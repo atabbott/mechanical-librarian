@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -56,6 +57,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderCandidate,
     ProviderClaim,
     ProviderEvidenceKind,
+    ProviderIdentityBinding,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
@@ -65,6 +67,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    complete_creator_identity_bindings,
     default_target_fields,
     isbn_family,
 )
@@ -73,7 +76,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState, cover_source_id,
 )
 from mechanical_librarian.domain.field_effect import FieldEffectError
-from mechanical_librarian.domain.proposal_set import POLICY_VERSION
+from mechanical_librarian.domain.proposal_set import POLICY_VERSION, evaluate_report
 
 
 class _InterruptedProviderStream(httpx.SyncByteStream):
@@ -3148,14 +3151,68 @@ class ProviderAdapterTests(unittest.TestCase):
                 },
             ]
         )
-
-        self.assertEqual(
-            ProviderStatus.NO_MATCH,
-            qualify_provider_observation(
-                observation,
-                _work_lookup("Synthetic title", ("Synthetic One", "Synthetic Two")),
-            ).status,
+        candidate = observation.candidates[0]
+        creators = tuple(
+            claim
+            for claim in candidate.claims
+            if claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.CREATOR
+            and claim.role is None
         )
+        observation = replace(
+            observation,
+            candidates=(
+                replace(
+                    candidate,
+                    identity_bindings=tuple(
+                        ProviderIdentityBinding(
+                            claim.reference, "hardcover-author-0000000001",
+                            ClaimScope.WORK, None, index,
+                        )
+                        for index, claim in enumerate(creators)
+                    ),
+                ),
+            ),
+        )
+        self.assertNotEqual(
+            len({value.identity for value in observation.candidates[0].identity_bindings}),
+            len(observation.candidates[0].identity_bindings),
+        )
+        self.assertIsNotNone(
+            complete_creator_identity_bindings(
+                observation.candidates[0], creators,
+            )
+        )
+
+        qualified = qualify_provider_observation(
+            observation,
+            _work_lookup("Synthetic title", ("Synthetic One", "Synthetic Two")),
+        )
+        self.assertEqual(ProviderStatus.CANDIDATES, qualified.status)
+        self.assertEqual(
+            ("hardcover-author-0000000001", "hardcover-author-0000000001"),
+            tuple(value.identity for value in observation.candidates[0].identity_bindings),
+        )
+        self.assertEqual(
+            2,
+            len(
+                tuple(
+                    claim
+                    for claim in observation.candidates[0].claims
+                    if claim.scope is ClaimScope.WORK
+                    and claim.kind is ClaimKind.CREATOR
+                    and claim.role is None
+                )
+            ),
+        )
+        self.assertFalse(
+            any(
+                claim.kind is ClaimKind.CREATOR
+                and claim.scope is ClaimScope.WORK
+                for claim in qualified.candidates[0].claims
+            )
+        )
+        self.assertEqual((), qualified.candidates[0].identity_bindings)
         sibling_claims = observation.candidates[0].claims
         self.assertEqual(
             {"Synthetic title", "9780306406157"},
@@ -3168,7 +3225,41 @@ class ProviderAdapterTests(unittest.TestCase):
         )
         self.assertIn(
             ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
-            {evidence.kind for evidence in observation.candidates[0].evidence},
+            {evidence.kind for evidence in qualified.candidates[0].evidence},
+        )
+        replayed = MetadataReport.from_json(
+            MetadataReport.create(
+                target=TargetFacts(
+                    "primary", "ebooks", "item-1",
+                    default_target_fields("Synthetic title"),
+                ),
+                file=FileFacts(0, "a" * 64, "b" * 64),
+                local_claims=(),
+                local_reasons=("no_opening_claims",),
+                providers=(qualified,),
+            ).to_json()
+        )
+        replayed_claims = replayed.providers[0].candidates[0].claims
+        self.assertEqual(
+            {"Synthetic title", "9780306406157"},
+            {
+                claim.value
+                for claim in replayed_claims
+                if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
+                and claim.state is FieldState.VALID
+            },
+        )
+        authors = next(
+            result
+            for result in evaluate_report(replayed).results
+            if result.destination is TargetDestination.AUTHORS
+        )
+        self.assertFalse(
+            any(
+                reference in {claim.reference for claim in creators}
+                for alternative in authors.alternatives
+                for reference in alternative.evidence_references
+            )
         )
 
     def test_nullable_and_malformed_contribution_authors_are_field_local(self) -> None:

@@ -18,7 +18,8 @@ newline. Failure emits no document and one value-free diagnostic.
 Only `proposal-set-v4` documents under `fixed-conservative-v8` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
-`fixed-conservative-v4`, `fixed-conservative-v5`, or `fixed-conservative-v6`
+`fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`, or
+`fixed-conservative-v7`
 table shape is incompatible and is rejected before
 mutation; there is no proposal migration, import, conversion, or compatibility
 parser.

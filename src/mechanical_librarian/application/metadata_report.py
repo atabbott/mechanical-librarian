@@ -829,6 +829,16 @@ def qualify_provider_observation(
             and claim.value is not None
         )
         untyped_creators = _complete_work_creators(candidate, None)
+        neutral_bindings = complete_creator_identity_bindings(
+            candidate,
+            tuple(
+                claim
+                for claim in candidate.claims
+                if claim.scope is ClaimScope.WORK
+                and claim.kind is ClaimKind.CREATOR
+                and claim.role is None
+            ),
+        )
         disqualifying_roles = {
             claim.role
             for claim in candidate.claims
@@ -854,17 +864,7 @@ def qualify_provider_observation(
                 )
                 or (
                     untyped_creators == expected_authors
-                    and (bindings := complete_creator_identity_bindings(
-                        candidate,
-                        tuple(
-                            claim
-                            for claim in candidate.claims
-                            if claim.scope is ClaimScope.WORK
-                            and claim.kind is ClaimKind.CREATOR
-                            and claim.role is None
-                        ),
-                    )) is not None
-                    and len({binding.identity for binding in bindings}) == len(bindings)
+                    and neutral_bindings is not None
                 )
             )
             and not disqualifying_roles
@@ -884,6 +884,22 @@ def qualify_provider_observation(
             accessed_at=observation.accessed_at,
         )
     candidate = min(next(iter(qualified.values())), key=lambda value: value.identity)
+    neutral_creators = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK
+        and claim.kind is ClaimKind.CREATOR
+        and claim.role is None
+    )
+    neutral_bindings = complete_creator_identity_bindings(candidate, neutral_creators)
+    reject_neutral_creators = (
+        neutral_bindings is not None
+        and len({binding.identity for binding in neutral_bindings})
+        != len(neutral_bindings)
+    )
+    rejected_creator_references = {
+        claim.reference for claim in neutral_creators
+    } if reject_neutral_creators else set()
     allowed_claims = {
         ClaimKind.TITLE,
         ClaimKind.CREATOR,
@@ -904,7 +920,11 @@ def qualify_provider_observation(
     filtered_claims = tuple(
         claim
         for claim in candidate.claims
-        if claim.scope is ClaimScope.WORK and claim.kind in allowed_claims
+        if claim.reference not in rejected_creator_references
+        and (
+            reject_neutral_creators
+            or (claim.scope is ClaimScope.WORK and claim.kind in allowed_claims)
+        )
     )
     filtered_references = {claim.reference for claim in filtered_claims}
     filtered = ProviderCandidate(
@@ -915,10 +935,18 @@ def qualify_provider_observation(
             value
             for value in candidate.evidence
             if (
+                not (
+                    reject_neutral_creators
+                    and value.kind in {
+                        ProviderEvidenceKind.AUTHOR_IDENTITY,
+                        ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+                    }
+                )
+                and (
                 value.scope is ClaimScope.WORK
                 and value.kind in allowed_evidence
-            )
-            or (
+                )
+                or (
                 value.scope is ClaimScope.EDITION
                 and value.kind
                 is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
@@ -931,6 +959,8 @@ def qualify_provider_observation(
                         is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
                         for link in value.links
                     )
+                )
+                or reject_neutral_creators
                 )
             )
         ),

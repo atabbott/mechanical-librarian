@@ -334,12 +334,12 @@ The suite covers:
   54/27/49 Google Books/Hardcover/Open Library metadata-attempt maxima, one
   shared pacer per paced adapter across foreground entries, and no persisted
   attempt diagnostics;
-- deterministic `metadata-report-v24` serialization and database reopen preserve
+- deterministic `metadata-report-v25` serialization and database reopen preserve
   claim raw order, rich-evidence canonical order, duplicate source occurrences,
   source ordinals, scopes, roles, field states and diagnostics byte-for-byte.
   Application tests merge parser, attempt and incomplete-outcome diagnostics
   once before persistence and prove reopen does not inflate them. Persistence
-  rejects `metadata-report-v23` before mutation and a direct regression proves
+  rejects immediate prior `metadata-report-v24` before mutation and a direct regression proves
   the prior database bytes remain unchanged;
 - cover-gallery provider/aggregate bounds, safe provenance, timeout/rejection
   states, visible truncation, and digest deduplication with all provenance;
@@ -375,8 +375,8 @@ Workbench integration tests use a disposable loopback target, synthetic media,
 private test secrets, and an absent database. Unit proposal-policy coverage includes whitespace, case, and
 width variants of the controlled package creator placeholder. The installed
 proposal path uses a whitespace/case variant and requires a nonmutating authors
-result under `fixed-conservative-v7`. Persistence tests reject prior proposal
-documents and proposal-store table shapes, including `fixed-conservative-v6`,
+result under `fixed-conservative-v8`. Persistence tests reject prior proposal
+documents and proposal-store table shapes, including immediate prior `fixed-conservative-v7`,
 without mutation, then prove exact deterministic replay under the current
 policy. Every synthetic EPUB member has a fixed timestamp so the probe identity
 does not depend on the qualification wall clock. No live library or provider is
@@ -430,7 +430,7 @@ cover nested single-emission, multiple exact sibling labels, mixed complete and
 split labels in one ancestor, repeated equal complete/split siblings, multiple
 assembled labels, scanning/production/workflow label values, promotion cues
 inside labels, the exact 16-fact rear cap, front/rear NFC and whitespace
-normalization, `metadata-report-v24`
+normalization, `metadata-report-v25`
 canonical replay, clean database creation, and byte-unchanged rejection of v23
 state. Only aggregate expected, found, and false-positive counts are asserted
 or exported; fixture rows and source text remain private.
