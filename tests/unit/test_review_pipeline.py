@@ -2122,6 +2122,21 @@ class ReviewPipelineSchedulingTests(unittest.TestCase):
             [("primary", "fiction"), ("primary", "non-fiction")],
         )
 
+    def test_lane_zero_wakes_recovery_with_the_supervisor_clock(self) -> None:
+        clock = [41]
+        pipeline = _ScheduledPipeline()
+        woken: list[int] = []
+        supervisor = ReviewPreparationSupervisor(
+            pipeline, clock=lambda: clock[0], recovery_wake=woken.append
+        )
+        def run_next() -> bool:
+            supervisor._stop.set()
+            return False
+        pipeline.run_next = run_next  # type: ignore[attr-defined]
+        supervisor._wake.set()
+        supervisor._run(0)
+        self.assertEqual([41], woken)
+
     def test_retry_is_limited_to_terminal_actionable_failure(self) -> None:
         pipeline = _ScheduledPipeline()
         supervisor = ReviewPreparationSupervisor(pipeline)

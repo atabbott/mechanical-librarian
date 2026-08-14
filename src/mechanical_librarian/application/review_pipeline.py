@@ -541,6 +541,7 @@ class ReviewPreparationSupervisor:
         polling_interval_seconds: int | None = None,
         graceful_shutdown_seconds: int = 30,
         clock: Callable[[], int] = lambda: int(time.time()),
+        recovery_wake: Callable[[int], None] | None = None,
         on_stop: Callable[[], None] | None = None,
     ) -> None:
         if polling_interval_seconds is not None and (
@@ -555,6 +556,7 @@ class ReviewPreparationSupervisor:
         self._polling_interval_seconds = polling_interval_seconds
         self._graceful_shutdown_seconds = graceful_shutdown_seconds
         self._clock = clock
+        self._recovery_wake = recovery_wake
         self._schedule_lock = threading.Lock()
         self._next_schedule_at: int | None = None
         self._schedule_paused = False
@@ -697,6 +699,12 @@ class ReviewPreparationSupervisor:
             self._wake.clear()
             try:
                 if lane == 0:
+                    # Recovery has no scheduler of its own.  It shares the
+                    # supervisor's clock, wake, drain and shutdown lifecycle.
+                    # A failed recovery observation is already persisted by
+                    # its runner, so it must not prevent ordinary preparation.
+                    if self._recovery_wake is not None:
+                        self._recovery_wake(self._clock())
                     self._schedule_due()
                 while not self._stop.is_set():
                     advanced = self._pipeline.run_next()

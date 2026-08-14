@@ -40,6 +40,36 @@ class ProviderRecoveryTests(unittest.TestCase):
             self.assertEqual("recovered", store.snapshot()[0].state)
             store.close()
 
+    def test_interrupted_fanout_does_not_repeat_the_completed_canary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            store.record(ProviderRecovery.failed(connection="google", adapter="google_books", scope="books", generation=1, failure="transient", now=0, retry_after=1), occurred_at=0)
+            calls: list[str] = []
+            def retry(_, member):
+                calls.append(member.member_id)
+                if member.member_id == "sibling-a":
+                    raise KeyboardInterrupt()
+            runner = ScopedProviderRecoveryRunner(
+                store=store, generation=1, retry=retry,
+                classify_failure=lambda _: ("transient", None),
+            )
+            runner.enqueue((self._job("canary"), self._job("sibling-a"), self._job("sibling-b")))
+            with self.assertRaises(KeyboardInterrupt):
+                runner.run_one(now=1, token="owner")
+            # The canary job is durably complete while the scope lease remains
+            # in checking state.  A new claimant after expiry continues at the
+            # unfinished sibling rather than recontacting the canary.
+            resumed: list[str] = []
+            next_runner = ScopedProviderRecoveryRunner(
+                store=store, generation=1,
+                retry=lambda _, member: resumed.append(member.member_id),
+                classify_failure=lambda _: ("transient", None),
+            )
+            self.assertEqual("recovered", next_runner.run_one(now=62, token="next").state)
+            self.assertEqual(["sibling-a", "sibling-b"], resumed)
+            self.assertEqual(["canary", "sibling-a"], calls)
+            store.close()
+
     def test_activation_runner_failure_has_zero_fanout_and_schedules_backoff(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")

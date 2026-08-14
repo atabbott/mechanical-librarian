@@ -10,10 +10,19 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 from uuid import uuid4
 
-from mechanical_librarian.adapters.persistence.provider_recovery import ProviderRecoveryJob, SQLiteProviderRecoveryStore
-from mechanical_librarian.domain.provider_recovery import ProviderRecovery
+from mechanical_librarian.domain.provider_recovery import ProviderRecovery, ProviderRecoveryJob
+
+
+class ProviderRecoveryStore(Protocol):
+    def enqueue_jobs(self, jobs: tuple[ProviderRecoveryJob, ...]) -> int: ...
+    def claim_one(self, *, generation: int, now: int, token: str) -> ProviderRecovery | None: ...
+    def claim_job(self, *, recovery: ProviderRecovery, token: str, now: int) -> ProviderRecoveryJob | None: ...
+    def complete_job(self, *, job: ProviderRecoveryJob, token: str, now: int, success: bool) -> None: ...
+    def complete_success(self, *, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
+    def complete(self, *, token: str, recovery: ProviderRecovery, now: int, failure: str, retry_after: int | None) -> ProviderRecovery: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,7 +47,7 @@ class ScopedProviderRecoveryRunner:
     """Claim one deterministic canary and atomically close or back off its scope."""
 
     def __init__(
-        self, *, store: SQLiteProviderRecoveryStore, generation: int,
+        self, *, store: ProviderRecoveryStore, generation: int,
         retry: Callable[[ProviderRecovery, ProviderRecoveryJob], None],
         classify_failure: Callable[[Exception], tuple[str, int | None]],
     ) -> None:
@@ -72,7 +81,6 @@ class ScopedProviderRecoveryRunner:
             self._store.complete(token=token, recovery=claimed, now=now, failure=failure, retry_after=retry_after)
             return RecoveryRun("waiting")
         self._store.complete_job(job=canary, token=token, now=now, success=True)
-        self._store.complete_success(token=token, recovery=claimed, now=now)
         fanout = 0
         while (member := self._store.claim_job(recovery=claimed, token=token, now=now)) is not None:
             try:
@@ -81,7 +89,12 @@ class ScopedProviderRecoveryRunner:
                 fanout += 1
             except Exception:
                 self._store.complete_job(job=member, token=token, now=now, success=False)
+        # Do not release the scope until all durable siblings have been
+        # considered.  If this process dies earlier, the health lease expires
+        # and a later claimant sees completed jobs as terminal, rather than
+        # running a successful provider member a second time.
+        self._store.complete_success(token=token, recovery=claimed, now=now)
         return RecoveryRun("recovered", fanout)
 
 
-__all__ = ["RecoveryMember", "RecoveryRun", "ScopedProviderRecoveryRunner"]
+__all__ = ["ProviderRecoveryStore", "RecoveryMember", "RecoveryRun", "ScopedProviderRecoveryRunner"]

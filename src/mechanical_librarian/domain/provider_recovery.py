@@ -13,6 +13,22 @@ class ProviderRecoveryError(ValueError):
     """A value-free provider recovery boundary failure."""
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderRecoveryJob:
+    """The immutable exact-current input for one scoped retry member."""
+
+    connection: str; adapter: str; scope: str; generation: int; member_id: str
+    target_connection: str; library: str; item: str; file_identity: str
+    source_report_id: str; package_proposal_id: str; package_report_id: str
+    package_case_id: str; package_checkpoint: int; package_outcome: str; lane_ids: str
+    state: str = "queued"; attempt: int = 0
+
+    def __post_init__(self) -> None:
+        strings = (self.connection, self.adapter, self.scope, self.member_id, self.target_connection, self.library, self.item, self.file_identity, self.source_report_id, self.package_proposal_id, self.package_report_id, self.package_case_id, self.package_outcome, self.lane_ids)
+        if (not all(type(value) is str and value for value in strings) or type(self.generation) is not int or self.generation < 1 or type(self.package_checkpoint) is not int or self.package_checkpoint < 0 or self.state not in {"queued", "running", "complete", "failed"} or type(self.attempt) is not int or not 0 <= self.attempt <= 5):
+            raise ProviderRecoveryError("provider recovery job is invalid")
+
+
 _TRANSIENT = {"transient", "rate_limited"}
 _DORMANT = {"authentication", "authorization", "configuration"}
 _BACKOFF = (7_200, 14_400, 28_800, 57_600, 86_400)
@@ -78,4 +94,4 @@ class ProviderRecovery:
         return ProviderRecovery(self.connection, self.adapter, self.scope, generation, self.state, self.attempt, self.next_eligible_at)
 
 
-__all__ = ["MAX_TIMESTAMP", "ProviderRecovery", "ProviderRecoveryError"]
+__all__ = ["MAX_TIMESTAMP", "ProviderRecovery", "ProviderRecoveryError", "ProviderRecoveryJob"]
