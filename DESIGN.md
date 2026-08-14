@@ -229,10 +229,10 @@ of competing as a fourth permanent destination.
 
 Wide task surfaces use asymmetric grids. Library pairs a sticky 310–380px work
 index with a flexible preview; Policy pairs a 220px chapter index with notebook
-pages; Activity pairs a narrower state card with a wider ledger. The common
-rhythm is compact—`0.25rem`, `0.35rem`, `0.5rem`, `0.75rem`, `1rem`, and
-`1.25rem`—with larger space reserved for page framing rather than individual
-controls.
+pages. Activity instead stacks a status and owner-authority strip above its
+full-width ledger. The common rhythm is compact—`0.25rem`, `0.35rem`, `0.5rem`,
+`0.75rem`, `1rem`, and `1.25rem`—with larger space reserved for page framing
+rather than individual controls.
 
 At 1300px, detail facts move below the field heading. Between 701px and 1199px,
 attention becomes a contextual Library drawer; by 1024px, workspace columns
@@ -285,13 +285,17 @@ substantial enough to trust, and never ornamental for their own sake.
 
 ### Buttons
 
-- **Shape:** compact rounded rectangle (`0.5rem`) with a minimum height of
-  `2.75rem`/44px and `0.6rem 0.85rem` default padding.
+- **Shape:** compact rounded rectangle (`0.5rem`) with `0.6rem 0.85rem` default
+  padding. Primary task and touch targets are at least `2.75rem`/44px; dense
+  desktop inspection and pagination controls may use 40px before returning to
+  44px at compact widths.
 - **Primary:** Deep Archive Teal fill with a paper-colored label; use for the
   next authoritative action, not every available action.
 - **Hover / Focus:** hover shifts borders or surfaces toward Archive Teal and
-  its wash. Keyboard focus is always a three-pixel mixed Focus Blue outline with
-  a three-pixel offset.
+  its wash. The default keyboard focus treatment is a three-pixel mixed Focus
+  Blue outline with a three-pixel offset. Compact native fields may use the
+  implemented two-pixel Archive Teal outline where their local component
+  contract requires it.
 - **Secondary / Ghost:** paper-toned or transparent surfaces with catalogue
   borders. Danger actions stay transparent with Correction Red text and border
   until explicitly invoked.
@@ -364,8 +368,10 @@ compressing their desktop columns.
 - **Do** use warm paper, ink, and catalogue lines as the default hierarchy.
 - **Do** reserve Archive Teal for current selection, affirmative action, and
   calm recorded state.
-- **Do** keep every interactive target at least 44px high and preserve the
-  three-pixel offset focus outline.
+- **Do** keep primary task and touch targets at least 44px high. Dense desktop
+  inspection controls may use 40px when they return to 44px at compact widths;
+  preserve the default three-pixel offset focus outline and documented compact
+  field exceptions.
 - **Do** keep task identity and direct values in serif type while operational
   controls and evidence remain sans-serif.
 - **Do** collapse wide workspaces into explicit, continuous mobile tasks rather
