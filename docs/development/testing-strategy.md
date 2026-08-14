@@ -142,9 +142,10 @@ report and ProposalSet creation, concurrent admission, replay, restart-backed
 get, successor/historical projection, and nonactionable retirement against a
 disposable loopback target and synthetic EPUB.
 
-Focused automatic no-change proof covers canonical equality and unequal
-near-matches, deterministic ledger identity and replay, exact-current schema
-admission, pending exclusion, and the absence of guarded-write dependencies.
+The committed focused automatic no-change tests prove deterministic identity
+across replay timestamps, closed domain bounds, exact-current schema admission,
+and the existing scheduler/guarded-effect regression suite. Broader integration
+scenarios remain covered by their established field-effect cohorts.
 
 The required suite includes a 45-item continuous-review restart cohort across
 three libraries. It retains the cross-library fairness, interruption, forced

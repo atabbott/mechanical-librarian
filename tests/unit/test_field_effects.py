@@ -1985,7 +1985,9 @@ class FieldEffectDomainTests(unittest.TestCase):
             target_version="e" * 64, occurred_at=17,
         )
         first = FieldEffectNoChange.create(**values)
-        self.assertEqual(first, FieldEffectNoChange.create(**values))
+        replay = FieldEffectNoChange.create(**{**values, "occurred_at": 18})
+        self.assertEqual(first.event_id, replay.event_id)
+        self.assertNotEqual(first.occurred_at, replay.occurred_at)
         self.assertEqual(first.origin, "automatic_policy")
         self.assertTrue(first.event_id.startswith("field_effect_no_change_"))
         with self.assertRaisesRegex(FieldEffectError, "invalid_no_change"):

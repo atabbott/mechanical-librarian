@@ -161,12 +161,13 @@ class FieldEffectNoChange:
             raise FieldEffectError("invalid_no_change")
         core = {
             "connection": connection, "decision_id": decision_id,
-            "destination": destination, "library": library, "occurred_at": occurred_at,
+            "destination": destination, "library": library,
             "origin": "automatic_policy", "report_id": report_id,
             "review_case_id": review_case_id, "target_fingerprint": target_fingerprint,
             "target_version": target_version, "work_id": work_id,
         }
-        return cls(**core, event_id="field_effect_no_change_" + _digest(core))
+        return cls(**core, occurred_at=occurred_at,
+                   event_id="field_effect_no_change_" + _digest(core))
 
 
 @dataclass(frozen=True, slots=True)

@@ -345,7 +345,11 @@ class ContinuousGuardedApplication:
             # This is intentionally before authority, consent and capability: an
             # equal automatic candidate is a terminal decision fact, not a write.
             no_change = getattr(self._repository, "record_current_field_effect_no_change", None)
-            if no_change is not None and no_change(decision, self._clock()):
+            if (
+                type(decision) is AutomaticDecision
+                and no_change is not None
+                and no_change(decision, self._clock())
+            ):
                 continue
             try:
                 snapshot = self._authority.resolve(decision)
