@@ -32,11 +32,13 @@ class ProviderRecovery:
     def __post_init__(self) -> None:
         if (not all(type(value) is str and 1 <= len(value) <= 64 for value in (self.connection, self.adapter, self.scope))
                 or type(self.generation) is not int or self.generation < 1
-                or self.state not in {"waiting", "dormant", "checking"}
+                or self.state not in {"waiting", "dormant", "checking", "recovered"}
                 or type(self.attempt) is not int or not 0 <= self.attempt <= len(_BACKOFF)
                 or (self.next_eligible_at is not None and (type(self.next_eligible_at) is not int or not 0 <= self.next_eligible_at <= MAX_TIMESTAMP))):
             raise ProviderRecoveryError("provider recovery is invalid")
         if (self.state == "waiting") != (self.next_eligible_at is not None):
+            raise ProviderRecoveryError("provider recovery is invalid")
+        if self.state == "recovered" and (self.attempt != 0 or self.next_eligible_at is not None):
             raise ProviderRecoveryError("provider recovery is invalid")
 
     @classmethod

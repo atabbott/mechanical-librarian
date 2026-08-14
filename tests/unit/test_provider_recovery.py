@@ -8,14 +8,56 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 
-from mechanical_librarian.adapters.persistence.provider_recovery import ProviderRecoveryStoreError, SQLiteProviderRecoveryStore
+from mechanical_librarian.adapters.persistence.provider_recovery import ProviderRecoveryJob, ProviderRecoveryStoreError, SQLiteProviderRecoveryStore
 from mechanical_librarian.bootstrap.composition import _record_provider_recovery_observations
 import mechanical_librarian.adapters.persistence.provider_recovery as recovery_persistence
 from mechanical_librarian.domain.metadata_report import ProviderStatus
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP, ProviderRecovery, ProviderRecoveryError
+from mechanical_librarian.application.provider_recovery_runner import ScopedProviderRecoveryRunner
 
 
 class ProviderRecoveryTests(unittest.TestCase):
+    @staticmethod
+    def _job(member_id: str) -> ProviderRecoveryJob:
+        return ProviderRecoveryJob("google", "google_books", "books", 1, member_id, "primary", "books", member_id, f"file-{member_id}", f"report-{member_id}", "proposal", f"report-{member_id}", "case", 1, "admitted", '["work"]')
+
+    def test_activation_runner_claims_one_canary_then_fans_out_current_members_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            store.record(ProviderRecovery.failed(connection="google", adapter="google_books", scope="books", generation=1, failure="transient", now=0, retry_after=1), occurred_at=0)
+            calls: list[str] = []
+            runner = ScopedProviderRecoveryRunner(
+                store=store, generation=1,
+                retry=lambda _, member: calls.append(member.source_report_id),
+                classify_failure=lambda _: ("transient", None),
+            )
+            runner.enqueue((self._job("canary"), self._job("sibling-a"), self._job("sibling-b")))
+            result = runner.run_one(now=1, token="owner")
+            self.assertEqual(("recovered", 2), (result.state, result.fanout))
+            self.assertEqual("idle", runner.run_one(now=1, token="other").state)
+            # The second invocation is idle: the first scope was atomically closed.
+            self.assertEqual(["report-canary", "report-sibling-a", "report-sibling-b"], calls)
+            self.assertEqual("recovered", store.snapshot()[0].state)
+            store.close()
+
+    def test_activation_runner_failure_has_zero_fanout_and_schedules_backoff(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            store.record(ProviderRecovery.failed(connection="google", adapter="google_books", scope="books", generation=1, failure="transient", now=0, retry_after=1), occurred_at=0)
+            calls: list[str] = []
+            def retry(_, member):
+                calls.append(member.source_report_id)
+                raise RuntimeError("unavailable")
+            runner = ScopedProviderRecoveryRunner(
+                store=store, generation=1,
+                retry=retry, classify_failure=lambda _: ("transient", None),
+            )
+            runner.enqueue((self._job("canary"), self._job("sibling")))
+            self.assertEqual("waiting", runner.run_one(now=1, token="owner").state)
+            self.assertEqual(["report-canary"], calls)
+            current = store.snapshot()[0]
+            self.assertEqual(("waiting", 2, 14_401), (current.state, current.attempt, current.next_eligible_at))
+            store.close()
     def test_bootstrap_preserves_unrelated_objects_and_rejects_partial_or_rolled_back_schema(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "recovery.sqlite"
