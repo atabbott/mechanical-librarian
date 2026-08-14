@@ -224,9 +224,11 @@ reordered, duplicated, multi-author-inverted or role/scope-incompatible sets
 cannot agree.
 An unlabelled Hardcover creator remains a neutral, identity-bound work claim
 when its complete ordered set exactly substantiates an existing target-backed
-work lookup. It never becomes author evidence by itself. One independently
-qualified provider's complete explicit author set compares complete ordered
-identity bindings first. Provider-native identity namespaces are not a global
+successful ISBN or work lookup. It never becomes author evidence by itself.
+An author-labelled creator collection that also contains neutral or other
+creator roles is rejected as a whole rather than projected as a typed subset.
+One independently qualified provider's complete explicit author set compares
+complete ordered identity bindings first. Provider-native identity namespaces are not a global
 person registry, so nonmatching namespaces fall back only to exact closed
 normalized names.
 Repeated endpoints and providers with the same authority are one source;

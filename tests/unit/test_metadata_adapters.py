@@ -76,7 +76,9 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState, cover_source_id,
 )
 from mechanical_librarian.domain.field_effect import FieldEffectError
-from mechanical_librarian.domain.proposal_set import POLICY_VERSION, evaluate_report
+from mechanical_librarian.domain.proposal_set import (
+    POLICY_VERSION, ProposalOutcome, evaluate_report,
+)
 
 
 class _InterruptedProviderStream(httpx.SyncByteStream):
@@ -3133,6 +3135,64 @@ class ProviderAdapterTests(unittest.TestCase):
             ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
             {evidence.kind for evidence in observation.candidates[0].evidence},
         )
+
+    def test_mixed_author_and_neutral_creators_reject_author_projection(self) -> None:
+        """A complete mixed creator collection cannot donate its typed subset."""
+        observation = self._observe_contributions(
+            [
+                {
+                    "id": 1,
+                    "contribution": "Author",
+                    "author": {"id": 1, "name": "Synthetic One"},
+                },
+                {
+                    "id": 2,
+                    "contribution": None,
+                    "author": {"id": 2, "name": "Synthetic Two"},
+                },
+            ]
+        )
+
+        qualified = qualify_provider_observation(
+            observation,
+            _work_lookup("Synthetic title", ("Synthetic One",)),
+        )
+        self.assertEqual(ProviderStatus.CANDIDATES, qualified.status)
+        candidate = qualified.candidates[0]
+        self.assertFalse(
+            any(
+                claim.scope is ClaimScope.WORK
+                and claim.kind is ClaimKind.CREATOR
+                for claim in candidate.claims
+            )
+        )
+        self.assertEqual((), candidate.identity_bindings)
+        self.assertEqual(
+            {"Synthetic title", "9780306406157"},
+            {
+                claim.value
+                for claim in candidate.claims
+                if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
+                and claim.state is FieldState.VALID
+            },
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary", "ebooks", "item-1",
+                default_target_fields("Synthetic title"),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(qualified,),
+        )
+        authors = next(
+            result
+            for result in evaluate_report(report).results
+            if result.destination is TargetDestination.AUTHORS
+        )
+        self.assertIs(ProposalOutcome.INELIGIBLE, authors.outcome)
+        self.assertEqual((), authors.alternatives)
 
     def test_reused_neutral_creator_identity_binding_fails_qualification_locally(
         self,

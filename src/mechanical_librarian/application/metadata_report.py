@@ -829,6 +829,7 @@ def qualify_provider_observation(
             and claim.value is not None
         )
         untyped_creators = _complete_work_creators(candidate, None)
+        mixed_author_creator_roles = _mixed_work_creator_roles(candidate)
         neutral_bindings = complete_creator_identity_bindings(
             candidate,
             tuple(
@@ -866,6 +867,7 @@ def qualify_provider_observation(
                     untyped_creators == expected_authors
                     and neutral_bindings is not None
                 )
+                or mixed_author_creator_roles
             )
             and not disqualifying_roles
             and not variant_marker
@@ -897,9 +899,20 @@ def qualify_provider_observation(
         and len({binding.identity for binding in neutral_bindings})
         != len(neutral_bindings)
     )
+    reject_mixed_author_creators = _mixed_work_creator_roles(candidate)
+    reject_creator_authority = (
+        reject_neutral_creators or reject_mixed_author_creators
+    )
     rejected_creator_references = {
         claim.reference for claim in neutral_creators
     } if reject_neutral_creators else set()
+    if reject_mixed_author_creators:
+        rejected_creator_references.update(
+            claim.reference
+            for claim in candidate.claims
+            if claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.CREATOR
+        )
     allowed_claims = {
         ClaimKind.TITLE,
         ClaimKind.CREATOR,
@@ -929,7 +942,7 @@ def qualify_provider_observation(
         and (
             (claim.scope is ClaimScope.WORK and claim.kind in allowed_claims)
             or (
-                reject_neutral_creators
+                reject_creator_authority
                 and claim.scope is ClaimScope.EDITION
                 and claim.kind in neutral_rejection_sibling_claims
                 and claim.state is FieldState.VALID
@@ -946,7 +959,7 @@ def qualify_provider_observation(
             for value in candidate.evidence
             if (
                 not (
-                    reject_neutral_creators
+                    reject_creator_authority
                     and value.kind in {
                         ProviderEvidenceKind.AUTHOR_IDENTITY,
                         ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
@@ -1016,6 +1029,16 @@ def _complete_work_creators(
     ):
         return None
     return tuple(normalize_title(claim.value).casefold() for claim in creators)
+
+
+def _mixed_work_creator_roles(candidate: ProviderCandidate) -> bool:
+    """A typed author set cannot be projected from a mixed creator collection."""
+    roles = {
+        claim.role
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
+    }
+    return "author" in roles and len(roles) > 1
 
 
 def _variant_marker(value: str) -> bool:

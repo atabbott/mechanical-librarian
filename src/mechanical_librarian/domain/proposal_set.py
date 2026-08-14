@@ -1217,6 +1217,11 @@ def _list_observations(
             )
     for provider in report.providers:
         for candidate in provider.candidates:
+            if (
+                destination is TargetDestination.AUTHORS
+                and _mixed_author_creator_roles(candidate)
+            ):
+                continue
             if destination is TargetDestination.AUTHORS and any(
                 claim.kind is ClaimKind.CONTRIBUTOR
                 and claim.scope is ClaimScope.WORK
@@ -1288,7 +1293,7 @@ def _corroborated_untyped_author_observations(
         (provider, candidate, claims, bindings)
         for provider in report.providers
         for candidate in provider.candidates
-        if _work_lane_contains(provider, candidate)
+        if _target_lookup_contains(provider, candidate)
         if (set_value := _complete_provider_creator_set(candidate, "author")) is not None
         for claims, bindings in (set_value,)
     )
@@ -1296,7 +1301,7 @@ def _corroborated_untyped_author_observations(
         (provider, candidate, claims, bindings)
         for provider in report.providers
         for candidate in provider.candidates
-        if _work_lane_contains(provider, candidate)
+        if _target_lookup_contains(provider, candidate)
         if (set_value := _complete_provider_creator_set(candidate, None)) is not None
         for claims, bindings in (set_value,)
         if bindings is not None
@@ -1388,24 +1393,29 @@ def _complete_provider_creator_set(
     return creators, bindings
 
 
-def _work_lane_contains(
+def _mixed_author_creator_roles(candidate: ProviderCandidate) -> bool:
+    """Never project an author subset from a mixed WORK creator collection."""
+    roles = {
+        claim.role
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
+    }
+    return "author" in roles and len(roles) > 1
+
+
+def _target_lookup_contains(
     provider: ProviderObservation, candidate: ProviderCandidate,
 ) -> bool:
-    """Require a successful exact WORK-lane membership when lanes exist."""
-    if provider.lanes:
-        return any(
-            lane.kind is ProviderQueryKind.WORK
-            and lane.status is ProviderStatus.CANDIDATES
-            and any(
-                member.edition_identity == candidate.identity
-                and member.work_identity == candidate.work_identity
-                for member in lane.candidates
-            )
-            for lane in provider.lanes
+    """Require one successful exact ISBN or WORK lookup for this candidate."""
+    return any(
+        lane.kind in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK}
+        and lane.status is ProviderStatus.CANDIDATES
+        and any(
+            member.edition_identity == candidate.identity
+            and member.work_identity == candidate.work_identity
+            for member in lane.candidates
         )
-    return (
-        provider.query_kind is ProviderQueryKind.WORK
-        and len(provider.candidates) == 1
+        for lane in provider.lanes
     )
 
 

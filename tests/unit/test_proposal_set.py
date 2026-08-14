@@ -7,6 +7,10 @@ from pathlib import Path
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
+    ProviderLaneResult,
+    TargetSnapshot,
+    metadata_discovery_plan,
+    provider_observation,
     qualify_provider_observation,
 )
 from mechanical_librarian.application.review_web import (
@@ -43,6 +47,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderQueryKind,
     ProviderStatus,
     PublicationDateRelation,
+    ReportValueError,
     TargetDestination,
     TargetFacts,
     TargetField,
@@ -483,7 +488,53 @@ def _result(proposal_set: ProposalSet, destination: TargetDestination):
     )
 
 
+def _work_lane_observation(
+    provider: str,
+    candidate: ProviderCandidate,
+    authority: str,
+    lane_seed: str,
+    reference: str,
+) -> ProviderObservation:
+    identity = "lane_" + lane_seed * 64
+    lane = ProviderLaneObservation(
+        identity,
+        ProviderQueryKind.WORK,
+        ProviderStatus.CANDIDATES,
+        (reference,),
+        None,
+        (
+            ProviderLaneCandidate(
+                provider_lane_candidate_reference(
+                    provider, identity, candidate.identity, candidate.work_identity,
+                ),
+                candidate.identity,
+                candidate.work_identity,
+            ),
+        ),
+    )
+    return ProviderObservation(
+        provider,
+        ProviderStatus.CANDIDATES,
+        (reference,),
+        (candidate,),
+        ProviderQueryKind.WORK,
+        authority,
+        lanes=(lane,),
+    )
+
+
 def _real_tigers_corroboration_report() -> MetadataReport:
+    title_claim = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed="Real Tigers",
+        canonical="Real Tigers",
+        excerpt="Real Tigers",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+        basis="target_metadata",
+    )
     author_claim = _claim(
         "open-library", "author-edition", ClaimKind.CREATOR, "Mick Herron",
         scope=ClaimScope.WORK, role="author", order=1,
@@ -505,9 +556,10 @@ def _real_tigers_corroboration_report() -> MetadataReport:
     return _report(
         title=None,
         fields=_fields(None, authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING)),
+        local_claims=(title_claim,),
         providers=(
-            ProviderObservation("hardcover", ProviderStatus.CANDIDATES, (), (neutral_candidate,), ProviderQueryKind.WORK, "hardcover"),
-            ProviderObservation("open-library", ProviderStatus.CANDIDATES, (), (author_candidate,), ProviderQueryKind.WORK, "open_library"),
+            _work_lane_observation("hardcover", neutral_candidate, "hardcover", "1", title_claim.reference),
+            _work_lane_observation("open-library", author_candidate, "open_library", "2", title_claim.reference),
         ),
     )
 
@@ -659,10 +711,10 @@ class ProposalSetTests(unittest.TestCase):
             _result(evaluate_report(report), TargetDestination.AUTHORS).outcome,
         )
 
-    def test_mixed_discovery_requires_exact_successful_work_lane_membership(
+    def test_mixed_discovery_requires_exact_successful_lookup_lane_membership(
         self,
     ) -> None:
-        """Only a candidate in the successful WORK lane can corroborate."""
+        """An exact successful ISBN or WORK lane can corroborate its candidate."""
         report = _real_tigers_corroboration_report()
         neutral = report.providers[0].candidates[0]
         author = report.providers[1].candidates[0]
@@ -766,17 +818,182 @@ class ProposalSetTests(unittest.TestCase):
             ),
             TargetDestination.AUTHORS,
         )
-        self.assertNotIn(
-            "explicit_author_corroborates_untyped_creator", rejected.reasons,
+        self.assertEqual(
+            ("explicit_author_corroborates_untyped_creator",), rejected.reasons,
         )
-        self.assertNotIn(
-            neutral.claims[1].reference,
-            {
-                reference
-                for alternative in rejected.alternatives
-                for reference in alternative.evidence_references
-            },
+        self.assertIn(neutral.claims[1].reference, rejected.alternatives[0].evidence_references)
+
+    def test_isbn_backed_creator_corroboration_requires_exact_complete_membership(
+        self,
+    ) -> None:
+        """ISBN discovery admits complete creators without a local author lookup."""
+        fields = _fields(
+            "Real Tigers",
+            authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING),
         )
+        isbn = _publication_local_isbn()
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", "Real Tigers", (), fields=fields), (isbn,),
+        )
+        self.assertEqual(1, len(plan.lanes))
+        isbn_lane = plan.lanes[0]
+        self.assertIs(ProviderQueryKind.ISBN, isbn_lane.kind)
+        self.assertEqual((isbn.reference,), isbn_lane.input_references)
+
+        def candidate(
+            provider: str,
+            identity: str,
+            work: str,
+            role: str | None,
+            names: tuple[str, ...] = ("Mick Herron", "Jane Doe"),
+        ) -> ProviderCandidate:
+            claims = tuple(
+                _claim(
+                    provider, identity, ClaimKind.CREATOR, name,
+                    scope=ClaimScope.WORK, role=role, order=index,
+                )
+                for index, name in enumerate(names)
+            )
+            bindings = (
+                tuple(
+                    ProviderIdentityBinding(
+                        claim.reference, f"{provider}-creator-{index}",
+                        ClaimScope.WORK, None, index,
+                    )
+                    for index, claim in enumerate(claims)
+                )
+                if role is None else ()
+            )
+            return ProviderCandidate(identity, work, claims, (), bindings)
+
+        explicit = candidate("open-connection", "open-edition", "real-work", "author")
+        neutral = candidate("hardcover-connection", "hardcover-edition", "real-work", None)
+
+        def observation(
+            provider: str,
+            authority: str,
+            value: ProviderCandidate,
+            status: ProviderStatus = ProviderStatus.CANDIDATES,
+        ) -> ProviderObservation:
+            return provider_observation(
+                provider,
+                (
+                    ProviderLaneResult(
+                        isbn_lane,
+                        status,
+                        (value,) if status is ProviderStatus.CANDIDATES else (),
+                    ),
+                ),
+                authority=authority,
+            )
+
+        def result(*providers: ProviderObservation) -> ProposalResult:
+            report = MetadataReport.create(
+                target=TargetFacts("primary", "ebooks", "item-1", fields),
+                file=FileFacts(0, "a" * 64, "b" * 64),
+                local_claims=(isbn,),
+                local_reasons=("opening_matter_isbn",),
+                providers=providers,
+            )
+            return _result(evaluate_report(report), TargetDestination.AUTHORS)
+
+        admitted = result(
+            observation("hardcover-connection", "hardcover", neutral),
+            observation("open-connection", "open_library", explicit),
+        )
+        self.assertIs(ProposalOutcome.PROPOSE_CHANGE, admitted.outcome)
+        self.assertEqual(
+            ("explicit_author_corroborates_untyped_creator",), admitted.reasons,
+        )
+        self.assertEqual(
+            {claim.reference for claim in (*explicit.claims, *neutral.claims)},
+            set(admitted.alternatives[0].evidence_references),
+        )
+
+        exact_observation = observation(
+            "hardcover-connection", "hardcover", neutral,
+        )
+        with self.assertRaisesRegex(ReportValueError, "lane candidates"):
+            replace(
+                exact_observation,
+                lanes=(
+                    replace(
+                        exact_observation.lanes[0],
+                        candidates=(
+                            ProviderLaneCandidate(
+                                provider_lane_candidate_reference(
+                                    "hardcover-connection", isbn_lane.identity,
+                                    neutral.identity, "other-work",
+                                ),
+                                neutral.identity,
+                                "other-work",
+                            ),
+                        ),
+                    ),
+                ),
+            )
+        mixed = candidate(
+            "open-connection", "open-mixed", "real-work", "author", ("Mick Herron",),
+        )
+        mixed = replace(
+            mixed,
+            claims=(
+                *mixed.claims,
+                _claim(
+                    "open-connection", "open-mixed", ClaimKind.CREATOR, "Jane Doe",
+                    scope=ClaimScope.WORK, role=None, order=1,
+                ),
+            ),
+        )
+        partial = candidate(
+            "hardcover-connection", "hardcover-partial", "real-work", None,
+            ("Mick Herron",),
+        )
+        for label, providers in (
+            (
+                "unsuccessful ISBN lane",
+                (
+                    observation(
+                        "hardcover-connection", "hardcover", neutral,
+                        ProviderStatus.NO_MATCH,
+                    ),
+                    observation("open-connection", "open_library", explicit),
+                ),
+            ),
+            (
+                "same authority",
+                (
+                    observation("hardcover-connection", "hardcover", neutral),
+                    observation("open-connection", "hardcover", explicit),
+                ),
+            ),
+            (
+                "mixed creator collection",
+                (
+                    observation("hardcover-connection", "hardcover", neutral),
+                    observation("open-connection", "open_library", mixed),
+                ),
+            ),
+            (
+                "partial creator collection",
+                (
+                    observation("hardcover-connection", "hardcover", partial),
+                    observation("open-connection", "open_library", explicit),
+                ),
+            ),
+        ):
+            with self.subTest(label=label):
+                rejected = result(*providers)
+                self.assertNotIn(
+                    "explicit_author_corroborates_untyped_creator", rejected.reasons,
+                )
+                self.assertFalse(
+                    any(
+                        reference in {claim.reference for claim in neutral.claims}
+                        for alternative in rejected.alternatives
+                        for reference in alternative.evidence_references
+                    )
+                )
 
     def test_reused_creator_identity_binding_fails_closed_for_corroboration(
         self,
@@ -908,15 +1125,33 @@ class ProposalSetTests(unittest.TestCase):
                 for index, claim in enumerate(neutral_claims)
             ),
         )
+        title_claim = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Real Tigers",
+            canonical="Real Tigers",
+            excerpt="Real Tigers",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+            basis="target_metadata",
+        )
         report = _report(
             title=None,
             fields=_fields(
                 None,
                 authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING),
             ),
+            local_claims=(title_claim,),
             providers=(
-                ProviderObservation(untyped_provider, ProviderStatus.CANDIDATES, (), (neutral_candidate,), ProviderQueryKind.WORK, "hardcover"),
-                ProviderObservation(typed_provider, ProviderStatus.CANDIDATES, (), (author_candidate,), ProviderQueryKind.WORK, "open_library"),
+                _work_lane_observation(
+                    untyped_provider, neutral_candidate, "hardcover", "3",
+                    title_claim.reference,
+                ),
+                _work_lane_observation(
+                    typed_provider, author_candidate, "open_library", "4",
+                    title_claim.reference,
+                ),
             ),
         )
         replayed_report = MetadataReport.from_json(report.to_json())
