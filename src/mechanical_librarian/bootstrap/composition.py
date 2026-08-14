@@ -1036,6 +1036,29 @@ def _current_resolved_policy(configuration, repository, library: str):
     return configured_resolution
 
 
+def _classify_provider_recovery_failure(error: Exception) -> tuple[str, int | None]:
+    if isinstance(error, CredentialError) or (
+        isinstance(error, ProviderRetrySuccessorError)
+        and isinstance(error.__cause__, CredentialError)
+    ):
+        return "authentication", None
+    if isinstance(error, ProviderRetryDisabled):
+        return "disabled", None
+    if isinstance(error, ProviderRetrySharedFailure):
+        failure = (
+            "transient" if error.failure in {"unavailable", "incomplete"}
+            else error.failure
+        )
+        return failure, error.retry_after
+    if isinstance(error, ProviderRetrySuccessorError) and "configuration" in str(error):
+        return "configuration", None
+    if isinstance(error, ProviderRetrySuccessorError):
+        return "terminal", None
+    if isinstance(error, (CurrentnessError, TargetNotFoundError)):
+        return "stale", None
+    return "transient", None
+
+
 def create_review_pipeline(
     configuration,
     database_path: Path,
@@ -1213,29 +1236,10 @@ def create_review_pipeline(
         finally:
             repository.close()
 
-    def classify_recovery_failure(error: Exception) -> tuple[str, int | None]:
-        if isinstance(error, CredentialError):
-            return "authentication", None
-        if isinstance(error, ProviderRetryDisabled):
-            return "disabled", None
-        if isinstance(error, ProviderRetrySharedFailure):
-            failure = (
-                "transient" if error.failure in {"unavailable", "incomplete"}
-                else error.failure
-            )
-            return failure, error.retry_after
-        if isinstance(error, ProviderRetrySuccessorError) and "configuration" in str(error):
-            return "configuration", None
-        if isinstance(error, ProviderRetrySuccessorError):
-            return "terminal", None
-        if isinstance(error, (CurrentnessError, TargetNotFoundError)):
-            return "stale", None
-        return "transient", None
-
     recovery_cancel = threading.Event()
     recovery_runner = ScopedProviderRecoveryRunner(
         store=provider_recovery, generation=configuration.provider_recovery_generation,
-        retry=retry_member, classify_failure=classify_recovery_failure,
+        retry=retry_member, classify_failure=_classify_provider_recovery_failure,
         clock=lambda: int(time.time()), cancelled=recovery_cancel.is_set,
     )
 

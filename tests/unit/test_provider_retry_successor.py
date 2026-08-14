@@ -10,13 +10,14 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.providers import hardcover_metadata
 from mechanical_librarian.application.configuration import MediaMountConfiguration, ReportLimits
 from mechanical_librarian.application.metadata_report import (
-    ProviderBinding, ProviderLaneResult, TargetFile, TargetSnapshot, metadata_discovery_plan,
+    CredentialError, ProviderBinding, ProviderLaneResult, TargetFile, TargetSnapshot, metadata_discovery_plan,
     provider_observation,
 )
 from mechanical_librarian.application.provider_retry_successor import (
     ConfiguredProviderRetry, GenerateProviderRetrySuccessor,
     ProviderRetrySharedFailure, ProviderRetrySuccessorError,
 )
+from mechanical_librarian.bootstrap.composition import _classify_provider_recovery_failure
 from mechanical_librarian.adapters.providers.retry_safety import ProviderAttemptRecord
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind, ClaimScope, FileFacts, LocalClaim, MetadataReport, ProviderCandidate, ProviderQueryKind, ProviderRequestAccounting, ProviderStatus,
@@ -92,6 +93,25 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertNotEqual(self.report.report_id, successor.report_id)
         self.assertEqual(self.report.report_id, self.repository.package[1])
+
+    def test_observe_wrapped_credential_error_remains_authentication_for_recovery(self):
+        class CredentialProvider:
+            def observe(self, _plan, *, deadline=None):
+                del deadline
+                raise CredentialError("credential")
+
+        configured = ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, CredentialProvider, "open_library"),
+            "open_library", 2,
+        )
+        service = self.service(configured)
+        with self.assertRaises(ProviderRetrySuccessorError) as raised:
+            service._observe(configured, self.plan, (self.failed,), deadline=1.0)
+        self.assertIsInstance(raised.exception.__cause__, CredentialError)
+        self.assertEqual(
+            ("authentication", None),
+            _classify_provider_recovery_failure(raised.exception),
+        )
 
     def test_generation_wake_alone_admits_authentication_lane_and_reclassifies_result(self):
         original = provider_observation("catalogue", (

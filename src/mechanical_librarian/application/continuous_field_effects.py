@@ -601,7 +601,7 @@ class ContinuousGuardedApplication:
         provider_recovery = list(self._provider_recovery_snapshot())
         if len(provider_recovery) > 100 or any(
             type(item) is not dict or set(item) != {"state", "next_eligible_at", "affected_count"}
-            or item["state"] not in {"waiting", "checking", "dormant", "recovered"}
+            or item["state"] not in {"waiting", "checking", "dormant", "recovered", "fanout", "exhausted"}
             or type(item["affected_count"]) is not int or not 1 <= item["affected_count"] <= 1_000_000
             or (item["next_eligible_at"] is not None and (type(item["next_eligible_at"]) is not int or not 0 <= item["next_eligible_at"] <= 8_640_000_000_000))
             for item in provider_recovery

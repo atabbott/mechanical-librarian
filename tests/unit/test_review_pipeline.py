@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.provider_recovery import ProviderRecoveryStoreError
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.metadata_report import (
     CredentialError,
@@ -2255,6 +2256,35 @@ class ReviewPipelineSchedulingTests(unittest.TestCase):
         supervisor._wake.set()
         supervisor._run(0)
         self.assertEqual([41], woken)
+
+    def test_lane_zero_contains_recovery_store_failure_and_continues(self) -> None:
+        pipeline = _ScheduledPipeline()
+        wakes: list[int] = []
+        supervisor: ReviewPreparationSupervisor
+
+        def recovery(now: int) -> None:
+            wakes.append(now)
+            if len(wakes) == 1:
+                supervisor._wake.set()
+                try:
+                    raise ProviderRecoveryStoreError("provider recovery persistence is unavailable")
+                except ProviderRecoveryStoreError as error:
+                    raise ReviewPipelineError("recovery") from error
+
+        supervisor = ReviewPreparationSupervisor(
+            pipeline, polling_interval_seconds=60, clock=lambda: 41,
+            recovery_wake=recovery,
+        )
+
+        def run_next() -> bool:
+            supervisor._stop.set()
+            return False
+
+        pipeline.run_next = run_next  # type: ignore[attr-defined]
+        supervisor._wake.set()
+        supervisor._run(0)
+        self.assertEqual([41, 41], wakes)
+        self.assertGreaterEqual(pipeline.status_calls, 1)
 
     def test_retry_is_limited_to_terminal_actionable_failure(self) -> None:
         pipeline = _ScheduledPipeline()
