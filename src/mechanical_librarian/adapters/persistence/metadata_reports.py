@@ -268,7 +268,7 @@ _REVIEW_WORK_SQL = (
     "catalogue_generation INTEGER NOT NULL CHECK(catalogue_generation>0), catalogue_fingerprint TEXT NOT NULL CHECK(length(catalogue_fingerprint)=64 AND catalogue_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "stage TEXT NOT NULL CHECK(stage IN ('extraction','provider','proposal','admission','projection','complete')), "
     "state TEXT NOT NULL CHECK(state IN ('queued','running','complete','failed','stale')), attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt BETWEEN 0 AND 3), recovery_attempt INTEGER NOT NULL DEFAULT 0 CHECK(recovery_attempt BETWEEN 0 AND 3), retry_not_before INTEGER NOT NULL DEFAULT 0 CHECK(retry_not_before>=0), "
-    "report_id TEXT REFERENCES metadata_reports(report_id), proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
+    "report_id TEXT REFERENCES metadata_reports(report_id), recovery_source_report_id TEXT REFERENCES metadata_reports(report_id), proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
     "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('provider','configuration','authentication','stale','transient','projection','failed','currentness')), "
     "failure_root TEXT CHECK(failure_root IS NULL OR (failure_code='authentication' AND typeof(failure_root)='text' AND length(CAST(failure_root AS BLOB)) BETWEEN 1 AND 64 AND failure_root NOT GLOB '*[^a-z0-9_-]*' AND substr(failure_root,1,1) GLOB '[a-z]')), "
     "updated_at INTEGER NOT NULL CHECK(updated_at>=0), UNIQUE(scan_id,item_id))"
@@ -3620,7 +3620,7 @@ class SQLiteMetadataReportRepository:
                     self._connection.execute(
                         "UPDATE review_preparation_work SET stage='extraction',"
                         "state='queued',attempt=0,recovery_attempt=0,library_id=?,producer_fingerprint=?,"
-                        "report_id=NULL,"
+                        "report_id=NULL,recovery_source_report_id=NULL,"
                         "proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL,"
                         "failure_root=NULL "
                         "WHERE scan_id=?",
@@ -3906,9 +3906,9 @@ class SQLiteMetadataReportRepository:
         if self._connection.execute(
             "UPDATE review_preparation_work SET stage='provider',state='queued',attempt=0,"
             "recovery_attempt=0,retry_not_before=0,report_id=?,proposal_set_id=NULL,"
-            "review_case_id=NULL,failure_code=NULL,failure_root=NULL,updated_at=? "
+            "review_case_id=NULL,recovery_source_report_id=?,failure_code=NULL,failure_root=NULL,updated_at=? "
             "WHERE work_id=? AND state IN ('complete','failed','stale')",
-            (report.report_id, staged_at, row[0]),
+            (report.report_id, source_report_id, staged_at, row[0]),
         ).rowcount != 1:
             raise MetadataReportError("provider retry staging changed")
         self._connection.execute(
@@ -3943,6 +3943,27 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             raise MetadataReportError("provider retry staging is unavailable") from error
         return row is not None
+
+    def completed_provider_retry_successor(
+        self, source_report_id: str
+    ) -> str | None:
+        """Return only the exact staged successor that completed package cutover."""
+        if type(source_report_id) is not str or not source_report_id:
+            raise MetadataReportError("provider retry staging is invalid")
+        try:
+            rows = self._connection.execute(
+                "SELECT w.report_id FROM review_preparation_work w "
+                "JOIN current_review_packages p ON p.connection_name=w.connection_name "
+                "AND p.library_name=w.library_name AND p.item_id=w.item_id "
+                "AND p.report_id=w.report_id WHERE w.recovery_source_report_id=? "
+                "AND w.stage='complete' AND w.state='complete' LIMIT 2",
+                (source_report_id,),
+            ).fetchall()
+        except sqlite3.Error as error:
+            raise MetadataReportError("provider retry staging is unavailable") from error
+        if len(rows) > 1:
+            raise MetadataReportError("provider retry staging conflicts")
+        return None if not rows else rows[0][0]
 
     def complete_review_discovery(
         self,
@@ -4111,7 +4132,10 @@ class SQLiteMetadataReportRepository:
                     "catalogue_fingerprint=excluded.catalogue_fingerprint,"
                     "stage=excluded.stage,state=excluded.state,attempt=0,recovery_attempt=0,retry_not_before=0,"
                     "report_id=excluded.report_id,proposal_set_id=excluded.proposal_set_id,"
-                    "review_case_id=excluded.review_case_id,failure_code=NULL,failure_root=NULL,"
+                    "review_case_id=excluded.review_case_id,recovery_source_report_id="
+                    "CASE WHEN excluded.report_id IS NULL THEN NULL "
+                    "ELSE review_preparation_work.recovery_source_report_id END,"
+                    "failure_code=NULL,failure_root=NULL,"
                     "updated_at=excluded.updated_at",
                     (
                         work_id,
@@ -4597,7 +4621,8 @@ class SQLiteMetadataReportRepository:
                     "state=CASE WHEN recovery_attempt<2 THEN 'queued' ELSE 'failed' END,"
                     "attempt=0,recovery_attempt=recovery_attempt+1,"
                     "retry_not_before=CASE WHEN recovery_attempt<2 THEN ? ELSE 0 END,"
-                    "report_id=NULL,proposal_set_id=NULL,review_case_id=NULL,"
+                    "report_id=NULL,recovery_source_report_id=NULL,"
+                    "proposal_set_id=NULL,review_case_id=NULL,"
                     "failure_code='transient',failure_root=NULL,updated_at=? WHERE work_id=? AND stage=? "
                     "AND state='running' AND attempt=?",
                     (
@@ -6410,10 +6435,13 @@ class SQLiteMetadataReportRepository:
         self._connection.execute(
             "UPDATE review_preparation_work SET stage=?,state='queued',attempt=0,"
             "recovery_attempt=0,report_id=?,proposal_set_id=NULL,review_case_id=NULL,"
+            "recovery_source_report_id=CASE WHEN ?='extraction' THEN NULL "
+            "ELSE recovery_source_report_id END,"
             "failure_code=NULL,failure_root=NULL,updated_at=? WHERE work_id=?",
             (
                 restart_stage,
                 None if restart_stage == "extraction" else report_id,
+                restart_stage,
                 updated_at,
                 work_id,
             ),

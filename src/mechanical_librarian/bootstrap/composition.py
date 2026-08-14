@@ -6,7 +6,7 @@ import json
 import os
 import threading
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import uvicorn
@@ -751,7 +751,11 @@ def _provider_recovery_jobs(
 ) -> tuple[ProviderRecoveryJob, ...]:
     """Create bounded retry work only from a published terminal package."""
     adapters = {provider.name: provider.adapter for provider in configuration.providers}
-    retryable = {ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE, ProviderStatus.INCOMPLETE}
+    retryable = {
+        ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION,
+        ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE,
+        ProviderStatus.INCOMPLETE,
+    }
     jobs = []
     for observation in report.providers:
         lane_ids = tuple(sorted(lane.identity for lane in observation.lanes if lane.status in retryable))
@@ -1130,10 +1134,17 @@ def create_review_pipeline(
 
     pipeline_holder: dict[str, ReviewPreparationPipeline] = {}
 
-    def retry_member(_recovery, job: ProviderRecoveryJob) -> None:
+    def retry_member(
+        _recovery, job: ProviderRecoveryJob, heartbeat: Callable[[], None]
+    ) -> None:
         staged_report_id: str | None = None
         repository = repository_factory()
         try:
+            completed_report_id = repository.completed_provider_retry_successor(
+                job.source_report_id
+            )
+            if completed_report_id is not None:
+                return
             package = repository.current_review_package(job.target_connection, job.library, job.item)
             if package != (job.package_proposal_id, job.package_report_id, job.package_case_id, job.package_checkpoint, job.package_outcome):
                 raise CurrentnessError("target or media changed")
@@ -1152,7 +1163,9 @@ def create_review_pipeline(
             repository.close()
         pipeline = pipeline_holder.get("pipeline")
         if staged_report_id is not None:
-            if pipeline is None or not pipeline.run_recovery_successor(staged_report_id):
+            if pipeline is None or not pipeline.run_recovery_successor(
+                staged_report_id, heartbeat
+            ):
                 raise ProviderRetrySuccessorError("provider retry package incomplete")
             repository = repository_factory()
             try:
@@ -1182,9 +1195,12 @@ def create_review_pipeline(
             after_publication=lambda bound, report: bound.stage_provider_retry_successor(
                 job.source_report_id, report, int(time.time())
             ),
+            heartbeat=heartbeat,
         ).run(job.source_report_id, tuple(json.loads(job.lane_ids)), provider_name=job.connection, adapter=job.adapter, generation=job.generation)
         successor = MetadataReport.from_json(serialized)
-        if pipeline is None or not pipeline.run_recovery_successor(successor.report_id):
+        if pipeline is None or not pipeline.run_recovery_successor(
+            successor.report_id, heartbeat
+        ):
             raise ProviderRetrySuccessorError("provider retry package incomplete")
         repository = repository_factory()
         try:
@@ -1353,22 +1369,31 @@ def create_review_pipeline(
             )
             if outcome == "stale":
                 return "stale"
-            if action.report_id is None:
-                raise ReviewPipelineError("projection")
-            report = MetadataReport.from_json(pipeline_repository.get(action.report_id))
-            package = pipeline_repository.current_review_package(
-                report.target.connection, report.target.library, report.target.item
-            )
-            if package is None or package[1] != report.report_id:
-                raise ReviewPipelineError("projection")
-            jobs = _provider_recovery_jobs(
-                report, package=package, configuration=configuration, scope=report.target.library
-            )
-            if jobs:
-                recovery_runner.enqueue(jobs)
             return "complete"
         except Exception as error:
             raise ReviewPipelineError("projection") from error
+
+    def after_advance(
+        pipeline_repository, action: PipelineAction, output_id: str | None
+    ) -> None:
+        """Persist recovery members only after atomic package cutover."""
+        if not (
+            action.stage == "projection"
+            or (action.stage == "admission" and output_id is None)
+        ) or action.report_id is None:
+            return
+        report = MetadataReport.from_json(pipeline_repository.get(action.report_id))
+        package = pipeline_repository.current_review_package(
+            report.target.connection, report.target.library, report.target.item
+        )
+        if package is None or package[1] != report.report_id:
+            raise ReviewPipelineError("projection")
+        jobs = _provider_recovery_jobs(
+            report, package=package, configuration=configuration,
+            scope=report.target.library,
+        )
+        if jobs:
+            recovery_runner.enqueue(jobs)
 
     pipeline = ReviewPreparationPipeline(
         repository_factory=repository_factory,
@@ -1400,6 +1425,7 @@ def create_review_pipeline(
         propose=propose,
         admit=admit,
         project=project,
+        after_advance=after_advance,
         timing=timing,
     )
     pipeline_holder["pipeline"] = pipeline

@@ -2091,6 +2091,9 @@ class ProviderRecoveryPipelineTests(unittest.TestCase):
             predecessor_package,
             repository.current_review_package("primary", "ebooks", "item-1"),
         )
+        self.assertIsNone(
+            repository.completed_provider_retry_successor(predecessor.report_id)
+        )
         repository.close()
 
         recovery = pipeline_for(successor, 30)
@@ -2101,6 +2104,10 @@ class ProviderRecoveryPipelineTests(unittest.TestCase):
         assert current is not None
         self.assertEqual(successor.report_id, current[1])
         self.assertNotEqual(predecessor_package, current)
+        self.assertEqual(
+            successor.report_id,
+            repository.completed_provider_retry_successor(predecessor.report_id),
+        )
         repository.close()
 
 

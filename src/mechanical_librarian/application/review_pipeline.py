@@ -142,6 +142,7 @@ class ReviewPipelineRepository(Protocol):
     def claim_review_pipeline_work(self, work_id: str, claimed_at: int) -> PipelineAction | None: ...
     def provider_retry_work_id(self, report_id: str) -> str: ...
     def provider_retry_complete(self, report_id: str) -> bool: ...
+    def completed_provider_retry_successor(self, source_report_id: str) -> str | None: ...
 
     def take_review_pipeline_claim(self) -> PipelineAction | None: ...
 
@@ -205,6 +206,9 @@ class ReviewPreparationPipeline:
             [ReviewPipelineRepository, str], tuple[str, str | None]
         ],
         project: Callable[[ReviewPipelineRepository, PipelineAction], bool | str],
+        after_advance: Callable[
+            [ReviewPipelineRepository, PipelineAction, str | None], None
+        ] = lambda *_args: None,
         clock: Callable[[], int] = lambda: int(time.time()),
         timing: StageTimer | None = None,
     ) -> None:
@@ -221,6 +225,7 @@ class ReviewPreparationPipeline:
         self._propose = propose
         self._admit = admit
         self._project = project
+        self._after_advance = after_advance
         self._clock = clock
         self._timing = timing or StageTimer(None)
         self._draining = threading.Event()
@@ -371,8 +376,13 @@ class ReviewPreparationPipeline:
         finally:
             repository.close()
 
-    def run_recovery_successor(self, report_id: str) -> bool:
+    def run_recovery_successor(
+        self, report_id: str, heartbeat: Callable[[], None] = lambda: None
+    ) -> bool:
         """Complete one staged successor through ordinary F22 stages."""
+        if not callable(heartbeat):
+            raise ReviewPipelineError("state")
+        heartbeat()
         repository = self._open_repository()
         try:
             work_id = repository.provider_retry_work_id(report_id)
@@ -382,9 +392,11 @@ class ReviewPreparationPipeline:
             for index in range(4):
                 if action is None:
                     return False
+                heartbeat()
                 action = self._run_claimed_action(
                     repository, action, claim_next=False, exact_next=True,
                 )
+                heartbeat()
                 if action is None:
                     return repository.provider_retry_complete(report_id)
             return False
@@ -531,17 +543,20 @@ class ReviewPreparationPipeline:
         try:
             if claim_next:
                 with self._claim_lock:
-                    return repository.advance_review_pipeline_action(
+                    advanced = repository.advance_review_pipeline_action(
                         action, output_id, self._clock(),
                         not self._draining.is_set(),
                     )
-            if exact_next:
-                return repository.advance_review_pipeline_action(
+            elif exact_next:
+                advanced = repository.advance_review_pipeline_action(
                     action, output_id, self._clock(), False, True,
                 )
-            return repository.advance_review_pipeline_action(
-                action, output_id, self._clock(), False
-            )
+            else:
+                advanced = repository.advance_review_pipeline_action(
+                    action, output_id, self._clock(), False
+                )
+            self._after_advance(repository, action, output_id)
+            return advanced
         except ReviewPipelineError:
             raise
         except Exception as error:

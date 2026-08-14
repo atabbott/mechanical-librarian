@@ -20,9 +20,9 @@ class ProviderRecoveryStore(Protocol):
     def enqueue_jobs(self, jobs: tuple[ProviderRecoveryJob, ...]) -> int: ...
     def claim_one(self, *, generation: int, now: int, token: str) -> ProviderRecovery | None: ...
     def claim_job(self, *, recovery: ProviderRecovery, token: str, now: int) -> ProviderRecoveryJob | None: ...
+    def renew_job(self, *, job: ProviderRecoveryJob, token: str, now: int) -> None: ...
     def complete_job(self, *, job: ProviderRecoveryJob, token: str, now: int, success: bool) -> None: ...
     def complete_stale_job(self, *, job: ProviderRecoveryJob, token: str, now: int) -> None: ...
-    def complete_stale_scope(self, *, job: ProviderRecoveryJob, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
     def complete_exhausted_scope(self, *, job: ProviderRecoveryJob, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
     def complete_canary_failure(self, *, job: ProviderRecoveryJob, token: str, recovery: ProviderRecovery, now: int, failure: str, retry_after: int | None) -> ProviderRecovery: ...
     def authorize_fanout(self, *, job: ProviderRecoveryJob, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
@@ -57,7 +57,7 @@ class ScopedProviderRecoveryRunner:
 
     def __init__(
         self, *, store: ProviderRecoveryStore, generation: int,
-        retry: Callable[[ProviderRecovery, ProviderRecoveryJob], None],
+        retry: Callable[[ProviderRecovery, ProviderRecoveryJob, Callable[[], None]], None],
         classify_failure: Callable[[Exception], tuple[str, int | None]],
         clock: Callable[[], int] | None = None,
         cancelled: Callable[[], bool] = lambda: False,
@@ -95,31 +95,50 @@ class ScopedProviderRecoveryRunner:
             self._store.complete_success(token=token, recovery=claimed, now=self._current(current))
             return RecoveryRun("recovered")
         if fanout_state is None:
-            assert claimed is not None and canary is not None
-            try:
-                self._retry(claimed, canary)
-            except Exception as error:
-                failure, retry_after = self._classify_failure(error)
+            assert claimed is not None
+            while canary is not None:
+                def renew_canary(
+                    member: ProviderRecoveryJob = canary,
+                    claim_token: str = token,
+                ) -> None:
+                    self._store.renew_job(
+                        job=member, token=claim_token,
+                        now=self._current(current),
+                    )
+
+                try:
+                    self._retry(claimed, canary, renew_canary)
+                except Exception as error:
+                    failure, retry_after = self._classify_failure(error)
+                    current = self._current(current)
+                    if failure == "stale":
+                        self._store.complete_stale_job(
+                            job=canary, token=token, now=current,
+                        )
+                        canary = self._store.claim_job(
+                            recovery=claimed, token=token, now=current,
+                        )
+                        continue
+                    if failure not in {"transient", "rate_limited", "authentication", "authorization", "configuration"}:
+                        self._store.complete_exhausted_scope(
+                            job=canary, token=token, recovery=claimed, now=current,
+                        )
+                        return RecoveryRun("exhausted")
+                    self._store.complete_canary_failure(
+                        job=canary, token=token, recovery=claimed, now=current,
+                        failure=failure, retry_after=retry_after,
+                    )
+                    return RecoveryRun("waiting")
                 current = self._current(current)
-                if failure == "stale":
-                    self._store.complete_stale_scope(
-                        job=canary, token=token, recovery=claimed, now=current,
-                    )
-                    return RecoveryRun("stale")
-                if failure not in {"transient", "rate_limited", "authentication", "authorization", "configuration"}:
-                    self._store.complete_exhausted_scope(
-                        job=canary, token=token, recovery=claimed, now=current,
-                    )
-                    return RecoveryRun("exhausted")
-                self._store.complete_canary_failure(
+                fanout_state = self._store.authorize_fanout(
                     job=canary, token=token, recovery=claimed, now=current,
-                    failure=failure, retry_after=retry_after,
                 )
-                return RecoveryRun("waiting")
-            current = self._current(current)
-            fanout_state = self._store.authorize_fanout(
-                job=canary, token=token, recovery=claimed, now=current,
-            )
+                break
+            if canary is None:
+                self._store.complete_success(
+                    token=token, recovery=claimed, now=self._current(current),
+                )
+                return RecoveryRun("recovered")
         assert fanout_state is not None
         fanout = 0
         while not self._cancelled():
@@ -131,7 +150,16 @@ class ScopedProviderRecoveryRunner:
             if member is None:
                 break
             try:
-                self._retry(fanout_state, member)
+                def renew_member(
+                    active: ProviderRecoveryJob = member,
+                    claim_token: str = member_token,
+                ) -> None:
+                    self._store.renew_job(
+                        job=active, token=claim_token,
+                        now=self._current(current),
+                    )
+
+                self._retry(fanout_state, member, renew_member)
                 current = self._current(current)
                 self._store.complete_job(
                     job=member, token=member_token, now=current, success=True,

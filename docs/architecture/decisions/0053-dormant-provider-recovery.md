@@ -18,8 +18,11 @@ Persist a closed provider-connection, adapter, and scope recovery state. A
 transient or rate-limited failure waits for a bounded delay; authentication,
 authorization, and configuration failures are dormant until the operator
 increments `provider_recovery_generation` in `config-v6` and restarts. The
-store atomically leases one due canary for five minutes, covering the final
-preflight and 60-second provider budget. The existing preparation supervisor is its
+store atomically leases one due canary for five minutes. Exact job and canary
+ownership is renewed from a fresh clock between target preflight, the bounded
+60-second provider call, publication, and each proposal, admission, and
+projection stage; no individual credential-bearing or local transaction stage
+may silently consume the next stage's lease. The existing preparation supervisor is its
 only wake, clock, drain, and shutdown owner; it has no independent queue or
 endpoint. A successful canary may process remaining durable members in that
 exact scope once. Canary success first commits an explicit durable fanout phase;
@@ -28,6 +31,10 @@ without extending a scope lease or repeating the canary. A shared failure
 requeues the canary, publishes no successor, has zero fanout,
 and takes Retry-After when supplied before bounded backoff. Target and package
 drift close safely without a provider call.
+Staleness retires only the affected member; another exact-current member may
+become the canary. If package cutover commits before fanout authorization, the
+persisted predecessor-to-successor lineage recognizes that completed canary on
+restart and authorizes fanout without another provider request.
 
 Health rows are exact-current and events are append-only. Existing state must
 match this exact schema; there are no migrations or imports.

@@ -168,6 +168,29 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertIsNone(page.evaluate("() => window.__metadataExecuted"))
                 if path == "/activity":
                     self._browser_stage = "activity:compact-initial-geometry"
+                    expect(page.locator(".cm-page-heading")).to_be_focused()
+                    recovery = page.get_by_role("region", name="Provider recovery")
+                    expected_recovery = {
+                        "Waiting for a safe retry": "2 affected scopes",
+                        "Checking provider health": "1 affected scope",
+                        "Retrying affected work": "3 affected works",
+                        "Recovered": "1 affected scope",
+                        "Needs a configuration change": "2 affected scopes",
+                        "No further retry scheduled": "1 affected scope",
+                    }
+                    for label, units in expected_recovery.items():
+                        row = recovery.get_by_text(label, exact=True).locator("..")
+                        expect(row).to_contain_text(units)
+                    recovery_text = recovery.inner_text().lower()
+                    for forbidden in (
+                        "provider_", "query=", "authorization:", "bearer ",
+                        "payload", "/private/", "x-api-key",
+                    ):
+                        self.assertNotIn(forbidden, recovery_text)
+                    self.assertEqual(
+                        recovery.get_by_role("button", name="Retry", exact=False).count(),
+                        0,
+                    )
                     self.assertTrue(
                         page.locator(".cm-activity-ledger").evaluate(
                             "node => node.previousElementSibling?.classList.contains('cm-activity-status')"
@@ -257,6 +280,45 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                         }"""
                     )
                     self._browser_stage = "activity:authority-and-recovery"
+                    theme_backgrounds: dict[str, str] = {}
+                    for scheme in ("light", "dark"):
+                        page.emulate_media(reduced_motion="reduce")
+                        wanted_control = "Use dark mode" if scheme == "dark" else "Use light mode"
+                        if page.get_by_role("button", name=wanted_control).count():
+                            page.get_by_role("button", name=wanted_control).click()
+                        for width in (1440, 1024, 390):
+                            page.set_viewport_size({"width": width, "height": 900})
+                            expect(recovery).to_be_visible()
+                            self.assertLessEqual(
+                                page.evaluate("() => document.documentElement.scrollWidth"),
+                                width,
+                            )
+                            for control in page.locator(
+                                ".cm-activity-filters button, .cm-activity-pagination button"
+                            ).all():
+                                self.assertGreaterEqual(control.bounding_box()["height"], 40)
+                            for control in page.locator(
+                                ".masthead nav a, .shell-actions button"
+                            ).all():
+                                self.assertGreaterEqual(control.bounding_box()["height"], 44)
+                        theme_backgrounds[scheme] = page.locator("body").evaluate(
+                            "node => getComputedStyle(node).backgroundColor"
+                        )
+                    self.assertNotEqual(
+                        theme_backgrounds["light"], theme_backgrounds["dark"]
+                    )
+                    self.assertTrue(
+                        page.evaluate(
+                            "() => matchMedia('(prefers-reduced-motion: reduce)').matches"
+                        )
+                    )
+                    self.assertEqual(
+                        recovery.evaluate("node => getComputedStyle(node).animationName"),
+                        "none",
+                    )
+                    page.get_by_role("button", name="Use light mode").click()
+                    page.emulate_media(reduced_motion="no-preference")
+                    page.set_viewport_size({"width": 390, "height": 844})
                     page.get_by_text("Authority and recovery", exact=True).click()
                     page.get_by_role(
                         "button", name="Review write permissions"
@@ -267,8 +329,11 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     ).get_by_text("5 prepared · Some destinations are ready").wait_for()
                     page.get_by_role("heading", name="Activity ledger").wait_for()
                     page.get_by_label("Search activity").wait_for()
-                    page.get_by_role("button", name="Reviews").wait_for()
-                    page.get_by_role("button", name="Inspect").first.click()
+                    page.get_by_role("button", name="Reviews").click()
+                    page.get_by_role("button", name="All").click()
+                    inspect_control = page.get_by_role("button", name="Inspect").first
+                    inspect_control.focus()
+                    page.keyboard.press("Enter")
                     page.get_by_text("Durable evidence").wait_for()
                     self.assertEqual(
                         page.locator(".cm-activity-evidence").evaluate(

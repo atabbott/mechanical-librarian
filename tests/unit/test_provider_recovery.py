@@ -9,7 +9,10 @@ from unittest.mock import patch
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.provider_recovery import ProviderRecoveryJob, ProviderRecoveryStoreError, SQLiteProviderRecoveryStore
-from mechanical_librarian.bootstrap.composition import _record_provider_recovery_observations
+from mechanical_librarian.bootstrap.composition import (
+    _provider_recovery_jobs,
+    _record_provider_recovery_observations,
+)
 import mechanical_librarian.adapters.persistence.provider_recovery as recovery_persistence
 from mechanical_librarian.domain.metadata_report import ProviderStatus
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP, ProviderRecovery, ProviderRecoveryError
@@ -48,7 +51,7 @@ class ProviderRecoveryTests(unittest.TestCase):
             calls: list[str] = []
             runner = ScopedProviderRecoveryRunner(
                 store=store, generation=1,
-                retry=lambda _, member: calls.append(member.source_report_id),
+                retry=lambda _, member, __: calls.append(member.source_report_id),
                 classify_failure=lambda _: ("transient", None),
             )
             runner.enqueue((self._job("canary"), self._job("sibling-a"), self._job("sibling-b")))
@@ -65,7 +68,7 @@ class ProviderRecoveryTests(unittest.TestCase):
             store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
             store.record(ProviderRecovery.failed(connection="google", adapter="google_books", scope="books", generation=1, failure="transient", now=0, retry_after=1), occurred_at=0)
             calls: list[str] = []
-            def retry(_, member):
+            def retry(_, member, __):
                 calls.append(member.member_id)
                 if member.member_id == "sibling-a":
                     raise KeyboardInterrupt()
@@ -82,7 +85,7 @@ class ProviderRecoveryTests(unittest.TestCase):
             resumed: list[str] = []
             next_runner = ScopedProviderRecoveryRunner(
                 store=store, generation=1,
-                retry=lambda _, member: resumed.append(member.member_id),
+                retry=lambda _, member, __: resumed.append(member.member_id),
                 classify_failure=lambda _: ("transient", None),
             )
             self.assertEqual("fanout", next_runner.run_one(now=62, token="next").state)
@@ -96,7 +99,7 @@ class ProviderRecoveryTests(unittest.TestCase):
             store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
             store.record(ProviderRecovery.failed(connection="google", adapter="google_books", scope="books", generation=1, failure="transient", now=0, retry_after=1), occurred_at=0)
             calls: list[str] = []
-            def retry(_, member):
+            def retry(_, member, __):
                 calls.append(member.source_report_id)
                 raise RuntimeError("unavailable")
             runner = ScopedProviderRecoveryRunner(
@@ -118,7 +121,7 @@ class ProviderRecoveryTests(unittest.TestCase):
                 generation=1, failure="transient", now=0, retry_after=1,
             ), occurred_at=0)
             calls: list[str] = []
-            def retry(_, member):
+            def retry(_, member, __):
                 calls.append(member.member_id)
                 if member.member_id == "sibling-a":
                     raise RuntimeError("rate limited")
@@ -151,7 +154,7 @@ class ProviderRecoveryTests(unittest.TestCase):
                 generation=1, failure="transient", now=0, retry_after=1,
             ), occurred_at=0)
             calls: list[str] = []
-            def retry(_, member):
+            def retry(_, member, __):
                 calls.append(member.member_id)
                 raise RuntimeError("disabled")
             runner = ScopedProviderRecoveryRunner(
@@ -205,11 +208,158 @@ class ProviderRecoveryTests(unittest.TestCase):
             worker.start(); worker.join()
             self.assertEqual([], failures)
             store.reconcile_generation(generation=2, now=1)
-            self.assertIsNotNone(store.claim_one(generation=2, now=1, token="owner"))
-            self.assertEqual("checking", store.snapshot()[0].state)
+            self.assertIsNone(store.claim_one(generation=2, now=1, token="owner"))
+            self.assertEqual("dormant", store.snapshot()[0].state)
             store.close()
             with self.assertRaises(ProviderRecoveryStoreError):
                 store.activity_snapshot()
+
+    def test_authentication_and_authorization_jobs_wake_only_with_generation(self) -> None:
+        for failure in ("authentication", "authorization"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                store = SQLiteProviderRecoveryStore.open(
+                    Path(directory) / "recovery.sqlite"
+                )
+                store.observe_failure(
+                    connection="google", adapter="google_books", scope="books",
+                    generation=1, failure=failure, now=0,
+                )
+                store.enqueue_jobs((self._job("canary"),))
+                self.assertIsNone(
+                    store.claim_one(generation=1, now=10_000, token="too-soon")
+                )
+                self.assertEqual(1, store.reconcile_generation(generation=2, now=20))
+                calls: list[str] = []
+                runner = ScopedProviderRecoveryRunner(
+                    store=store, generation=2,
+                    retry=lambda _, member, __: calls.append(member.member_id),
+                    classify_failure=lambda _: ("transient", None),
+                )
+                self.assertEqual("recovered", runner.run_one(now=20).state)
+                self.assertEqual(["canary"], calls)
+                self.assertEqual(
+                    [(2, "complete")],
+                    store._connection.execute(
+                        "SELECT generation,state FROM provider_recovery_jobs"
+                    ).fetchall(),
+                )
+                store.close()
+
+    def test_terminal_authentication_and_authorization_lanes_create_exact_jobs(self) -> None:
+        configuration = SimpleNamespace(
+            providers=(SimpleNamespace(name="google", adapter="google_books"),),
+            provider_recovery_generation=1,
+        )
+        for status in (
+            ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION,
+        ):
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                report = SimpleNamespace(
+                    report_id="report-auth",
+                    target=SimpleNamespace(
+                        connection="primary", library="books", item="item-1"
+                    ),
+                    file=SimpleNamespace(identity="file-1"),
+                    providers=(SimpleNamespace(
+                        provider="google",
+                        lanes=(SimpleNamespace(identity="isbn-lane", status=status),),
+                    ),),
+                )
+                jobs = _provider_recovery_jobs(
+                    report,
+                    package=(None, "report-auth", None, None, "report_only"),
+                    configuration=configuration,
+                    scope="books",
+                )
+                self.assertEqual(1, len(jobs))
+                self.assertEqual('["isbn-lane"]', jobs[0].lane_ids)
+                store = SQLiteProviderRecoveryStore.open(
+                    Path(directory) / "recovery.sqlite"
+                )
+                store.observe_failure(
+                    connection="google", adapter="google_books", scope="books",
+                    generation=1, failure=status.value, now=0,
+                )
+                self.assertEqual(1, store.enqueue_jobs(jobs))
+                self.assertEqual(
+                    [("report-auth", '["isbn-lane"]', "queued")],
+                    store._connection.execute(
+                        "SELECT source_report_id,lane_ids,state "
+                        "FROM provider_recovery_jobs"
+                    ).fetchall(),
+                )
+                store.close()
+
+    def test_stale_canary_retires_only_itself_before_current_canary(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(
+                Path(directory) / "recovery.sqlite"
+            )
+            store.record(ProviderRecovery.failed(
+                connection="google", adapter="google_books", scope="books",
+                generation=1, failure="transient", now=0, retry_after=1,
+            ), occurred_at=0)
+            calls: list[str] = []
+
+            def retry(_, member, __):
+                calls.append(member.member_id)
+                if member.member_id == "a-stale":
+                    raise RuntimeError("stale")
+
+            runner = ScopedProviderRecoveryRunner(
+                store=store, generation=1, retry=retry,
+                classify_failure=lambda error: (
+                    "stale" if str(error) == "stale" else "transient", None
+                ),
+            )
+            runner.enqueue((self._job("a-stale"), self._job("b-current")))
+            result = runner.run_one(now=1, token="owner")
+            self.assertEqual(("recovered", 0), (result.state, result.fanout))
+            self.assertEqual(["a-stale", "b-current"], calls)
+            self.assertEqual(
+                [("a-stale", "stale"), ("b-current", "complete")],
+                store._connection.execute(
+                    "SELECT member_id,state FROM provider_recovery_jobs ORDER BY member_id"
+                ).fetchall(),
+            )
+            store.close()
+
+    def test_stage_renewal_prevents_manual_reclaim_beyond_initial_lease(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(
+                Path(directory) / "recovery.sqlite"
+            )
+            store.record(ProviderRecovery.failed(
+                connection="google", adapter="google_books", scope="books",
+                generation=1, failure="transient", now=0, retry_after=1,
+            ), occurred_at=0)
+            store.enqueue_jobs((self._job("canary"),))
+            clock = [1]
+            competing: list[str] = []
+            competitor = ScopedProviderRecoveryRunner(
+                store=store, generation=1,
+                retry=lambda _, member, __: competing.append(member.member_id),
+                classify_failure=lambda _: ("transient", None),
+                clock=lambda: clock[0],
+            )
+
+            def retry(_, member, renew):
+                self.assertEqual("canary", member.member_id)
+                clock[0] = 250
+                renew()
+                clock[0] = 301
+                self.assertEqual("idle", competitor.run_one(now=301).state)
+                clock[0] = 400
+                renew()
+
+            runner = ScopedProviderRecoveryRunner(
+                store=store, generation=1, retry=retry,
+                classify_failure=lambda _: ("transient", None),
+                clock=lambda: clock[0],
+            )
+            self.assertEqual("recovered", runner.run_one(now=1, token="owner").state)
+            self.assertEqual([], competing)
+            store.close()
 
     def test_transient_retry_and_generation_wake_are_closed(self) -> None:
         recovery = ProviderRecovery.failed(connection="primary", adapter="hardcover", scope="books", generation=1, failure="transient", now=10)
@@ -338,11 +488,11 @@ class ProviderRecoveryTests(unittest.TestCase):
             self.assertIsNotNone(store.claim_one(generation=1, now=1, token="owner"))
             self.assertEqual(3, store.reconcile_generation(generation=2, now=9))
             rows = {item.connection: item for item in store.snapshot(limit=3)}
-            self.assertEqual((2, "waiting", 0, 9), (rows["primary"].generation, rows["primary"].state, rows["primary"].attempt, rows["primary"].next_eligible_at))
-            self.assertEqual((2, "waiting", 1, 1), (rows["other"].generation, rows["other"].state, rows["other"].attempt, rows["other"].next_eligible_at))
-            self.assertEqual((2, "checking", 1, None), (rows["aaa"].generation, rows["aaa"].state, rows["aaa"].attempt, rows["aaa"].next_eligible_at))
+            self.assertEqual((2, "dormant", 0, None), (rows["primary"].generation, rows["primary"].state, rows["primary"].attempt, rows["primary"].next_eligible_at))
+            self.assertEqual((2, "dormant", 1, None), (rows["other"].generation, rows["other"].state, rows["other"].attempt, rows["other"].next_eligible_at))
+            self.assertEqual((2, "dormant", 1, None), (rows["aaa"].generation, rows["aaa"].state, rows["aaa"].attempt, rows["aaa"].next_eligible_at))
             self.assertEqual(
-                [("aaa", 2, "checking", 1, None), ("other", 2, "waiting", 1, 1), ("primary", 2, "waiting", 0, 9)],
+                [("aaa", 2, "dormant", 1, None), ("other", 2, "dormant", 1, None), ("primary", 2, "dormant", 0, None)],
                 store._connection.execute("SELECT connection,generation,state,attempt,next_eligible_at FROM provider_recovery_events WHERE generation=2 ORDER BY connection").fetchall(),
             )
             before = (store.snapshot(limit=3), store._connection.execute("SELECT count(*) FROM provider_recovery_events").fetchone()[0])

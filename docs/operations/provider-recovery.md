@@ -5,6 +5,10 @@ the existing review-preparation supervisor: it claims one exact-current canary,
 then authorizes durable fanout only after that canary succeeds. Each sibling is
 leased independently; shutdown drains between members and restart resumes
 unfinished fanout without repeating a completed canary.
+Each exact lease is renewed between the bounded target/provider operation and
+the proposal, admission, and projection stages. A manual invocation therefore
+cannot reclaim work merely because the composed path has passed the initial
+five-minute lease horizon.
 Transient and rate-limited failures wait for either a strict 1–86,400 second
 `Retry-After` delay or 2, 4, 8, 16, then 24 hours. Authentication,
 authorization, and configuration failures are dormant.
@@ -23,6 +27,9 @@ provider failure creates no successor and no sibling fanout; it waits for
 Retry-After when supplied, otherwise uses bounded backoff. Stale package,
 request, deadline, cancellation, and target/media checks close safely without
 replaying a sibling. Recovery never writes target metadata.
+One stale member is retired without retiring current siblings. A restart after
+an exact successor package cutover resumes from its persisted lineage, so the
+completed canary is not sent to the provider again.
 
 Recovery state contains bounded connection, adapter, scope, generation, phase,
 attempt, and timing data plus the exact private work, source-report, lane, file,

@@ -114,16 +114,21 @@ class GenerateProviderRetrySuccessor:
         mount: MediaMountConfiguration | None,
         limits: ReportLimits,
         after_publication: Callable[[ReportRepository, MetadataReport], None],
+        heartbeat: Callable[[], None] = lambda: None,
     ) -> None:
         self._target = target
         self._inspector = inspector
         self._repository_factory = repository_factory
-        if not callable(provider_resolver) or not callable(after_publication):
+        if (
+            not callable(provider_resolver) or not callable(after_publication)
+            or not callable(heartbeat)
+        ):
             raise ProviderRetrySuccessorError("provider retry composition is invalid")
         self._provider_resolver = provider_resolver
         self._mount = mount
         self._limits = limits
         self._after_publication = after_publication
+        self._heartbeat = heartbeat
 
     def run(
         self,
@@ -160,9 +165,11 @@ class GenerateProviderRetrySuccessor:
             live_provider = self._provider(source, provider_name, adapter, generation)
             if self._provider_identity(live_provider) != self._provider_identity(provider):
                 raise ProviderRetrySuccessorError("provider retry configuration changed")
+            self._heartbeat()
             replacement, retry_after = self._observe(
                 live_provider, plan, selected, deadline=time.monotonic() + 60.0
             )
+            self._heartbeat()
             # A shared provider condition is not evidence for a successor.
             # Leave the predecessor current so the recovery claim can back off
             # before any sibling is contacted.

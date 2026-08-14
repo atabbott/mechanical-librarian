@@ -561,6 +561,14 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
             "total": len(events),
         },
         "prepared": {"automatic": 3, "human": 6, "total": 9},
+        "provider_recovery": [
+            {"state": "waiting", "affected_count": 2, "next_eligible_at": 1_754_900_000},
+            {"state": "checking", "affected_count": 1, "next_eligible_at": None},
+            {"state": "fanout", "affected_count": 3, "next_eligible_at": None},
+            {"state": "recovered", "affected_count": 1, "next_eligible_at": None},
+            {"state": "dormant", "affected_count": 2, "next_eligible_at": None},
+            {"state": "exhausted", "affected_count": 1, "next_eligible_at": None},
+        ],
         "suspensions": [
             {"reason": "readback", "connection": "archive", "destination": "authors", "scope": "destination", "updated_at": 1_754_858_700},
             {"reason": "readback", "connection": "archive", "destination": "title", "scope": "destination", "updated_at": 1_754_858_700},
