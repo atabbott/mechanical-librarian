@@ -23,7 +23,6 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
     ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
-    _provider_failure_disposition,
 )
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.metadata_report import (
@@ -96,24 +95,6 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             repository.review_pipeline_status((("x" * 65, "fiction"),))
         repository.close()
 
-    def test_provider_failures_separate_recovery_from_configuration_validation(self) -> None:
-        self.assertEqual(
-            _provider_failure_disposition((ProviderStatus.UNAVAILABLE,)),
-            ("transient", True),
-        )
-        self.assertEqual(
-            _provider_failure_disposition((ProviderStatus.AUTHENTICATION,)),
-            ("authentication", False),
-        )
-        self.assertEqual(
-            _provider_failure_disposition((ProviderStatus.AUTHORIZATION,)),
-            ("authentication", False),
-        )
-        self.assertEqual(
-            _provider_failure_disposition((ProviderStatus.MALFORMED,)),
-            ("provider", False),
-        )
-
     def test_actual_provider_credential_failure_projects_once_at_provider_scope(self) -> None:
         repository = open_repository(self.path)
         repository.request_review_scan(
@@ -153,7 +134,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             "field": None,
         }, signals)
 
-    def test_observed_provider_authentication_projects_every_distinct_root(self) -> None:
+    def test_observed_provider_authentication_remains_in_complete_report(self) -> None:
         base = _report()
         report = MetadataReport.create(
             target=base.target,
@@ -181,10 +162,6 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         )
         extraction = repository.claim_review_pipeline_action(13)
         assert extraction is not None
-        disposition = _provider_failure_disposition(
-            composition._provider_statuses(report)
-        )
-        assert disposition is not None
         repository.publish(
             report,
             lambda: True,
@@ -193,51 +170,21 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 extraction,
                 published.report_id,
                 14,
-                provider_failure_code=disposition[0],
-                provider_failure_root=composition._provider_authentication_root(
-                    published
-                ),
             ),
         )
         work = repository._connection.execute(
             "SELECT stage,state,failure_code,failure_root "
             "FROM review_preparation_work"
         ).fetchone()
-        signals = repository.operational_snapshot()["signals"]
-        replayed_signals = repository.operational_snapshot()["signals"]
+        retained = MetadataReport.from_json(repository.get(report.report_id))
         repository.close()
         self.assertEqual(
             work,
-            ("provider", "failed", "authentication", "google-main"),
-        )
-        expected = [{
-                "kind": "authentication_failure",
-                "cause": "provider_authentication",
-                "scope": "connection",
-                "connection": "google-main",
-                "library": None,
-                "category": None,
-                "work_id": None,
-                "field": None,
-            }, {
-                "kind": "authentication_failure",
-                "cause": "provider_authentication",
-                "scope": "connection",
-                "connection": "hardcover-main",
-                "library": None,
-                "category": None,
-                "work_id": None,
-                "field": None,
-            }]
-        self.assertEqual(
-            [signal for signal in signals
-             if signal["kind"] == "authentication_failure"],
-            expected,
+            ("proposal", "queued", None, None),
         )
         self.assertEqual(
-            [signal for signal in replayed_signals
-             if signal["kind"] == "authentication_failure"],
-            expected,
+            tuple((provider.provider, provider.status) for provider in retained.providers),
+            (("google-main", ProviderStatus.AUTHORIZATION), ("hardcover-main", ProviderStatus.AUTHENTICATION)),
         )
 
     def test_thousand_work_three_library_backlog_is_bounded_and_fair(self) -> None:
