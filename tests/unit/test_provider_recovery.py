@@ -29,6 +29,8 @@ class ProviderRecoveryTests(unittest.TestCase):
             self.assertIsNone(store.claim_one(generation=1, now=0, token="a"))
             self.assertIsNotNone(store.claim_one(generation=1, now=1, token="a"))
             self.assertIsNone(store.claim_one(generation=1, now=1, token="b"))
+            with self.assertRaises(ProviderRecoveryStoreError):
+                store.record(ProviderRecovery.failed(connection="primary", adapter="hardcover", scope="books", generation=1, failure="authentication", now=2), occurred_at=2)
             # An interrupted worker can only be reclaimed after its bounded
             # lease; the claim operation itself never invokes a provider.
             self.assertIsNotNone(store.claim_one(generation=1, now=61, token="b"))
