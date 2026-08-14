@@ -457,7 +457,7 @@ class SQLiteProviderRecoveryStore:
                 inserted = 0
                 for job in jobs:
                     values = (job.connection, job.adapter, job.scope, job.generation, job.member_id, job.target_connection, job.library, job.item, job.file_identity, job.source_report_id, job.package_proposal_id, job.package_report_id, job.package_case_id, job.package_checkpoint, job.package_outcome, job.lane_ids, job.state, job.attempt)
-                    result = self._connection.execute("INSERT INTO provider_recovery_jobs(connection,adapter,scope,generation,member_id,target_connection,library,item,file_identity,source_report_id,package_proposal_id,package_report_id,package_case_id,package_checkpoint,package_outcome,lane_ids,state,attempt,claim_token,claim_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL) ON CONFLICT(connection,adapter,scope,generation,member_id) DO UPDATE SET target_connection=excluded.target_connection,library=excluded.library,item=excluded.item,file_identity=excluded.file_identity,source_report_id=excluded.source_report_id,package_proposal_id=excluded.package_proposal_id,package_report_id=excluded.package_report_id,package_case_id=excluded.package_case_id,package_checkpoint=excluded.package_checkpoint,package_outcome=excluded.package_outcome,lane_ids=excluded.lane_ids,state=excluded.state,attempt=excluded.attempt,claim_token=NULL,claim_expires_at=NULL", values)
+                    result = self._connection.execute("INSERT INTO provider_recovery_jobs(connection,adapter,scope,generation,member_id,target_connection,library,item,file_identity,source_report_id,package_proposal_id,package_report_id,package_case_id,package_checkpoint,package_outcome,lane_ids,state,attempt,claim_token,claim_expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL) ON CONFLICT(connection,adapter,scope,generation,member_id) DO UPDATE SET target_connection=excluded.target_connection,library=excluded.library,item=excluded.item,file_identity=excluded.file_identity,source_report_id=excluded.source_report_id,package_proposal_id=excluded.package_proposal_id,package_report_id=excluded.package_report_id,package_case_id=excluded.package_case_id,package_checkpoint=excluded.package_checkpoint,package_outcome=excluded.package_outcome,lane_ids=excluded.lane_ids,state=excluded.state,attempt=excluded.attempt,claim_token=NULL,claim_expires_at=NULL WHERE target_connection IS NOT excluded.target_connection OR library IS NOT excluded.library OR item IS NOT excluded.item OR file_identity IS NOT excluded.file_identity OR source_report_id IS NOT excluded.source_report_id OR package_proposal_id IS NOT excluded.package_proposal_id OR package_report_id IS NOT excluded.package_report_id OR package_case_id IS NOT excluded.package_case_id OR package_checkpoint IS NOT excluded.package_checkpoint OR package_outcome IS NOT excluded.package_outcome OR lane_ids IS NOT excluded.lane_ids", values)
                     inserted += result.rowcount
                 self._connection.execute("COMMIT")
                 return inserted
@@ -481,6 +481,9 @@ class SQLiteProviderRecoveryStore:
                     self._connection.execute("COMMIT"); return None
                 self._connection.execute("COMMIT")
                 return ProviderRecoveryJob(*row[:16], "running", row[17] + 1)
+        except ProviderRecoveryStoreError:
+            if self._connection.in_transaction: self._connection.execute("ROLLBACK")
+            raise
         except (sqlite3.Error, OverflowError) as error:
             if self._connection.in_transaction: self._connection.execute("ROLLBACK")
             raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error

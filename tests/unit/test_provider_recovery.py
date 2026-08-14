@@ -229,6 +229,13 @@ class ProviderRecoveryTests(unittest.TestCase):
             assert claimed is not None
             running = store.claim_job(recovery=claimed, token="owner", now=1)
             assert running is not None
+            self.assertEqual(0, store.enqueue_jobs((original,)))
+            self.assertEqual(
+                ("running", 1, "owner"),
+                store._connection.execute(
+                    "SELECT state,attempt,claim_token FROM provider_recovery_jobs"
+                ).fetchone(),
+            )
             self.assertEqual(1, store.enqueue_jobs((current,)))
             self.assertEqual(
                 ("current-file", "current-report", "current-package", '["current"]', "queued", 0),
@@ -239,6 +246,32 @@ class ProviderRecoveryTests(unittest.TestCase):
             )
             with self.assertRaises(ProviderRecoveryStoreError):
                 store.complete_job(job=running, token="owner", now=1, success=True)
+            refreshed = store.claim_job(recovery=claimed, token="owner", now=1)
+            assert refreshed is not None
+            store.complete_job(job=refreshed, token="owner", now=1, success=True)
+            self.assertEqual(0, store.enqueue_jobs((current,)))
+            self.assertEqual(
+                ("complete", 1, None),
+                store._connection.execute(
+                    "SELECT state,attempt,claim_token FROM provider_recovery_jobs"
+                ).fetchone(),
+            )
+            store.close()
+
+    def test_rejected_scope_claim_rolls_back_before_valid_claimant(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            store.record(ProviderRecovery.failed(
+                connection="google", adapter="google_books", scope="books",
+                generation=1, failure="transient", now=0, retry_after=1,
+            ), occurred_at=0)
+            store.enqueue_jobs((self._job("canary"),))
+            claimed = store.claim_one(generation=1, now=1, token="owner")
+            assert claimed is not None
+            with self.assertRaises(ProviderRecoveryStoreError):
+                store.claim_job(recovery=claimed, token="other", now=1)
+            self.assertFalse(store._connection.in_transaction)
+            self.assertIsNotNone(store.claim_job(recovery=claimed, token="owner", now=1))
             store.close()
 
     def test_generation_reconciliation_keeps_current_duplicate_member(self) -> None:
