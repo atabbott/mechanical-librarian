@@ -61,8 +61,16 @@ class ConfiguredProviderRetry:
             or self.binding.authority != self.adapter
         ):
             raise ProviderRetrySuccessorError("provider retry configuration is invalid")
-        if not isinstance(self.adapter, str) or not self.adapter or type(self.generation) is not int or self.generation < 1:
+        if (
+            not isinstance(self.adapter, str)
+            or not self.adapter
+            or type(self.generation) is not int
+            or self.generation < 1
+        ):
             raise ProviderRetrySuccessorError("provider retry configuration is invalid")
+
+
+ProviderRetryResolver = Callable[[str, str, str, str, int], ConfiguredProviderRetry | None]
 
 
 class GenerateProviderRetrySuccessor:
@@ -79,15 +87,17 @@ class GenerateProviderRetrySuccessor:
         target: TargetReader,
         inspector,
         repository_factory: Callable[[], ReportRepository],
-        provider: ConfiguredProviderRetry,
+        provider_resolver: ProviderRetryResolver,
         mount: MediaMountConfiguration | None,
         limits: ReportLimits,
-        after_publication: Callable[[ReportRepository, MetadataReport], None] | None = None,
+        after_publication: Callable[[ReportRepository, MetadataReport], bool],
     ) -> None:
         self._target = target
         self._inspector = inspector
         self._repository_factory = repository_factory
-        self._provider = provider
+        if not callable(provider_resolver) or not callable(after_publication):
+            raise ProviderRetrySuccessorError("provider retry composition is invalid")
+        self._provider_resolver = provider_resolver
         self._mount = mount
         self._limits = limits
         self._after_publication = after_publication
@@ -97,16 +107,17 @@ class GenerateProviderRetrySuccessor:
         source_report_id: str,
         lane_identities: tuple[str, ...],
         *,
+        provider_name: str,
         adapter: str,
         generation: int,
     ) -> str:
         if (
             not isinstance(source_report_id, str)
+            or not isinstance(provider_name, str)
+            or not provider_name
             or type(lane_identities) is not tuple
             or not lane_identities
             or tuple(sorted(set(lane_identities))) != lane_identities
-            or adapter != self._provider.adapter
-            or generation != self._provider.generation
         ):
             raise ProviderRetrySuccessorError("provider retry request is invalid")
         repository = self._repository_factory()
@@ -114,9 +125,10 @@ class GenerateProviderRetrySuccessor:
             source = self._source(repository, source_report_id)
             current = self._current_source(repository, source)
             plan = self._plan(source)
-            original = self._observation(source)
+            provider = self._provider(source, provider_name, adapter, generation)
+            original = self._observation(source, provider)
             selected = self._selected(plan, original, lane_identities)
-            replacement = self._observe(plan, selected)
+            replacement = self._observe(provider, plan, selected)
             merged = self._merged(plan, original, selected, replacement)
             successor = MetadataReport.create(
                 target=source.target, file=source.file,
@@ -131,11 +143,16 @@ class GenerateProviderRetrySuccessor:
             def currentness() -> bool:
                 if not require_report_current(self._target, self._inspector, self._mount, self._limits, source):
                     return False
-                return self._current_source(repository, source) == current
+                return (
+                    self._current_source(repository, source) == current
+                    and self._provider(source, provider_name, adapter, generation) == provider
+                )
 
-            published = repository.publish(
-                successor, currentness, source.report_id, self._after_publication
-            )
+            def stage(bound: ReportRepository, report: MetadataReport) -> None:
+                if self._after_publication(bound, report) is not True:
+                    raise ProviderRetrySuccessorError("provider retry staging failed")
+
+            published = repository.publish(successor, currentness, source.report_id, stage)
             if published != successor.to_json() or repository.get(successor.report_id) != published:
                 raise ProviderRetrySuccessorError("provider retry publication failed")
             return published
@@ -158,7 +175,13 @@ class GenerateProviderRetrySuccessor:
         document = repository.current_optional(
             source.target.connection, source.target.library, source.target.item, source.file.identity
         )
-        if document is None or MetadataReport.from_json(document).report_id != source.report_id:
+        if (
+            document is None
+            or MetadataReport.from_json(document).report_id != source.report_id
+            or repository.current_review_package_report(
+                source.target.connection, source.target.library, source.target.item
+            ) != source.report_id
+        ):
             raise CurrentnessError("target or media changed")
         return document
 
@@ -171,9 +194,23 @@ class GenerateProviderRetrySuccessor:
             raise ProviderRetrySuccessorError("provider retry source is invalid")
         return plan
 
-    def _observation(self, source: MetadataReport) -> ProviderObservation:
-        matches = tuple(value for value in source.providers if value.provider == self._provider.binding.name)
-        if len(matches) != 1 or matches[0].authority != self._provider.binding.authority:
+    def _provider(self, source: MetadataReport, name: str, adapter: str, generation: int) -> ConfiguredProviderRetry:
+        value = self._provider_resolver(
+            source.target.connection, source.target.library,
+            name, adapter, generation,
+        )
+        if (
+            type(value) is not ConfiguredProviderRetry
+            or value.binding.name != name
+            or value.adapter != adapter
+            or value.generation != generation
+        ):
+            raise ProviderRetrySuccessorError("provider retry configuration changed")
+        return value
+
+    def _observation(self, source: MetadataReport, provider: ConfiguredProviderRetry) -> ProviderObservation:
+        matches = tuple(value for value in source.providers if value.provider == provider.binding.name)
+        if len(matches) != 1 or matches[0].authority != provider.binding.authority:
             raise ProviderRetrySuccessorError("provider retry configuration changed")
         return matches[0]
 
@@ -187,13 +224,13 @@ class GenerateProviderRetrySuccessor:
             raise ProviderRetrySuccessorError("provider retry lane is invalid")
         return selected
 
-    def _observe(self, plan: MetadataDiscoveryPlan, selected: tuple) -> ProviderObservation:
+    def _observe(self, provider: ConfiguredProviderRetry, plan: MetadataDiscoveryPlan, selected: tuple) -> ProviderObservation:
         try:
-            provider: MetadataProvider = self._provider.binding.factory()
-            observation = provider.observe(MetadataDiscoveryPlan(plan.local_claims, selected))
+            client: MetadataProvider = provider.binding.factory()
+            observation = client.observe(MetadataDiscoveryPlan(plan.local_claims, selected))
         except Exception as error:
             raise ProviderRetrySuccessorError("provider retry dispatch failed") from error
-        if observation.provider != self._provider.binding.name:
+        if observation.provider != provider.binding.name or observation.authority != provider.binding.authority:
             raise ProviderRetrySuccessorError("provider retry result is invalid")
         if {lane.identity for lane in observation.lanes} != {lane.identity for lane in selected}:
             raise ProviderRetrySuccessorError("provider retry result is invalid")
@@ -201,10 +238,10 @@ class GenerateProviderRetrySuccessor:
 
     def _merged(self, plan, original, selected, replacement) -> ProviderObservation:
         selected_ids = {lane.identity for lane in selected}
-        old_candidates = {candidate.identity: candidate for candidate in original.candidates}
-        new_candidates = {candidate.identity: candidate for candidate in replacement.candidates}
-        old_lanes = {lane.identity: lane for lane in original.lanes}
-        new_lanes = {lane.identity: lane for lane in replacement.lanes}
+        old_candidates = self._canonical_candidates(original.candidates)
+        new_candidates = self._canonical_candidates(replacement.candidates)
+        old_lanes = self._canonical_lanes(original.lanes)
+        new_lanes = self._canonical_lanes(replacement.lanes)
 
         def result(lane):
             observation = new_lanes[lane.identity] if lane.identity in selected_ids else old_lanes[lane.identity]
@@ -223,5 +260,23 @@ class GenerateProviderRetrySuccessor:
             raise ProviderRetrySuccessorError("provider retry merged sibling changed")
         return merged
 
+    @staticmethod
+    def _canonical_candidates(candidates):
+        result = {}
+        for candidate in candidates:
+            previous = result.setdefault(candidate.identity, candidate)
+            if previous.to_data() != candidate.to_data():
+                raise ProviderRetrySuccessorError("provider retry candidates conflict")
+        return result
 
-__all__ = ["ConfiguredProviderRetry", "GenerateProviderRetrySuccessor", "ProviderRetrySuccessorError"]
+    @staticmethod
+    def _canonical_lanes(lanes):
+        result = {}
+        for lane in lanes:
+            previous = result.setdefault(lane.identity, lane)
+            if previous.to_data() != lane.to_data():
+                raise ProviderRetrySuccessorError("provider retry lanes conflict")
+        return result
+
+
+__all__ = ["ConfiguredProviderRetry", "GenerateProviderRetrySuccessor", "ProviderRetryResolver", "ProviderRetrySuccessorError"]

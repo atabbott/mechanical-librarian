@@ -27,9 +27,10 @@ class _Inspector:
 
 class _Repository:
     def __init__(self, report):
-        self.values = {report.report_id: report.to_json()}; self.current_id = report.report_id
+        self.values = {report.report_id: report.to_json()}; self.current_id = report.report_id; self.package_id = report.report_id
     def get(self, report_id): return self.values[report_id]
     def current_optional(self, *_args): return self.values[self.current_id]
+    def current_review_package_report(self, *_args): return self.package_id
     def publish(self, report, currentness, expected_current=None, after_publication=None):
         if expected_current != self.current_id or not currentness(): raise ProviderRetrySuccessorError("stale")
         self.values[report.report_id] = report.to_json(); self.current_id = report.report_id
@@ -58,34 +59,52 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
         self.report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item", self.snapshot.fields), file=FileFacts(0, "b" * 64, "c" * 64), local_claims=self.claims, local_reasons=("opening_matter_isbn",), providers=(original,))
         self.repository = _Repository(self.report)
 
+    def service(self, configured):
+        return GenerateProviderRetrySuccessor(
+            target=_Target(self.snapshot), inspector=_Inspector(),
+            repository_factory=lambda: self.repository,
+            provider_resolver=lambda *_args: configured,
+            mount=MediaMountConfiguration("books", "/container", "/service", True),
+            limits=ReportLimits(), after_publication=lambda *_args: True,
+        )
+
     def test_retries_only_selected_failed_lane_and_preserves_sibling(self):
         replacement = provider_observation("catalogue", (ProviderLaneResult(self.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),), authority="open_library")
         provider = _Provider(replacement)
-        service = GenerateProviderRetrySuccessor(target=_Target(self.snapshot), inspector=_Inspector(), repository_factory=lambda: self.repository, provider=ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2), mount=MediaMountConfiguration("books", "/container", "/service", True), limits=ReportLimits())
-        successor = MetadataReport.from_json(service.run(self.report.report_id, (self.failed.identity,), adapter="open_library", generation=2))
+        service = self.service(ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2))
+        successor = MetadataReport.from_json(service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2))
         self.assertEqual((self.failed.identity,), tuple(lane.identity for lane in provider.plans[0].lanes))
         before = self.report.providers[0].lanes[1].to_data()
         after = next(lane for lane in successor.providers[0].lanes if lane.identity == self.success.identity).to_data()
         self.assertEqual(before, after)
         self.assertNotEqual(self.report.report_id, successor.report_id)
+        self.assertEqual(self.report.report_id, self.repository.package_id)
 
     def test_rejects_successful_lane_before_provider_dispatch(self):
         provider = _Provider(provider_observation("catalogue", (), authority="open_library"))
-        service = GenerateProviderRetrySuccessor(target=_Target(self.snapshot), inspector=_Inspector(), repository_factory=lambda: self.repository, provider=ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2), mount=MediaMountConfiguration("books", "/container", "/service", True), limits=ReportLimits())
+        service = self.service(ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2))
         with self.assertRaisesRegex(ProviderRetrySuccessorError, "lane"):
-            service.run(self.report.report_id, (self.success.identity,), adapter="open_library", generation=2)
+            service.run(self.report.report_id, (self.success.identity,), provider_name="catalogue", adapter="open_library", generation=2)
         self.assertEqual([], provider.plans)
 
     def test_rebound_generation_and_provider_failure_leave_predecessor_current(self):
         provider = _Provider(provider_observation("catalogue", (), authority="open_library"))
-        service = GenerateProviderRetrySuccessor(target=_Target(self.snapshot), inspector=_Inspector(), repository_factory=lambda: self.repository, provider=ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2), mount=MediaMountConfiguration("books", "/container", "/service", True), limits=ReportLimits())
-        with self.assertRaisesRegex(ProviderRetrySuccessorError, "request"):
-            service.run(self.report.report_id, (self.failed.identity,), adapter="open_library", generation=3)
+        service = self.service(ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2))
+        with self.assertRaisesRegex(ProviderRetrySuccessorError, "configuration"):
+            service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=3)
         self.assertEqual(self.report.report_id, self.repository.current_id)
 
         class FailingProvider:
             def observe(self, *_args, **_kwargs): raise RuntimeError("offline")
-        failing = GenerateProviderRetrySuccessor(target=_Target(self.snapshot), inspector=_Inspector(), repository_factory=lambda: self.repository, provider=ConfiguredProviderRetry(ProviderBinding("catalogue", True, FailingProvider, "open_library"), "open_library", 2), mount=MediaMountConfiguration("books", "/container", "/service", True), limits=ReportLimits())
+        failing = self.service(ConfiguredProviderRetry(ProviderBinding("catalogue", True, FailingProvider, "open_library"), "open_library", 2))
         with self.assertRaisesRegex(ProviderRetrySuccessorError, "dispatch"):
-            failing.run(self.report.report_id, (self.failed.identity,), adapter="open_library", generation=2)
+            failing.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)
         self.assertEqual(self.report.report_id, self.repository.current_id)
+
+    def test_rejects_report_current_but_not_current_package_before_dispatch(self):
+        provider = _Provider(provider_observation("catalogue", (), authority="open_library"))
+        self.repository.package_id = "not-the-source"
+        service = self.service(ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2))
+        with self.assertRaisesRegex(Exception, "target or media"):
+            service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)
+        self.assertEqual([], provider.plans)

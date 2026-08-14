@@ -31,9 +31,9 @@ authority.
 
 ## Consequences
 
-The successor operation is restart-safe through immutable report publication,
-but it is not independently executable in normal deployment. No schema or
-recovery persistence is added.
+The operation is intentionally not independently restartable or executable in
+normal deployment: activation must supply durable claiming and scheduling. No
+schema or recovery persistence is added here.
 
 ## Validation
 

@@ -4555,6 +4555,8 @@ class SQLiteMetadataReportRepository:
             self._connection.execute("BEGIN IMMEDIATE")
             if self._binding is not None:
                 self._binding.require_current()
+            if currentness() is not True:
+                raise MetadataReportError("target or media changed")
             current = self._connection.execute(
                 "SELECT r.report_id,r.connection_name,r.library_name,r.item_id,r.file_identity,r.content_digest,r.schema_version,r.document_digest,r.document FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
                 values[1:5],
@@ -7657,6 +7659,22 @@ class SQLiteMetadataReportRepository:
         if document is None:
             raise MetadataReportError("persisted current report is unavailable")
         return document
+
+    def current_review_package_report(
+        self, connection: str, library: str, item: str
+    ) -> str | None:
+        try:
+            row = self._connection.execute(
+                "SELECT report_id FROM current_review_packages WHERE connection_name=? AND library_name=? AND item_id=?",
+                (connection, library, item),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise MetadataReportError("persisted review package is invalid") from error
+        if row is None:
+            return None
+        if len(row) != 1 or type(row[0]) is not str:
+            raise MetadataReportError("persisted review package is invalid")
+        return row[0]
 
     def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None:
         try:
