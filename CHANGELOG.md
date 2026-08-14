@@ -7,6 +7,9 @@
   when a distinct provider's complete explicit author set exactly corroborates
   the same qualified work. Partial, reordered, mixed-role, malformed, and
   same-authority creator sets remain unresolved. (#416)
+  The exact-current metadata report and proposal policy contracts are now
+  `metadata-report-v25` and `fixed-conservative-v8`; earlier development
+  documents and databases remain incompatible under the clean-schema policy.
 
 - Add durable provider- and configuration-scoped recovery canaries. Terminal
   packages register only retry-eligible lanes; the existing supervisor claims

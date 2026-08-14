@@ -134,7 +134,7 @@ pointer per target/file scope in `current_metadata_reports`, and immutable
 report-bound cover references in `metadata_report_cover_references`.
 `proposal_sets` stores one content-addressed result document bound to an exact
 report and closed policy version and has no current pointer. Its exact-current
-table accepts only `fixed-conservative-v7`; earlier proposal-store shapes are
+table accepts only `fixed-conservative-v8`; earlier proposal-store shapes are
 rejected without migration. Report insert and pointer advance share one
 transaction. Proposal insertion separately rechecks the exact report and
 current pointer after external currentness. The report database also stores
@@ -151,7 +151,7 @@ progression and reconciles one current per-work row on a later scan; immutable
 reports, ProposalSets, ReviewCases, decisions, and audit transitions retain
 their existing authority. These rules are the current-runtime application
 of repository-wide ADR-0013.
-The `metadata-report-v24` document retains all 16 ordered Audiobookshelf target
+The `metadata-report-v25` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
 source capability

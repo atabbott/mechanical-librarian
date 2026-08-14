@@ -854,7 +854,7 @@ def qualify_provider_observation(
                 )
                 or (
                     untyped_creators == expected_authors
-                    and complete_creator_identity_bindings(
+                    and (bindings := complete_creator_identity_bindings(
                         candidate,
                         tuple(
                             claim
@@ -863,8 +863,8 @@ def qualify_provider_observation(
                             and claim.kind is ClaimKind.CREATOR
                             and claim.role is None
                         ),
-                    )
-                    is not None
+                    )) is not None
+                    and len({binding.identity for binding in bindings}) == len(bindings)
                 )
             )
             and not disqualifying_roles

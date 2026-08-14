@@ -162,7 +162,7 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v24'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v25'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -177,7 +177,7 @@ def _create_prior_schema(
 ) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v24'", f"= '{version}'"
+            "= 'metadata-report-v25'", f"= '{version}'"
         ),
         metadata_persistence._CURRENT_SQL,
         metadata_persistence._CURRENT_LINEAGE_SQL,
@@ -363,7 +363,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "current report schema with stale proposal policy",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v24",
+                    "metadata-report-v25",
                     "fixed-conservative-v6",
                 ),
             ),
@@ -427,7 +427,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "previous proposal policy v3",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v24",
+                    "metadata-report-v25",
                     "fixed-conservative-v3",
                 ),
             ),
@@ -435,7 +435,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "previous proposal policy v4",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v24",
+                    "metadata-report-v25",
                     "fixed-conservative-v4",
                 ),
             ),
@@ -443,7 +443,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "previous proposal policy v5",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v24",
+                    "metadata-report-v25",
                     "fixed-conservative-v5",
                 ),
             ),
@@ -570,7 +570,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
-            self.assertEqual(schema_version, ("metadata-report-v24",))
+            self.assertEqual(schema_version, ("metadata-report-v25",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)

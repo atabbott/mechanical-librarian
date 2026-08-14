@@ -54,7 +54,7 @@ from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 
 
 PROPOSAL_SCHEMA = "proposal-set-v4"
-POLICY_VERSION = "fixed-conservative-v7"
+POLICY_VERSION = "fixed-conservative-v8"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -1287,7 +1287,7 @@ def _corroborated_untyped_author_observations(
         (provider, candidate, claims, bindings)
         for provider in report.providers
         for candidate in provider.candidates
-        if provider.query_kind is ProviderQueryKind.WORK
+        if _work_lane_contains(provider, candidate)
         if (set_value := _complete_provider_creator_set(candidate, "author")) is not None
         for claims, bindings in (set_value,)
     )
@@ -1295,7 +1295,7 @@ def _corroborated_untyped_author_observations(
         (provider, candidate, claims, bindings)
         for provider in report.providers
         for candidate in provider.candidates
-        if provider.query_kind is ProviderQueryKind.WORK
+        if _work_lane_contains(provider, candidate)
         if (set_value := _complete_provider_creator_set(candidate, None)) is not None
         for claims, bindings in (set_value,)
         if bindings is not None
@@ -1382,7 +1382,29 @@ def _complete_provider_creator_set(
         for binding in candidate.identity_bindings
     ) and bindings is None:
         return None
+    if bindings is not None and len({binding.identity for binding in bindings}) != len(bindings):
+        return None
     return creators, bindings
+
+
+def _work_lane_contains(
+    provider: ProviderObservation, candidate: ProviderCandidate,
+) -> bool:
+    """Require a successful exact WORK-lane membership when lanes exist."""
+    if provider.query_kind is not ProviderQueryKind.WORK:
+        return False
+    if not provider.lanes:
+        return len(provider.candidates) == 1
+    return any(
+        lane.kind is ProviderQueryKind.WORK
+        and lane.status is ProviderStatus.CANDIDATES
+        and any(
+            member.edition_identity == candidate.identity
+            and member.work_identity == candidate.work_identity
+            for member in lane.candidates
+        )
+        for lane in provider.lanes
+    )
 
 
 def _creator_sets_match(

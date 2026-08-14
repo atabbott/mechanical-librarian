@@ -773,7 +773,7 @@ class ProposalSetTests(unittest.TestCase):
             proposal_set.proposal_set_id,
             ProposalSet.from_json(proposal_set.to_json()).proposal_set_id,
         )
-        self.assertEqual("fixed-conservative-v7", POLICY_VERSION)
+        self.assertEqual("fixed-conservative-v8", POLICY_VERSION)
         self.assertEqual(POLICY_VERSION, proposal_set.policy_version)
         self.assertRegex(proposal_set.resolved_policy_id, r"^resolved_policy_[0-9a-f]{64}$")
 
