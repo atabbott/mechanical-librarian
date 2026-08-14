@@ -8,6 +8,13 @@
   Operators increment `provider_recovery_generation` and restart after fixing
   a dormant provider condition. (#625)
 
+- Make Library policy impact previews distinguish real changes from retained
+  values, unsupported evidence, and owner review. Empty fields with no
+  candidate now read `No change · remains empty — no supported value found`;
+  exact-current, ignored, and abstained outcomes no longer inflate the change
+  total, while bounded technical detail preserves their closed audit codes.
+  (#609)
+
 - Explain every closed Library policy representation in place: its admitted
   source/value, bounded transformation, field effect, and abstention boundary.
   Visible Google text now explicitly admits only eligible transformed Google
