@@ -1563,13 +1563,15 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             ))
         replacement = MetadataReport.create(
             target=replace(next(iter(reports.values())).target, item="item-0"),
-            file=replace(next(iter(reports.values())).file, content_digest="f" * 64,
-                         identity="e" * 64),
+            file=replace(
+                next(iter(reports.values())).file, content_digest="f" * 64
+            ),
             local_claims=next(iter(reports.values())).local_claims,
             local_reasons=next(iter(reports.values())).local_reasons,
-            providers=(),
+            providers=next(iter(reports.values())).providers,
         )
         projected: list[str] = []
+        projection_outcomes: list[str] = []
         stale_once = [True]
 
         def extract(repository, action: PipelineAction, _: bool):
@@ -1593,11 +1595,17 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 stale_once[0] = False
                 reports[replacement.report_id] = replacement
                 report_for_item["item-0"] = replacement
-                repository.publish(replacement, lambda: True, action.report_id)
+                repository.publish(
+                    replacement,
+                    lambda: True,
+                    action.report_id,
+                    after_publication=lambda *_: None,
+                )
             projected.append(action.item_id or "")
             outcome = repository.persist_shadow_outcome(
                 action.review_case_id or "", 20, staged_action=action
             )
+            projection_outcomes.append(outcome)
             return "stale" if outcome == "stale" else "complete"
 
         repository = open_repository(self.path)
@@ -1619,12 +1627,13 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         ).fetchall()
         repository.close()
         self.assertFalse(stale_once[0], (projected, states[:5]))
+        self.assertIn("stale", projection_outcomes)
         self.assertIn("item-2", projected)
         self.assertEqual(50, len(states))
         self.assertTrue(
             all(state in {"complete", "failed", "stale"} for state, _ in states)
         )
-        self.assertIn(("failed", "failed"), states)
+        self.assertEqual(1, states.count(("stale", "stale")))
 
     def test_unrelated_provider_success_does_not_shorten_open_circuit(self) -> None:
         repository = open_repository(self.path)
