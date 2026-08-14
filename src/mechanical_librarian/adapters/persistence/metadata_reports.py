@@ -4550,34 +4550,35 @@ class SQLiteMetadataReportRepository:
             rows = self.list_current_review_case_documents(
                 search, limit, offset, attention
             )
-            projected = tuple(
-                (
-                    case_document,
-                    report_document,
-                    (
-                        ()
-                        if case_document is None
-                        else self.get_review_case_decisions(
-                            ReviewCase.from_json(case_document).review_case_id
-                        )
-                    ),
-                    (
-                        ()
-                        if case_document is None
-                        else self._automatic_attention_destinations(
-                            ReviewCase.from_json(case_document).review_case_id
-                        )
-                    ),
-                    (
-                        ()
-                        if case_document is None
-                        else self._field_effect_capability_suspended_destinations(
-                            ReviewCase.from_json(case_document).review_case_id
-                        )
-                    ),
-                )
-                for case_document, report_document in rows
-            )
+            projected_rows = []
+            for case_document, report_document in rows:
+                if case_document is None and '"schema_version":"review-terminal-work-v1"' in report_document:
+                    projected_rows.append((case_document, report_document, (), (), (), None))
+                    continue
+                report = MetadataReport.from_json(report_document)
+                terminal = self._connection.execute(
+                    "SELECT work_id,stage,attempt,recovery_attempt,failure_code,failure_root "
+                    "FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=? "
+                    "AND state='failed' AND failure_code IS NOT NULL AND (report_id IS NULL OR report_id<>?) "
+                    "ORDER BY updated_at DESC,work_id DESC LIMIT 1",
+                    (report.target.connection, report.target.library, report.target.item, report.report_id),
+                ).fetchone()
+                terminal_document = None if terminal is None else _canonical_json({
+                    "attempt": terminal[2], "connection": report.target.connection,
+                    "failure_root": terminal[5], "item": report.target.item,
+                    "lane": terminal[1], "library": report.target.library,
+                    "recovery_attempt": terminal[3], "schema_version": "review-terminal-work-v1",
+                    "status": terminal[4], "work_id": terminal[0],
+                })
+                case_id = None if case_document is None else ReviewCase.from_json(case_document).review_case_id
+                projected_rows.append((
+                    case_document, report_document,
+                    () if case_id is None else self.get_review_case_decisions(case_id),
+                    () if case_id is None else self._automatic_attention_destinations(case_id),
+                    () if case_id is None else self._field_effect_capability_suspended_destinations(case_id),
+                    terminal_document,
+                ))
+            projected = tuple(projected_rows)
             total, attention_total = self.count_current_review_cases(search)
             snapshot = ReviewLibrarySnapshot(
                 rows=projected,

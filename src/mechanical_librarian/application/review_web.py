@@ -597,8 +597,9 @@ class BrowseReviewLibrary:
             for row in snapshot.rows[:bounded_limit]:
                 case_document, report_document, decision_documents = row[:3]
                 automatic_attention_destinations = row[3] if len(row) >= 4 else ()
-                suspended_destinations = row[4] if len(row) == 5 else ()
-                items.append(_library_item(case_document, report_document, decision_documents, automatic_attention_destinations, suspended_destinations))
+                suspended_destinations = row[4] if len(row) >= 5 else ()
+                terminal_document = row[5] if len(row) >= 6 else None
+                items.append(_library_item(case_document, report_document, decision_documents, automatic_attention_destinations, suspended_destinations, terminal_document))
         except Exception as error:
             raise ReviewWebError("unavailable") from error
         return {
@@ -922,6 +923,7 @@ def _library_item(
     decision_documents: tuple[str, ...],
     automatic_attention_destinations: tuple[str, ...] = (),
     suspended_destinations: tuple[str, ...] = (),
+    terminal_document: str | None = None,
 ) -> dict[str, object]:
     if case_document is None:
         try:
@@ -974,7 +976,7 @@ def _library_item(
         f"{report.target.library}\0{report.target.item}"
     )
     work_id = "library_work_" + hashlib.sha256(material.encode("utf-8")).hexdigest()
-    return {
+    value = {
         "authors": _report_authors(report),
         "attention_count": len(attention),
         "attention_state": (
@@ -988,9 +990,10 @@ def _library_item(
         "review_case_id": None if case is None else case.review_case_id,
         "title": report.target.current_title or "Untitled",
         "work_id": work_id,
-        "preparation": None,
+        "preparation": None if terminal_document is None else _library_item(None, terminal_document, ())["preparation"],
         "preparation_outcomes": _provider_outcomes(report),
     }
+    return value
 
 
 def _attention_item(
