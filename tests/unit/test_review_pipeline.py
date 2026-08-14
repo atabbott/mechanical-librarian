@@ -23,8 +23,8 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
     ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
-    _provider_failure_disposition,
 )
+from mechanical_librarian.application.review_web import BrowseReviewLibrary
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -96,24 +96,6 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             repository.review_pipeline_status((("x" * 65, "fiction"),))
         repository.close()
 
-    def test_provider_failures_separate_recovery_from_configuration_validation(self) -> None:
-        self.assertEqual(
-            _provider_failure_disposition((ProviderStatus.UNAVAILABLE,)),
-            ("transient", True),
-        )
-        self.assertEqual(
-            _provider_failure_disposition((ProviderStatus.AUTHENTICATION,)),
-            ("authentication", False),
-        )
-        self.assertEqual(
-            _provider_failure_disposition((ProviderStatus.AUTHORIZATION,)),
-            ("authentication", False),
-        )
-        self.assertEqual(
-            _provider_failure_disposition((ProviderStatus.MALFORMED,)),
-            ("provider", False),
-        )
-
     def test_actual_provider_credential_failure_projects_once_at_provider_scope(self) -> None:
         repository = open_repository(self.path)
         repository.request_review_scan(
@@ -153,7 +135,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             "field": None,
         }, signals)
 
-    def test_observed_provider_authentication_projects_every_distinct_root(self) -> None:
+    def test_observed_provider_authentication_remains_in_complete_report(self) -> None:
         base = _report()
         report = MetadataReport.create(
             target=base.target,
@@ -181,10 +163,6 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         )
         extraction = repository.claim_review_pipeline_action(13)
         assert extraction is not None
-        disposition = _provider_failure_disposition(
-            composition._provider_statuses(report)
-        )
-        assert disposition is not None
         repository.publish(
             report,
             lambda: True,
@@ -193,51 +171,21 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 extraction,
                 published.report_id,
                 14,
-                provider_failure_code=disposition[0],
-                provider_failure_root=composition._provider_authentication_root(
-                    published
-                ),
             ),
         )
         work = repository._connection.execute(
             "SELECT stage,state,failure_code,failure_root "
             "FROM review_preparation_work"
         ).fetchone()
-        signals = repository.operational_snapshot()["signals"]
-        replayed_signals = repository.operational_snapshot()["signals"]
+        retained = MetadataReport.from_json(repository.get(report.report_id))
         repository.close()
         self.assertEqual(
             work,
-            ("provider", "failed", "authentication", "google-main"),
-        )
-        expected = [{
-                "kind": "authentication_failure",
-                "cause": "provider_authentication",
-                "scope": "connection",
-                "connection": "google-main",
-                "library": None,
-                "category": None,
-                "work_id": None,
-                "field": None,
-            }, {
-                "kind": "authentication_failure",
-                "cause": "provider_authentication",
-                "scope": "connection",
-                "connection": "hardcover-main",
-                "library": None,
-                "category": None,
-                "work_id": None,
-                "field": None,
-            }]
-        self.assertEqual(
-            [signal for signal in signals
-             if signal["kind"] == "authentication_failure"],
-            expected,
+            ("proposal", "queued", None, None),
         )
         self.assertEqual(
-            [signal for signal in replayed_signals
-             if signal["kind"] == "authentication_failure"],
-            expected,
+            tuple((provider.provider, provider.status) for provider in retained.providers),
+            (("google-main", ProviderStatus.AUTHORIZATION), ("hardcover-main", ProviderStatus.AUTHENTICATION)),
         )
 
     def test_thousand_work_three_library_backlog_is_bounded_and_fair(self) -> None:
@@ -714,6 +662,12 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         )
 
         repository = open_repository(self.path)
+        self.assertEqual(repository._connection.execute("SELECT COUNT(*) FROM current_review_packages").fetchone(), (0,))
+        self.assertEqual(repository.count_current_review_cases(None), (0, 0))
+        self.assertEqual(repository.read_review_attention(None, 10, 0).total, 0)
+        repository.close()
+
+        repository = open_repository(self.path)
         reappeared = json.loads(repository.admit_review_case(proposal))
         pointer = repository._connection.execute(
             "SELECT review_case_id,outcome FROM current_review_case_lineages"
@@ -761,6 +715,11 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             "SELECT actor,kind,reason FROM review_case_transitions "
             "ORDER BY checkpoint DESC LIMIT 1"
         ).fetchone()
+        package_count = repository._connection.execute(
+            "SELECT COUNT(*) FROM current_review_packages"
+        ).fetchone()
+        library_count = repository.count_current_review_cases(None)
+        attention_count = repository.read_review_attention(None, 10, 0).total
         reopened = json.loads(repository.admit_review_case(proposal))
         repository.close()
 
@@ -768,6 +727,9 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertEqual(
             transition, ("review-preparation-v1", "retired", "ineligible")
         )
+        self.assertEqual(package_count, (0,))
+        self.assertEqual(library_count, (0, 0))
+        self.assertEqual(attention_count, 0)
         self.assertEqual(reopened["status"], "admitted")
         self.assertEqual(reopened["review_case_id"], admitted["review_case_id"])
 
@@ -1133,12 +1095,12 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertEqual(restarted.producer_fingerprint, changed_producer)
         self.assertIsNone(restarted.report_id)
 
-    def test_provider_technical_failure_stops_before_proposal(self) -> None:
+    def test_terminal_provider_failure_continues_to_proposal(self) -> None:
         proposed: list[str] = []
         extracted: list[str] = []
         clock = [30]
         provider_statuses = [
-            (ProviderStatus.CANDIDATES, ProviderStatus.UNAVAILABLE),
+            (ProviderStatus.CANDIDATES, ProviderStatus.INCOMPLETE),
             (ProviderStatus.CANDIDATES,),
         ]
         report = _report()
@@ -1184,27 +1146,6 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertTrue(pipeline.run_next(1))
         self.assertTrue(pipeline.run_next(1))
         self.assertTrue(pipeline.run_next(1))
-        self.assertFalse(pipeline.run_next(1))
-        self.assertEqual(proposed, [])
-        progress = pipeline.progress("primary", "ebooks")
-        assert progress is not None
-        self.assertEqual(
-            (progress.state, progress.checked, progress.blocked),
-            ("processing", 0, 0),
-        )
-        repository = open_repository(self.path)
-        deadline = repository._connection.execute(
-            "SELECT circuit_open_until FROM review_preparation_control"
-        ).fetchone()[0]
-        repository.close()
-        self.assertGreater(deadline, clock[0])
-        clock[0] = deadline - 1
-        self.assertFalse(pipeline.run_next(1))
-        clock[0] = deadline
-        self.assertTrue(pipeline.run_next(1))
-        self.assertTrue(pipeline.run_next(1))
-        self.assertEqual(len(extracted), 2)
-        self.assertEqual(proposed, [])
         self.assertTrue(pipeline.run_next(1))
         self.assertEqual(proposed, [report.report_id])
         repository = open_repository(self.path)
@@ -1214,13 +1155,14 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         repository.close()
         self.assertEqual(control, (0, 0))
 
-    def test_persistent_transient_provider_failure_exhausts_automatic_recovery(
+    def test_terminal_unavailable_provider_report_continues_to_proposal(
         self,
     ) -> None:
         report = _report()
         clock = [30]
         extracted: list[str] = []
         provider_calls = 0
+        proposed: list[str] = []
 
         def publish_report(
             repository, __: PipelineAction, ___: bool
@@ -1244,32 +1186,273 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             ),
             extract=publish_report,
             providers=unavailable,
-            propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            propose=lambda _, report_id: proposed.append(report_id) or "proposal-set",
             admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
             project=lambda *_: True,
             clock=lambda: clock[0],
         )
         pipeline.request("primary", "ebooks")
         self.assertTrue(pipeline.run_next(1))
-        for recovery in range(3):
-            self.assertTrue(pipeline.run_next(1))
-            self.assertTrue(pipeline.run_next(1))
+        self.assertTrue(pipeline.run_next(1))
+        self.assertTrue(pipeline.run_next(1))
+        self.assertTrue(pipeline.run_next(1))
+        self.assertEqual(proposed, [report.report_id])
+        self.assertEqual((len(extracted), provider_calls), (1, 1))
+
+    def test_first_generation_and_refresh_publish_only_after_projection(self) -> None:
+        reports = [
+            _report(title="Published old", content_digest="a", file_identity="b"),
+            _report(title="Staged successor", content_digest="c", file_identity="d"),
+            _report(title="Failed successor", content_digest="e", file_identity="f"),
+            _report(title="Recovered successor", content_digest="1", file_identity="2"),
+            _report(title="Absent successor", content_digest="3", file_identity="4"),
+            _report(title="Retired successor", content_digest="5", file_identity="6"),
+        ]
+
+        def pipeline_for(
+            report: MetadataReport,
+            *,
+            projection: bool = True,
+            now: int = 20,
+            database: Path | None = None,
+        ) -> ReviewPreparationPipeline:
+            proposal = evaluate_report(report)
+            selected_database = self.path if database is None else database
+
+            def extract(repository, action: PipelineAction, claim_next: bool):
+                repository.publish(
+                    report,
+                    lambda: True,
+                    after_publication=lambda bound, current: bound.complete_review_extraction_publication(
+                        action, current.report_id, now, 0, None, claim_next, None
+                    ),
+                )
+                return report.report_id, True
+
+            def propose(repository, _: str) -> str:
+                repository.publish_proposal(proposal)
+                return proposal.proposal_set_id
+
+            def admit(repository, _: str) -> tuple[str, str | None]:
+                value = json.loads(repository.admit_review_case(proposal))
+                return value["status"], value.get("review_case_id")
+
+            return ReviewPreparationPipeline(
+                repository_factory=lambda: open_repository(selected_database),
+                libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
+                discover=lambda *_: (1, report.file.content_digest, (replace(_entry("item-1", report.file.identity), library="ebooks"),)),
+                extract=extract,
+                providers=lambda *_: (),
+                propose=propose,
+                admit=admit,
+                project=lambda *_: projection,
+                clock=lambda: now,
+            )
+
+        def titles() -> tuple[str, ...]:
             repository = open_repository(self.path)
-            deadline = repository._connection.execute(
-                "SELECT circuit_open_until FROM review_preparation_control"
-            ).fetchone()[0]
+            rows = repository.read_review_library(None, 10, 0, None).rows
             repository.close()
-            if recovery < 2:
-                self.assertFalse(pipeline.run_next(1))
-                clock[0] = deadline
-        self.assertFalse(pipeline.run_next(1))
-        progress = pipeline.progress("primary", "ebooks")
-        assert progress is not None
-        self.assertEqual(
-            (progress.state, progress.checked, progress.blocked),
-            ("completed_with_failures", 1, 1),
+            return tuple(json.loads(row[1])["target"]["fields"][0]["value"] for row in rows)
+
+        first = pipeline_for(reports[0])
+        first.request("primary", "ebooks")
+        self.assertEqual(titles(), ())
+        for _ in range(5):
+            self.assertTrue(first.run_next(1))
+            if _ < 4:
+                self.assertEqual(titles(), ())
+        self.assertEqual(titles(), ("Published old",))
+        repository = open_repository(self.path)
+        old_case = repository._connection.execute("SELECT review_case_id FROM current_review_packages").fetchone()[0]
+        self.assertTrue(json.loads(repository.get_review_case(old_case))["current"])
+        repository.close()
+        self.assertFalse(first.run_next(1))
+
+        refresh = pipeline_for(reports[1], now=30)
+        refresh.request("primary", "ebooks")
+        for _ in range(5):
+            self.assertTrue(refresh.run_next(1))
+            if _ < 4:
+                self.assertEqual(titles(), ("Published old",))
+                repository = open_repository(self.path)
+                self.assertTrue(json.loads(repository.get_review_case(old_case))["current"])
+                staged = repository._connection.execute(
+                    "SELECT review_case_id FROM current_review_case_lineages"
+                ).fetchone()
+                if staged is not None and staged[0] not in {None, old_case}:
+                    self.assertFalse(
+                        json.loads(repository.get_review_case(staged[0]))["current"]
+                    )
+                repository.close()
+        self.assertEqual(titles(), ("Staged successor",))
+        repository = open_repository(self.path)
+        self.assertFalse(json.loads(repository.get_review_case(old_case))["current"])
+        repository.close()
+        self.assertFalse(refresh.run_next(1))
+
+        failed_refresh = pipeline_for(reports[2], projection=False, now=40)
+        failed_refresh.request("primary", "ebooks")
+        for _ in range(5):
+            self.assertTrue(failed_refresh.run_next(1))
+            self.assertEqual(titles(), ("Staged successor",))
+        self.assertFalse(failed_refresh.run_next(1))
+        repository = open_repository(self.path)
+        staged_case = repository._connection.execute(
+            "SELECT review_case_id FROM current_review_case_lineages"
+        ).fetchone()[0]
+        published_case = repository._connection.execute(
+            "SELECT review_case_id FROM current_review_packages"
+        ).fetchone()[0]
+        self.assertNotEqual(staged_case, published_case)
+        self.assertTrue(json.loads(repository.get_review_case(published_case))["current"])
+        self.assertFalse(json.loads(repository.get_review_case(staged_case))["current"])
+        prior_attention = repository.read_review_attention(None, 10, 0).total
+        repository.close()
+
+        reopened = open_repository(self.path)
+        page = BrowseReviewLibrary(reopened).library(
+            lens="all", search="Staged successor", limit=1, cursor=None
         )
-        self.assertEqual((len(extracted), provider_calls), (3, 3))
+        self.assertEqual(page["counts"]["all"], 1)
+        self.assertIsNone(page["next_cursor"])
+        self.assertEqual(len(page["items"]), 1)
+        self.assertIsNotNone(page["items"][0]["preparation"])
+        self.assertEqual(
+            reopened.read_review_attention(None, 10, 0).total,
+            prior_attention,
+        )
+        reopened.close()
+
+        reused_report = open_repository(self.path)
+        self.assertEqual(
+            reused_report._connection.execute(
+                "UPDATE review_preparation_work SET report_id=? WHERE state='failed'",
+                (reports[1].report_id,),
+            ).rowcount,
+            1,
+        )
+        reused_report_page = BrowseReviewLibrary(reused_report).library(
+            lens="all", search="Staged successor", limit=1, cursor=None
+        )
+        self.assertEqual(reused_report_page["counts"]["all"], 1)
+        self.assertIsNotNone(reused_report_page["items"][0]["preparation"])
+        self.assertEqual(
+            reused_report._connection.execute(
+                "SELECT report_id FROM current_review_packages"
+            ).fetchone(),
+            (reports[1].report_id,),
+        )
+        self.assertEqual(
+            reused_report._connection.execute(
+                "UPDATE review_preparation_work SET report_id=? WHERE state='failed'",
+                (reports[2].report_id,),
+            ).rowcount,
+            1,
+        )
+        reused_report.close()
+
+        recovery = pipeline_for(reports[3], now=50)
+        recovery.request("primary", "ebooks")
+        recovery_steps = 0
+        while recovery.run_next(1):
+            recovery_steps += 1
+            self.assertLessEqual(recovery_steps, 5)
+        self.assertGreater(recovery_steps, 0)
+        recovered = open_repository(self.path)
+        recovered_page = BrowseReviewLibrary(recovered).library(
+            lens="all", search="Recovered successor", limit=1, cursor=None
+        )
+        recovered_case = recovered._connection.execute(
+            "SELECT review_case_id FROM current_review_packages"
+        ).fetchone()[0]
+        self.assertIsNone(recovered_page["items"][0]["preparation"])
+        self.assertFalse(json.loads(recovered.get_review_case(published_case))["current"])
+        self.assertTrue(json.loads(recovered.get_review_case(recovered_case))["current"])
+        recovered.close()
+
+        def fail_successor(report: MetadataReport, now: int) -> None:
+            pipeline = pipeline_for(report, projection=False, now=now)
+            pipeline.request("primary", "ebooks")
+            for _ in range(5):
+                self.assertTrue(pipeline.run_next(1))
+            self.assertFalse(pipeline.run_next(1))
+
+        def confirm_removal(
+            entries: tuple[CatalogueEntry, ...],
+            now: int,
+            database: Path | None = None,
+        ) -> None:
+            repository = open_repository(self.path if database is None else database)
+            repository.request_review_scan(
+                "primary", "ebooks", "lib-1", _PRODUCER, now
+            )
+            discovery = repository.claim_review_pipeline_action(now + 1)
+            assert discovery is not None
+            repository.complete_review_discovery(
+                discovery, 1, "9" * 64, entries, now + 2
+            )
+            self.assertIsNone(repository.claim_review_pipeline_action(now + 3))
+            confirmation = repository.claim_review_pipeline_action(now + 4)
+            assert confirmation is not None
+            repository.complete_review_discovery(
+                confirmation, 2, "9" * 64, entries, now + 5
+            )
+            self.assertIsNone(repository.claim_review_pipeline_action(now + 6))
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT COUNT(*) FROM current_review_packages"
+                ).fetchone(),
+                (0,),
+            )
+            self.assertEqual(repository.count_current_review_cases(None), (0, 0))
+            repository.close()
+
+        fail_successor(reports[4], 60)
+        confirm_removal((), 70)
+
+        repository = open_repository(self.path)
+        recovered_proposal = evaluate_report(reports[3])
+        repository.publish(reports[3], lambda: True)
+        repository.publish_proposal(recovered_proposal)
+        repository.admit_review_case(recovered_proposal)
+        repository.close()
+        fail_successor(reports[5], 80)
+        ineligible = replace(
+            _entry(reports[5].target.item, reports[5].file.identity),
+            library="ebooks",
+            classification="singular-unmounted",
+            mount=None,
+        )
+        confirm_removal((ineligible,), 90)
+
+        for index, entries in enumerate(
+            (
+                (),
+                (
+                    replace(
+                        _entry(reports[4].target.item, reports[4].file.identity),
+                        library="ebooks",
+                        classification="singular-unmounted",
+                        mount=None,
+                    ),
+                ),
+            )
+        ):
+            with self.subTest(first_generation_removal=index):
+                database = Path(self.temporary.name) / f"first-{index}.sqlite3"
+                open_repository(database).close()
+                first_failure = pipeline_for(
+                    reports[4],
+                    projection=False,
+                    now=100 + index * 20,
+                    database=database,
+                )
+                first_failure.request("primary", "ebooks")
+                for _ in range(5):
+                    self.assertTrue(first_failure.run_next(1))
+                self.assertFalse(first_failure.run_next(1))
+                confirm_removal(entries, 110 + index * 20, database)
 
     def test_unrelated_provider_success_does_not_shorten_open_circuit(self) -> None:
         repository = open_repository(self.path)
@@ -1430,13 +1613,13 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         )
         resumed = reopened.claim_review_pipeline_action(16)
         assert resumed is not None
-        circuit = reopened._connection.execute(
-            "SELECT circuit_open_until FROM review_preparation_control"
+        retry_not_before = reopened._connection.execute(
+            "SELECT retry_not_before FROM review_preparation_work"
         ).fetchone()
         reopened.close()
         self.assertEqual(resumed.stage, "proposal")
         self.assertEqual(resumed.report_id, report.report_id)
-        self.assertEqual(circuit, (45,))
+        self.assertEqual(retry_not_before, (0,))
 
 
 def _entry(item_id: str, file_identity: str) -> CatalogueEntry:

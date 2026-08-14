@@ -489,8 +489,13 @@ reports to exercise the transaction boundary, restart while a fixed transition
 is processing, exact response replay, consecutive generation gating,
 exact-current cohort exclusion, stale old-policy publication, historical
 resolved-destination replay, progressive completion, missing F17a linkage,
-actual terminal extraction/provider failure and safe stage-specific retry, and
-transition-scoped acknowledgement. Regression coverage also binds configured
+actual pre-package extraction/provider failure, complete mixed-provider
+terminal reports, safe per-work retry, atomic package publication, and
+transition-scoped acknowledgement. The matrix includes matched, no-match,
+disabled, insufficient-input, ambiguous/over-bound, authentication,
+unavailable, and malformed outcomes; mixed pagination and a 50-work synthetic
+cohort prove exact counts and absence of a slow-work global barrier. Regression
+coverage also binds configured
 generation-one overrides through admission, keeps new-library preview separate
 from fail-closed proposal execution, restarts pre-existing terminal work, and
 checks atomic extraction-publication transition failure. Generated

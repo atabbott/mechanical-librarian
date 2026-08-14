@@ -21,6 +21,8 @@ const library: LibraryView = {
     mediaKind: 'ebook',
     attentionCount: 1,
     attention: 'needs_attention',
+    preparation: null,
+    preparationOutcomes: [],
   }],
 }
 
@@ -181,6 +183,31 @@ describe('typed review routes', () => {
     expect(screen.queryByText('item-1')).toBeNull()
     expect(screen.getByText('Author details unavailable · Books · ebook')).toBeVisible()
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
+  })
+
+  it('keeps bounded provider outcomes and failed preparation inspectable in Library', async () => {
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const baseWork = { ...firstWork }
+    delete baseWork.reviewCaseId
+    const failed = {
+      ...baseWork,
+      id: 'failed-work',
+      title: 'Preparation unavailable',
+      attentionCount: 0,
+      attention: 'no_attention_needed',
+      preparation: { attempt: 1, provider: 'hardcover-main', reason: 'Provider credentials need owner attention.', recovery: 'Retry review preparation after correcting the reported condition.', recoveryAttempt: 0, stage: 'provider', status: 'authentication' },
+      preparationOutcomes: [{ providerRequests: 1, laneKind: 'work', provider: 'hardcover-main', reason: 'Provider credentials need owner attention.', status: 'authentication' }],
+    }
+    const http: ReviewHttp = { ...createHttp(), getLibrary: vi.fn(async () => ({ lens: 'all' as const, counts: { attention: 0, all: 1, clear: 1 }, works: [failed] })) }
+    renderRoute('/library?lens=all', http)
+
+    expect(await screen.findByText('Preparation failed safely')).toBeVisible()
+    await userEvent.click(screen.getByText('Preparation needs owner recovery'))
+    const outcomes = screen.getByText('Preparation needs owner recovery').closest('details')
+    expect(outcomes).toHaveTextContent('Authentication at Provider')
+    expect(outcomes).toHaveTextContent('hardcover-main · Work · Authentication · 1 bounded provider request')
+    expect(screen.queryByRole('button', { name: 'Preparation unavailable' })).toBeNull()
   })
 
   it('keeps Variant M field, automatic, evidence, and apply context in the responsive Library workspace', async () => {

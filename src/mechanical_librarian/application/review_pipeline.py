@@ -30,43 +30,6 @@ _STAGES = (
     "admission",
     "projection",
 )
-_TECHNICAL_PROVIDER_FAILURES = frozenset(
-    {
-        ProviderStatus.AUTHENTICATION,
-        ProviderStatus.AUTHORIZATION,
-        ProviderStatus.RATE_LIMITED,
-        ProviderStatus.UNAVAILABLE,
-        ProviderStatus.INCOMPLETE,
-        ProviderStatus.MALFORMED,
-        ProviderStatus.OVERSIZED,
-        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
-        ProviderStatus.QUERY_LIMIT_EXCEEDED,
-    }
-)
-_TRANSIENT_PROVIDER_FAILURES = frozenset(
-    {ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE}
-)
-_AUTHENTICATION_PROVIDER_FAILURES = frozenset(
-    {ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION}
-)
-
-
-def provider_failure_disposition(
-    statuses: tuple[ProviderStatus, ...],
-) -> tuple[str, bool] | None:
-    failures = _TECHNICAL_PROVIDER_FAILURES.intersection(statuses)
-    if _AUTHENTICATION_PROVIDER_FAILURES.intersection(failures):
-        return "authentication", False
-    if _TRANSIENT_PROVIDER_FAILURES.intersection(failures):
-        return "transient", True
-    if failures:
-        return "provider", False
-    return None
-
-
-_provider_failure_disposition = provider_failure_disposition
-
-
 class ReviewPipelineError(RuntimeError):
     """A fixed, value-free review-preparation failure."""
 
@@ -441,11 +404,11 @@ class ReviewPreparationPipeline:
             elif action.stage == "provider":
                 if action.report_id is None:
                     raise ReviewPipelineError("state")
-                statuses = self._providers(repository, action.report_id)
-                disposition = provider_failure_disposition(statuses)
-                if disposition is not None:
-                    self._fail(repository, action, *disposition)
-                    return None
+                # The report already contains one bounded terminal observation
+                # for every configured provider lane. Proposal admission, not a
+                # sibling technical status, decides whether the complete report
+                # can form a coherent package.
+                self._providers(repository, action.report_id)
             elif action.stage == "proposal":
                 if action.report_id is None:
                     raise ReviewPipelineError("state")

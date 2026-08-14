@@ -13,6 +13,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.application.field_effects import FieldEffectError
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     MetadataPolicyProfile,
@@ -331,7 +332,7 @@ class MetadataPolicyActivationTests(unittest.TestCase):
                 ((report.target.library, follow_up_resolved.resolved_id, follow_up_resolved.canonical_json),),
                 30,
             )
-        self.assertEqual(repository.current_unapplied_count(report.target.library), 0)
+        self.assertEqual(repository.current_unapplied_count(report.target.library), 1)
         self.assertEqual(
             repository._connection.execute(
                 "SELECT review_case_id,outcome FROM current_review_case_lineages"
@@ -344,7 +345,7 @@ class MetadataPolicyActivationTests(unittest.TestCase):
             ).fetchone(),
             ("policy-activation-v1", "retired", "policy_changed"),
         )
-        self.assertFalse(json.loads(repository.get_review_case(old_case_id))["current"])
+        self.assertTrue(json.loads(repository.get_review_case(old_case_id))["current"])
         with self.assertRaises(MetadataReportError):
             repository.publish_proposal(old)
 
@@ -703,15 +704,26 @@ class MetadataPolicyActivationTests(unittest.TestCase):
                         ),
                     ),
                 )
-                failed = repository.metadata_policy_transition()
-                assert failed is not None
-                self.assertEqual(("completed_with_failures", 1), (failed.state, failed.failed))
-                self.assertEqual(
-                    "stale" if outcome == "stale" else "failed",
-                    repository._connection.execute(
-                        "SELECT failure_code FROM metadata_policy_transition_items"
-                    ).fetchone()[0],
-                )
+                current = repository.metadata_policy_transition()
+                assert current is not None
+                if outcome == "stale":
+                    self.assertEqual(
+                        ("completed_with_failures", 1),
+                        (current.state, current.failed),
+                    )
+                    self.assertEqual(
+                        "stale",
+                        repository._connection.execute(
+                            "SELECT failure_code FROM metadata_policy_transition_items"
+                        ).fetchone()[0],
+                    )
+                else:
+                    self.assertEqual(
+                        ("processing", 0), (current.state, current.failed)
+                    )
+                    proposal = repository.claim_review_pipeline_action(28)
+                    assert proposal is not None
+                    self.assertEqual(proposal.stage, "proposal")
                 repository.close()
 
     def test_new_library_preview_can_establish_next_generation_resolution(self) -> None:
@@ -839,7 +851,7 @@ class MetadataPolicyActivationTests(unittest.TestCase):
                 for value in history
             )
         )
-        self.assertFalse(json.loads(activator.get_review_case(case_id))["current"])
+        self.assertTrue(json.loads(activator.get_review_case(case_id))["current"])
         self.assertEqual(
             (1, 1),
             activator._connection.execute(
@@ -885,9 +897,31 @@ class MetadataPolicyActivationTests(unittest.TestCase):
                 "(SELECT COUNT(*) FROM human_decision_events)"
             ).fetchone(),
         )
-        self.assertFalse(json.loads(stale_writer.get_review_case(case_id))["current"])
+        self.assertTrue(json.loads(stale_writer.get_review_case(case_id))["current"])
         stale_writer.close()
         activator.close()
+
+    def test_field_effect_authority_requires_exact_published_checkpoint(self) -> None:
+        repository, _, _, case_id = self._current_case_with_completed_work()
+        decision = self._human_decision(
+            repository, case_id, "checkpoint-authority-0001"
+        )
+        repository.record_human_decision(decision)
+        self.assertEqual(
+            repository.field_effect_authority_source(decision)["review_case_id"],
+            case_id,
+        )
+        repository._connection.execute(
+            "UPDATE current_review_packages SET checkpoint=checkpoint+2 "
+            "WHERE review_case_id=?",
+            (case_id,),
+        )
+        repository._connection.commit()
+        self.assertTrue(json.loads(repository.get_review_case(case_id))["current"])
+        self.assertFalse(repository._review_case_accepts_authority(case_id))
+        with self.assertRaisesRegex(FieldEffectError, "authority_binding"):
+            repository.field_effect_authority_source(decision)
+        repository.close()
 
     def test_invisible_stale_case_is_not_in_activation_cohort(self) -> None:
         repository = open_repository(self.path)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import threading
 import time
@@ -120,7 +119,6 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
     ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
-    provider_failure_disposition,
 )
 from mechanical_librarian.application.review_application import (
     compose_review_application,
@@ -685,35 +683,6 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
     return run_metadata_report_loaded(configuration, database_path, artifact_store_path, connection_name, library_name, item, file_index, expected_file_identity)
 
 
-def _provider_recovery_delay(
-    provider_instances: dict[str, object], report: MetadataReport
-) -> int:
-    transient_providers = {
-        provider.provider
-        for provider in report.providers
-        if any(
-            status in {ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE}
-            for status in (
-                provider.status,
-                *(lane.status for lane in provider.lanes),
-            )
-        )
-    }
-    if not transient_providers:
-        return 0
-    delays = tuple(
-        record.delay_seconds
-        for name, provider in provider_instances.items()
-        if name in transient_providers
-        for record in getattr(provider, "attempt_records", ())
-        if record.outcome == "exhausted"
-        if type(record.delay_seconds) in {int, float}
-        and math.isfinite(record.delay_seconds)
-        and record.delay_seconds > 0
-    )
-    return min(86_400, math.ceil(max(delays, default=0)))
-
-
 def _provider_statuses(report: MetadataReport) -> tuple[ProviderStatus, ...]:
     return tuple(
         status
@@ -723,18 +692,6 @@ def _provider_statuses(report: MetadataReport) -> tuple[ProviderStatus, ...]:
             *(lane.status for lane in provider.lanes),
         )
     )
-
-
-def _provider_authentication_root(report: MetadataReport) -> str | None:
-    roots = sorted(
-        provider.provider
-        for provider in report.providers
-        if any(
-            status in {ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION}
-            for status in (provider.status, *(lane.status for lane in provider.lanes))
-        )
-    )
-    return None if not roots else roots[0]
 
 
 class _NonClosingRepository:
@@ -775,7 +732,6 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
     ):
         hardcover_pacer = HardcoverPacer()
     bindings: list[ProviderBinding] = []
-    provider_instances: dict[str, object] = {}
     for provider in provider_configs:
         def factory(value=provider):
             if value.adapter == "google_books":
@@ -815,7 +771,6 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
                 )
             else:
                 raise MetadataReportError("provider configuration is invalid")
-            provider_instances[value.name] = instance
             return instance
         bindings.append(
             ProviderBinding(
@@ -858,16 +813,10 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
                 review_action,
                 report.report_id,
                 int(time.time()),
-                _provider_recovery_delay(provider_instances, report),
-                (
-                    None
-                    if (disposition := provider_failure_disposition(
-                        _provider_statuses(report)
-                    )) is None
-                    else disposition[0]
-                ),
+                0,
+                None,
                 review_claim_next,
-                _provider_authentication_root(report),
+                None,
             )
         ),
         require_singular_target=review_action is not None,

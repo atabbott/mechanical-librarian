@@ -585,7 +585,7 @@ granting a release, tag, deployment, or production operation.
 
 | Slice | Tracker | Demonstrable outcome | Planning state |
 | --- | --- | --- | --- |
-| F22 Complete per-work publication | #597 | After every provider lane reaches a terminal outcome, one work publishes its complete bounded result. | Assigned one-issue activation slice; follows independent focused prerequisite #418. |
+| F22 Complete per-work publication | #597 | After every provider lane reaches a terminal outcome, one work publishes its complete bounded result; sibling failure stays inspectable without hiding coherent evidence. | In delivery as a one-issue activation slice; independent focused prerequisite #418 is complete. |
 | F23 Qualified advisory cover review | #600 | Standard preparation automatically performs one bounded, qualified advisory cover review for the work. | Assigned one-issue activation slice; follows F22 and the final installed #591 Activity baseline. |
 | F24 Provider/configuration-scoped canary recovery | #408 | One durable provider- and configuration-scoped canary recovers safely within its bounded scope. | Assigned one-issue activation slice; follows F22, with the final installed #591 Activity baseline applying to its Activity surface. |
 

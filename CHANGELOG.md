@@ -6,6 +6,13 @@
   with chapter-specific accessible labels. Unsupported fields now explain that
   they are read-only and cannot be changed in a draft. (#607)
 
+- Keep authenticated Library and Attention reads bound to one completed review
+  package. In-progress, stale, and failed preparation no longer replaces a
+  visible prior package or exposes a first-generation partial result. Complete
+  provider-lane failures and no-match outcomes remain inspectable without
+  discarding coherent sibling evidence, while pre-package failures appear as
+  bounded Library-only recovery states and never enter Attention. (#597)
+
 - Preserve safely anchored Hardcover work identity, title, and complete creator
   evidence when the requested edition enrichment exceeds its bound. The
   oversized enrichment is diagnosed without retaining any edition claims or

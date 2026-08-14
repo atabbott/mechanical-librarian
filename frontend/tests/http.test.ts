@@ -57,6 +57,8 @@ describe('ReviewApiClient', () => {
           detail_url: '/review/case-1',
           dispositions: ['unresolved_choice'],
           work_id: 'library_work_1',
+          preparation: null,
+          preparation_outcomes: [],
         }, {
           review_case_id: null,
           title: 'Catalogue-only work',
@@ -69,6 +71,8 @@ describe('ReviewApiClient', () => {
           detail_url: null,
           dispositions: [],
           work_id: 'library_work_2',
+          preparation: null,
+          preparation_outcomes: [{ provider_requests: 2, lane_kind: 'isbn', provider: 'google-books', reason: 'Provider returned no matching metadata.', status: 'no_match' }],
         }],
       }),
     )
@@ -86,6 +90,8 @@ describe('ReviewApiClient', () => {
       mediaKind: 'ebook',
       attentionCount: 1,
       attention: 'needs_attention',
+      preparation: null,
+      preparationOutcomes: [],
     })
     expect(view.works[1]).toEqual({
       id: 'library_work_2',
@@ -95,6 +101,8 @@ describe('ReviewApiClient', () => {
       mediaKind: 'ebook',
       attentionCount: 0,
       attention: 'no_attention_needed',
+      preparation: null,
+      preparationOutcomes: [{ providerRequests: 2, laneKind: 'isbn', provider: 'google-books', reason: 'Provider returned no matching metadata.', status: 'no_match' }],
     })
     expect(JSON.stringify(view)).not.toContain('internal-item-2')
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/library?lens=all', expect.objectContaining({

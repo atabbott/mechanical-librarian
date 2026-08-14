@@ -41,6 +41,7 @@ from mechanical_librarian.application.review_web import (
     ReviewWebError,
     _decode_cursor,
     _encode_cursor,
+    _provider_outcomes,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import PipelineProgress
@@ -57,6 +58,8 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     FileFacts,
     MetadataReport,
+    ProviderObservation,
+    ProviderStatus,
     TargetDestination,
     TargetFacts,
     TargetField,
@@ -2458,6 +2461,143 @@ class ReviewWebTests(unittest.TestCase):
 
 
 class ReviewSessionPersistenceTests(unittest.TestCase):
+    def test_terminal_provider_taxonomy_projects_closed_safe_outcomes(self) -> None:
+        statuses = tuple(
+            status
+            for status in ProviderStatus
+            if status is not ProviderStatus.CANDIDATES
+        )
+        source = _report()
+        report = MetadataReport.create(
+            target=source.target,
+            file=source.file,
+            local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=tuple(
+                sorted(
+                    (
+                        ProviderObservation(f"provider-{index}", status)
+                        for index, status in enumerate(statuses)
+                    ),
+                    key=lambda provider: provider.provider,
+                )
+            ),
+        )
+        outcomes = _provider_outcomes(report)
+        self.assertEqual(
+            {outcome["status"] for outcome in outcomes},
+            {status.value for status in statuses}
+            - {"disabled", "insufficient_input"},
+        )
+        self.assertTrue(
+            all(
+                set(outcome)
+                == {"lane_kind", "provider", "provider_requests", "reason", "status"}
+                and outcome["provider_requests"] == 0
+                for outcome in outcomes
+            )
+        )
+        self.assertNotIn("diagnostic", json.dumps(outcomes))
+        many = MetadataReport.create(
+            target=source.target, file=source.file, local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=tuple(ProviderObservation(f"lane-{index:02d}", ProviderStatus.NO_MATCH) for index in range(33)),
+        )
+        self.assertEqual(len(_provider_outcomes(many)), 33)
+
+    def test_fifty_mixed_packages_and_failures_share_one_bounded_browse_window(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "review.sqlite")
+            repository.request_review_scan("primary", "fiction", "lib-1", "f" * 64, 10)
+            discovery = repository.claim_review_pipeline_action(11)
+            assert discovery is not None
+            from mechanical_librarian.application.catalogue import CatalogueEntry
+            entries = tuple(
+                CatalogueEntry("primary", "fiction", "lib-1", f"failed-{index:02d}", index, f"Failed {index:02d}", (), True, False, "singular-supported", f"{index + 1:064x}", f"/safe-{index}.epub", "epub", "/media")
+                for index in range(25)
+            )
+            repository.complete_review_discovery(discovery, 1, "a" * 64, entries, 12)
+            now = 13
+            while action := repository.claim_review_pipeline_action(now):
+                if action.stage == "extraction":
+                    repository.advance_review_pipeline_action(action, None, now + 1)
+                elif action.stage == "provider":
+                    repository.fail_review_pipeline_action(action, "authentication", False, now + 1, "hardcover-main")
+                else:
+                    self.fail(f"unexpected stage {action.stage}")
+                now += 2
+            for index in range(25):
+                source = _report(title=f"Published {index:02d}", content_digest=f"{index + 30:064x}"[-1], file_identity=f"{index + 60:064x}"[-1])
+                report = MetadataReport.create(
+                    target=TargetFacts("primary", "ebooks", f"published-{index:02d}", source.target.fields),
+                    file=source.file,
+                    local_claims=source.local_claims,
+                    local_reasons=source.local_reasons,
+                    providers=source.providers,
+                )
+                repository.publish(report, lambda: True)
+            total, attention = repository.count_current_review_cases(None)
+            rows = tuple(
+                row
+                for offset in range(0, 50, 7)
+                for row in repository.list_current_review_case_documents(None, 7, offset, None)
+            )
+            failed_total = repository.count_current_review_cases("fiction")[0]
+            published_total = repository.count_current_review_cases("ebooks")[0]
+            repository.close()
+        self.assertEqual((total, attention), (50, 0))
+        self.assertEqual((failed_total, published_total), (25, 25))
+        self.assertEqual(len(rows), 50)
+        self.assertEqual(len(set(rows)), 50)
+
+    def test_terminal_failed_work_is_library_only_and_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "review.sqlite")
+            repository.request_review_scan("primary", "fiction", "lib-1", "f" * 64, 10)
+            discovery = repository.claim_review_pipeline_action(11)
+            assert discovery is not None
+            from mechanical_librarian.application.catalogue import CatalogueEntry
+            repository.complete_review_discovery(discovery, 1, "a" * 64, (CatalogueEntry("primary", "fiction", "lib-1", "item-secret", 1, "Title", (), True, False, "singular-supported", "b" * 64, "/safe.epub", "epub", "/media"),), 12)
+            extraction = repository.claim_review_pipeline_action(13)
+            assert extraction is not None
+            repository.advance_review_pipeline_action(extraction, None, 14)
+            provider = repository.claim_review_pipeline_action(15)
+            assert provider is not None
+            repository.fail_review_pipeline_action(provider, "authentication", False, 16, "hardcover-main")
+            repository.publish(_report(), lambda: True)
+            first_page = repository.list_current_review_case_documents(None, 1, 0, None)
+            second_page = repository.list_current_review_case_documents(None, 1, 1, None)
+            title_rows = repository.list_current_review_case_documents(
+                "Preparation unavailable", 10, 0, None
+            )
+            media_rows = repository.list_current_review_case_documents(
+                "unknown", 10, 0, None
+            )
+            snapshot = repository.read_review_library(None, 10, 0, None)
+            title_total = repository.count_current_review_cases(
+                "Preparation unavailable"
+            )
+            media_total = repository.count_current_review_cases("unknown")
+            attention = repository.read_review_attention(None, 10, 0)
+            repository.close()
+        self.assertEqual(len(first_page), 1)
+        self.assertEqual(len(second_page), 1)
+        self.assertNotEqual(first_page, second_page)
+        self.assertEqual(snapshot.total, 2)
+        self.assertEqual(snapshot.attention_total, 0)
+        self.assertEqual(len(snapshot.rows), 2)
+        self.assertEqual((len(title_rows), title_total), (1, (1, 0)))
+        self.assertEqual((len(media_rows), media_total), (1, (1, 0)))
+        self.assertEqual(attention.total, 0)
+        from mechanical_librarian.application.review_web import _library_item
+        item = next(
+            _library_item(*row[:3])
+            for row in snapshot.rows
+            if _library_item(*row[:3])["preparation"] is not None
+        )
+        self.assertEqual(item["preparation"], {"attempt": 1, "provider": "hardcover-main", "reason": "Provider credentials need owner attention.", "recovery": "Retry review preparation after correcting the reported condition.", "recovery_attempt": 0, "stage": "provider", "status": "authentication"})
+        self.assertEqual(item["preparation_outcomes"], [])
+        self.assertNotIn("credential unavailable", json.dumps(item))
     def test_cover_state_is_inside_the_current_case_read_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "application.sqlite3"
