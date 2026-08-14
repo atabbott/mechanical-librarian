@@ -3100,7 +3100,10 @@
             "enum": [
               "waiting",
               "checking",
-              "dormant"
+              "dormant",
+              "recovered",
+              "fanout",
+              "exhausted"
             ],
             "title": "State",
             "type": "string"

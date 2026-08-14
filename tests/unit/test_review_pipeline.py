@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.provider_recovery import ProviderRecoveryStoreError
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.metadata_report import (
     CredentialError,
@@ -2008,6 +2009,125 @@ class _ScheduledPipeline:
         self.is_paused = paused
 
 
+class ProviderRecoveryPipelineTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.path = Path(self.temporary.name) / "reports.sqlite3"
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(self) -> None:
+        predecessor = _report(
+            title="Visible predecessor", content_digest="a", file_identity="b"
+        )
+        successor = _report(
+            title="Recovered successor", content_digest="a", file_identity="b"
+        )
+        repository = open_repository(self.path)
+        repository.enter_shadow_preview(1)
+        repository.close()
+
+        def pipeline_for(report: MetadataReport, now: int) -> ReviewPreparationPipeline:
+            proposal = evaluate_report(report)
+
+            def extract(bound, action: PipelineAction, claim_next: bool):
+                bound.publish(
+                    report, lambda: True,
+                    after_publication=lambda current, published: current.complete_review_extraction_publication(
+                        action, published.report_id, now, 0, None, claim_next, None
+                    ),
+                )
+                return report.report_id, True
+
+            def propose(bound, _: str) -> str:
+                bound.publish_proposal(proposal)
+                return proposal.proposal_set_id
+
+            def admit(bound, _: str) -> tuple[str, str | None]:
+                value = json.loads(bound.admit_review_case(proposal))
+                return value["status"], value.get("review_case_id")
+
+            def project(bound, action: PipelineAction) -> str:
+                outcome = bound.persist_shadow_outcome(
+                    action.review_case_id or "", now, staged_action=action
+                )
+                return "stale" if outcome == "stale" else "complete"
+
+            return ReviewPreparationPipeline(
+                repository_factory=lambda: open_repository(self.path),
+                libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
+                discover=lambda *_: (
+                    1, report.file.content_digest,
+                    (replace(_entry("item-1", report.file.identity), library="ebooks"),),
+                ),
+                extract=extract, providers=lambda *_: (), propose=propose,
+                admit=admit, project=project, clock=lambda: now,
+            )
+
+        initial = pipeline_for(predecessor, 20)
+        initial.request("primary", "ebooks")
+        for _ in range(5):
+            self.assertTrue(initial.run_next(1))
+        repository = open_repository(self.path)
+        predecessor_package = repository.current_review_package(
+            "primary", "ebooks", "item-1"
+        )
+        self.assertIsNotNone(predecessor_package)
+        current_document = repository.current_optional(
+            "primary", "ebooks", "item-1", predecessor.file.identity
+        )
+        self.assertIsNotNone(current_document)
+        assert current_document is not None
+        expected_current = MetadataReport.from_json(current_document).report_id
+        self.assertEqual(predecessor.report_id, expected_current)
+        repository.publish(
+            successor, lambda: True, expected_current,
+            after_publication=lambda bound, report: bound.stage_provider_retry_successor(
+                predecessor.report_id, report, 30
+            ),
+            expected_package=predecessor_package,
+        )
+        self.assertEqual(
+            predecessor_package,
+            repository.current_review_package("primary", "ebooks", "item-1"),
+        )
+        self.assertIsNone(
+            repository.completed_provider_retry_successor(predecessor.report_id)
+        )
+        repository.close()
+
+        recovery = pipeline_for(successor, 30)
+        self.assertTrue(recovery.run_recovery_successor(successor.report_id))
+        repository = open_repository(self.path)
+        current = repository.current_review_package("primary", "ebooks", "item-1")
+        self.assertIsNotNone(current)
+        assert current is not None
+        self.assertEqual(successor.report_id, current[1])
+        self.assertNotEqual(predecessor_package, current)
+        self.assertEqual(
+            successor.report_id,
+            repository.completed_provider_retry_successor(predecessor.report_id),
+        )
+        pending = repository.pending_provider_recovery_outbox()
+        self.assertEqual(2, len(pending))
+        self.assertEqual(successor.report_id, pending[-1][5])
+        repository.close()
+
+        restarted = open_repository(self.path)
+        replayed = restarted.pending_provider_recovery_outbox()
+        self.assertEqual(pending, replayed)
+        for row in replayed:
+            restarted.complete_provider_recovery_outbox(
+                row[0], delivered_at=row[9],
+            )
+            restarted.complete_provider_recovery_outbox(
+                row[0], delivered_at=row[9],
+            )
+        self.assertEqual((), restarted.pending_provider_recovery_outbox())
+        restarted.close()
+
+
 class ReviewPipelineSchedulingTests(unittest.TestCase):
     def test_startup_interval_and_pause_admission_are_bounded(self) -> None:
         clock = [100]
@@ -2121,6 +2241,50 @@ class ReviewPipelineSchedulingTests(unittest.TestCase):
             pipeline.requests,
             [("primary", "fiction"), ("primary", "non-fiction")],
         )
+
+    def test_lane_zero_wakes_recovery_with_the_supervisor_clock(self) -> None:
+        clock = [41]
+        pipeline = _ScheduledPipeline()
+        woken: list[int] = []
+        supervisor = ReviewPreparationSupervisor(
+            pipeline, clock=lambda: clock[0], recovery_wake=woken.append
+        )
+        def run_next() -> bool:
+            supervisor._stop.set()
+            return False
+        pipeline.run_next = run_next  # type: ignore[attr-defined]
+        supervisor._wake.set()
+        supervisor._run(0)
+        self.assertEqual([41], woken)
+
+    def test_lane_zero_contains_recovery_store_failure_and_continues(self) -> None:
+        pipeline = _ScheduledPipeline()
+        wakes: list[int] = []
+        supervisor: ReviewPreparationSupervisor
+
+        def recovery(now: int) -> None:
+            wakes.append(now)
+            if len(wakes) == 1:
+                supervisor._wake.set()
+                try:
+                    raise ProviderRecoveryStoreError("provider recovery persistence is unavailable")
+                except ProviderRecoveryStoreError as error:
+                    raise ReviewPipelineError("recovery") from error
+
+        supervisor = ReviewPreparationSupervisor(
+            pipeline, polling_interval_seconds=60, clock=lambda: 41,
+            recovery_wake=recovery,
+        )
+
+        def run_next() -> bool:
+            supervisor._stop.set()
+            return False
+
+        pipeline.run_next = run_next  # type: ignore[attr-defined]
+        supervisor._wake.set()
+        supervisor._run(0)
+        self.assertEqual([41, 41], wakes)
+        self.assertGreaterEqual(pipeline.status_calls, 1)
 
     def test_retry_is_limited_to_terminal_actionable_failure(self) -> None:
         pipeline = _ScheduledPipeline()

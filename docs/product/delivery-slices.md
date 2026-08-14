@@ -587,7 +587,7 @@ granting a release, tag, deployment, or production operation.
 | --- | --- | --- | --- |
 | F22 Complete per-work publication | #597 | After every provider lane reaches a terminal outcome, one work publishes its complete bounded result; sibling failure stays inspectable without hiding coherent evidence. | In delivery as a one-issue activation slice; independent focused prerequisite #418 is complete. |
 | F23 Qualified advisory cover review | #600 | Standard preparation automatically performs one bounded, qualified advisory cover review for the work. | Assigned one-issue activation slice; follows F22 and the final installed #591 Activity baseline. |
-| F24 Provider/configuration-scoped canary recovery | #408 | One durable provider- and configuration-scoped canary recovers safely within its bounded scope. | Assigned activation slice; #629 supplies its unreachable scoped retry-successor seam, while activation retains scheduling and canary authority. |
+| F24 Provider/configuration-scoped canary recovery | #408 | One durable provider- and configuration-scoped canary recovers safely within its bounded scope. | Activation candidate: the supervisor and owner CLI share exact canary/member claims; successful members complete #630's proposal, admission, projection, and atomic package cutover without rerunning healthy providers. |
 
 #418 is an independent focused prerequisite to F22, not an F22 constituent.
 #594, #595, #596, and #418 are focused defects with `Delivery slice: Not

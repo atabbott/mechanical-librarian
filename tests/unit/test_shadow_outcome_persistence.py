@@ -862,6 +862,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
+                database_authority=repository.authority,
                 provider_recovery=provider_recovery,
             )
 
@@ -904,6 +905,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
+                database_authority=repository.authority,
                 provider_recovery=provider_recovery,
             )
 

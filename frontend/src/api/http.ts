@@ -91,7 +91,7 @@ export interface ActivityLedgerView { event_type: ActivitySearch['eventType']; p
 export interface ActivityWaitingView { destination: string; library: string; state: string; work_id: string; work_label: string }
 export interface ActivityExampleView { after: unknown; before: unknown; destination: string; library: string; work_id: string; work_label: string }
 export interface ActivitySuspensionView { connection: string; destination: string | null; reason: string; scope: string; updated_at: number }
-export interface ProviderRecoveryActivityView { affected_count: number; next_eligible_at: number | null; state: 'waiting' | 'checking' | 'dormant' }
+export interface ProviderRecoveryActivityView { affected_count: number; next_eligible_at: number | null; state: 'waiting' | 'checking' | 'dormant' | 'recovered' | 'fanout' | 'exhausted' }
 export interface ActivityDisplayView {
   backup_ready: boolean
   capabilities: readonly ActivityCapabilityView[]
@@ -312,7 +312,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
   const providerRecovery = value.provider_recovery === undefined ? [] : value.provider_recovery
   if (!Array.isArray(providerRecovery)) throw new ApiError(502, 'invalid_provider_recovery')
   const recovery = providerRecovery.map((item, index) => {
-    if (!record(item) || !['waiting', 'checking', 'dormant'].includes(stringValue(item.state, `provider_recovery_state_${String(index)}`))) throw new ApiError(502, `invalid_provider_recovery_${String(index)}`)
+    if (!record(item) || !['waiting', 'checking', 'dormant', 'recovered', 'fanout', 'exhausted'].includes(stringValue(item.state, `provider_recovery_state_${String(index)}`))) throw new ApiError(502, `invalid_provider_recovery_${String(index)}`)
     const next = item.next_eligible_at === null ? null : integerValue(item.next_eligible_at, 'provider_recovery_next_eligible_at')
     if (next !== null && (!Number.isSafeInteger(next) || next < 0 || next > 8640000000000)) throw new ApiError(502, 'invalid_provider_recovery_timestamp')
     return { state: item.state as ProviderRecoveryActivityView['state'], affected_count: integerValue(item.affected_count, 'provider_recovery_affected_count'), next_eligible_at: next }

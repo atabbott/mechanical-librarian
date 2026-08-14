@@ -10,12 +10,15 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.providers import hardcover_metadata
 from mechanical_librarian.application.configuration import MediaMountConfiguration, ReportLimits
 from mechanical_librarian.application.metadata_report import (
-    ProviderBinding, ProviderLaneResult, TargetFile, TargetSnapshot, metadata_discovery_plan,
+    CredentialError, ProviderBinding, ProviderLaneResult, TargetFile, TargetSnapshot, metadata_discovery_plan,
     provider_observation,
 )
 from mechanical_librarian.application.provider_retry_successor import (
-    ConfiguredProviderRetry, GenerateProviderRetrySuccessor, ProviderRetrySuccessorError,
+    ConfiguredProviderRetry, GenerateProviderRetrySuccessor,
+    ProviderRetrySharedFailure, ProviderRetrySuccessorError,
 )
+from mechanical_librarian.bootstrap.composition import _classify_provider_recovery_failure
+from mechanical_librarian.adapters.providers.retry_safety import ProviderAttemptRecord
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind, ClaimScope, FileFacts, LocalClaim, MetadataReport, ProviderCandidate, ProviderQueryKind, ProviderRequestAccounting, ProviderStatus,
     TargetDestination, TargetFacts, TargetFieldState,
@@ -51,7 +54,7 @@ class _Repository:
 
 
 class _Provider:
-    def __init__(self, observation): self.observation = observation; self.plans = []; self.deadlines = []
+    def __init__(self, observation, attempt_records=()): self.observation = observation; self.plans = []; self.deadlines = []; self.attempt_records = attempt_records
     def observe(self, plan, *, deadline=None): self.plans.append(plan); self.deadlines.append(deadline); return self.observation
 
 
@@ -90,6 +93,75 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertNotEqual(self.report.report_id, successor.report_id)
         self.assertEqual(self.report.report_id, self.repository.package[1])
+
+    def test_observe_wrapped_credential_error_remains_authentication_for_recovery(self):
+        class CredentialProvider:
+            def observe(self, _plan, *, deadline=None):
+                del deadline
+                raise CredentialError("credential")
+
+        configured = ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, CredentialProvider, "open_library"),
+            "open_library", 2,
+        )
+        service = self.service(configured)
+        with self.assertRaises(ProviderRetrySuccessorError) as raised:
+            service._observe(configured, self.plan, (self.failed,), deadline=1.0)
+        self.assertIsInstance(raised.exception.__cause__, CredentialError)
+        self.assertEqual(
+            ("authentication", None),
+            _classify_provider_recovery_failure(raised.exception),
+        )
+
+    def test_generation_wake_alone_admits_authentication_lane_and_reclassifies_result(self):
+        original = provider_observation("catalogue", (
+            ProviderLaneResult(self.failed, ProviderStatus.AUTHENTICATION),
+            ProviderLaneResult(self.success, ProviderStatus.CANDIDATES, (ProviderCandidate("old", "work", ()),)),
+        ), authority="open_library")
+        report = MetadataReport.create(
+            target=self.report.target, file=self.report.file,
+            local_claims=self.report.local_claims,
+            local_reasons=self.report.local_reasons, providers=(original,),
+        )
+        self.repository = _Repository(report)
+        replacement = provider_observation("catalogue", (
+            ProviderLaneResult(self.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),
+        ), authority="open_library")
+        provider = _Provider(replacement)
+        service = self.service(ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, lambda: provider, "open_library"),
+            "open_library", 2,
+        ))
+        with self.assertRaisesRegex(ProviderRetrySuccessorError, "lane"):
+            service.run(
+                report.report_id, (self.failed.identity,),
+                provider_name="catalogue", adapter="open_library", generation=2,
+            )
+        self.assertEqual([], provider.plans)
+
+        successor = MetadataReport.from_json(service.run(
+            report.report_id, (self.failed.identity,),
+            provider_name="catalogue", adapter="open_library", generation=2,
+            generation_woken=True,
+        ))
+        self.assertNotEqual(report.report_id, successor.report_id)
+        self.assertEqual(ProviderStatus.CANDIDATES, successor.providers[0].lanes[0].status)
+
+        self.repository = _Repository(report)
+        still_auth = _Provider(provider_observation("catalogue", (
+            ProviderLaneResult(self.failed, ProviderStatus.AUTHENTICATION),
+        ), authority="open_library"))
+        failed = self.service(ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, lambda: still_auth, "open_library"),
+            "open_library", 2,
+        ))
+        with self.assertRaises(ProviderRetrySharedFailure):
+            failed.run(
+                report.report_id, (self.failed.identity,),
+                provider_name="catalogue", adapter="open_library", generation=2,
+                generation_woken=True,
+            )
+        self.assertEqual(report.report_id, self.repository.current_id)
 
     def test_none_returning_staging_receipt_succeeds(self):
         replacement = provider_observation("catalogue", (ProviderLaneResult(self.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),), authority="open_library")
@@ -202,6 +274,54 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
             service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)
         self.assertEqual(self.report.report_id, self.repository.current_id)
         self.assertEqual(self.report.report_id, self.repository.package[1])
+
+    def test_shared_terminal_matrix_is_typed_before_publication(self):
+        for status, failure in (
+            (ProviderStatus.AUTHENTICATION, "authentication"),
+            (ProviderStatus.AUTHORIZATION, "authorization"),
+            (ProviderStatus.RATE_LIMITED, "rate_limited"),
+            (ProviderStatus.UNAVAILABLE, "unavailable"),
+            (ProviderStatus.INCOMPLETE, "incomplete"),
+        ):
+            with self.subTest(status=status):
+                self.repository = _Repository(self.report)
+                provider = _Provider(provider_observation(
+                    "catalogue", (ProviderLaneResult(self.failed, status),),
+                    authority="open_library",
+                ))
+                service = self.service(ConfiguredProviderRetry(
+                    ProviderBinding("catalogue", True, lambda: provider, "open_library"),
+                    "open_library", 2,
+                ))
+                with self.assertRaises(ProviderRetrySharedFailure) as raised:
+                    service.run(
+                        self.report.report_id, (self.failed.identity,),
+                        provider_name="catalogue", adapter="open_library", generation=2,
+                    )
+                self.assertEqual(failure, raised.exception.failure)
+                self.assertEqual(self.report.report_id, self.repository.current_id)
+                self.assertEqual(self.report.report_id, self.repository.package[1])
+
+    def test_validated_final_retry_after_is_carried_by_shared_failure(self):
+        record = ProviderAttemptRecord(
+            "catalogue", 1, "http_429", 37.0, 0.1, "exhausted"
+        )
+        provider = _Provider(provider_observation(
+            "catalogue", (ProviderLaneResult(self.failed, ProviderStatus.RATE_LIMITED),),
+            authority="open_library",
+        ), (record,))
+        service = self.service(ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, lambda: provider, "open_library"),
+            "open_library", 2,
+        ))
+        with self.assertRaises(ProviderRetrySharedFailure) as raised:
+            service.run(
+                self.report.report_id, (self.failed.identity,),
+                provider_name="catalogue", adapter="open_library", generation=2,
+            )
+        self.assertEqual(("rate_limited", 37), (
+            raised.exception.failure, raised.exception.retry_after,
+        ))
 
     def test_merge_uses_one_timestamp_and_retains_bounded_evidence(self):
         diagnostic = FailureDiagnostic(

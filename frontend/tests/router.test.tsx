@@ -1,12 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../src/api/http'
-import type { ActivityDisplayView, ActivityView, AttentionSearch, AttentionView, CaseDetailView, HistoryView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
-import { createApplicationRouter, detailQuery, normalizeLibrarySearch, normalizePolicySearch } from '../src/router'
+import type { ActivityDisplayView, ActivitySearch, ActivityView, AttentionSearch, AttentionView, CaseDetailView, HistoryView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
+import { activityRoute, createApplicationRouter, detailQuery, normalizeLibrarySearch, normalizePolicySearch } from '../src/router'
 import { activityEventKeys, activityOutcome } from '../src/activityState'
 import { policyImpactDisplay, policyImpactTotals, policyRepresentationGuidance } from '../src/routes/PolicyPage'
 
@@ -1954,6 +1954,29 @@ describe('typed review routes', () => {
     expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
   })
 
+  it('projects all durable provider-recovery phases with safe scope and work units', async () => {
+    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
+      provider_recovery: [
+        { state: 'waiting', affected_count: 2, next_eligible_at: 1 },
+        { state: 'checking', affected_count: 1, next_eligible_at: null },
+        { state: 'fanout', affected_count: 3, next_eligible_at: null },
+        { state: 'recovered', affected_count: 1, next_eligible_at: null },
+        { state: 'dormant', affected_count: 2, next_eligible_at: null },
+        { state: 'exhausted', affected_count: 1, next_eligible_at: null },
+      ],
+    })) }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByRole('heading', { name: 'Provider recovery' })).toBeVisible()
+    expect(screen.getByText('Waiting for a safe retry').parentElement).toHaveTextContent('2 affected scopes')
+    expect(screen.getByText('Checking provider health').parentElement).toHaveTextContent('1 affected scope')
+    expect(screen.getByText('Retrying affected work').parentElement).toHaveTextContent('3 affected works')
+    expect(screen.getByText('Recovered').parentElement).toHaveTextContent('1 affected scope')
+    expect(screen.getByText('Needs a configuration change').parentElement).toHaveTextContent('2 affected scopes')
+    expect(screen.getByText('No further retry scheduled').parentElement).toHaveTextContent('1 affected scope')
+    expect(screen.queryByRole('button', { name: /provider.*retry/i })).toBeNull()
+  })
+
   it('retains distinct recovery facts without a completion estimate', async () => {
     const user = userEvent.setup()
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
@@ -2054,6 +2077,288 @@ describe('typed review routes', () => {
     await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
       expect.objectContaining({ eventType: 'policy', page: 2 }), expect.anything(),
     ))
+  })
+
+  it('preserves Activity drafts and control focus across interleaved route completion', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async (search: ActivitySearch) => activity({
+        ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 },
+      })),
+    }
+    renderRoute('/activity', http)
+
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)) })
+    const search = screen.getByRole('searchbox', { name: 'Search activity' })
+    await user.click(search)
+    await user.type(search, 'ab')
+    await waitFor(() => expect(search).toHaveValue('ab'))
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ q: 'ab', page: 1 }), expect.anything(),
+    ))
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveFocus())
+
+    await user.clear(search)
+    await user.type(search, 'desktop')
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ q: 'desktop', page: 1 }), expect.anything(),
+    ))
+    expect(search).toHaveValue('desktop')
+    expect(search).toHaveFocus()
+
+    const next = screen.getByRole('button', { name: 'Next' })
+    await user.click(next)
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ q: 'desktop', page: 2 }), expect.anything(),
+    ))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toHaveFocus())
+
+    const page = screen.getByRole('spinbutton', { name: 'Activity page number' })
+    await user.clear(page)
+    await user.type(page, '99{Enter}')
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 3 }), expect.anything(),
+    ))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveFocus())
+
+    const currentPage = screen.getByRole('spinbutton', { name: 'Activity page number' })
+    await user.clear(currentPage)
+    await user.type(currentPage, '2{Escape}')
+    expect(http.getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 3 }), expect.anything(),
+    )
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(3))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveFocus())
+
+    const dateRange = screen.getByRole('combobox', { name: 'Activity date range' })
+    await user.click(dateRange)
+    await user.click(screen.getByRole('option', { name: 'Last 90 days' }))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Activity date range' })).toHaveFocus())
+
+    const escapedPage = screen.getByRole('spinbutton', { name: 'Activity page number' })
+    await user.clear(escapedPage)
+    await user.type(escapedPage, '2{Escape}')
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveFocus())
+
+    const rows = screen.getByRole('combobox', { name: 'Rows per activity page' })
+    await user.click(rows)
+    await user.click(screen.getByRole('option', { name: '50 per page' }))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Rows per activity page' })).toHaveFocus())
+
+    await user.click(screen.getByRole('button', { name: 'Last' }))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(3))
+    const previous = screen.getByRole('button', { name: 'Previous' })
+    act(() => { previous.click(); previous.click() })
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(1))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveFocus())
+
+    await user.click(screen.getByRole('button', { name: 'Last' }))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(3))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveFocus())
+
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 3, pageSize: 50 }), expect.anything(),
+    ))
+  })
+
+  it('commits the next page edit once after an Escape cancellation', async () => {
+    const user = userEvent.setup()
+    const getActivity = vi.fn(async (search: ActivitySearch) => activity({
+      ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 },
+    }))
+    renderRoute('/activity', { ...createHttp(), getActivity })
+
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const page = screen.getByRole('spinbutton', { name: 'Activity page number' })
+    const callsBeforeEscape = getActivity.mock.calls.length
+    await user.clear(page)
+    await user.type(page, '2{Escape}')
+    expect(page).toHaveValue(1)
+    expect(page).toHaveFocus()
+    expect(getActivity).toHaveBeenCalledTimes(callsBeforeEscape)
+
+    await user.clear(page)
+    await user.type(page, '2')
+    await user.click(screen.getByRole('searchbox', { name: 'Search activity' }))
+    await waitFor(() => expect(getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 2 }), expect.anything(),
+    ))
+    expect(getActivity.mock.calls.filter(([search]) => search.page === 2)).toHaveLength(1)
+  })
+
+  it.each([['a', 'ab'], ['ab', 'a']] as const)('keeps the latest Activity query draft when deferred replacements complete %s then %s', async (first, second) => {
+    const deferred = new Map<string, { resolve: (value: ActivityView) => void }>()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn((search: ActivitySearch) => {
+        if (search.q !== 'a' && search.q !== 'ab') return Promise.resolve(activity({ ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 } }))
+        return new Promise<ActivityView>((resolve) => { deferred.set(search.q ?? '', { resolve }) })
+      }),
+    }
+    renderRoute('/activity', http)
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    vi.useFakeTimers()
+    try {
+      const query = screen.getByRole('searchbox', { name: 'Search activity' })
+      fireEvent.change(query, { target: { value: 'a' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+      expect(deferred.has('a')).toBe(true)
+      fireEvent.change(query, { target: { value: 'ab' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+      expect(deferred.has('ab')).toBe(true)
+
+      act(() => { deferred.get(first)?.resolve(activity({ ledger: { event_type: 'all', page: 1, page_count: 3, page_size: 25, query: first, range_days: 30, total: 75 } })) })
+      act(() => { deferred.get(second)?.resolve(activity({ ledger: { event_type: 'all', page: 1, page_count: 3, page_size: 25, query: second, range_days: 30, total: 75 } })) })
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('ab')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps slow sequential search editing focused when a prior dropdown replacement settles late', async () => {
+    const deferred = new Map<string, { resolve: (value: ActivityView) => void }>()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn((search: ActivitySearch) => {
+        const key = search.q ?? `rows-${String(search.pageSize)}`
+        if (search.pageSize !== 50 && !search.q?.startsWith('desktop')) return Promise.resolve(activity({ ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 } }))
+        return new Promise<ActivityView>((resolve) => { deferred.set(key, { resolve }) })
+      }),
+    }
+    const user = userEvent.setup({ delay: 175 })
+    renderRoute('/activity', http)
+
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const rows = screen.getByRole('combobox', { name: 'Rows per activity page' })
+    await user.click(rows)
+    await user.click(screen.getByRole('option', { name: '50 per page' }))
+    await waitFor(() => expect(deferred.has('rows-50')).toBe(true))
+
+    const search = screen.getByRole('searchbox', { name: 'Search activity' })
+    await user.click(search)
+    await user.type(search, 'desktop')
+    await waitFor(() => expect(deferred.has('desktop')).toBe(true))
+    expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('desktop')
+    expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveFocus()
+
+    act(() => { deferred.get('rows-50')?.resolve(activity({ ledger: { event_type: 'all', page: 1, page_count: 3, page_size: 50, query: null, range_days: 30, total: 75 } })) })
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('desktop'))
+    expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveFocus()
+
+    act(() => { deferred.get('desktop')?.resolve(activity({ ledger: { event_type: 'all', page: 1, page_count: 3, page_size: 50, query: 'desktop', range_days: 30, total: 75 } })) })
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'desktop' }), expect.anything()))
+  }, 10_000)
+
+  it('retains the Activity search draft through a pending same-query page-size replacement', async () => {
+    expect(activityRoute.options.pendingMs).toBe(Infinity)
+    let resolveRows: ((value: ActivityView) => void) | undefined
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn((search: ActivitySearch) => {
+        if (search.q === 'ab' && search.pageSize === 50) return new Promise<ActivityView>((resolve) => { resolveRows = resolve })
+        return Promise.resolve(activity({ ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 } }))
+      }),
+    }
+    const user = userEvent.setup()
+    renderRoute('/activity?q=ab', http)
+
+    const search = await screen.findByRole('searchbox', { name: 'Search activity' })
+    const rows = screen.getByRole('combobox', { name: 'Rows per activity page' })
+    await user.click(rows)
+    await user.click(screen.getByRole('option', { name: '50 per page' }))
+    await waitFor(() => expect(resolveRows).toBeTypeOf('function'))
+    search.focus()
+    await user.clear(search)
+    expect(screen.getByRole('searchbox', { name: 'Search activity' })).toBe(search)
+    expect(search).toHaveValue('')
+    expect(search).toHaveFocus()
+
+    act(() => { resolveRows?.(activity({ ledger: { event_type: 'all', page: 1, page_count: 3, page_size: 50, query: 'ab', range_days: 30, total: 75 } })) })
+    await waitFor(() => expect(search).toHaveValue(''))
+    expect(screen.getByRole('searchbox', { name: 'Search activity' })).toBe(search)
+    expect(search).toHaveFocus()
+
+    await user.type(search, 'desktop')
+    expect(search).toHaveValue('desktop')
+    expect(search).toHaveFocus()
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'desktop' }), expect.anything()))
+  })
+
+  it('uses memory-history traversal, rather than synthetic popstate, as Activity query and page authority', async () => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async (search: ActivitySearch) => activity({ ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 } })),
+    }
+    const user = userEvent.setup()
+    const { router } = renderRoute('/activity?q=first&page=1', http)
+
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await router.navigate({ to: '/activity', search: { eventType: 'all', q: 'second', rangeDays: 30, page: 2, pageSize: 25 } })
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('second'))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(2))
+
+    const editingSearch = screen.getByRole('searchbox', { name: 'Search activity' })
+    await user.clear(editingSearch)
+    await user.type(editingSearch, 'editing')
+    act(() => router.history.back())
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('first'))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(1))
+
+    act(() => router.history.forward())
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('second'))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(2))
+
+    await router.navigate({ to: '/activity', search: { eventType: 'all', q: 'second', rangeDays: 30, page: 3, pageSize: 25 } })
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(3))
+    act(() => router.history.back())
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('second'))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(2))
+
+    fireEvent.popState(window)
+    expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('second')
+    expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(2)
+  })
+
+  it('gives a traversal target authority over an abandoned local page identity', async () => {
+    const deferred = new Map<number, (value: ActivityView) => void>()
+    const getActivity = vi.fn((search: ActivitySearch) => {
+      if (search.page === 1) return Promise.resolve(activity({ ledger: { event_type: search.eventType, page: 1, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 } }))
+      return new Promise<ActivityView>((resolve) => { deferred.set(search.page, resolve) })
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity,
+    }
+    const user = userEvent.setup()
+    const { router } = renderRoute('/activity?q=canonical&page=1', http)
+
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+    await waitFor(() => expect(deferred.has(2)).toBe(true))
+    await user.click(screen.getByRole('button', { name: 'Next' }))
+    await waitFor(() => expect(deferred.has(3)).toBe(true))
+    act(() => { deferred.get(3)?.(activity({ ledger: { event_type: 'all', page: 3, page_count: 3, page_size: 25, query: 'canonical', range_days: 30, total: 75 } })) })
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(3))
+
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(screen.getByRole('searchbox', { name: 'Search activity' }), { target: { value: 'draft' } })
+      act(() => router.history.back())
+      await act(async () => { await vi.advanceTimersByTimeAsync(151) })
+      expect(getActivity.mock.calls.some(([search]) => search.q === 'draft')).toBe(false)
+      expect(router.state.location.search).toMatchObject({ q: 'canonical', page: 2 })
+      act(() => { deferred.get(2)?.(activity({ ledger: { event_type: 'all', page: 2, page_count: 3, page_size: 25, query: 'canonical', range_days: 30, total: 75 } })) })
+      await act(async () => { await Promise.resolve() })
+      expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('canonical')
+      expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(2)
+      expect(router.state.location.search).toMatchObject({ q: 'canonical', page: 2 })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keeps an unknown direct entry inside a safe shell fallback', async () => {

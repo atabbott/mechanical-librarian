@@ -20,6 +20,7 @@ CoverReviewRunner = Callable[
     [Path, Path, Path, str, str, str | None, str | None], dict[str, object]
 ]
 ReviewActivityRunner = Callable[[Path, Path], dict[str, object]]
+ProviderRecoveryRunner = Callable[[Path, Path, Path, Path], None]
 _MAX_PROFILE_BYTES = 16_384
 
 
@@ -84,6 +85,11 @@ def _parser() -> _Parser:
     )
     activity.add_argument("--config", required=True, metavar="PATH", type=Path)
     activity.add_argument("--database", required=True, metavar="PATH", type=Path)
+    recovery = commands.add_parser("provider-recovery", help="run one durable provider recovery claim")
+    recovery.add_argument("--config", required=True, metavar="PATH", type=Path)
+    recovery.add_argument("--database", required=True, metavar="PATH", type=Path)
+    recovery.add_argument("--catalogue", required=True, metavar="PATH", type=Path)
+    recovery.add_argument("--artifacts", required=True, metavar="PATH", type=Path)
     return parser
 
 
@@ -91,6 +97,7 @@ def main(argv: Sequence[str] | None = None, *, review_serve_runner: ReviewServeR
          policy_preview_runner: PolicyPreviewRunner | None = None,
          cover_review_runner: CoverReviewRunner | None = None,
          review_activity_runner: ReviewActivityRunner | None = None,
+         provider_recovery_runner: ProviderRecoveryRunner | None = None,
          stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
     """Run the closed installed operations without exposing workbench tools."""
     output = sys.stdout if stdout is None else stdout
@@ -114,6 +121,11 @@ def main(argv: Sequence[str] | None = None, *, review_serve_runner: ReviewServeR
                 )
                 + "\n"
             )
+            return 0
+        if arguments.command == "provider-recovery":
+            if provider_recovery_runner is None:
+                raise RuntimeError("runtime composition unavailable")
+            provider_recovery_runner(arguments.config, arguments.database, arguments.catalogue, arguments.artifacts)
             return 0
         if arguments.command == "cover-review":
             if cover_review_runner is None:

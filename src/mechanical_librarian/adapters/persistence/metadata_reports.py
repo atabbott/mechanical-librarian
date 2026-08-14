@@ -231,6 +231,21 @@ _CURRENT_REVIEW_PACKAGES_SQL = (
     "OR (outcome IN ('no_case','retired') AND proposal_set_id IS NOT NULL AND review_case_id IS NULL AND checkpoint IS NOT NULL)), "
     "PRIMARY KEY(connection_name,library_name,item_id))"
 )
+_PROVIDER_RECOVERY_OUTBOX_SQL = (
+    "CREATE TABLE provider_recovery_outbox ("
+    "outbox_id TEXT PRIMARY KEY NOT NULL CHECK(outbox_id GLOB 'recovery_outbox_[0-9a-f]*' AND length(outbox_id)=80), "
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
+    "proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), "
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "review_case_id TEXT REFERENCES review_cases(review_case_id), "
+    "checkpoint INTEGER CHECK(checkpoint IS NULL OR checkpoint>=1), "
+    "outcome TEXT NOT NULL CHECK(outcome IN ('report_only','admitted','superseded','no_case','retired')), "
+    "created_at INTEGER NOT NULL CHECK(created_at>=0), "
+    "delivered_at INTEGER CHECK(delivered_at IS NULL OR delivered_at>=created_at), "
+    "CHECK ((outcome='report_only' AND proposal_set_id IS NULL AND review_case_id IS NULL AND checkpoint IS NULL) "
+    "OR (outcome IN ('admitted','superseded') AND proposal_set_id IS NOT NULL AND review_case_id IS NOT NULL AND checkpoint IS NOT NULL) "
+    "OR (outcome IN ('no_case','retired') AND proposal_set_id IS NOT NULL AND review_case_id IS NULL AND checkpoint IS NOT NULL)))"
+)
 _REVIEW_TRANSITIONS_SQL = (
     "CREATE TABLE review_case_transitions ("
     "transition_id TEXT PRIMARY KEY NOT NULL CHECK(transition_id GLOB 'review_transition_[0-9a-f]*' AND length(transition_id)=82), "
@@ -268,7 +283,7 @@ _REVIEW_WORK_SQL = (
     "catalogue_generation INTEGER NOT NULL CHECK(catalogue_generation>0), catalogue_fingerprint TEXT NOT NULL CHECK(length(catalogue_fingerprint)=64 AND catalogue_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "stage TEXT NOT NULL CHECK(stage IN ('extraction','provider','proposal','admission','projection','complete')), "
     "state TEXT NOT NULL CHECK(state IN ('queued','running','complete','failed','stale')), attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt BETWEEN 0 AND 3), recovery_attempt INTEGER NOT NULL DEFAULT 0 CHECK(recovery_attempt BETWEEN 0 AND 3), retry_not_before INTEGER NOT NULL DEFAULT 0 CHECK(retry_not_before>=0), "
-    "report_id TEXT REFERENCES metadata_reports(report_id), proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
+    "report_id TEXT REFERENCES metadata_reports(report_id), recovery_source_report_id TEXT REFERENCES metadata_reports(report_id), proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
     "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('provider','configuration','authentication','stale','transient','projection','failed','currentness')), "
     "failure_root TEXT CHECK(failure_root IS NULL OR (failure_code='authentication' AND typeof(failure_root)='text' AND length(CAST(failure_root AS BLOB)) BETWEEN 1 AND 64 AND failure_root NOT GLOB '*[^a-z0-9_-]*' AND substr(failure_root,1,1) GLOB '[a-z]')), "
     "updated_at INTEGER NOT NULL CHECK(updated_at>=0), UNIQUE(scan_id,item_id))"
@@ -3620,7 +3635,7 @@ class SQLiteMetadataReportRepository:
                     self._connection.execute(
                         "UPDATE review_preparation_work SET stage='extraction',"
                         "state='queued',attempt=0,recovery_attempt=0,library_id=?,producer_fingerprint=?,"
-                        "report_id=NULL,"
+                        "report_id=NULL,recovery_source_report_id=NULL,"
                         "proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL,"
                         "failure_root=NULL "
                         "WHERE scan_id=?",
@@ -3829,6 +3844,142 @@ class SQLiteMetadataReportRepository:
                 raise
             raise MetadataReportError("review preparation claim failed") from error
 
+    def claim_review_pipeline_work(
+        self, work_id: str, claimed_at: int
+    ) -> PipelineAction | None:
+        """Claim one named queued successor without bypassing stage handling."""
+        if type(work_id) is not str or type(claimed_at) is not int or claimed_at < 0:
+            raise MetadataReportError("review preparation state is invalid")
+        owns_transaction = not self._connection.in_transaction
+        try:
+            if owns_transaction:
+                self._connection.execute("BEGIN IMMEDIATE")
+            work = self._connection.execute(
+                "SELECT work_id,scan_id,stage,attempt,connection_name,library_name,library_id,"
+                "producer_fingerprint,catalogue_generation,catalogue_fingerprint,item_id,"
+                "file_identity,source_revision,report_id,proposal_set_id,review_case_id,"
+                "source_fingerprint,(SELECT checkpoint FROM current_review_case_lineages lineage "
+                "WHERE lineage.connection_name=review_preparation_work.connection_name "
+                "AND lineage.library_name=review_preparation_work.library_name "
+                "AND lineage.item_id=review_preparation_work.item_id "
+                "AND lineage.proposal_set_id=review_preparation_work.proposal_set_id "
+                "AND lineage.report_id=review_preparation_work.report_id "
+                "AND lineage.review_case_id=review_preparation_work.review_case_id),"
+                "(SELECT generation FROM metadata_policy_state WHERE singleton=1) "
+                "FROM review_preparation_work WHERE work_id=? AND state='queued' "
+                "AND retry_not_before<=? AND EXISTS(SELECT 1 FROM review_preparation_scans s "
+                "WHERE s.scan_id=review_preparation_work.scan_id AND s.state='processing')",
+                (work_id, claimed_at),
+            ).fetchone()
+            if work is None:
+                if owns_transaction:
+                    self._connection.execute("COMMIT")
+                return None
+            attempt = work[3] + 1
+            if self._connection.execute(
+                "UPDATE review_preparation_work SET state='running',attempt=?,updated_at=? "
+                "WHERE work_id=? AND state='queued'",
+                (attempt, claimed_at, work_id),
+            ).rowcount != 1:
+                raise MetadataReportError("review preparation claim changed")
+            if owns_transaction:
+                self._connection.execute("COMMIT")
+            return PipelineAction(
+                work[0], work[1], work[2], attempt, work[4], work[5], work[6],
+                work[7], work[8], work[9], work[10], work[11], work[12], work[13],
+                work[14], work[15], work[16], work[17], work[18],
+            )
+        except (sqlite3.Error, MetadataReportError) as error:
+            if owns_transaction and self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("review preparation claim failed") from error
+
+    def stage_provider_retry_successor(
+        self, source_report_id: str, report: MetadataReport, staged_at: int
+    ) -> str:
+        """Attach a retry report to its existing work before publication commits."""
+        if (
+            not self._connection.in_transaction
+            or type(source_report_id) is not str
+            or not source_report_id
+            or type(report) is not MetadataReport
+            or type(staged_at) is not int
+            or staged_at < 0
+        ):
+            raise MetadataReportError("provider retry staging is invalid")
+        row = self._connection.execute(
+            "SELECT work_id,scan_id FROM review_preparation_work WHERE connection_name=? "
+            "AND library_name=? AND item_id=? AND file_identity=? "
+            "AND report_id=? AND state IN ('complete','failed','stale')",
+            (report.target.connection, report.target.library, report.target.item,
+             report.file.identity, source_report_id),
+        ).fetchone()
+        if row is None:
+            raise MetadataReportError("provider retry staging is stale")
+        if self._connection.execute(
+            "UPDATE review_preparation_work SET stage='provider',state='queued',attempt=0,"
+            "recovery_attempt=0,retry_not_before=0,report_id=?,proposal_set_id=NULL,"
+            "review_case_id=NULL,recovery_source_report_id=?,failure_code=NULL,failure_root=NULL,updated_at=? "
+            "WHERE work_id=? AND state IN ('complete','failed','stale')",
+            (report.report_id, source_report_id, staged_at, row[0]),
+        ).rowcount != 1:
+            raise MetadataReportError("provider retry staging changed")
+        self._connection.execute(
+            "UPDATE review_preparation_scans SET state='processing',updated_at=? "
+            "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
+            (staged_at, row[1]),
+        )
+        return row[0]
+
+    def provider_retry_work_id(self, report_id: str) -> str:
+        try:
+            row = self._connection.execute(
+                "SELECT work_id FROM review_preparation_work WHERE report_id=? "
+                "AND stage IN ('provider','proposal','admission','projection','complete')",
+                (report_id,),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise MetadataReportError("provider retry staging is unavailable") from error
+        if row is None:
+            raise MetadataReportError("provider retry staging is stale")
+        return row[0]
+
+    def provider_retry_complete(self, report_id: str) -> bool:
+        try:
+            row = self._connection.execute(
+                "SELECT 1 FROM review_preparation_work w WHERE w.report_id=? "
+                "AND w.stage='complete' AND w.state='complete' AND EXISTS("
+                "SELECT 1 FROM current_review_packages p WHERE p.connection_name=w.connection_name "
+                "AND p.library_name=w.library_name AND p.item_id=w.item_id AND p.report_id=w.report_id)",
+                (report_id,),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise MetadataReportError("provider retry staging is unavailable") from error
+        return row is not None
+
+    def completed_provider_retry_successor(
+        self, source_report_id: str
+    ) -> str | None:
+        """Return only the exact staged successor that completed package cutover."""
+        if type(source_report_id) is not str or not source_report_id:
+            raise MetadataReportError("provider retry staging is invalid")
+        try:
+            rows = self._connection.execute(
+                "SELECT w.report_id FROM review_preparation_work w "
+                "JOIN current_review_packages p ON p.connection_name=w.connection_name "
+                "AND p.library_name=w.library_name AND p.item_id=w.item_id "
+                "AND p.report_id=w.report_id WHERE w.recovery_source_report_id=? "
+                "AND w.stage='complete' AND w.state='complete' LIMIT 2",
+                (source_report_id,),
+            ).fetchall()
+        except sqlite3.Error as error:
+            raise MetadataReportError("provider retry staging is unavailable") from error
+        if len(rows) > 1:
+            raise MetadataReportError("provider retry staging conflicts")
+        return None if not rows else rows[0][0]
+
     def complete_review_discovery(
         self,
         action: PipelineAction,
@@ -3996,7 +4147,10 @@ class SQLiteMetadataReportRepository:
                     "catalogue_fingerprint=excluded.catalogue_fingerprint,"
                     "stage=excluded.stage,state=excluded.state,attempt=0,recovery_attempt=0,retry_not_before=0,"
                     "report_id=excluded.report_id,proposal_set_id=excluded.proposal_set_id,"
-                    "review_case_id=excluded.review_case_id,failure_code=NULL,failure_root=NULL,"
+                    "review_case_id=excluded.review_case_id,recovery_source_report_id="
+                    "CASE WHEN excluded.report_id IS NULL THEN NULL "
+                    "ELSE review_preparation_work.recovery_source_report_id END,"
+                    "failure_code=NULL,failure_root=NULL,"
                     "updated_at=excluded.updated_at",
                     (
                         work_id,
@@ -4159,8 +4313,9 @@ class SQLiteMetadataReportRepository:
         output_id: str | None,
         completed_at: int,
         claim_next: bool = False,
+        exact_next: bool = False,
     ) -> PipelineAction | None:
-        if type(claim_next) is not bool:
+        if type(claim_next) is not bool or type(exact_next) is not bool or (claim_next and exact_next):
             raise MetadataReportError("review preparation state is invalid")
         stages = {
             "extraction": ("provider", "report_id"),
@@ -4240,6 +4395,17 @@ class SQLiteMetadataReportRepository:
                     "review_case_id=excluded.review_case_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
                     (action.connection, action.library, action.item_id, *pointer),
                 )
+                outbox_id = _provider_recovery_outbox_id(
+                    action.connection, action.library, action.item_id, *pointer,
+                )
+                self._connection.execute(
+                    "INSERT INTO provider_recovery_outbox(outbox_id,connection_name,"
+                    "library_name,item_id,proposal_set_id,report_id,review_case_id,"
+                    "checkpoint,outcome,created_at,delivered_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,NULL) ON CONFLICT(outbox_id) DO NOTHING",
+                    (outbox_id, action.connection, action.library, action.item_id,
+                     *pointer, completed_at),
+                )
             if target[0] == "complete":
                 transition_row = self._connection.execute(
                     "SELECT transition_id FROM metadata_policy_transition_items WHERE work_id=? AND state='pending'",
@@ -4262,7 +4428,11 @@ class SQLiteMetadataReportRepository:
             next_action = (
                 self.claim_review_pipeline_action(completed_at)
                 if claim_next
-                else None
+                else (
+                    self.claim_review_pipeline_work(action.action_id, completed_at)
+                    if exact_next and target[0] != "complete"
+                    else None
+                )
             )
             self._connection.commit()
             return next_action
@@ -4477,7 +4647,8 @@ class SQLiteMetadataReportRepository:
                     "state=CASE WHEN recovery_attempt<2 THEN 'queued' ELSE 'failed' END,"
                     "attempt=0,recovery_attempt=recovery_attempt+1,"
                     "retry_not_before=CASE WHEN recovery_attempt<2 THEN ? ELSE 0 END,"
-                    "report_id=NULL,proposal_set_id=NULL,review_case_id=NULL,"
+                    "report_id=NULL,recovery_source_report_id=NULL,"
+                    "proposal_set_id=NULL,review_case_id=NULL,"
                     "failure_code='transient',failure_root=NULL,updated_at=? WHERE work_id=? AND stage=? "
                     "AND state='running' AND attempt=?",
                     (
@@ -6290,10 +6461,13 @@ class SQLiteMetadataReportRepository:
         self._connection.execute(
             "UPDATE review_preparation_work SET stage=?,state='queued',attempt=0,"
             "recovery_attempt=0,report_id=?,proposal_set_id=NULL,review_case_id=NULL,"
+            "recovery_source_report_id=CASE WHEN ?='extraction' THEN NULL "
+            "ELSE recovery_source_report_id END,"
             "failure_code=NULL,failure_root=NULL,updated_at=? WHERE work_id=?",
             (
                 restart_stage,
                 None if restart_stage == "extraction" else report_id,
+                restart_stage,
                 updated_at,
                 work_id,
             ),
@@ -7807,6 +7981,68 @@ class SQLiteMetadataReportRepository:
         package = self.current_review_package(connection, library, item)
         return None if package is None else package[1]
 
+    def pending_provider_recovery_outbox(
+        self, *, limit: int = 100,
+    ) -> tuple[tuple[object, ...], ...]:
+        """Return bounded exact package cutovers awaiting recovery enqueue."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise MetadataReportError("provider recovery outbox query is invalid")
+        try:
+            rows = self._connection.execute(
+                "SELECT outbox_id,connection_name,library_name,item_id,"
+                "proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at "
+                "FROM provider_recovery_outbox WHERE delivered_at IS NULL "
+                "ORDER BY created_at,outbox_id LIMIT ?", (limit,),
+            ).fetchall()
+            for row in rows:
+                _validate_provider_recovery_outbox_row(row)
+            return tuple(rows)
+        except MetadataReportError:
+            raise
+        except sqlite3.Error as error:
+            raise MetadataReportError(
+                "provider recovery outbox is unavailable"
+            ) from error
+
+    def complete_provider_recovery_outbox(
+        self, outbox_id: str, *, delivered_at: int,
+    ) -> None:
+        """Mark one exact cutover delivered only after idempotent enqueue."""
+        if (type(outbox_id) is not str or type(delivered_at) is not int
+                or delivered_at < 0):
+            raise MetadataReportError("provider recovery outbox completion is invalid")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT outbox_id,connection_name,library_name,item_id,"
+                "proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at,"
+                "delivered_at FROM provider_recovery_outbox WHERE outbox_id=?",
+                (outbox_id,),
+            ).fetchone()
+            if row is None:
+                raise MetadataReportError("provider recovery outbox changed")
+            _validate_provider_recovery_outbox_row(row[:10])
+            if row[10] is None:
+                if delivered_at < row[9] or self._connection.execute(
+                    "UPDATE provider_recovery_outbox SET delivered_at=? "
+                    "WHERE outbox_id=? AND delivered_at IS NULL",
+                    (delivered_at, outbox_id),
+                ).rowcount != 1:
+                    raise MetadataReportError("provider recovery outbox changed")
+            elif type(row[10]) is not int or row[10] < row[9]:
+                raise MetadataReportError("provider recovery outbox changed")
+            self._connection.execute("COMMIT")
+        except MetadataReportError:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
+        except sqlite3.Error as error:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise MetadataReportError(
+                "provider recovery outbox is unavailable"
+            ) from error
+
     def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None:
         try:
             row = self._connection.execute(
@@ -8194,6 +8430,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_REVIEW_CASES_SQL)
             connection.execute(_REVIEW_POINTERS_SQL)
             connection.execute(_CURRENT_REVIEW_PACKAGES_SQL)
+            connection.execute(_PROVIDER_RECOVERY_OUTBOX_SQL)
             connection.execute(_REVIEW_TRANSITIONS_SQL)
             connection.execute(_REVIEW_SCANS_SQL)
             connection.execute(_REVIEW_CONTROL_SQL)
@@ -8495,6 +8732,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
         ("index", "sqlite_autoindex_current_review_case_lineages_1", None),
         ("index", "sqlite_autoindex_current_review_packages_1", None),
+        ("index", "sqlite_autoindex_provider_recovery_outbox_1", None),
         ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
         ("index", "metadata_report_cover_references_artifact_id", _COVER_ARTIFACT_INDEX_SQL),
         ("index", "metadata_report_cover_references_preview_digest", _COVER_PREVIEW_INDEX_SQL),
@@ -8554,6 +8792,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
         ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
         ("table", "current_review_packages", _CURRENT_REVIEW_PACKAGES_SQL),
+        ("table", "provider_recovery_outbox", _PROVIDER_RECOVERY_OUTBOX_SQL),
         ("table", "cover_considerations", _COVER_CONSIDERATIONS_SQL),
         ("table", "current_cover_considerations", _CURRENT_COVER_CONSIDERATIONS_SQL),
         ("table", "cover_consideration_events", _COVER_CONSIDERATION_EVENTS_SQL),
@@ -8621,6 +8860,12 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         raise MetadataReportError("database is unavailable or incompatible")
     _validate_metadata_policy_documents(connection)
     _validate_field_effect_state(connection)
+    for row in connection.execute(
+        "SELECT outbox_id,connection_name,library_name,item_id,proposal_set_id,"
+        "report_id,review_case_id,checkpoint,outcome,created_at "
+        "FROM provider_recovery_outbox"
+    ):
+        _validate_provider_recovery_outbox_row(row)
 
 
 def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:
@@ -9029,6 +9274,33 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
 
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _provider_recovery_outbox_id(
+    connection: str, library: str, item: str, proposal_id: str | None,
+    report_id: str, case_id: str | None, checkpoint: int | None, outcome: str,
+) -> str:
+    document = _canonical_json({
+        "case_id": case_id, "checkpoint": checkpoint, "connection": connection,
+        "item": item, "library": library, "outcome": outcome,
+        "proposal_id": proposal_id, "report_id": report_id,
+    })
+    return "recovery_outbox_" + hashlib.sha256(document.encode("utf-8")).hexdigest()
+
+
+def _validate_provider_recovery_outbox_row(row: tuple[object, ...]) -> None:
+    if (
+        len(row) != 10
+        or not all(type(row[index]) is str and row[index] for index in (0, 1, 2, 3, 5, 8))
+        or (row[4] is not None and (type(row[4]) is not str or not row[4]))
+        or (row[6] is not None and (type(row[6]) is not str or not row[6]))
+        or (row[7] is not None and (type(row[7]) is not int or row[7] < 1))
+        or type(row[9]) is not int or row[9] < 0
+        or row[0] != _provider_recovery_outbox_id(
+            row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]
+        )
+    ):
+        raise MetadataReportError("provider recovery outbox is invalid")
 
 
 def _operational_signal(kind: str, cause: str, scope: str, *,

@@ -557,6 +557,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                     ("metadata_report_cover_references",),
                     ("metadata_reports",),
                     ("proposal_sets",),
+                    ("provider_recovery_outbox",),
                     ("review_case_transitions",),
                     ("review_cases",),
                     ("review_login_failures",),
@@ -576,6 +577,39 @@ class MetadataPersistenceTests(unittest.TestCase):
             self.assertEqual(reopened.get(first.report_id), first.to_json())
             self.assertEqual(reopened.current("primary", "ebooks", "item-1", "a" * 64), second.to_json())
             reopened.close()
+
+    def test_provider_recovery_outbox_rejects_digest_corruption_on_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            repository = open_repository(path)
+            report = _report()
+            repository.publish(report, lambda: True)
+            outbox_id = metadata_persistence._provider_recovery_outbox_id(
+                report.target.connection, report.target.library,
+                report.target.item, None, report.report_id, None, None,
+                "report_only",
+            )
+            repository._connection.execute(
+                "INSERT INTO provider_recovery_outbox(outbox_id,connection_name,"
+                "library_name,item_id,proposal_set_id,report_id,review_case_id,"
+                "checkpoint,outcome,created_at,delivered_at) "
+                "VALUES(?,?,?,?,NULL,?,NULL,NULL,'report_only',1,NULL)",
+                (outbox_id, report.target.connection, report.target.library,
+                 report.target.item, report.report_id),
+            )
+            repository._connection.commit()
+            repository.close()
+            open_repository(path).close()
+
+            connection = sqlite3.connect(path)
+            connection.execute(
+                "UPDATE provider_recovery_outbox SET outbox_id=?",
+                ("recovery_outbox_" + "0" * 64,),
+            )
+            connection.commit()
+            connection.close()
+            with self.assertRaisesRegex(MetadataReportError, "outbox"):
+                open_repository(path)
 
     def test_same_candidate_replay_converges_after_a_stale_null_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

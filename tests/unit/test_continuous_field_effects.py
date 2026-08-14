@@ -735,6 +735,30 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
                 activity_only=True,
             )
 
+    def test_activity_accepts_activated_recovery_states_and_rejects_unknown_state(self) -> None:
+        class Repository(_PagedRepository):
+            def field_effect_activity_data(self, _limit):
+                return {
+                    "consented_destinations": [], "consented_libraries": [],
+                    "counts": {}, "events": [], "paused": False,
+                    "suspensions": [],
+                }
+
+        def service(snapshot):
+            return ContinuousGuardedApplication(
+                Repository([]), {}, {}, _Authority(),
+                (("primary", "alpha"),), lambda: 1, lambda *_: None,
+                activity_only=True, provider_recovery_snapshot=lambda: snapshot,
+            )
+
+        snapshot = (
+            {"state": "fanout", "affected_count": 3, "next_eligible_at": None},
+            {"state": "exhausted", "affected_count": 1, "next_eligible_at": None},
+        )
+        self.assertEqual(list(snapshot), service(snapshot).activity()["provider_recovery"])
+        with self.assertRaisesRegex(GuardedApplicationError, "activity"):
+            service(({"state": "unknown", "affected_count": 1, "next_eligible_at": None},)).activity()
+
     def test_activity_strips_valid_cleanup_and_rejects_malformed_cleanup(self) -> None:
         decision = self._decisions(1)[0]
 
