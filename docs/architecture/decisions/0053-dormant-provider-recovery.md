@@ -31,6 +31,11 @@ observations are atomic and idempotent: checking and dormant take precedence,
 and a dormant observation replaces waiting once without rescheduling repeated
 transient or rate-limited observations.
 
+The recovery database is created atomically only when its named objects are
+absent; unrelated SQLite objects are preserved, while partial or mismatched
+recovery objects fail closed. Its one shared connection serializes every query
+and transaction across worker threads and closes after the supervisor drains.
+
 ## Consequences
 
 ### Positive

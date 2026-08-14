@@ -20,6 +20,11 @@ generation, state, attempt, and timing data. It never stores credentials,
 provider payloads, raw retry headers, query values, filesystem paths, or work
 identifiers.
 
+The trusted owner-only `private` directory is created and validated before the
+server opens recovery state. The shared local store serializes every recovery
+transaction and snapshot across supervisor and Activity threads, then closes
+after those workers drain.
+
 Terminal health observations are idempotent. In one generation, checking and
 dormant state take precedence; a dormant observation may replace waiting once,
 while repeated transient or rate-limited observations do not reschedule it.

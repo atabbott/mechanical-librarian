@@ -528,6 +528,7 @@ class ReviewPreparationSupervisor:
         polling_interval_seconds: int | None = None,
         graceful_shutdown_seconds: int = 30,
         clock: Callable[[], int] = lambda: int(time.time()),
+        on_stop: Callable[[], None] | None = None,
     ) -> None:
         if polling_interval_seconds is not None and (
             type(polling_interval_seconds) is not int
@@ -548,6 +549,7 @@ class ReviewPreparationSupervisor:
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._threads: tuple[threading.Thread, ...] = ()
+        self._on_stop = on_stop
 
     @property
     def libraries(self) -> tuple[tuple[str, str, str], ...]:
@@ -593,6 +595,9 @@ class ReviewPreparationSupervisor:
         self._threads = active
         if active:
             raise ReviewPipelineError("shutdown_timeout")
+        if self._on_stop is not None:
+            self._on_stop()
+            self._on_stop = None
 
     def request(self, connection: str, library: str) -> PipelineProgress:
         if self._pipeline.paused():

@@ -2,14 +2,60 @@ from __future__ import annotations
 
 import sqlite3
 import tempfile
+import threading
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.provider_recovery import ProviderRecoveryStoreError, SQLiteProviderRecoveryStore
+import mechanical_librarian.adapters.persistence.provider_recovery as recovery_persistence
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP, ProviderRecovery, ProviderRecoveryError
 
 
 class ProviderRecoveryTests(unittest.TestCase):
+    def test_bootstrap_preserves_unrelated_objects_and_rejects_partial_or_rolled_back_schema(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "recovery.sqlite"
+            connection = sqlite3.connect(path)
+            connection.execute("CREATE TABLE unrelated(value TEXT) STRICT")
+            connection.close()
+            store = SQLiteProviderRecoveryStore.open(path)
+            self.assertEqual(("unrelated",), store._connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='unrelated'").fetchone())
+            store.close()
+
+            partial = Path(directory) / "partial.sqlite"
+            sqlite3.connect(partial).execute("CREATE TABLE provider_recovery_health(value TEXT)").connection.close()
+            with self.assertRaises(ProviderRecoveryStoreError):
+                SQLiteProviderRecoveryStore.open(partial)
+
+            rolled_back = Path(directory) / "rolled-back.sqlite"
+            with patch.object(recovery_persistence, "_CREATE", recovery_persistence._CREATE + ("INVALID SQL",)):
+                with self.assertRaises(ProviderRecoveryStoreError):
+                    SQLiteProviderRecoveryStore.open(rolled_back)
+            connection = sqlite3.connect(rolled_back)
+            self.assertEqual([], connection.execute("SELECT name FROM sqlite_master WHERE name LIKE 'provider_recovery_%'").fetchall())
+            connection.close()
+
+    def test_shared_store_serializes_worker_observation_and_closes_after_shutdown(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            failures: list[Exception] = []
+            def observe() -> None:
+                try:
+                    store.observe_failure(connection="primary", adapter="hardcover", scope="books", generation=1, failure="authentication", now=0)
+                    store.activity_snapshot()
+                except Exception as error:
+                    failures.append(error)
+            worker = threading.Thread(target=observe)
+            worker.start(); worker.join()
+            self.assertEqual([], failures)
+            store.reconcile_generation(generation=2, now=1)
+            self.assertIsNotNone(store.claim_one(generation=2, now=1, token="owner"))
+            self.assertEqual("checking", store.snapshot()[0].state)
+            store.close()
+            with self.assertRaises(ProviderRecoveryStoreError):
+                store.activity_snapshot()
+
     def test_transient_retry_and_generation_wake_are_closed(self) -> None:
         recovery = ProviderRecovery.failed(connection="primary", adapter="hardcover", scope="books", generation=1, failure="transient", now=10)
         self.assertEqual(("waiting", 1, 7210), (recovery.state, recovery.attempt, recovery.next_eligible_at))

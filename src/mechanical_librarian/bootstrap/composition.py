@@ -45,6 +45,7 @@ from mechanical_librarian.adapters.field_effect_runtime import (
 )
 from mechanical_librarian.adapters.private_recovery import (
     PrivateCoverRecoveryStore,
+    require_private_directory,
 )
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.batch_manifest import create as create_batch_manifest, read as read_batch_manifest
@@ -235,7 +236,8 @@ def compose_audiobookshelf_field_effect_capabilities(
 
 def compose_continuous_guarded_application(
     configuration, repository, database_path: Path, artifact_store_path: Path,
-    preparation: ReviewPreparationSupervisor,
+    preparation: ReviewPreparationSupervisor, private_root: Path | None = None,
+    provider_recovery: SQLiteProviderRecoveryStore | None = None,
 ) -> ContinuousGuardedApplication:
     """Activate one configured Audiobookshelf instance across its libraries."""
     configured = tuple(
@@ -260,8 +262,7 @@ def compose_continuous_guarded_application(
         )
         for key in configured
     }
-    private_root = database_path.parent / "private"
-    private_root.mkdir(mode=0o700, exist_ok=True)
+    private_root = _private_root(database_path) if private_root is None else private_root
     recovery_root = private_root / "cover-recovery"
     recovery_root.mkdir(mode=0o700, exist_ok=True)
     recovery = PrivateCoverRecoveryStore(
@@ -290,12 +291,9 @@ def compose_continuous_guarded_application(
         )
         for key in configured
     }
-    provider_recovery = SQLiteProviderRecoveryStore.open(
-        database_path.parent / "private" / "provider-recovery.sqlite"
-    )
-    provider_recovery.reconcile_generation(
-        generation=configuration.provider_recovery_generation, now=int(time.time())
-    )
+    if provider_recovery is None:
+        provider_recovery = SQLiteProviderRecoveryStore.open(private_root / "provider-recovery.sqlite")
+        provider_recovery.reconcile_generation(generation=configuration.provider_recovery_generation, now=int(time.time()))
     return ContinuousGuardedApplication(
         repository,
         applications,
@@ -984,6 +982,8 @@ def create_review_pipeline(
     artifact_store_path: Path,
     database_authority: object | None = None,
     timing=None,
+    private_root: Path | None = None,
+    provider_recovery: SQLiteProviderRecoveryStore | None = None,
 ) -> ReviewPreparationSupervisor:
     artifact_recovery_lock = threading.Lock()
     artifacts_recovered = False
@@ -1035,9 +1035,8 @@ def create_review_pipeline(
         else None
     )
     discovery_lock = threading.Lock()
-    provider_recovery = SQLiteProviderRecoveryStore.open(
-        database_path.parent / "private" / "provider-recovery.sqlite"
-    )
+    private_root = _private_root(database_path) if private_root is None else private_root
+    provider_recovery = provider_recovery or SQLiteProviderRecoveryStore.open(private_root / "provider-recovery.sqlite")
     provider_recovery.reconcile_generation(
         generation=configuration.provider_recovery_generation, now=int(time.time())
     )
@@ -1199,7 +1198,14 @@ def create_review_pipeline(
         pipeline,
         polling_interval_seconds=configuration.review.library_polling_interval_seconds,
         graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
+        on_stop=provider_recovery.close,
     )
+
+
+def _private_root(database_path: Path) -> Path:
+    root = database_path.parent / "private"
+    require_private_directory(root, "provider recovery unavailable")
+    return root
 
 
 def reopen_metadata_report(database_path: Path, report_id: str) -> str:
@@ -1476,6 +1482,7 @@ def run_review_server(
     with open_review_tls_identity(
         review.tls_certificate_file, review.tls_private_key_file
     ) as tls:
+        private_root = _private_root(database_path)
         repository = open_repository(database_path, create=False, cross_thread=True)
         try:
             from mechanical_librarian.adapters.operational_evidence import (
@@ -1483,19 +1490,20 @@ def run_review_server(
             )
 
             timing_store = LocalTimingStore(
-                database_path.parent / "private" / "stage-timings.json",
+                private_root / "stage-timings.json",
                 enabled=review.diagnostic_timings_enabled,
             )
             from mechanical_librarian.application.operations import StageTimer
 
             timing = StageTimer(timing_store)
+            provider_recovery = SQLiteProviderRecoveryStore.open(private_root / "provider-recovery.sqlite")
             preparation = create_review_pipeline(
                 configuration,
                 database_path,
                 catalogue_path,
                 artifact_store_path,
                 repository.authority,
-                timing,
+                timing, private_root, provider_recovery,
             )
             field_application = (
                 compose_continuous_guarded_application(
@@ -1503,7 +1511,7 @@ def run_review_server(
                     repository,
                     database_path,
                     artifact_store_path,
-                    preparation,
+                    preparation, private_root, provider_recovery,
                 )
                 if getattr(configuration, "libraries", ())
                 else None
