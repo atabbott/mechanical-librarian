@@ -90,6 +90,7 @@ class ContinuousGuardedApplication:
         graceful_shutdown_seconds: int = 30,
         scan_progress: Callable[[str, str], object] | None = None,
         activity_only: bool = False,
+        provider_recovery_snapshot: Callable[[], tuple[dict[str, int | str | None], ...]] | None = None,
     ) -> None:
         if ((activity_only and (applications or capabilities))
                 or (not activity_only and (
@@ -115,6 +116,7 @@ class ContinuousGuardedApplication:
         self._graceful_shutdown_seconds = graceful_shutdown_seconds
         self._scan_progress = scan_progress
         self._activity_only = activity_only
+        self._provider_recovery_snapshot = provider_recovery_snapshot or (lambda: ())
         self._slot = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -596,6 +598,15 @@ class ContinuousGuardedApplication:
             "human": sum(value["human"] for value in prepared_by_library.values()),
             "total": sum(value["total"] for value in prepared_by_library.values()),
         }
+        provider_recovery = list(self._provider_recovery_snapshot())
+        if len(provider_recovery) > 100 or any(
+            type(item) is not dict or set(item) != {"state", "next_eligible_at", "affected_count"}
+            or item["state"] not in {"waiting", "checking", "dormant"}
+            or type(item["affected_count"]) is not int or not 1 <= item["affected_count"] <= 1_000_000
+            or (item["next_eligible_at"] is not None and (type(item["next_eligible_at"]) is not int or not 0 <= item["next_eligible_at"] <= 8_640_000_000_000))
+            for item in provider_recovery
+        ):
+            raise GuardedApplicationError("activity")
         return {
             **data,
             "backup_ready": self._repository.field_effect_backup_ready(),
@@ -619,6 +630,7 @@ class ContinuousGuardedApplication:
                 "total": int(page_projection["total"]),
             },
             "schema_version": "continuous-field-activity-v2",
+            "provider_recovery": provider_recovery,
         }
 
     def _capability_readiness(

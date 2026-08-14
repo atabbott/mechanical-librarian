@@ -204,7 +204,8 @@ def _clean_stop(container: str) -> int:
 
 def _configuration() -> dict[str, object]:
     return {
-        "schema_version": "config-v5",
+        "schema_version": "config-v6",
+        "provider_recovery_generation": 1,
         "connections": [{
             "name": "primary",
             "adapter": "audiobookshelf",

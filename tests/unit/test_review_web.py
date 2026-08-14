@@ -2400,6 +2400,7 @@ class ReviewWebTests(unittest.TestCase):
         from tests.support.tls import synthetic_tls_identity
 
         repository = Mock()
+        database = Path(self.temporary.name) / "application.sqlite3"
         certificate, private_key = synthetic_tls_identity(
             Path(self.temporary.name)
         )
@@ -2434,14 +2435,14 @@ class ReviewWebTests(unittest.TestCase):
         ):
             run_review_server(
                 Path("/config.json"),
-                Path("/application.sqlite3"),
+                database,
                 Path("/catalogue.sqlite3"),
                 Path("/artifacts"),
                 "127.0.0.1",
                 8443,
             )
         opened.assert_called_once_with(
-            Path("/application.sqlite3"),
+            database,
             create=False,
             cross_thread=True,
         )

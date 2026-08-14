@@ -26,6 +26,7 @@ type ActivitySearchUpdate = Partial<Omit<ActivitySearch, 'q'>> & { q?: string | 
 const dateParts = (value: number | null) => {
   if (value === null) return { day: 'Date not recorded', time: '—' }
   const date = new Date(value * 1000)
+  if (Number.isNaN(date.getTime())) return { day: 'Date not recorded', time: '—' }
   return {
     day: new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(date),
     time: new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', hour12: false }).format(date),
@@ -83,7 +84,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const goToPage = (page: number) => { const clamped = Math.max(1, Math.min(ledger.page_count, page)); setExpandedId(null); void navigate({ search: (previous) => ({ ...previous, page: clamped }) }) }
   const suspensions = records(data.suspensions)
   const writes = ['claimed', 'applying', 'reconciling'].reduce((total, state) => total + count(data.counts[state]), 0)
-  const recoveryCount = suspensions.length
+  const providerRecovery = data.provider_recovery ?? []
+  const dormantRecovery = providerRecovery.filter((item) => item.state === 'dormant').reduce((total, item) => total + item.affected_count, 0)
+  const recoveryCount = suspensions.length + dormantRecovery
   const waiting = data.prepared.total + count(data.counts.planned) + count(data.counts.retryable)
   const waitingEvent = data.current_waiting
   const needsConsent = consentCandidates.length > 0 || (!enabled.length && configured.length > 0)
@@ -93,9 +96,10 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   return <div className="cm-activity-route">
     <header className="cm-page-heading" tabIndex={-1} data-route-focus><div><h1>Activity and recovery</h1><p>See what needs attention now and inspect the durable record of reviews, policy changes, safeguards, and verified updates.</p></div><span className="cm-activity-calm">{recoveryCount ? 'Recovery available' : data.paused ? 'New work paused' : 'No action required'}</span></header>
     <section className="cm-activity-status" aria-labelledby="activity-status-title">
-      <div className="cm-activity-status-copy"><h2 id="activity-status-title">{recoveryCount ? 'Recovery needs attention' : data.paused ? 'New work is paused' : 'No intervention needed'}</h2><p>{recoveryCount ? 'Affected work remains held until its current state can be reconciled safely.' : data.paused ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.' : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}</p></div>
+      <div className="cm-activity-status-copy"><h2 id="activity-status-title">{recoveryCount ? 'Recovery needs attention' : data.paused ? 'New work is paused' : 'No intervention needed'}</h2><p>{dormantRecovery ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.` : recoveryCount ? 'Affected work remains held until its current state can be reconciled safely.' : data.paused ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.' : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}</p></div>
       <dl><div><dt>Writes in progress</dt><dd>{writes}</dd></div><div><dt>Waiting safely</dt><dd>{waiting}</dd></div><div><dt>Recovery needed</dt><dd>{recoveryCount}</dd></div></dl>
       {waitingEvent ? <div className="cm-activity-waiting"><span className="cm-activity-pulse" aria-hidden="true"/><div><strong>{waitingEvent.work_label} · {destinationLabel(waitingEvent.destination)} update</strong><span>{data.paused ? 'Resume new work when you are ready. No automatic check will start while new work is paused.' : 'Next exact-current check runs automatically. No action is required.'}</span></div></div> : null}
+      {providerRecovery.length ? <section className="activity-recovery" aria-label="Provider recovery"><h3>Provider recovery</h3>{providerRecovery.map((item, index) => <p key={`${item.state}:${String(index)}`}><strong>{item.state === 'waiting' ? 'Waiting' : item.state === 'checking' ? 'Checking' : 'Dormant'}</strong> · {item.affected_count} affected {item.affected_count === 1 ? 'scope' : 'scopes'}{item.next_eligible_at === null ? '' : ` · next eligible ${dateParts(item.next_eligible_at).time}`}</p>)}</section> : null}
       {hasAuthority ? <details className="cm-activity-authority">
         <summary><span><strong>Authority and recovery</strong><small>{recoveryCount ? `${String(recoveryCount)} recovery ${recoveryCount === 1 ? 'item' : 'items'} need review` : data.paused ? 'New work remains paused until you resume it' : 'Write permissions and pause controls'}</small></span></summary>
         <div className="cm-activity-authority-actions" aria-label="Activity authority and recovery">

@@ -686,7 +686,7 @@ observer is packaged and composed for bounded private report-cover previews,
 with no target credentials, identity admission, owner-decision, or write
 authority.
 
-The final report database, `catalogue-v2` database, `config-v5`, artifact
+The final report database, `catalogue-v2` database, `config-v6`, artifact
 records, and `batch-manifest-v5` each accept only absent or their exact current
 schema. `metadata-report-v1` through `metadata-report-v10`, prior development
 schemas, extra objects, altered

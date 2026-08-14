@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Record terminal provider failure recovery eligibility as durable,
+  configuration-generation-scoped waiting or dormant state. The local canary
+  claim is non-executing: it makes no provider, replay, fanout, or write call.
+  Operators increment `provider_recovery_generation` and restart after fixing
+  a dormant provider condition. (#625)
+
 - Make Library policy impact previews distinguish real changes from retained
   values, unsupported evidence, and owner review. Empty fields with no
   candidate now read `No change · remains empty — no supported value found`;

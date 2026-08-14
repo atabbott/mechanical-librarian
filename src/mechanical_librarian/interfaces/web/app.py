@@ -494,6 +494,12 @@ class _ActivityWaiting(_ClosedModel):
     work_label: str = Field(max_length=512)
 
 
+class _ProviderRecoveryActivity(_ClosedModel):
+    affected_count: int = Field(ge=1, le=1_000_000)
+    next_eligible_at: int | None = Field(default=None, ge=0, le=8_640_000_000_000)
+    state: Literal["waiting", "checking", "dormant"]
+
+
 class _ActivityResponse(_ClosedModel):
     backup_ready: bool
     capabilities: list[_ActivityCapability]
@@ -508,6 +514,7 @@ class _ActivityResponse(_ClosedModel):
     current_waiting: _ActivityWaiting | None
     paused: bool
     prepared: _ActivityPrepared
+    provider_recovery: list[_ProviderRecoveryActivity] = Field(default_factory=list, max_length=100)
     schema_version: Literal["continuous-field-activity-v2"]
     suspensions: list[_ActivitySuspension]
 

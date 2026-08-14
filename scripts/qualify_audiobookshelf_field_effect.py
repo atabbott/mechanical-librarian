@@ -853,7 +853,8 @@ def _installed_continuous_qualification(
         provider_secrets[suffix] = provider_secret
     config_path = root / "installed-config.json"
     configuration_document = {
-        "schema_version": "config-v5",
+        "schema_version": "config-v6",
+        "provider_recovery_generation": 1,
         "connections": [{
             "name": "canary", "adapter": "audiobookshelf",
             "endpoint": base, "secret_file": str(secret),
@@ -909,12 +910,16 @@ def _installed_continuous_qualification(
     open_catalogue(catalogue, create=True).close()
 
     def composed_client(bound_repository) -> tuple[TestClient, object]:
+        provider_recovery = composition.SQLiteProviderRecoveryStore.open(
+            composition._private_root(database) / "provider-recovery.sqlite"
+        )
         preparation = create_review_pipeline(
             configuration, database, catalogue, artifacts,
-            bound_repository.authority
+            bound_repository.authority, provider_recovery=provider_recovery,
         )
         continuous = compose_continuous_guarded_application(
-            configuration, bound_repository, database, artifacts, preparation
+            configuration, bound_repository, database, artifacts, preparation,
+            provider_recovery=provider_recovery,
         )
         client = _compose_review_client(
             bound_repository,

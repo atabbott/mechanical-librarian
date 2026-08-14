@@ -466,6 +466,14 @@
           "prepared": {
             "$ref": "#/components/schemas/_ActivityPrepared"
           },
+          "provider_recovery": {
+            "items": {
+              "$ref": "#/components/schemas/_ProviderRecoveryActivity"
+            },
+            "maxItems": 100,
+            "title": "Provider Recovery",
+            "type": "array"
+          },
           "schema_version": {
             "const": "continuous-field-activity-v2",
             "title": "Schema Version",
@@ -3064,6 +3072,45 @@
           "status"
         ],
         "title": "_ProviderOutcome",
+        "type": "object"
+      },
+      "_ProviderRecoveryActivity": {
+        "additionalProperties": false,
+        "properties": {
+          "affected_count": {
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Affected Count",
+            "type": "integer"
+          },
+          "next_eligible_at": {
+            "anyOf": [
+              {
+                "maximum": 8640000000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Eligible At"
+          },
+          "state": {
+            "enum": [
+              "waiting",
+              "checking",
+              "dormant"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "affected_count",
+          "state"
+        ],
+        "title": "_ProviderRecoveryActivity",
         "type": "object"
       },
       "_ReviewCounts": {

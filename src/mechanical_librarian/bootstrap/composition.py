@@ -45,6 +45,7 @@ from mechanical_librarian.adapters.field_effect_runtime import (
 )
 from mechanical_librarian.adapters.private_recovery import (
     PrivateCoverRecoveryStore,
+    require_private_directory,
 )
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.batch_manifest import create as create_batch_manifest, read as read_batch_manifest
@@ -56,6 +57,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
     open_shadow_preview_repository,
 )
+from mechanical_librarian.adapters.persistence.provider_recovery import SQLiteProviderRecoveryStore
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
     HardcoverPacer,
@@ -234,7 +236,8 @@ def compose_audiobookshelf_field_effect_capabilities(
 
 def compose_continuous_guarded_application(
     configuration, repository, database_path: Path, artifact_store_path: Path,
-    preparation: ReviewPreparationSupervisor,
+    preparation: ReviewPreparationSupervisor, private_root: Path | None = None,
+    provider_recovery: SQLiteProviderRecoveryStore | None = None,
 ) -> ContinuousGuardedApplication:
     """Activate one configured Audiobookshelf instance across its libraries."""
     configured = tuple(
@@ -259,8 +262,7 @@ def compose_continuous_guarded_application(
         )
         for key in configured
     }
-    private_root = database_path.parent / "private"
-    private_root.mkdir(mode=0o700, exist_ok=True)
+    private_root = _private_root(database_path) if private_root is None else private_root
     recovery_root = private_root / "cover-recovery"
     recovery_root.mkdir(mode=0o700, exist_ok=True)
     recovery = PrivateCoverRecoveryStore(
@@ -289,6 +291,8 @@ def compose_continuous_guarded_application(
         )
         for key in configured
     }
+    if provider_recovery is None:
+        raise ConfigurationError("provider recovery store is unavailable")
     return ContinuousGuardedApplication(
         repository,
         applications,
@@ -299,11 +303,12 @@ def compose_continuous_guarded_application(
         preparation.request,
         graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
         scan_progress=preparation.progress,
+        provider_recovery_snapshot=provider_recovery.activity_snapshot,
     )
 
 
 def compose_field_effect_activity_projection(
-    configuration, repository,
+    configuration, repository, provider_recovery: SQLiteProviderRecoveryStore | None = None,
 ) -> ContinuousGuardedApplication:
     """Compose the shared Activity projection without write-capable adapters."""
     configured = tuple(
@@ -322,6 +327,11 @@ def compose_field_effect_activity_projection(
         lambda _connection, _library: None,
         graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
         activity_only=True,
+        provider_recovery_snapshot=(
+            provider_recovery.activity_snapshot
+            if provider_recovery is not None
+            else None
+        ),
     )
 
 
@@ -694,6 +704,38 @@ def _provider_statuses(report: MetadataReport) -> tuple[ProviderStatus, ...]:
     )
 
 
+def _record_provider_recovery_observations(
+    store: SQLiteProviderRecoveryStore,
+    report: MetadataReport,
+    *,
+    adapters: dict[str, str],
+    scope: str,
+    generation: int,
+    now: int,
+) -> None:
+    """Persist only terminal F22 provider classifications; never retry them."""
+    failures = {
+        ProviderStatus.AUTHENTICATION: "authentication", ProviderStatus.AUTHORIZATION: "authorization",
+        ProviderStatus.RATE_LIMITED: "rate_limited", ProviderStatus.UNAVAILABLE: "transient",
+        ProviderStatus.INCOMPLETE: "transient",
+    }
+    for observation in report.providers:
+        statuses = (observation.status, *(lane.status for lane in observation.lanes))
+        terminal = tuple(failures[status] for status in statuses if status in failures)
+        failure = (
+            next((value for value in terminal if value in {"authentication", "authorization", "configuration"}), None)
+            or next((value for value in terminal if value in {"rate_limited", "transient"}), None)
+        )
+        if failure is not None:
+            adapter = adapters.get(observation.provider)
+            if adapter is None:
+                raise ReviewPipelineError("configuration")
+            store.observe_failure(
+                connection=observation.provider, adapter=adapter, scope=scope,
+                generation=generation, failure=failure, now=now,
+            )
+
+
 class _NonClosingRepository:
     """Let one composed service borrow a pipeline-owned repository connection."""
 
@@ -963,6 +1005,8 @@ def create_review_pipeline(
     artifact_store_path: Path,
     database_authority: object | None = None,
     timing=None,
+    private_root: Path | None = None,
+    provider_recovery: SQLiteProviderRecoveryStore | None = None,
 ) -> ReviewPreparationSupervisor:
     artifact_recovery_lock = threading.Lock()
     artifacts_recovered = False
@@ -1014,6 +1058,11 @@ def create_review_pipeline(
         else None
     )
     discovery_lock = threading.Lock()
+    if provider_recovery is None:
+        raise ConfigurationError("provider recovery store is unavailable")
+    provider_recovery.reconcile_generation(
+        generation=configuration.provider_recovery_generation, now=int(time.time())
+    )
 
     def repository_factory():
         return open_repository(
@@ -1083,6 +1132,18 @@ def create_review_pipeline(
         except CredentialError as error:
             if error.provider is None:
                 raise ReviewPipelineError("authentication") from error
+            provider = next(
+                (value for value in configuration.providers if value.name == error.provider),
+                None,
+            )
+            if provider is None:
+                raise ReviewPipelineError("configuration") from error
+            provider_recovery.observe_failure(
+                connection=provider.name, adapter=provider.adapter,
+                scope=action.library,
+                generation=configuration.provider_recovery_generation,
+                failure="authentication", now=int(time.time()),
+            )
             raise ReviewPipelineError(
                 "authentication", root=error.provider
             ) from error
@@ -1093,6 +1154,12 @@ def create_review_pipeline(
 
     def providers(pipeline_repository, report_id: str):
         value = MetadataReport.from_json(pipeline_repository.get(report_id))
+        _record_provider_recovery_observations(
+            provider_recovery, value,
+            adapters={provider.name: provider.adapter for provider in configuration.providers},
+            scope=value.target.library,
+            generation=configuration.provider_recovery_generation, now=int(time.time()),
+        )
         return _provider_statuses(value)
 
     def propose(pipeline_repository, report_id: str) -> str:
@@ -1168,7 +1235,14 @@ def create_review_pipeline(
         pipeline,
         polling_interval_seconds=configuration.review.library_polling_interval_seconds,
         graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
+        on_stop=provider_recovery.close,
     )
+
+
+def _private_root(database_path: Path) -> Path:
+    root = database_path.parent / "private"
+    require_private_directory(root, "provider recovery unavailable")
+    return root
 
 
 def reopen_metadata_report(database_path: Path, report_id: str) -> str:
@@ -1445,6 +1519,7 @@ def run_review_server(
     with open_review_tls_identity(
         review.tls_certificate_file, review.tls_private_key_file
     ) as tls:
+        private_root = _private_root(database_path)
         repository = open_repository(database_path, create=False, cross_thread=True)
         try:
             from mechanical_librarian.adapters.operational_evidence import (
@@ -1452,19 +1527,20 @@ def run_review_server(
             )
 
             timing_store = LocalTimingStore(
-                database_path.parent / "private" / "stage-timings.json",
+                private_root / "stage-timings.json",
                 enabled=review.diagnostic_timings_enabled,
             )
             from mechanical_librarian.application.operations import StageTimer
 
             timing = StageTimer(timing_store)
+            provider_recovery = SQLiteProviderRecoveryStore.open(private_root / "provider-recovery.sqlite")
             preparation = create_review_pipeline(
                 configuration,
                 database_path,
                 catalogue_path,
                 artifact_store_path,
                 repository.authority,
-                timing,
+                timing, private_root, provider_recovery,
             )
             field_application = (
                 compose_continuous_guarded_application(
@@ -1472,7 +1548,7 @@ def run_review_server(
                     repository,
                     database_path,
                     artifact_store_path,
-                    preparation,
+                    preparation, private_root, provider_recovery,
                 )
                 if getattr(configuration, "libraries", ())
                 else None
@@ -1657,12 +1733,22 @@ def run_review_activity(
     if configuration.review is None:
         raise ConfigurationError("review configuration is unavailable")
     repository = open_repository(database_path, create=False)
+    provider_recovery = None
     try:
-        projection = compose_field_effect_activity_projection(
-            configuration, repository
-        )
+        recovery_path = database_path.parent / "private" / "provider-recovery.sqlite"
+        if recovery_path.is_file():
+            provider_recovery = SQLiteProviderRecoveryStore.open(recovery_path)
+            projection = compose_field_effect_activity_projection(
+                configuration, repository, provider_recovery
+            )
+        else:
+            projection = compose_field_effect_activity_projection(
+                configuration, repository
+            )
         return projection.activity()
     finally:
+        if provider_recovery is not None:
+            provider_recovery.close()
         repository.close()
 
 

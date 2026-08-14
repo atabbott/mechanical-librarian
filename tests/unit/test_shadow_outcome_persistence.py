@@ -827,6 +827,9 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             root = Path(temporary)
             database = root / "reports.sqlite"
             repository = open_repository(database)
+            provider_recovery = composition.SQLiteProviderRecoveryStore.open(
+                root / "provider-recovery.sqlite"
+            )
             case_id = _case(repository)
             repository.enter_shadow_preview(1)
             supervisor = composition.create_review_pipeline(
@@ -834,6 +837,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
+                provider_recovery=provider_recovery,
             )
 
             self.assertEqual(
@@ -851,6 +855,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 "stale", supervisor._pipeline._project(repository, case_id)
             )
             self.assertEqual(1, len(repository.list_shadow_outcomes(50)))
+            supervisor.stop()
             repository.close()
 
     def test_review_posture_composed_stale_projection_restarts_instead_of_completing(self) -> None:
@@ -858,6 +863,9 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             root = Path(temporary)
             database = root / "reports.sqlite"
             repository = open_repository(database)
+            provider_recovery = composition.SQLiteProviderRecoveryStore.open(
+                root / "provider-recovery.sqlite"
+            )
             old_case_id = _case(repository)
             old_case = json.loads(repository.get_review_case(old_case_id))["case"]
             work_id = _running_projection(repository, old_case_id)
@@ -871,6 +879,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
+                provider_recovery=provider_recovery,
             )
 
             self.assertEqual("automatic", repository.shadow_posture())
@@ -895,6 +904,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                     "SELECT COUNT(*) FROM review_preparation_work"
                 ).fetchone(),
             )
+            supervisor.stop()
             repository.close()
 
     def test_automatic_bootstrap_and_preview_replay_one_exact_set(self) -> None:
