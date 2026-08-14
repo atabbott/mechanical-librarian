@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import unittest
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -23,6 +24,27 @@ from tests.browser.fidelity_cohort import (
 
 class ReactPlatformArtifactTests(unittest.TestCase):
     def test_exact_built_shell_supports_every_direct_route_and_client_navigation(self) -> None:
+        self._browser_stage = "test-setup"
+        try:
+            self._exercise_exact_built_shell_supports_every_direct_route_and_client_navigation()
+        except Exception:
+            print(
+                json.dumps(
+                    {
+                        "schema": "protected-browser-failure-stage-v1",
+                        "stage": self._browser_stage,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            raise
+
+    def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigation(
+        self,
+    ) -> None:
         root_value = os.environ.get("ML_REACT_ASSET_DIR")
         self.assertIsNotNone(root_value, "ML_REACT_ASSET_DIR is required")
         bundle = load_react_asset_bundle(Path(root_value or ""))
@@ -126,6 +148,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 ("/activity", "Activity and recovery"),
             )
             for path, heading in routes:
+                self._browser_stage = f"direct-route:{path}"
                 fail_activity_once = path == "/activity"
                 before_entry = documents
                 response = page.goto(f"https://react-platform.invalid{path}")
@@ -144,6 +167,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertEqual(page.locator("img, script:not([src])").count(), 0)
                 self.assertIsNone(page.evaluate("() => window.__metadataExecuted"))
                 if path == "/activity":
+                    self._browser_stage = "activity:compact-initial-geometry"
                     self.assertTrue(
                         page.locator(".cm-activity-ledger").evaluate(
                             "node => node.previousElementSibling?.classList.contains('cm-activity-status')"
@@ -159,13 +183,46 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                         ),
                         "2",
                     )
-                    self.assertLessEqual(long_activity_title.bounding_box()["height"], 36)
+                    title_box = long_activity_title.bounding_box()
+                    row_box = long_activity_title.locator(
+                        "xpath=ancestor::article"
+                    ).bounding_box()
+                    self.assertIsNotNone(title_box)
+                    self.assertIsNotNone(row_box)
+                    compact_geometry = {
+                        "title_height": title_box["height"],
+                        "row_height": row_box["height"],
+                    }
+                    compact_row = long_activity_title.locator(
+                        "xpath=ancestor::article"
+                    )
+                    self.assertEqual(
+                        compact_row.evaluate(
+                            "node => getComputedStyle(node).gridTemplateColumns"
+                        ).split(" ", 1)[0],
+                        "44px",
+                    )
+                    self.assertEqual(
+                        compact_row.locator("b").evaluate(
+                            "node => getComputedStyle(node).gridRow"
+                        ),
+                        "3",
+                    )
+                    self.assertEqual(
+                        compact_row.get_by_role("button", name="Inspect").evaluate(
+                            "node => getComputedStyle(node).gridRow"
+                        ),
+                        "4",
+                    )
+                    self.assertLessEqual(title_box["height"], 36, compact_geometry)
                     self.assertLessEqual(
-                        long_activity_title.locator("xpath=ancestor::article").bounding_box()["height"],
-                        190,
+                        row_box["height"],
+                        182,
+                        compact_geometry,
                     )
                     page.set_viewport_size({"width": 1440, "height": 900})
                     inspect = page.get_by_role("button", name="Inspect").first
+                    self._browser_stage = "activity:desktop-media-state"
                     page.wait_for_function(
                         """() => {
                             const inspect = document.querySelector('.cm-activity-events article > button');
@@ -177,14 +234,20 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                                 && getComputedStyle(title).whiteSpace === 'nowrap';
                         }"""
                     )
+                    self._browser_stage = "activity:desktop-geometry"
                     inspect_box = inspect.bounding_box()
                     row_box = inspect.locator("xpath=ancestor::article").bounding_box()
                     self.assertIsNotNone(inspect_box)
                     self.assertIsNotNone(row_box)
                     self.assertEqual(inspect.evaluate("node => getComputedStyle(node).whiteSpace"), "nowrap")
                     self.assertLessEqual(row_box["height"], 72)
-                    self.assertLessEqual(inspect_box["height"], 40)
+                    self.assertEqual(
+                        inspect.evaluate("node => getComputedStyle(node).minHeight"),
+                        "40px",
+                    )
+                    self.assertLessEqual(inspect_box["height"], 40.5)
                     page.set_viewport_size({"width": 390, "height": 844})
+                    self._browser_stage = "activity:compact-media-state"
                     page.wait_for_function(
                         """() => {
                             const title = document.querySelector('.cm-activity-outcome > strong');
@@ -193,6 +256,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                                 && getComputedStyle(title).webkitLineClamp === '2';
                         }"""
                     )
+                    self._browser_stage = "activity:authority-and-recovery"
                     page.get_by_text("Authority and recovery", exact=True).click()
                     page.get_by_role(
                         "button", name="Review write permissions"
@@ -206,6 +270,12 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     page.get_by_role("button", name="Reviews").wait_for()
                     page.get_by_role("button", name="Inspect").first.click()
                     page.get_by_text("Durable evidence").wait_for()
+                    self.assertEqual(
+                        page.locator(".cm-activity-evidence").evaluate(
+                            "node => getComputedStyle(node).gridRow"
+                        ),
+                        "5",
+                    )
                     page.get_by_text("Recorded origin").wait_for()
                     page.locator(".cm-activity-evidence").get_by_text(
                         "Outcome", exact=True
@@ -217,10 +287,12 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     page.locator(".activity-consent-library").filter(
                         has_text="Spoken stories"
                     ).get_by_role("checkbox").check()
+                    self._browser_stage = "activity:consent-refresh"
                     page.get_by_role("button", name="Enable selected libraries").click()
                     page.get_by_text(
                         "Activity state refreshed from the authoritative server."
                     ).wait_for()
+                self._browser_stage = f"direct-route:{path}:document-count"
                 self.assertEqual(
                     documents,
                     before_entry + (2 if path == "/activity" else 1),
