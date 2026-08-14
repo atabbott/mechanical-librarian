@@ -1208,6 +1208,9 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             _report(title="Absent successor", content_digest="3", file_identity="4"),
             _report(title="Retired successor", content_digest="5", file_identity="6"),
         ]
+        repository = open_repository(self.path)
+        repository.enter_shadow_preview(1)
+        repository.close()
 
         def pipeline_for(
             report: MetadataReport,
@@ -1237,6 +1240,14 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 value = json.loads(repository.admit_review_case(proposal))
                 return value["status"], value.get("review_case_id")
 
+            def project(repository, action: PipelineAction) -> str:
+                if not projection:
+                    raise RuntimeError("synthetic projection failure")
+                outcome = repository.persist_shadow_outcome(
+                    action.review_case_id or "", now, staged_action=action
+                )
+                return "stale" if outcome == "stale" else "complete"
+
             return ReviewPreparationPipeline(
                 repository_factory=lambda: open_repository(selected_database),
                 libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
@@ -1245,7 +1256,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 providers=lambda *_: (),
                 propose=propose,
                 admit=admit,
-                project=lambda *_: projection,
+                project=project,
                 clock=lambda: now,
             )
 
@@ -1485,7 +1496,109 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         repository = open_repository(self.path)
         self.assertEqual(("complete",), repository._connection.execute("SELECT state FROM review_preparation_work").fetchone())
         self.assertEqual((1,), repository._connection.execute("SELECT COUNT(*) FROM current_review_packages").fetchone())
+        case_id = repository._connection.execute(
+            "SELECT review_case_id FROM current_review_packages"
+        ).fetchone()[0]
         repository.close()
+        # A restarted worker replays the same immutable outcome and never
+        # manufactures another decision, package checkpoint, or completion.
+        restarted = open_repository(self.path)
+        restarted.enter_shadow_preview(11)
+        replay = restarted.persist_shadow_outcome(case_id, 11)
+        self.assertTrue(replay.startswith('{"authority":"none"'))
+        self.assertEqual((1, 1, 1), restarted._connection.execute(
+            "SELECT (SELECT COUNT(*) FROM shadow_decision_outcomes),"
+            "(SELECT COUNT(*) FROM current_review_packages),"
+            "(SELECT COUNT(*) FROM review_preparation_work WHERE state='complete')"
+        ).fetchone())
+        restarted.close()
+
+    def test_real_projection_stale_lane_does_not_block_mixed_fifty_work_cohort(self) -> None:
+        reports: dict[str, MetadataReport] = {}
+        report_for_item: dict[str, MetadataReport] = {}
+        proposals = {}
+        entries = []
+        for index in range(50):
+            base = _report(
+                title=f"Synthetic {index}",
+                content_digest=f"{index % 16:x}",
+                file_identity=f"{(index + 5) % 16:x}",
+                actionable=index % 2 == 0,
+            )
+            report = MetadataReport.create(
+                target=replace(base.target, item=f"item-{index}"),
+                file=base.file,
+                local_claims=base.local_claims,
+                local_reasons=base.local_reasons,
+                providers=base.providers,
+            )
+            reports[report.report_id] = report
+            report_for_item[f"item-{index}"] = report
+            entries.append(replace(
+                _entry(f"item-{index}", report.file.identity), library="ebooks"
+            ))
+        replacement = MetadataReport.create(
+            target=replace(next(iter(reports.values())).target, item="item-0"),
+            file=replace(next(iter(reports.values())).file, content_digest="f" * 64,
+                         identity="e" * 64),
+            local_claims=next(iter(reports.values())).local_claims,
+            local_reasons=next(iter(reports.values())).local_reasons,
+            providers=(),
+        )
+        projected: list[str] = []
+        stale_once = [True]
+
+        def extract(repository, action: PipelineAction, _: bool):
+            report = report_for_item[action.item_id or ""]
+            repository.publish(report, lambda: True)
+            return report.report_id, False
+
+        def propose(repository, report_id: str) -> str:
+            report = reports[report_id]
+            proposal = evaluate_report(report)
+            proposals[proposal.proposal_set_id] = proposal
+            repository.publish_proposal(proposal)
+            return proposal.proposal_set_id
+
+        def admit(repository, proposal_id: str) -> tuple[str, str | None]:
+            value = json.loads(repository.admit_review_case(proposals[proposal_id]))
+            return value["status"], value.get("review_case_id")
+
+        def project(repository, action: PipelineAction) -> str:
+            if action.item_id == "item-0" and stale_once[0]:
+                stale_once[0] = False
+                reports[replacement.report_id] = replacement
+                report_for_item["item-0"] = replacement
+                repository.publish(replacement, lambda: True, action.report_id)
+            projected.append(action.item_id or "")
+            outcome = repository.persist_shadow_outcome(
+                action.review_case_id or "", 20, staged_action=action
+            )
+            return "stale" if outcome == "stale" else "complete"
+
+        repository = open_repository(self.path)
+        repository.enter_shadow_preview(1)
+        repository.close()
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(self.path),
+            libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
+            discover=lambda *_: (1, "a" * 64, tuple(entries)), extract=extract,
+            providers=lambda *_: (), propose=propose, admit=admit, project=project,
+            clock=lambda: 20,
+        )
+        pipeline.request("primary", "ebooks")
+        while pipeline.run_next(1):
+            pass
+        repository = open_repository(self.path)
+        states = repository._connection.execute(
+            "SELECT state,failure_code FROM review_preparation_work ORDER BY item_id"
+        ).fetchall()
+        repository.close()
+        self.assertFalse(stale_once[0], (projected, states[:5]))
+        self.assertIn("item-2", projected)
+        self.assertEqual(50, len(states))
+        self.assertTrue(all(state in {"complete", "failed"} for state, _ in states))
+        self.assertIn(("failed", "failed"), states)
 
     def test_unrelated_provider_success_does_not_shorten_open_circuit(self) -> None:
         repository = open_repository(self.path)

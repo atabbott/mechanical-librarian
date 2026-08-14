@@ -3686,7 +3686,14 @@ class SQLiteMetadataReportRepository:
                 "SELECT work_id,scan_id,stage,attempt,connection_name,library_name,library_id,"
                 "producer_fingerprint,catalogue_generation,catalogue_fingerprint,"
                 "item_id,file_identity,source_revision,"
-                "report_id,proposal_set_id,review_case_id,source_fingerprint "
+                "report_id,proposal_set_id,review_case_id,source_fingerprint,"
+                "(SELECT checkpoint FROM current_review_case_lineages lineage "
+                "WHERE lineage.connection_name=review_preparation_work.connection_name "
+                "AND lineage.library_name=review_preparation_work.library_name "
+                "AND lineage.item_id=review_preparation_work.item_id "
+                "AND lineage.proposal_set_id=review_preparation_work.proposal_set_id "
+                "AND lineage.report_id=review_preparation_work.report_id "
+                "AND lineage.review_case_id=review_preparation_work.review_case_id) "
                 "FROM review_preparation_work WHERE state='queued' AND library_name=? "
                 "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
                 "WHERE s.scan_id=review_preparation_work.scan_id "
@@ -3732,6 +3739,7 @@ class SQLiteMetadataReportRepository:
                     work[14],
                     work[15],
                     work[16],
+                    work[17],
                 )
             scans = self._connection.execute(
                 "SELECT scan_id,rescan_requested FROM review_preparation_scans "
@@ -7546,7 +7554,7 @@ class SQLiteMetadataReportRepository:
         self, review_case_id: str, action: PipelineAction
     ) -> None:
         """Admit only the exact claimed staged case to package-internal projection."""
-        if self._connection.execute(
+        if action.lineage_checkpoint is None or self._connection.execute(
             "SELECT 1 FROM review_preparation_work work "
             "JOIN current_review_case_lineages staged ON "
             "staged.connection_name=work.connection_name AND "
@@ -7565,14 +7573,11 @@ class SQLiteMetadataReportRepository:
             "AND work.connection_name=? AND work.library_name=? "
             "AND work.item_id=? AND work.report_id=? "
             "AND work.proposal_set_id=? AND work.review_case_id=? "
-            "AND staged.checkpoint=(SELECT checkpoint FROM "
-            "current_review_case_lineages WHERE connection_name=? "
-            "AND library_name=? AND item_id=?)",
+            "AND staged.checkpoint=?",
             (
                 action.action_id, action.attempt, action.connection,
                 action.library, action.item_id, action.report_id,
-                action.proposal_set_id, review_case_id, action.connection,
-                action.library, action.item_id,
+                action.proposal_set_id, review_case_id, action.lineage_checkpoint,
             ),
         ).fetchone() != (1,):
             raise ReviewAdmissionStaleError

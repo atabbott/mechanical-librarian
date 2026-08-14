@@ -72,6 +72,7 @@ class PipelineAction:
     proposal_set_id: str | None = None
     review_case_id: str | None = None
     source_fingerprint: str | None = None
+    lineage_checkpoint: int | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -97,6 +98,11 @@ class PipelineAction:
             or type(self.source_fingerprint) is not str
             or len(self.source_fingerprint) != 64
             or any(value not in "0123456789abcdef" for value in self.source_fingerprint)
+        ):
+            raise ReviewPipelineError("state")
+        if self.lineage_checkpoint is not None and (
+            type(self.lineage_checkpoint) is not int
+            or self.lineage_checkpoint < 1
         ):
             raise ReviewPipelineError("state")
 

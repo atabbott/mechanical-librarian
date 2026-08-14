@@ -60,8 +60,9 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticSafetyState,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
-from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+from mechanical_librarian.application.review_pipeline import PipelineAction
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source,
@@ -123,6 +124,24 @@ def _running_projection(repository, case_id: str) -> str:
     )
     repository._connection.commit()
     return work_id
+
+
+def _staged_projection_action(repository, work_id: str) -> PipelineAction:
+    row = repository._connection.execute(
+        "SELECT work_id,scan_id,stage,attempt,connection_name,library_name,library_id,"
+        "producer_fingerprint,catalogue_generation,catalogue_fingerprint,item_id,"
+        "file_identity,source_revision,report_id,proposal_set_id,review_case_id,"
+        "source_fingerprint FROM review_preparation_work WHERE work_id=?",
+        (work_id,),
+    ).fetchone()
+    assert row is not None
+    checkpoint = repository._connection.execute(
+        "SELECT checkpoint FROM current_review_case_lineages WHERE "
+        "connection_name=? AND library_name=? AND item_id=?",
+        (row[4], row[5], row[10]),
+    ).fetchone()
+    assert checkpoint is not None
+    return PipelineAction(*row, lineage_checkpoint=checkpoint[0])
 
 
 def _digest(value: object) -> str:
@@ -1203,6 +1222,64 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                     "SELECT COUNT(*) FROM review_preparation_work"
                 ).fetchone(),
             )
+            repository.close()
+
+    def test_old_claim_cannot_project_same_ids_at_newer_lineage_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            work_id = _running_projection(repository, case_id)
+            action = _staged_projection_action(repository, work_id)
+            pointer = repository._connection.execute(
+                "SELECT proposal_set_id,report_id,transition_id,checkpoint FROM "
+                "current_review_case_lineages WHERE connection_name='primary' "
+                "AND library_name='ebooks' AND item_id='item-1'"
+            ).fetchone()
+            assert pointer is not None
+            successor = ReviewTransition(
+                "primary", "ebooks", "item-1", pointer[3] + 1,
+                pointer[0], pointer[1], "superseded", case_id, case_id,
+                "actionable",
+            )
+            repository._connection.execute(
+                "INSERT INTO review_case_transitions(transition_id,connection_name,"
+                "library_name,item_id,checkpoint,actor,from_review_case_id,"
+                "to_review_case_id,proposal_set_id,report_id,kind,reason) "
+                "VALUES(?,?,?,?,?,'review-admission-v1',?,?,?,?,?,'actionable')",
+                (
+                    successor.transition_id,
+                    "primary", "ebooks", "item-1", pointer[3] + 1,
+                    case_id, case_id, pointer[0], pointer[1], "superseded",
+                ),
+            )
+            repository._connection.execute(
+                "UPDATE current_review_case_lineages SET transition_id=?,checkpoint=?,outcome='superseded' "
+                "WHERE connection_name='primary' AND library_name='ebooks' AND item_id='item-1'",
+                (successor.transition_id, pointer[3] + 1),
+            )
+            repository._connection.execute(
+                "UPDATE current_review_packages SET checkpoint=?,outcome='superseded' "
+                "WHERE connection_name='primary' AND library_name='ebooks' AND item_id='item-1'",
+                (pointer[3] + 1,),
+            )
+            repository._connection.execute(
+                "DELETE FROM current_review_packages WHERE connection_name='primary' "
+                "AND library_name='ebooks' AND item_id='item-1'"
+            )
+            repository._connection.commit()
+            repository.enter_shadow_preview(2)
+
+            self.assertEqual("stale", repository.persist_shadow_outcome(
+                case_id, 3, staged_action=action
+            ))
+            self.assertEqual((0,), repository._connection.execute(
+                "SELECT COUNT(*) FROM shadow_decision_outcomes"
+            ).fetchone())
+            repository.fail_review_pipeline_action(action, "stale", True, 4)
+            self.assertEqual(("queued", "stale"), repository._connection.execute(
+                "SELECT state,failure_code FROM review_preparation_work WHERE work_id=?",
+                (work_id,),
+            ).fetchone())
             repository.close()
 
     def test_stale_recovery_currentness_failure_rolls_back_owned_transaction(self) -> None:
