@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
-import { act, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -2090,6 +2090,7 @@ describe('typed review routes', () => {
     renderRoute('/activity', http)
 
     await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)) })
     const search = screen.getByRole('searchbox', { name: 'Search activity' })
     await user.click(search)
     await user.type(search, 'ab')
@@ -2160,6 +2161,68 @@ describe('typed review routes', () => {
     await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
       expect.objectContaining({ page: 3, pageSize: 50 }), expect.anything(),
     ))
+  })
+
+  it.each([['a', 'ab'], ['ab', 'a']] as const)('keeps the latest Activity query draft when deferred replacements complete %s then %s', async (first, second) => {
+    const deferred = new Map<string, { resolve: (value: ActivityView) => void }>()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn((search: ActivitySearch) => {
+        if (search.q !== 'a' && search.q !== 'ab') return Promise.resolve(activity({ ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 } }))
+        return new Promise<ActivityView>((resolve) => { deferred.set(search.q ?? '', { resolve }) })
+      }),
+    }
+    renderRoute('/activity', http)
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    vi.useFakeTimers()
+    try {
+      const query = screen.getByRole('searchbox', { name: 'Search activity' })
+      fireEvent.change(query, { target: { value: 'a' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+      expect(deferred.has('a')).toBe(true)
+      fireEvent.change(query, { target: { value: 'ab' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+      expect(deferred.has('ab')).toBe(true)
+
+      act(() => { deferred.get(first)?.resolve(activity({ ledger: { event_type: 'all', page: 1, page_count: 3, page_size: 25, query: first, range_days: 30, total: 75 } })) })
+      act(() => { deferred.get(second)?.resolve(activity({ ledger: { event_type: 'all', page: 1, page_count: 3, page_size: 25, query: second, range_days: 30, total: 75 } })) })
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('ab')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('uses memory-history traversal, rather than synthetic popstate, as Activity query and page authority', async () => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async (search: ActivitySearch) => activity({ ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 } })),
+    }
+    const { router } = renderRoute('/activity?q=first&page=1', http)
+
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await router.navigate({ to: '/activity', search: { eventType: 'all', q: 'second', rangeDays: 30, page: 2, pageSize: 25 } })
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('second'))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(2))
+
+    act(() => router.history.back())
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('first'))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(1))
+
+    act(() => router.history.forward())
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('second'))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(2))
+
+    await router.navigate({ to: '/activity', search: { eventType: 'all', q: 'second', rangeDays: 30, page: 3, pageSize: 25 } })
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(3))
+    act(() => router.history.back())
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('second'))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(2))
+
+    fireEvent.popState(window)
+    expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('second')
+    expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(2)
   })
 
   it('keeps an unknown direct entry inside a safe shell fallback', async () => {

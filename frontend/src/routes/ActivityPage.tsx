@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useNavigate } from '@tanstack/react-router'
+import { useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 
 import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../api/http'
@@ -23,6 +23,7 @@ const typeOptions = [
   { id: 'metadata', label: 'Metadata' }, { id: 'safety', label: 'Safety' },
 ] as const
 type ActivitySearchUpdate = Partial<Omit<ActivitySearch, 'q'>> & { q?: string | undefined }
+const locationIdentity = (location: { href: string, state: { __TSR_key?: string } }) => `${location.href}\u0000${location.state.__TSR_key ?? ''}`
 const dateParts = (value: number | null) => {
   if (value === null) return { day: 'Date not recorded', time: '—' }
   const date = new Date(value * 1000)
@@ -42,13 +43,16 @@ function PageJump({ page, pageCount, onCommit, onEscape }: { page: number, pageC
 
 export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const { http, queryClient } = useReviewContext()
+  const router = useRouter()
   const navigate = useNavigate({ from: activityRoute.fullPath })
   const search = activityRoute.useSearch()
+  const resolvedLocation = useRouterState({ select: (state) => state.resolvedLocation })
   const [queryText, setQueryText] = useState(search.q ?? '')
   const queryCommit = useRef<number | null>(null)
   const queryDraftVersion = useRef(0)
+  const canonicalQuery = useRef(search.q ?? '')
   const localQueryNavigations = useRef(new Map<string, number>())
-  const externalQueryNavigation = useRef(false)
+  const externalTarget = useRef<string | null>(null)
   const requestedPage = useRef(search.page)
   const pageNavigationVersion = useRef(0)
   const localPageNavigations = useRef(new Map<number, number>())
@@ -59,17 +63,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   }, [])
   useEffect(() => {
     const current = search.q ?? ''
-    if (externalQueryNavigation.current) {
-      externalQueryNavigation.current = false
-      if (queryCommit.current !== null) { window.clearTimeout(queryCommit.current); queryCommit.current = null }
-      setQueryText(current)
-      return
-    } else {
-      const navigationVersion = localQueryNavigations.current.get(current)
-      if (navigationVersion !== undefined) {
-        localQueryNavigations.current.delete(current)
-        if (navigationVersion <= queryDraftVersion.current) return
-      }
+    if (canonicalQuery.current === current) return
+    canonicalQuery.current = current
+    const navigationVersion = localQueryNavigations.current.get(current)
+    if (navigationVersion !== undefined) {
+      localQueryNavigations.current.delete(current)
+      if (navigationVersion <= queryDraftVersion.current) return
     }
     if (queryCommit.current !== null) { window.clearTimeout(queryCommit.current); queryCommit.current = null }
     const draftVersion = queryDraftVersion.current
@@ -84,11 +83,21 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     }
     requestedPage.current = search.page
   }, [search.page])
+  useEffect(() => router.history.subscribe(({ action, location }) => {
+    if (action.type === 'BACK' || action.type === 'FORWARD' || action.type === 'GO') externalTarget.current = locationIdentity(location)
+  }), [router])
   useEffect(() => {
-    const markExternalNavigation = () => { externalQueryNavigation.current = true }
-    addEventListener('popstate', markExternalNavigation)
-    return () => removeEventListener('popstate', markExternalNavigation)
-  }, [])
+    if (!resolvedLocation || externalTarget.current !== locationIdentity(resolvedLocation)) return
+    externalTarget.current = null
+    if (queryCommit.current !== null) { window.clearTimeout(queryCommit.current); queryCommit.current = null }
+    localQueryNavigations.current.clear()
+    localPageNavigations.current.clear()
+    ++queryDraftVersion.current
+    ++pageNavigationVersion.current
+    ++focusVersion.current
+    setQueryText(search.q ?? '')
+    requestedPage.current = search.page
+  }, [resolvedLocation, search.page, search.q])
   useEffect(() => {
     if (focusVersion.current !== focusRequest?.version) return
     const outer = requestAnimationFrame(() => {
@@ -125,6 +134,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const selectedGrants = selectable.flatMap((library) => { const name = text(library.library); return selected.has(name) ? [{ library: name, destinations: capabilityDestinations(capability(name)).filter((destination) => destination.state === 'allowed').map((destination) => destination.destination) }] : [] })
   const toggle = (library: string) => { const next = new Set(selected); if (next.has(library)) next.delete(library); else next.add(library); setSelection({ source: data, names: next }) }
   const restoreFocus = (key: string, version: number) => {
+    if (focusVersion.current !== version) return
     setFocusRequest({ key, version })
   }
   const changeSearch = (next: ActivitySearchUpdate, focusKey?: string) => {
@@ -157,6 +167,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const clearFilters = () => {
     ++queryDraftVersion.current
     if (queryCommit.current !== null) { window.clearTimeout(queryCommit.current); queryCommit.current = null }
+    localQueryNavigations.current.clear()
     setQueryText('')
     changeSearch({ q: undefined, eventType: 'all' }, 'clear-filters')
   }

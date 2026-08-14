@@ -357,6 +357,8 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     page.get_by_role("button", name="Reviews").click()
                     page.get_by_role("button", name="All").click()
                     inspect_control = page.get_by_role("button", name="Inspect").first
+                    inspect_control.wait_for()
+                    expect(inspect_control).to_be_visible()
                     inspect_control.focus()
                     page.keyboard.press("Enter")
                     page.get_by_text("Durable evidence").wait_for()
