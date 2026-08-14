@@ -131,10 +131,6 @@ class GenerateProviderRetrySuccessor:
             provider = self._provider(source, provider_name, adapter, generation)
             original = self._observation(source, provider)
             selected = self._selected(plan, original, lane_identities)
-            if not require_report_current(
-                self._target, self._inspector, self._mount, self._limits, source
-            ):
-                raise CurrentnessError("target or media changed")
             # This is the final external preflight: no factory or provider call
             # may follow a changed source package or rebound configuration.
             if not require_report_current(

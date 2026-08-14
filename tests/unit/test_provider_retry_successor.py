@@ -114,7 +114,7 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
             reads = 0
             def read(_self, _item):
                 _self.reads += 1
-                return self.snapshot if _self.reads < 3 else TargetSnapshot("ebook", "changed", self.snapshot.files)
+                return self.snapshot if _self.reads < 2 else TargetSnapshot("ebook", "changed", self.snapshot.files)
 
         service = GenerateProviderRetrySuccessor(
             target=DriftingTarget(), inspector=_Inspector(),
