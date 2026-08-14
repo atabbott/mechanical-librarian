@@ -252,14 +252,13 @@ class MetadataPersistenceTests(unittest.TestCase):
             successor = _report("Successor")
             try:
                 repository.publish(source, lambda: True)
-                repository._connection.execute("PRAGMA foreign_keys=OFF")
+                repository._connection.execute("PRAGMA ignore_check_constraints=ON")
                 repository._connection.execute(
-                    "UPDATE current_review_packages SET proposal_set_id=?,checkpoint=1,outcome='no_case'",
-                    ("proposal_set_" + "a" * 64,),
+                    "UPDATE current_review_packages SET outcome='hostile'"
                 )
-                repository._connection.execute("PRAGMA foreign_keys=ON")
+                repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
 
-                with self.assertRaisesRegex(MetadataReportError, "review package changed"):
+                with self.assertRaisesRegex(MetadataReportError, "review package is invalid"):
                     repository.publish(
                         successor,
                         lambda: True,
@@ -271,9 +270,10 @@ class MetadataPersistenceTests(unittest.TestCase):
                     source.target.connection, source.target.library,
                     source.target.item, source.file.identity,
                 ))
-                self.assertEqual(("proposal_set_" + "a" * 64, source.report_id, None, 1, "no_case"), repository.current_review_package(
-                    source.target.connection, source.target.library, source.target.item
-                ))
+                with self.assertRaisesRegex(MetadataReportError, "review package is invalid"):
+                    repository.current_review_package(
+                        source.target.connection, source.target.library, source.target.item
+                    )
                 self.assertIsNone(repository._connection.execute(
                     "SELECT report_id FROM metadata_reports WHERE report_id=?",
                     (successor.report_id,),

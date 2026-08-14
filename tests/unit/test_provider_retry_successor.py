@@ -155,6 +155,27 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
             service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)
         self.assertEqual([], provider.plans)
 
+    def test_malformed_package_prevents_factory_dispatch(self):
+        provider = _Provider(provider_observation("catalogue", (), authority="open_library"))
+
+        class MalformedPackageRepository(_Repository):
+            def current_review_package(_self, *_args):
+                raise ProviderRetrySuccessorError("persisted review package is invalid")
+
+        repository = MalformedPackageRepository(self.report)
+        service = GenerateProviderRetrySuccessor(
+            target=_Target(self.snapshot), inspector=_Inspector(),
+            repository_factory=lambda: repository,
+            provider_resolver=lambda *_args: ConfiguredProviderRetry(
+                ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2
+            ),
+            mount=MediaMountConfiguration("books", "/container", "/service", True),
+            limits=ReportLimits(), after_publication=lambda *_args: None,
+        )
+        with self.assertRaisesRegex(Exception, "package is invalid"):
+            service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)
+        self.assertEqual([], provider.plans)
+
     def test_malformed_replacement_leaves_predecessor_current(self):
         provider = _Provider(provider_observation(
             "catalogue", (ProviderLaneResult(self.failed, ProviderStatus.MALFORMED),), authority="open_library"

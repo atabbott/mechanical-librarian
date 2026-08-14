@@ -7768,6 +7768,37 @@ class SQLiteMetadataReportRepository:
             or type(row[4]) is not str
         ):
             raise MetadataReportError("persisted review package is invalid")
+        proposal_id, report_id, case_id, checkpoint, outcome = row
+        if outcome == "report_only":
+            if proposal_id is not None or case_id is not None or checkpoint is not None:
+                raise MetadataReportError("persisted review package is invalid")
+            return row
+        expected_case = outcome in {"admitted", "superseded"}
+        if (
+            outcome not in {"admitted", "superseded", "no_case", "retired"}
+            or proposal_id is None
+            or (case_id is not None) != expected_case
+            or checkpoint is None
+        ):
+            raise MetadataReportError("persisted review package is invalid")
+        try:
+            valid = self._connection.execute(
+                "SELECT 1 FROM proposal_sets proposal JOIN current_review_case_lineages lineage ON "
+                "lineage.connection_name=? AND lineage.library_name=? AND lineage.item_id=? "
+                "AND lineage.proposal_set_id=proposal.proposal_set_id AND lineage.report_id=proposal.report_id "
+                "WHERE proposal.proposal_set_id=? AND proposal.report_id=? AND "
+                "lineage.review_case_id IS ? AND lineage.checkpoint=? AND lineage.outcome=? "
+                "AND (? IS NULL OR EXISTS(SELECT 1 FROM review_cases review WHERE review.review_case_id=? "
+                "AND review.proposal_set_id=? AND review.report_id=?))",
+                (
+                    connection, library, item, proposal_id, report_id, case_id,
+                    checkpoint, outcome, case_id, case_id, proposal_id, report_id,
+                ),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise MetadataReportError("persisted review package is invalid") from error
+        if valid != (1,):
+            raise MetadataReportError("persisted review package is invalid")
         return row
 
     def current_review_package_report(
