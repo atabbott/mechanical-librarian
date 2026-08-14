@@ -1435,6 +1435,15 @@ def _target_backed_lookup_contains(
             if claim.kind is ClaimKind.TITLE and claim.basis == "target_metadata"
         )
     )
+    target_titles_are_exact = all(
+        (claim := local_claims.get(reference)) is not None
+        and claim.kind is ClaimKind.TITLE
+        and claim.basis == "target_metadata"
+        and claim.state is FieldState.VALID
+        and type(claim.canonical) is str
+        and normalize_title(claim.canonical).casefold() == expected_title.casefold()
+        for reference in target_title_references
+    ) if expected_title is not None else False
     return any(
         lane.status is ProviderStatus.CANDIDATES
         and any(
@@ -1452,26 +1461,42 @@ def _target_backed_lookup_contains(
                     and isbn_family(claim.canonical) == lane.matched_family
                     for reference in lane.input_references
                 )
+                and lane.identity == _discovery_lane_identity(
+                    {
+                        "canonical_isbns": sorted(
+                            {
+                                local_claims[reference].canonical
+                                for reference in lane.input_references
+                            }
+                        ),
+                        "input_references": list(lane.input_references),
+                        "kind": ProviderQueryKind.ISBN.value,
+                        "matched_family": lane.matched_family,
+                    }
+                )
             )
             or (
                 lane.kind is ProviderQueryKind.WORK
                 and expected_title is not None
                 and expected_authors
                 and lane.input_references == target_title_references
-                and lane.identity == "lane_" + hashlib.sha256(
-                    canonical_json(
-                        {
-                            "authors": list(expected_authors),
-                            "input_references": list(target_title_references),
-                            "kind": ProviderQueryKind.WORK.value,
-                            "title": expected_title,
-                        }
-                    ).encode()
-                ).hexdigest()
+                and target_titles_are_exact
+                and lane.identity == _discovery_lane_identity(
+                    {
+                        "authors": list(expected_authors),
+                        "input_references": list(target_title_references),
+                        "kind": ProviderQueryKind.WORK.value,
+                        "title": expected_title,
+                    }
+                )
             )
         )
         for lane in provider.lanes
     )
+
+
+def _discovery_lane_identity(payload: dict[str, object]) -> str:
+    return "lane_" + hashlib.sha256(canonical_json(payload).encode()).hexdigest()
 
 
 def _creator_sets_match(

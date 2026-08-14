@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -1015,6 +1016,37 @@ class ProposalSetTests(unittest.TestCase):
                     )
                 )
 
+        source = observation("hardcover-connection", "hardcover", neutral)
+        forged_identity = "lane_" + "0" * 64
+        forged_lane = replace(
+            source.lanes[0],
+            identity=forged_identity,
+            candidates=(
+                ProviderLaneCandidate(
+                    provider_lane_candidate_reference(
+                        "hardcover-connection", forged_identity,
+                        neutral.identity, neutral.work_identity,
+                    ),
+                    neutral.identity,
+                    neutral.work_identity,
+                ),
+            ),
+        )
+        forged_source = replace(source, lanes=(forged_lane,))
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", fields),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(isbn,),
+            local_reasons=("opening_matter_isbn",),
+            providers=(forged_source,),
+        )
+        replayed = MetadataReport.from_json(report.to_json())
+        self.assertFalse(
+            _target_backed_lookup_contains(
+                replayed, replayed.providers[0], replayed.providers[0].candidates[0],
+            )
+        )
+
     def test_work_lane_corroboration_rejects_replayed_target_binding_tampering(
         self,
     ) -> None:
@@ -1075,10 +1107,40 @@ class ProposalSetTests(unittest.TestCase):
             ("wrong title ref", (wrong_title,), wrong_title.reference),
         ):
             with self.subTest(label=label):
+                lane_identity = (
+                    "lane_" + hashlib.sha256(
+                        canonical_json(
+                            {
+                                "authors": ["Mick Herron"],
+                                "input_references": [reference],
+                                "kind": ProviderQueryKind.WORK.value,
+                                "title": "Real Tigers",
+                            }
+                        ).encode()
+                    ).hexdigest()
+                    if label == "wrong title ref"
+                    else source.lanes[0].identity
+                )
                 tampered = replace(
                     source,
                     input_references=(reference,),
-                    lanes=(replace(source.lanes[0], input_references=(reference,)),),
+                    lanes=(
+                        replace(
+                            source.lanes[0],
+                            identity=lane_identity,
+                            input_references=(reference,),
+                            candidates=(
+                                ProviderLaneCandidate(
+                                    provider_lane_candidate_reference(
+                                        "open-connection", lane_identity,
+                                        candidate.identity, candidate.work_identity,
+                                    ),
+                                    candidate.identity,
+                                    candidate.work_identity,
+                                ),
+                            ),
+                        ),
+                    ),
                 )
                 report = MetadataReport.create(
                     target=TargetFacts("primary", "ebooks", "item-1", fields),
