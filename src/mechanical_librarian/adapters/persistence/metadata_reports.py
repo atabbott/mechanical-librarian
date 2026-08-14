@@ -951,6 +951,8 @@ class SQLiteMetadataReportRepository:
         self, decision: HumanDecision | AutomaticDecision
     ) -> dict[str, object]:
         """Resolve one exact persisted decision against its current case lineage."""
+        if not self._review_case_accepts_authority(decision.review_case_id):
+            raise FieldEffectError("authority_binding")
         table = "human_decisions" if type(decision) is HumanDecision else "automatic_decisions"
         row = self._connection.execute(
             f"SELECT document FROM {table} WHERE decision_id=?", (decision.decision_id,)
@@ -1110,7 +1112,9 @@ class SQLiteMetadataReportRepository:
         ).fetchone() == (1,) and self._connection.execute(
             "SELECT 1 FROM current_review_case_lineages WHERE review_case_id=?",
             (authority.review_case_id,),
-        ).fetchone() == (1,))
+        ).fetchone() == (1,) and self._review_case_accepts_authority(
+            authority.review_case_id
+        ))
         if not current or authority.origin != "automatic_policy":
             return current
         lineage = self._connection.execute(

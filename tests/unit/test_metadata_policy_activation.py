@@ -13,6 +13,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.application.field_effects import FieldEffectError
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     MetadataPolicyProfile,
@@ -899,6 +900,28 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         self.assertTrue(json.loads(stale_writer.get_review_case(case_id))["current"])
         stale_writer.close()
         activator.close()
+
+    def test_field_effect_authority_requires_exact_published_checkpoint(self) -> None:
+        repository, _, _, case_id = self._current_case_with_completed_work()
+        decision = self._human_decision(
+            repository, case_id, "checkpoint-authority-0001"
+        )
+        repository.record_human_decision(decision)
+        self.assertEqual(
+            repository.field_effect_authority_source(decision)["review_case_id"],
+            case_id,
+        )
+        repository._connection.execute(
+            "UPDATE current_review_packages SET checkpoint=checkpoint+2 "
+            "WHERE review_case_id=?",
+            (case_id,),
+        )
+        repository._connection.commit()
+        self.assertTrue(json.loads(repository.get_review_case(case_id))["current"])
+        self.assertFalse(repository._review_case_accepts_authority(case_id))
+        with self.assertRaisesRegex(FieldEffectError, "authority_binding"):
+            repository.field_effect_authority_source(decision)
+        repository.close()
 
     def test_invisible_stale_case_is_not_in_activation_cohort(self) -> None:
         repository = open_repository(self.path)
