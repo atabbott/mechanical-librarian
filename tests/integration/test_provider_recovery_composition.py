@@ -155,8 +155,19 @@ class ProviderRecoveryCompositionTests(unittest.TestCase):
             check.close()
             recovery.close()
 
-    def test_restart_delivers_generation_cutover_once_after_dormant_auth_health(self) -> None:
-        """A persisted F22 cutover wakes dormant owner-recovery health on restart."""
+    def test_restart_delivers_generation_cutover_once_after_dormant_authentication_health(self) -> None:
+        self._assert_restart_delivers_generation_cutover_once(
+            ProviderStatus.AUTHENTICATION
+        )
+
+    def test_restart_delivers_generation_cutover_once_after_dormant_authorization_health(self) -> None:
+        self._assert_restart_delivers_generation_cutover_once(
+            ProviderStatus.AUTHORIZATION
+        )
+
+    def _assert_restart_delivers_generation_cutover_once(
+        self, failed_lane_status: ProviderStatus,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             database = root / "reports.sqlite"
@@ -179,7 +190,7 @@ class ProviderRecoveryCompositionTests(unittest.TestCase):
                 file=FileFacts(0, file_identity, f"{20:064x}"),
                 local_claims=(isbn,), local_reasons=("opening_matter_isbn",),
                 providers=(
-                    provider_observation("google", tuple(ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE) for lane in plan.lanes), authority="google_books"),
+                    provider_observation("google", tuple(ProviderLaneResult(lane, failed_lane_status) for lane in plan.lanes), authority="google_books"),
                     _provider("hardcover", "hc", (_claim("hardcover", "hc", ClaimKind.TITLE, "Recovered title", scope=ClaimScope.WORK),), authority="hardcover"),
                     _provider("open-library", "ol", (_claim("open-library", "ol", ClaimKind.TITLE, "Recovered title", scope=ClaimScope.WORK),), authority="open_library"),
                 ),
@@ -217,9 +228,16 @@ class ProviderRecoveryCompositionTests(unittest.TestCase):
                 (ProviderConnectionConfiguration("google", True, False, None, "google_books"), ProviderConnectionConfiguration("hardcover", True, False, "/run/hardcover-token", "hardcover"), ProviderConnectionConfiguration("open-library", True, False, None, "open_library", "owner@example.invalid")),
                 provider_recovery_generation=1, review=ReviewWebConfiguration("https://review.example.invalid", "/run/owner-password"),
             )
-            recovery.observe_failure(connection="google", adapter="google_books", scope="ebooks", generation=1, failure="authentication", now=0)
-            recovery.observe_failure(connection="google", adapter="google_books", scope="ebooks", generation=1, failure="authorization", now=1)
-            self.assertEqual("dormant", recovery.snapshot()[0].state)
+            recovery.observe_failure(
+                connection="google", adapter="google_books", scope="ebooks",
+                generation=1, failure=failed_lane_status.value, now=0,
+            )
+            dormant_health, = recovery.snapshot()
+            self.assertEqual("dormant", dormant_health.state)
+            self.assertEqual(1, dormant_health.generation)
+            self.assertIsNone(
+                recovery.claim_one(generation=1, now=9, token="before")
+            )
             generation_two = replace(generation_one, provider_recovery_generation=2)
             calls: list[ProviderStatus] = []
             clock = [10]
@@ -237,6 +255,13 @@ class ProviderRecoveryCompositionTests(unittest.TestCase):
                 check = open_repository(database)
                 self.assertNotEqual(predecessor, check.current_review_package("primary", "ebooks", item))
                 self.assertEqual(0, check._connection.execute("SELECT count(*) FROM provider_recovery_outbox WHERE delivered_at IS NULL").fetchone()[0])
+                self.assertEqual(
+                    2,
+                    check._connection.execute(
+                        "SELECT count(*) FROM provider_recovery_outbox "
+                        "WHERE delivered_at IS NOT NULL"
+                    ).fetchone()[0],
+                )
                 check.close()
                 self.assertEqual([ProviderStatus.CANDIDATES], calls)
                 self.assertEqual("recovered", recovery.snapshot()[0].state)
