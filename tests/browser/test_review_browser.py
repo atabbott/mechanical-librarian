@@ -516,6 +516,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     page.wait_for_url("**/activity?*page=2*")
                     expect(next_page).to_be_focused()
                     page_number = page.get_by_role("spinbutton", name="Activity page number")
+                    expect(page_number).to_have_value("2")
                     page_number.fill("99")
                     page_number.press("Enter")
                     page.wait_for_url("**/activity?*page=3*")
