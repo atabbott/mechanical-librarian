@@ -48,7 +48,13 @@ The recovery member succeeds only after that ordinary F22 work has projected
 and atomically replaced `current_review_packages`; the predecessor package
 remains owner-visible until then.
 
-F24 activation composes this seam behind the existing preparation supervisor
+F24 activation composes this seam behind the existing preparation supervisor.
+The exact package cutover transaction writes its recovery outbox row before any
+cross-database recovery enqueue; startup drains that row before generation
+reconciliation, so a crash cannot turn an authorized authentication or
+authorization wake into dormant health with orphaned work. Replayed outbox
+delivery is idempotent.
+The activation composes this seam behind the existing preparation supervisor
 and its explicit owner CLI invocation. Neither path is an endpoint, bulk
 operation, or target-metadata write caller.
 

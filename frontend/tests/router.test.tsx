@@ -2104,7 +2104,7 @@ describe('typed review routes', () => {
     await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
       expect.objectContaining({ q: 'ab', page: 2 }), expect.anything(),
     ))
-    expect(screen.getByRole('button', { name: 'Next' })).toHaveFocus()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toHaveFocus())
 
     const page = screen.getByRole('spinbutton', { name: 'Activity page number' })
     await user.clear(page)
@@ -2112,6 +2112,26 @@ describe('typed review routes', () => {
     await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
       expect.objectContaining({ page: 3 }), expect.anything(),
     ))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveFocus())
+
+    const currentPage = screen.getByRole('spinbutton', { name: 'Activity page number' })
+    await user.clear(currentPage)
+    await user.type(currentPage, '2{Escape}')
+    expect(http.getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 3 }), expect.anything(),
+    )
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(3))
+    expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveFocus()
+
+    const previous = screen.getByRole('button', { name: 'Previous' })
+    await user.click(previous)
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(2))
+    await user.click(screen.getByRole('button', { name: 'Previous' }))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(1))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveFocus())
+
+    await user.click(screen.getByRole('button', { name: 'Last' }))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(3))
     await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveFocus())
 
     const rows = screen.getByRole('combobox', { name: 'Rows per activity page' })

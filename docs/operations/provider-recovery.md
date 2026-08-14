@@ -15,9 +15,12 @@ authorization, and configuration failures are dormant.
 
 After correcting a dormant condition, increment the positive
 `provider_recovery_generation` in the `config-v6` file and restart the
-container. Startup rejects persisted generations newer than configuration and
-advances every older row atomically: dormant rows wake immediately while
-waiting and checking rows retain their domain state. No environment variable,
+container. Startup first drains committed package cutovers from the durable
+outbox, then rejects persisted generations newer than configuration and
+advances every older row atomically. Authentication and authorization wake only
+when that delivered exact job proves the new configured generation; otherwise
+they remain dormant. Outbox delivery and job registration are idempotent, so a
+crash between cutover and enqueue is recovered on restart. No environment variable,
 file watcher, configuration hash, or manual retry endpoint wakes it. This
 recovery path rebuilds only retry-eligible provider lanes and publishes an immutable
 successor through the ordinary proposal, admission, shadow projection, and

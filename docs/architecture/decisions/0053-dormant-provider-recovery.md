@@ -39,9 +39,11 @@ restart and authorizes fanout without another provider request.
 Health rows are exact-current and events are append-only. Existing state must
 match this exact schema; there are no migrations or imports.
 
-Startup rejects a persisted generation newer than configuration and advances
-every older row and its unfinished exact jobs atomically through its domain
-generation transition. Checking
+Startup first drains committed package-cutover outbox rows into durable exact
+jobs, then rejects a persisted generation newer than configuration and advances
+every older row. A delivered job at the configured generation is the durable
+provenance that authorizes an authentication or authorization wake; without it
+the row remains dormant. Checking
 can only transition through strict lease completion. Terminal health
 observations are atomic and idempotent: checking, fanout, and dormant take precedence,
 and a dormant observation replaces waiting once without rescheduling repeated

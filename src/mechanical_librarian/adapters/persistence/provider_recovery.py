@@ -75,8 +75,8 @@ class SQLiteProviderRecoveryStore:
             for row in rows:
                 has_jobs = self._connection.execute(
                     "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
-                    "AND scope=? AND generation=? AND state!='complete' LIMIT 1",
-                    (row[0], row[1], row[2], row[3]),
+                    "AND scope=? AND generation<=? AND state!='complete' LIMIT 1",
+                    (row[0], row[1], row[2], generation),
                 ).fetchone() is not None
                 successor = (
                     ProviderRecovery(*row).with_generation(generation, now=now)

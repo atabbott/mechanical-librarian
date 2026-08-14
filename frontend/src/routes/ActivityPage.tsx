@@ -35,8 +35,9 @@ const dateParts = (value: number | null) => {
 
 function PageJump({ page, pageCount, onCommit }: { page: number, pageCount: number, onCommit: (page: number, focusKey: string) => void }) {
   const [value, setValue] = useState(String(page))
-  const commit = () => { const requested = Number.parseInt(value, 10); if (!Number.isFinite(requested)) { setValue(String(page)); return }; const clamped = Math.max(1, Math.min(pageCount, requested)); setValue(String(clamped)); onCommit(clamped, 'page-jump') }
-  return <label className="cm-activity-page-jump"><span>Page</span><input data-activity-focus="page-jump" aria-label="Activity page number" inputMode="numeric" type="number" min="1" max={pageCount} value={value} onChange={(event) => setValue(event.target.value)} onBlur={commit} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setValue(String(page)); event.currentTarget.blur() } }}/><span>of {pageCount}</span></label>
+  const cancelCommit = useRef(false)
+  const commit = () => { if (cancelCommit.current) { cancelCommit.current = false; setValue(String(page)); return }; const requested = Number.parseInt(value, 10); if (!Number.isFinite(requested)) { setValue(String(page)); return }; const clamped = Math.max(1, Math.min(pageCount, requested)); setValue(String(clamped)); onCommit(clamped, 'page-jump') }
+  return <label className="cm-activity-page-jump"><span>Page</span><input data-activity-focus="page-jump" aria-label="Activity page number" inputMode="numeric" type="number" min="1" max={pageCount} value={value} onChange={(event) => setValue(event.target.value)} onBlur={commit} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { cancelCommit.current = true; setValue(String(page)); const input = event.currentTarget; input.blur(); input.focus({ preventScroll: true }) } }}/><span>of {pageCount}</span></label>
 }
 
 export default function ActivityPage({ initial }: { initial: ActivityView }) {
@@ -48,6 +49,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   useEffect(() => () => {
     if (queryCommit.current !== null) window.clearTimeout(queryCommit.current)
   }, [])
+  useEffect(() => {
+    if (queryCommit.current !== null) { window.clearTimeout(queryCommit.current); queryCommit.current = null }
+    const sync = window.setTimeout(() => setQueryText(search.q ?? ''), 0)
+    return () => window.clearTimeout(sync)
+  }, [search.q])
   useRouteReadyFocus('activity')
   const query = useQuery({
     queryKey: ['activity', search.q ?? null, search.eventType, search.rangeDays, search.page, search.pageSize],
@@ -98,7 +104,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       changeSearch({ q: value || undefined }, 'search')
     }, 150)
   }
-  const goToPage = (page: number, focusKey?: string) => { const clamped = Math.max(1, Math.min(ledger.page_count, page)); setExpandedId(null); const key = focusKey ?? document.activeElement?.getAttribute('data-activity-focus') ?? undefined; void navigate({ search: (previous) => ({ ...previous, page: clamped }) }).then(() => { if (key) restoreFocus(key) }) }
+  const goToPage = (page: number, focusKey?: string) => { const clamped = Math.max(1, Math.min(ledger.page_count, page)); setExpandedId(null); const key = focusKey ?? document.activeElement?.getAttribute('data-activity-focus') ?? undefined; const restoredKey = (clamped === 1 && (key === 'first' || key === 'previous')) || (clamped === ledger.page_count && (key === 'next' || key === 'last')) ? 'page-jump' : key; void navigate({ search: (previous) => ({ ...previous, page: clamped }) }).then(() => { if (restoredKey) restoreFocus(restoredKey) }) }
   const suspensions = records(data.suspensions)
   const writes = ['claimed', 'applying', 'reconciling'].reduce((total, state) => total + count(data.counts[state]), 0)
   const providerRecovery = data.provider_recovery ?? []

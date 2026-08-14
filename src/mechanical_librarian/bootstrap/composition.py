@@ -1098,10 +1098,6 @@ def create_review_pipeline(
     discovery_lock = threading.Lock()
     if provider_recovery is None:
         raise ConfigurationError("provider recovery store is unavailable")
-    provider_recovery.reconcile_generation(
-        generation=configuration.provider_recovery_generation, now=int(time.time())
-    )
-
     def repository_factory():
         return open_repository(
             database_path, create=False, authority=database_authority
@@ -1463,6 +1459,9 @@ def create_review_pipeline(
     )
     pipeline_holder["pipeline"] = pipeline
     drain_provider_recovery_outbox()
+    provider_recovery.reconcile_generation(
+        generation=configuration.provider_recovery_generation, now=int(time.time())
+    )
     return ReviewPreparationSupervisor(
         pipeline,
         polling_interval_seconds=configuration.review.library_polling_interval_seconds,
