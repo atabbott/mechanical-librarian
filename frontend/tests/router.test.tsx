@@ -8,6 +8,7 @@ import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../src/api
 import type { ActivityDisplayView, ActivityView, AttentionSearch, AttentionView, CaseDetailView, HistoryView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
 import { createApplicationRouter, detailQuery, normalizeLibrarySearch, normalizePolicySearch } from '../src/router'
 import { activityEventKeys, activityOutcome } from '../src/activityState'
+import { policyRepresentationGuidance } from '../src/routes/PolicyPage'
 
 const library: LibraryView = {
   lens: 'all',
@@ -100,6 +101,30 @@ const openActivityAuthority = async (user: ReturnType<typeof userEvent.setup>) =
 }
 
 describe('typed review routes', () => {
+  it('keeps every supported closed Policy representation context-complete', () => {
+    const expected = [
+      'title_layout:preserve', 'title_layout:title_and_subtitle', 'contributor_names:preserve', 'contributor_names:canonical', 'language_rendering:preserve', 'language_rendering:display_name', 'subtitle:fill_empty', 'subtitle:corroborated_split', 'date_precision:year', 'date_precision:full_date', 'publisher_preference:publisher', 'publisher_preference:imprint', 'isbn_form:preserve_exact', 'isbn_form:prefer_isbn13', 'series:primary_narrative', 'series:source_order', 'series:all_qualified', 'genres:fill_empty', 'genres:add', 'genres:replace', 'tags:off', 'tags:fill_empty', 'tags:add', 'tags:replace', 'description_fill:safe_plain_text', 'description_fill:google_visible_text', 'cover_order:fixed_source_order', 'asin:preserve_exact', 'asin:ebook_manifestation',
+    ]
+    expect(Object.keys(policyRepresentationGuidance).sort()).toEqual(expected.sort())
+    for (const guidance of Object.values(policyRepresentationGuidance)) {
+      expect(guidance.admitted).not.toHaveLength(0)
+      expect(guidance.transformation).not.toHaveLength(0)
+      expect(guidance.effect).not.toHaveLength(0)
+      expect(guidance.fallback).not.toHaveLength(0)
+    }
+    for (const key of ['contributor_names:preserve', 'contributor_names:canonical', 'language_rendering:preserve', 'language_rendering:display_name', 'date_precision:year', 'date_precision:full_date', 'publisher_preference:publisher']) {
+      const guidance = policyRepresentationGuidance[key]
+      if (!guidance) throw new Error(`missing guidance: ${key}`)
+      expect(guidance.admitted).toContain('already-produced exact candidate')
+      expect(guidance.transformation).toContain('without')
+      expect(guidance.effect).toContain('only that exact selected')
+      expect(guidance.fallback).toContain('no decision is qualified')
+    }
+    expect(policyRepresentationGuidance['date_precision:year']?.effect).toContain('Publication date or Publication year destination value')
+    expect(policyRepresentationGuidance['date_precision:full_date']?.effect).toContain('Publication date or Publication year destination value')
+    expect(policyRepresentationGuidance['publisher_preference:imprint']?.effect).toContain('no Automatic decision is qualified')
+  })
+
   it('fails closed while classifying every authoritative Activity command outcome', () => {
     expect(activityOutcome({}, { path: 'field-effects/pause' })).toBe('unknown')
     expect(activityOutcome({ paused: true }, { path: 'field-effects/pause' })).toBe('applied')
@@ -1255,7 +1280,7 @@ describe('typed review routes', () => {
       title_layout: 'title_and_subtitle', date_precision: 'year', language_rendering: 'display_name', contributor_names: 'canonical', publisher_preference: 'publisher', subtitle: 'fill_empty', series: 'primary_narrative', genres: 'fill_empty', tags: 'off', description_fill: 'safe_plain_text', isbn_form: 'preserve_exact', cover_order: 'fixed_source_order', asin: 'preserve_exact', explicit: 'unsupported',
     }
     const destinations = {
-      title_layout: 'ask', date_precision: 'ask', language_rendering: 'ask', contributor_names: 'ask', publisher_preference: 'ask', genres: 'automatic', tags: 'ignore', description_fill: 'ask', isbn_form: 'ask', cover_order: 'ask', asin: 'ask', explicit: 'unsupported',
+      title_layout: 'ask', date_precision: 'ask', language_rendering: 'ask', contributor_names: 'ask', publisher_preference: 'ask', genres: 'automatic', tags: 'ignore', description_fill: 'automatic', isbn_form: 'ask', cover_order: 'ask', asin: 'ask', explicit: 'unsupported',
     }
     let validationCalls = 0
     let draftSaves = 0
@@ -1281,8 +1306,13 @@ describe('typed review routes', () => {
         { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'series', option: 'source_order' },
         { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'series', option: 'all_qualified' },
         { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'genres', option: 'fill_empty' },
+        { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'policy_only', field: 'tags', option: 'off' },
         { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'isbn_form', option: 'preserve_exact' },
         { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'isbn_form', option: 'prefer_isbn13' },
+        { automatic_available: true, candidate_sha256: 'a'.repeat(64), disposition: 'passing_automatic', field: 'description_fill', option: 'safe_plain_text' },
+        { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'not_qualified', field: 'description_fill', option: 'google_visible_text' },
+        { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'insufficient_coverage', field: 'asin', option: 'preserve_exact' },
+        { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'insufficient_coverage', field: 'asin', option: 'ebook_manifestation' },
         { automatic_available: false, candidate_sha256: 'a'.repeat(64), disposition: 'passing_human_only', field: 'explicit', option: 'unsupported' },
       ] })),
       policyCommand: <T,>(path: string, body?: unknown) => policyCommand(path, body) as Promise<T>,
@@ -1311,9 +1341,28 @@ describe('typed review routes', () => {
     await user.click(within(publisher).getByRole('button', { name: 'Ignore' }))
     expect(screen.getByRole('button', { name: /^Publication/ })).toHaveAccessibleDescription('2 changed fields')
     await user.click(screen.getByRole('button', { name: /Curation/ }))
+    const tags = screen.getByRole('region', { name: 'Tags' })
+    expect(within(tags).getByText(/Manual review only: this policy option is intentionally off/i)).toBeVisible()
+    expect(within(tags).getByRole('button', { name: 'Ask me' })).toBeEnabled()
+    expect(within(tags).getByRole('button', { name: 'Ignore' })).toBeEnabled()
+    const asin = screen.getByRole('region', { name: 'ASIN' })
+    expect(within(asin).getByText(/Manual review only: this representation has insufficient Automatic qualification coverage/i)).toBeVisible()
+    expect(within(asin).getByRole('button', { name: 'Ask me' })).toBeEnabled()
+    expect(within(asin).getByRole('button', { name: 'Ignore' })).toBeEnabled()
+    const description = screen.getByRole('region', { name: 'Description' })
+    expect(within(description).getByText('Policy preview context:').parentElement).toHaveTextContent('one exact bounded plain-text description')
+    expect(within(description).getByText(/does not transform HTML/i)).toBeVisible()
+    await user.click(within(description).getByRole('combobox', { name: 'Description representation' }))
+    await user.click(screen.getByRole('option', { name: 'Visible Google text' }))
+    expect(await screen.findByText('Description now uses a Manual review only representation, so review mode changed from Automatic to Ask me.')).toBeVisible()
+    expect(within(description).getByRole('button', { name: 'Ask me' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(description).getByText(/eligible Google Books visible text only/i)).toBeVisible()
+    expect(within(description).getByText(/bounded Google HTML into inert visible text/i)).toBeVisible()
+    expect(within(description).getByText(/never falls back to Hardcover/i)).toBeVisible()
+    expect(within(description).getByText('Ask me:').parentElement).toHaveTextContent('applies the exact displayed proposal')
     const changedGenres = screen.getByRole('region', { name: 'Genres' })
     await user.click(within(changedGenres).getByRole('button', { name: 'Ignore' }))
-    expect(screen.getByRole('button', { name: /^Curation/ })).toHaveAccessibleDescription('1 changed field')
+    expect(screen.getByRole('button', { name: /^Curation/ })).toHaveAccessibleDescription('2 changed fields')
     expect(screen.getByRole('button', { name: /^Publication/ })).toHaveAccessibleDescription('2 changed fields')
     await user.click(screen.getByRole('button', { name: /Publication/ }))
     const returnedPublisher = screen.getByRole('region', { name: 'Publisher' })

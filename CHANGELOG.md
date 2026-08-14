@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Explain every closed Library policy representation in place: its admitted
+  source/value, bounded transformation, field effect, and abstention boundary.
+  Visible Google text now explicitly admits only eligible transformed Google
+  Books text and never falls back to Hardcover; manual-review-only choices and
+  any Automatic-to-Ask-me consequence are owner-visible. (#608)
+
 - Record an equal automatic metadata candidate as a durable **No change
   required** Activity outcome without creating a guarded write plan or
   consulting write authority, consent, capability, backup, target, or read-back
