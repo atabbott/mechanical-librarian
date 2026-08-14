@@ -661,6 +661,12 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         )
 
         repository = open_repository(self.path)
+        self.assertEqual(repository._connection.execute("SELECT COUNT(*) FROM current_review_packages").fetchone(), (0,))
+        self.assertEqual(repository.count_current_review_cases(None), (0, 0))
+        self.assertEqual(repository.read_review_attention(None, 10, 0).total, 0)
+        repository.close()
+
+        repository = open_repository(self.path)
         reappeared = json.loads(repository.admit_review_case(proposal))
         pointer = repository._connection.execute(
             "SELECT review_case_id,outcome FROM current_review_case_lineages"

@@ -3608,6 +3608,13 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             if current != (proposal_id, report_id, case_id, checkpoint):
                 continue
+            published = self._connection.execute(
+                "SELECT proposal_set_id,report_id,review_case_id FROM current_review_packages "
+                "WHERE connection_name=? AND library_name=? AND item_id=?",
+                (connection, library, item_id),
+            ).fetchone()
+            if published is None:
+                raise MetadataReportError("review preparation state changed")
             transition = ReviewTransition(
                 connection,
                 library,
@@ -3659,7 +3666,7 @@ class SQLiteMetadataReportRepository:
             )
             if self._connection.execute(
                 "DELETE FROM current_review_packages WHERE connection_name=? AND library_name=? AND item_id=? AND proposal_set_id=? AND report_id=? AND review_case_id=?",
-                (connection, library, item_id, proposal_id, report_id, case_id),
+                (connection, library, item_id, *published),
             ).rowcount != 1:
                 raise MetadataReportError("review preparation state changed")
         self._connection.execute(
