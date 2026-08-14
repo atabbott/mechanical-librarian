@@ -8,7 +8,8 @@ otherwise awkward successor transaction testable without granting execution.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+import time
 
 from mechanical_librarian.application.metadata_report import (
     CurrentnessError,
@@ -20,6 +21,7 @@ from mechanical_librarian.application.metadata_report import (
     ReportRepository,
     TargetReader,
     metadata_discovery_plan,
+    merge_provider_diagnostics,
     provider_observation,
     require_report_current,
 )
@@ -30,6 +32,7 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderObservation,
+    ProviderRequestAccounting,
     ProviderStatus,
     ReportValueError,
 )
@@ -132,7 +135,18 @@ class GenerateProviderRetrySuccessor:
                 self._target, self._inspector, self._mount, self._limits, source
             ):
                 raise CurrentnessError("target or media changed")
-            replacement = self._observe(provider, plan, selected)
+            # This is the final external preflight: no factory or provider call
+            # may follow a changed source package or rebound configuration.
+            if not require_report_current(
+                self._target, self._inspector, self._mount, self._limits, source
+            ) or self._current_source(repository, source) != current:
+                raise CurrentnessError("target or media changed")
+            live_provider = self._provider(source, provider_name, adapter, generation)
+            if self._provider_identity(live_provider) != self._provider_identity(provider):
+                raise ProviderRetrySuccessorError("provider retry configuration changed")
+            replacement = self._observe(
+                live_provider, plan, selected, deadline=time.monotonic() + 60.0
+            )
             merged = self._merged(plan, original, selected, replacement)
             successor = MetadataReport.create(
                 target=source.target, file=source.file,
@@ -246,12 +260,23 @@ class GenerateProviderRetrySuccessor:
             raise ProviderRetrySuccessorError("provider retry lane is invalid")
         return selected
 
-    def _observe(self, provider: ConfiguredProviderRetry, plan: MetadataDiscoveryPlan, selected: tuple) -> ProviderObservation:
+    def _observe(
+        self,
+        provider: ConfiguredProviderRetry,
+        plan: MetadataDiscoveryPlan,
+        selected: tuple,
+        *,
+        deadline: float,
+    ) -> ProviderObservation:
         try:
             client: MetadataProvider = provider.binding.factory()
-            observation = client.observe(MetadataDiscoveryPlan(plan.local_claims, selected))
+            observation = client.observe(
+                MetadataDiscoveryPlan(plan.local_claims, selected), deadline=deadline
+            )
         except Exception as error:
             raise ProviderRetrySuccessorError("provider retry dispatch failed") from error
+        if type(observation) is ProviderObservation and observation.authority is None:
+            observation = replace(observation, authority=provider.binding.authority)
         if observation.provider != provider.binding.name or observation.authority != provider.binding.authority:
             raise ProviderRetrySuccessorError("provider retry result is invalid")
         if {lane.identity for lane in observation.lanes} != {lane.identity for lane in selected}:
@@ -265,16 +290,39 @@ class GenerateProviderRetrySuccessor:
         old_lanes = self._canonical_lanes(original.lanes)
         new_lanes = self._canonical_lanes(replacement.lanes)
 
+        aggregate_accessed_at = replacement.accessed_at or original.accessed_at
+
         def result(lane):
             observation = new_lanes[lane.identity] if lane.identity in selected_ids else old_lanes[lane.identity]
             candidates = new_candidates if lane.identity in selected_ids else old_candidates
-            return ProviderLaneResult(lane, observation.status, tuple(
-                candidates[item.edition_identity] for item in observation.candidates
-            ), replacement.accessed_at if lane.identity in selected_ids else original.accessed_at)
+            evidence = replacement if lane.identity in selected_ids else original
+            overflow = (
+                evidence.edition_enrichment_overflow
+                if lane.kind.value == "work"
+                and observation.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+                else None
+            )
+            return ProviderLaneResult(
+                lane,
+                observation.status,
+                tuple(candidates[item.edition_identity] for item in observation.candidates),
+                aggregate_accessed_at,
+                overflow,
+            )
 
         merged = provider_observation(
             original.provider, tuple(result(lane) for lane in plan.lanes),
             authority=original.authority,
+            diagnostics=merge_provider_diagnostics(
+                original.diagnostics, replacement.diagnostics
+            ),
+            request_accounting=ProviderRequestAccounting(
+                original.request_accounting.logical_requests + replacement.request_accounting.logical_requests,
+                original.request_accounting.initial_dispatches + replacement.request_accounting.initial_dispatches,
+                original.request_accounting.retry_dispatches + replacement.request_accounting.retry_dispatches,
+                original.request_accounting.replays + replacement.request_accounting.replays,
+                original.request_accounting.undispatched_incomplete + replacement.request_accounting.undispatched_incomplete,
+            ),
         )
         # A retry must never rewrite an unselected lane's persisted evidence.
         merged_lanes = {lane.identity: lane.to_data() for lane in merged.lanes}

@@ -14,8 +14,11 @@ from mechanical_librarian.application.provider_retry_successor import (
     ConfiguredProviderRetry, GenerateProviderRetrySuccessor, ProviderRetrySuccessorError,
 )
 from mechanical_librarian.domain.metadata_report import (
-    ClaimKind, FileFacts, LocalClaim, MetadataReport, ProviderCandidate, ProviderStatus,
+    ClaimKind, FileFacts, LocalClaim, MetadataReport, ProviderCandidate, ProviderRequestAccounting, ProviderStatus,
     TargetFacts,
+)
+from mechanical_librarian.domain.failure_diagnostics import (
+    FailureCategory, FailureComponent, FailureDiagnostic, FailureStage,
 )
 
 
@@ -44,8 +47,8 @@ class _Repository:
 
 
 class _Provider:
-    def __init__(self, observation): self.observation = observation; self.plans = []
-    def observe(self, plan, *, deadline=None): self.plans.append(plan); return self.observation
+    def __init__(self, observation): self.observation = observation; self.plans = []; self.deadlines = []
+    def observe(self, plan, *, deadline=None): self.plans.append(plan); self.deadlines.append(deadline); return self.observation
 
 
 class ProviderRetrySuccessorTests(unittest.TestCase):
@@ -92,6 +95,59 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
             MetadataReport.from_json(service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)).report_id,
             self.repository.current_id,
         )
+
+    def test_raw_adapter_authority_is_bound_and_retry_has_deadline(self):
+        replacement = provider_observation("catalogue", (ProviderLaneResult(self.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),))
+        provider = _Provider(replacement)
+        successor = MetadataReport.from_json(self.service(
+            ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2)
+        ).run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2))
+        self.assertEqual("open_library", successor.providers[0].authority)
+        self.assertEqual(1, len(provider.deadlines))
+        self.assertGreater(provider.deadlines[0], 0.0)
+
+    def test_final_source_drift_prevents_factory_dispatch(self):
+        replacement = provider_observation("catalogue", (), authority="open_library")
+        provider = _Provider(replacement)
+
+        class DriftingTarget:
+            reads = 0
+            def read(_self, _item):
+                _self.reads += 1
+                return self.snapshot if _self.reads < 3 else TargetSnapshot("ebook", "changed", self.snapshot.files)
+
+        service = GenerateProviderRetrySuccessor(
+            target=DriftingTarget(), inspector=_Inspector(),
+            repository_factory=lambda: self.repository,
+            provider_resolver=lambda *_args: ConfiguredProviderRetry(
+                ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2
+            ),
+            mount=MediaMountConfiguration("books", "/container", "/service", True),
+            limits=ReportLimits(), after_publication=lambda *_args: None,
+        )
+        with self.assertRaisesRegex(Exception, "target or media"):
+            service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)
+        self.assertEqual([], provider.plans)
+
+    def test_merge_uses_one_timestamp_and_retains_bounded_evidence(self):
+        diagnostic = FailureDiagnostic(
+            FailureCategory.UNKNOWN, FailureComponent.PROVIDER, FailureStage.RESPONSE
+        )
+        original = provider_observation("catalogue", (
+            ProviderLaneResult(self.failed, ProviderStatus.UNAVAILABLE, accessed_at="2026-08-14T12:00:00.000000Z"),
+            ProviderLaneResult(self.success, ProviderStatus.CANDIDATES, (ProviderCandidate("old", "work", ()),), "2026-08-14T12:00:00.000000Z"),
+        ), authority="open_library", diagnostics=(diagnostic,), request_accounting=ProviderRequestAccounting(2, 2))
+        replacement = provider_observation("catalogue", (
+            ProviderLaneResult(self.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),), "2026-08-14T12:01:00.000000Z"),
+        ), authority="open_library", diagnostics=(diagnostic,), request_accounting=ProviderRequestAccounting(1, 1))
+        merged = self.service(None)._merged(self.plan, original, (self.failed,), replacement)
+        self.assertEqual("2026-08-14T12:01:00.000000Z", merged.accessed_at)
+        self.assertEqual(
+            next(lane for lane in original.lanes if lane.identity == self.success.identity).to_data(),
+            next(lane for lane in merged.lanes if lane.identity == self.success.identity).to_data(),
+        )
+        self.assertEqual(2, merged.diagnostics[0].count)
+        self.assertEqual(ProviderRequestAccounting(3, 3), merged.request_accounting)
 
     def test_real_sqlite_successor_staging_retains_the_source_package(self):
         replacement = provider_observation("catalogue", (ProviderLaneResult(self.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),), authority="open_library")

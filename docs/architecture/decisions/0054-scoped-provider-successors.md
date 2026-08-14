@@ -28,6 +28,13 @@ it. This keeps provider and target work outside the SQLite writer lock, while
 dispatch failure, source drift, and a concurrent package race leave the
 predecessor package current.
 
+Immediately before constructing the provider client, the seam repeats the full
+source/package currentness and binding-identity checks. It binds a production
+adapter's authority-less observation to the configured authority, gives the
+single retry observation a 60-second monotonic aggregate deadline, and combines
+selected and retained evidence without discarding bounded diagnostics, request
+accounting, or a valid edition-overflow witness.
+
 The seam has no composition, scheduler, CLI, endpoint, recovery claim, canary,
 or production write caller in this constituent. F24 activation owns that
 authority.
