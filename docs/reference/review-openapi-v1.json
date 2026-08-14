@@ -112,12 +112,34 @@
             "type": "string"
           },
           "destination": {
+            "maxLength": 512,
             "title": "Destination",
             "type": "string"
+          },
+          "event_id": {
+            "default": "recorded-event",
+            "maxLength": 128,
+            "title": "Event Id",
+            "type": "string"
+          },
+          "event_type": {
+            "default": "unknown",
+            "maxLength": 32,
+            "title": "Event Type",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityEvidence"
+            },
+            "maxItems": 8,
+            "title": "Evidence",
+            "type": "array"
           },
           "failure": {
             "anyOf": [
               {
+                "maxLength": 512,
                 "type": "string"
               },
               {
@@ -127,6 +149,7 @@
             "title": "Failure"
           },
           "library": {
+            "maxLength": 512,
             "title": "Library",
             "type": "string"
           },
@@ -142,14 +165,17 @@
             "title": "Occurred At"
           },
           "origin": {
+            "maxLength": 512,
             "title": "Origin",
             "type": "string"
           },
           "state": {
+            "maxLength": 512,
             "title": "State",
             "type": "string"
           },
           "work_id": {
+            "maxLength": 512,
             "title": "Work Id",
             "type": "string"
           },
@@ -168,6 +194,27 @@
           "work_id"
         ],
         "title": "_ActivityEvent",
+        "type": "object"
+      },
+      "_ActivityEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "maxLength": 64,
+            "title": "Label",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 512,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "value"
+        ],
+        "title": "_ActivityEvidence",
         "type": "object"
       },
       "_ActivityExample": {
@@ -200,6 +247,80 @@
           "work_id"
         ],
         "title": "_ActivityExample",
+        "type": "object"
+      },
+      "_ActivityLedger": {
+        "additionalProperties": false,
+        "properties": {
+          "event_type": {
+            "enum": [
+              "all",
+              "review",
+              "policy",
+              "metadata",
+              "safety",
+              "unknown"
+            ],
+            "title": "Event Type",
+            "type": "string"
+          },
+          "page": {
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_count": {
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Page Count",
+            "type": "integer"
+          },
+          "page_size": {
+            "enum": [
+              25,
+              50,
+              100
+            ],
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "range_days": {
+            "enum": [
+              7,
+              30,
+              90
+            ],
+            "title": "Range Days",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "event_type",
+          "page",
+          "page_count",
+          "page_size",
+          "range_days",
+          "total"
+        ],
+        "title": "_ActivityLedger",
         "type": "object"
       },
       "_ActivityLibrary": {
@@ -290,6 +411,16 @@
             "title": "Counts",
             "type": "object"
           },
+          "current_waiting": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ActivityWaiting"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "enabled_libraries": {
             "items": {
               "$ref": "#/components/schemas/_ActivityLibrary"
@@ -325,6 +456,9 @@
             ],
             "title": "Last Failure"
           },
+          "ledger": {
+            "$ref": "#/components/schemas/_ActivityLedger"
+          },
           "paused": {
             "title": "Paused",
             "type": "boolean"
@@ -333,7 +467,7 @@
             "$ref": "#/components/schemas/_ActivityPrepared"
           },
           "schema_version": {
-            "const": "continuous-field-activity-v1",
+            "const": "continuous-field-activity-v2",
             "title": "Schema Version",
             "type": "string"
           },
@@ -355,6 +489,8 @@
           "events",
           "example",
           "last_failure",
+          "ledger",
+          "current_waiting",
           "paused",
           "prepared",
           "schema_version",
@@ -402,6 +538,45 @@
           "updated_at"
         ],
         "title": "_ActivitySuspension",
+        "type": "object"
+      },
+      "_ActivityWaiting": {
+        "additionalProperties": false,
+        "properties": {
+          "destination": {
+            "maxLength": 512,
+            "title": "Destination",
+            "type": "string"
+          },
+          "library": {
+            "maxLength": 512,
+            "title": "Library",
+            "type": "string"
+          },
+          "state": {
+            "maxLength": 512,
+            "title": "State",
+            "type": "string"
+          },
+          "work_id": {
+            "maxLength": 512,
+            "title": "Work Id",
+            "type": "string"
+          },
+          "work_label": {
+            "maxLength": 512,
+            "title": "Work Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "destination",
+          "library",
+          "state",
+          "work_id",
+          "work_label"
+        ],
+        "title": "_ActivityWaiting",
         "type": "object"
       },
       "_AsinQualification": {
@@ -3874,6 +4049,84 @@
     "/api/v1/activity": {
       "get": {
         "operationId": "activity_status_api_v1_activity_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_type",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "review",
+                "policy",
+                "metadata",
+                "safety",
+                "unknown"
+              ],
+              "title": "Event Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "range_days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "enum": [
+                7,
+                30,
+                90
+              ],
+              "title": "Range Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 1000000,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "enum": [
+                25,
+                50,
+                100
+              ],
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -3894,6 +4147,16 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {

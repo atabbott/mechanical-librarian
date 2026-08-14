@@ -83,7 +83,12 @@ export interface ActivityPreparedView { automatic: number; human: number; total:
 export interface ActivityLibraryView { connection: string; library: string; prepared?: ActivityPreparedView | null }
 export interface ActivityDestinationView { consented: boolean; destination: string; state: string }
 export interface ActivityCapabilityView { connection: string; destinations: readonly ActivityDestinationView[]; library: string; state: string }
-export interface ActivityEventView { author_label?: string; destination: string; failure: string | null; library: string; occurred_at: number | null; origin: string; state: string; work_id: string; work_label: string }
+export type ActivityEventType = 'review' | 'policy' | 'metadata' | 'safety' | 'unknown'
+export interface ActivityEvidenceView { label: string; value: string }
+export interface ActivityEventView { author_label?: string; destination: string; event_id: string; event_type: ActivityEventType; evidence: readonly ActivityEvidenceView[]; failure: string | null; library: string; occurred_at: number | null; origin: string; state: string; work_id: string; work_label: string }
+export interface ActivitySearch { q?: string; eventType: 'all' | ActivityEventType; rangeDays: 7 | 30 | 90; page: number; pageSize: 25 | 50 | 100 }
+export interface ActivityLedgerView { event_type: ActivitySearch['eventType']; page: number; page_count: number; page_size: ActivitySearch['pageSize']; query: string | null; range_days: ActivitySearch['rangeDays']; total: number }
+export interface ActivityWaitingView { destination: string; library: string; state: string; work_id: string; work_label: string }
 export interface ActivityExampleView { after: unknown; before: unknown; destination: string; library: string; work_id: string; work_label: string }
 export interface ActivitySuspensionView { connection: string; destination: string | null; reason: string; scope: string; updated_at: number }
 export interface ActivityDisplayView {
@@ -96,9 +101,11 @@ export interface ActivityDisplayView {
   events: readonly ActivityEventView[]
   example: ActivityExampleView | null
   last_failure: string | null
+  ledger: ActivityLedgerView
+  current_waiting: ActivityWaitingView | null
   paused: boolean
   prepared: ActivityPreparedView
-  schema_version: 'continuous-field-activity-v1'
+  schema_version: 'continuous-field-activity-v2'
   suspensions: readonly ActivitySuspensionView[]
 }
 
@@ -148,7 +155,7 @@ export interface ReviewHttp {
   getShadowSample(signal?: AbortSignal): Promise<ShadowSampleView>
   getPolicyTransition(signal?: AbortSignal): Promise<PolicyTransitionView | null>
   policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T>
-  getActivity(signal?: AbortSignal): Promise<ActivityView>
+  getActivity(search?: ActivitySearch, signal?: AbortSignal): Promise<ActivityView>
   activityCommand(path: string, body?: unknown, signal?: AbortSignal): Promise<ActivityView | undefined>
   logout(signal?: AbortSignal): Promise<void>
 }
@@ -224,7 +231,11 @@ export class ReviewApiClient implements ReviewHttp {
   async getShadowSample(signal?: AbortSignal) { return validateObject(await this.read('/api/v1/metadata-policy/shadow/outcomes?limit=10', signal), 'shadow_sample') as unknown as ShadowSampleView }
   async getPolicyTransition(signal?: AbortSignal) { const value = await this.read('/api/v1/metadata-policy/transition', signal); return value === null ? null : validateObject(value, 'policy_transition') as unknown as PolicyTransitionView }
   async policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal) { const value = await this.mutate(`/api/v1/metadata-policy/${path}`, body, signal); if (!record(value)) throw new ApiError(502, 'invalid_policy_response'); return value as T }
-  async getActivity(signal?: AbortSignal): Promise<ActivityView> { return mapActivity(await this.read('/api/v1/activity', signal)) }
+  async getActivity(search?: ActivitySearch, signal?: AbortSignal): Promise<ActivityView> {
+    const p = new URLSearchParams()
+    if (search) { if (search.q) p.set('q', search.q); p.set('event_type', search.eventType); p.set('range_days', String(search.rangeDays)); p.set('page', String(search.page)); p.set('page_size', String(search.pageSize)) }
+    return mapActivity(await this.read(`/api/v1/activity${p.size ? `?${p}` : ''}`, signal))
+  }
   async activityCommand(path: string, body?: unknown, signal?: AbortSignal): Promise<ActivityView | undefined> { const value = await this.mutate(`/api/v1/${path}`, body, signal); return value === undefined ? undefined : mapActivity(value) }
   async logout(signal?: AbortSignal) { await this.mutate('/api/v1/session/logout', undefined, signal) }
 
@@ -286,7 +297,7 @@ const activitySuspensions = (value: unknown): ActivitySuspensionView[] => {
   return value.map((item, index) => { if (!record(item)) throw new ApiError(502, `invalid_activity_suspension_${String(index)}`); return { connection: stringValue(item.connection, 'activity_suspension_connection'), destination: item.destination === null ? null : stringValue(item.destination, 'activity_suspension_destination'), reason: stringValue(item.reason, 'activity_suspension_reason'), scope: stringValue(item.scope, 'activity_suspension_scope'), updated_at: integerValue(item.updated_at, 'activity_suspension_updated_at') } })
 }
 export const mapActivity = (value: unknown): ActivityDisplayView => {
-  if (!record(value) || value.schema_version !== 'continuous-field-activity-v1') throw new ApiError(502, 'invalid_activity_response')
+  if (!record(value) || value.schema_version !== 'continuous-field-activity-v2' || !record(value.ledger)) throw new ApiError(502, 'invalid_activity_response')
   const libraries = (raw: unknown, field: string): ActivityLibraryView[] => {
     if (!Array.isArray(raw)) throw new ApiError(502, `invalid_${field}`)
     return raw.map((item, index) => { if (!record(item)) throw new ApiError(502, `invalid_${field}_${String(index)}`); return { connection: stringValue(item.connection, `${field}_connection`), library: stringValue(item.library, `${field}_library`), ...(item.prepared === undefined ? {} : { prepared: item.prepared === null ? null : activityPrepared(item.prepared, `${field}_prepared`) }) } })
@@ -298,8 +309,8 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
   for (const [key, count] of Object.entries(value.counts)) counts[stringValue(key, 'activity_count_name')] = integerValue(count, 'activity_count')
   return {
     backup_ready: typeof value.backup_ready === 'boolean' ? value.backup_ready : (() => { throw new ApiError(502, 'invalid_activity_backup_ready') })(), capabilities: capabilities.map((item, index) => { if (!record(item) || !Array.isArray(item.destinations)) throw new ApiError(502, `invalid_activity_capability_${String(index)}`); return { connection: stringValue(item.connection, 'activity_connection'), library: stringValue(item.library, 'activity_library'), state: stringValue(item.state, 'activity_state'), destinations: item.destinations.map((destination, destinationIndex) => { if (!record(destination) || typeof destination.consented !== 'boolean') throw new ApiError(502, `invalid_activity_destination_${String(destinationIndex)}`); return { destination: stringValue(destination.destination, 'activity_destination'), state: stringValue(destination.state, 'activity_destination_state'), consented: destination.consented } }) } }),
-    configured_libraries: libraries(value.configured_libraries, 'activity_configured_libraries'), consented_libraries: libraries(value.consented_libraries, 'activity_consented_libraries'), counts, enabled_libraries: libraries(value.enabled_libraries, 'activity_enabled_libraries'), events: events.map((event, index) => { if (!record(event)) throw new ApiError(502, `invalid_activity_event_${String(index)}`); const occurred_at = event.occurred_at === undefined || event.occurred_at === null ? null : integerValue(event.occurred_at, 'activity_occurred_at'); const failure = event.failure === undefined || event.failure === null ? null : stringValue(event.failure, 'activity_failure'); const author_label = event.author_label === undefined ? undefined : stringValue(event.author_label, 'activity_author_label'); return { destination: stringValue(event.destination, 'activity_event_destination'), library: stringValue(event.library, 'activity_event_library'), origin: stringValue(event.origin, 'activity_event_origin'), state: stringValue(event.state, 'activity_event_state'), work_id: stringValue(event.work_id, 'activity_work_id'), work_label: event.work_label === undefined ? 'Recorded work' : stringValue(event.work_label, 'activity_work_label'), ...(author_label === undefined ? {} : { author_label }), occurred_at, failure } }),
-    example: activityExample(value.example), last_failure: value.last_failure === null ? null : stringValue(value.last_failure, 'activity_last_failure'), paused: typeof value.paused === 'boolean' ? value.paused : (() => { throw new ApiError(502, 'invalid_activity_paused') })(), prepared: activityPrepared(value.prepared, 'activity_prepared'), schema_version: 'continuous-field-activity-v1', suspensions: activitySuspensions(value.suspensions),
+    configured_libraries: libraries(value.configured_libraries, 'activity_configured_libraries'), consented_libraries: libraries(value.consented_libraries, 'activity_consented_libraries'), counts, enabled_libraries: libraries(value.enabled_libraries, 'activity_enabled_libraries'), events: events.map((event, index) => { if (!record(event) || !Array.isArray(event.evidence)) throw new ApiError(502, `invalid_activity_event_${String(index)}`); const occurred_at = event.occurred_at === undefined || event.occurred_at === null ? null : integerValue(event.occurred_at, 'activity_occurred_at'); const failure = event.failure === undefined || event.failure === null ? null : stringValue(event.failure, 'activity_failure'); const author_label = event.author_label === undefined ? undefined : stringValue(event.author_label, 'activity_author_label'); const eventType = stringValue(event.event_type, 'activity_event_type'); if (!['review', 'policy', 'metadata', 'safety', 'unknown'].includes(eventType) || event.evidence.length > 8) throw new ApiError(502, 'invalid_activity_event'); return { destination: stringValue(event.destination, 'activity_event_destination'), event_id: stringValue(event.event_id, 'activity_event_id'), event_type: eventType as ActivityEventType, evidence: event.evidence.map((item) => { if (!record(item)) throw new ApiError(502, 'invalid_activity_evidence'); return { label: stringValue(item.label, 'activity_evidence_label'), value: stringValue(item.value, 'activity_evidence_value') } }), library: stringValue(event.library, 'activity_event_library'), origin: stringValue(event.origin, 'activity_event_origin'), state: stringValue(event.state, 'activity_event_state'), work_id: stringValue(event.work_id, 'activity_work_id'), work_label: event.work_label === undefined ? 'Recorded work' : stringValue(event.work_label, 'activity_work_label'), ...(author_label === undefined ? {} : { author_label }), occurred_at, failure } }),
+    example: activityExample(value.example), last_failure: value.last_failure === null ? null : stringValue(value.last_failure, 'activity_last_failure'), ledger: (() => { const item = value.ledger; const eventType = stringValue(item.event_type, 'activity_ledger_type'); const pageSize = integerValue(item.page_size, 'activity_page_size'); const rangeDays = integerValue(item.range_days, 'activity_range_days'); if (!['all', 'review', 'policy', 'metadata', 'safety', 'unknown'].includes(eventType) || ![25, 50, 100].includes(pageSize) || ![7, 30, 90].includes(rangeDays)) throw new ApiError(502, 'invalid_activity_ledger'); return { event_type: eventType as ActivitySearch['eventType'], page: integerValue(item.page, 'activity_page'), page_count: integerValue(item.page_count, 'activity_page_count'), page_size: pageSize as ActivitySearch['pageSize'], query: item.query === null ? null : stringValue(item.query, 'activity_query'), range_days: rangeDays as ActivitySearch['rangeDays'], total: integerValue(item.total, 'activity_total') } })(), current_waiting: value.current_waiting === null ? null : (() => { if (!record(value.current_waiting)) throw new ApiError(502, 'invalid_activity_waiting'); return { destination: stringValue(value.current_waiting.destination, 'activity_waiting_destination'), library: stringValue(value.current_waiting.library, 'activity_waiting_library'), state: stringValue(value.current_waiting.state, 'activity_waiting_state'), work_id: stringValue(value.current_waiting.work_id, 'activity_waiting_work_id'), work_label: stringValue(value.current_waiting.work_label, 'activity_waiting_work_label') } })(), paused: typeof value.paused === 'boolean' ? value.paused : (() => { throw new ApiError(502, 'invalid_activity_paused') })(), prepared: activityPrepared(value.prepared, 'activity_prepared'), schema_version: 'continuous-field-activity-v2', suspensions: activitySuspensions(value.suspensions),
   }
 }
 

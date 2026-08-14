@@ -648,9 +648,23 @@ class ReviewApplication:
             "category_suspensions": dict(state.category_suspensions),
         }
 
-    def activity(self) -> dict[str, object]:
+    def activity(
+        self,
+        *,
+        search: str | None = None,
+        event_type: str = "all",
+        range_days: int = 30,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> dict[str, object]:
         application = self._continuous_application()
-        return self.serialized(application.activity)
+        return self.serialized(lambda: application.activity(
+            search=search,
+            event_type=event_type,
+            range_days=range_days,
+            page=page,
+            page_size=page_size,
+        ))
 
     def enable_activity(
         self, grants: tuple[tuple[str, tuple[str, ...]], ...]

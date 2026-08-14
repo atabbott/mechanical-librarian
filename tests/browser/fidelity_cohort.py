@@ -463,7 +463,7 @@ def _attention() -> dict[str, object]:
     }
 
 
-def _activity() -> dict[str, object]:
+def _activity(query: dict[str, list[str]]) -> dict[str, object]:
     events = [
         ("The Glass Orchard", "Spoken stories", "title", "verified", "automatic_policy", None),
         (LONG_TITLE, "Spoken stories", "authors", "applying", "human", None),
@@ -482,7 +482,8 @@ def _activity() -> dict[str, object]:
         ("Automatic-only edition", "Household ebooks", "series", "running", "automatic_policy", None),
     ]
     return {
-        "schema_version": "continuous-field-activity-v1",
+        "schema_version": "continuous-field-activity-v2",
+        "current_waiting": None,
         "backup_ready": True,
         "paused": False,
         "configured_libraries": [
@@ -527,6 +528,14 @@ def _activity() -> dict[str, object]:
         ],
         "events": [
             {
+                "event_id": f"activity-event-{index}",
+                "event_type": (
+                    "review" if origin == "human" else "metadata"
+                ),
+                "evidence": [
+                    {"label": "Recorded origin", "value": origin},
+                    {"label": "Outcome", "value": state},
+                ],
                 "work_id": f"book-{index}",
                 "work_label": work,
                 "author_label": "Synthetic Author",
@@ -542,6 +551,15 @@ def _activity() -> dict[str, object]:
         "counts": {"verified": 1, "applying": 1, "stale": 1, "recovered": 1},
         "example": None,
         "last_failure": "readback",
+        "ledger": {
+            "event_type": query.get("event_type", ["all"])[0],
+            "page": int(query.get("page", ["1"])[0]),
+            "page_count": 1,
+            "page_size": int(query.get("page_size", ["25"])[0]),
+            "query": query.get("q", [None])[0],
+            "range_days": int(query.get("range_days", ["30"])[0]),
+            "total": len(events),
+        },
         "prepared": {"automatic": 3, "human": 6, "total": 9},
         "suspensions": [
             {"reason": "readback", "connection": "archive", "destination": "authors", "scope": "destination", "updated_at": 1_754_858_700},
@@ -726,7 +744,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             "acknowledged": False,
         }
     if path == "/api/v1/activity":
-        return _activity()
+        return _activity(query)
     raise AssertionError(f"unexpected API target: {target}")
 
 

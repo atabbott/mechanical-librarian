@@ -555,7 +555,7 @@ class _ActivityApplication(ContinuousGuardedApplication):
     def wait_for_drain(self, deadline=None) -> None:
         return None
 
-    def activity(self):
+    def activity(self, **query):
         return {
             "backup_ready": True,
             "configured_libraries": [
@@ -572,10 +572,12 @@ class _ActivityApplication(ContinuousGuardedApplication):
                                    "consented": "history" in self.enabled_libraries}]},
             ],
             "counts": {}, "enabled_libraries": [{"connection": "primary", "library": library} for library in sorted(self.enabled_libraries)],
-            "events": [{"destination": "title", "failure": None, "library": "fiction", "occurred_at": 1, "origin": "automatic_policy", "state": "verified", "work_id": "book-1"}], "example": {"after": "After", "before": "Before", "destination": "title", "library": "fiction", "work_id": "book-1"},
+            "events": [{"destination": "title", "event_id": "event-1", "event_type": "metadata", "evidence": [{"label": "Recorded automatic decision", "value": "verified"}], "failure": None, "library": "fiction", "occurred_at": 1, "origin": "automatic_policy", "state": "verified", "work_id": "book-1"}], "example": {"after": "After", "before": "Before", "destination": "title", "library": "fiction", "work_id": "book-1"},
             "last_failure": None, "paused": self.paused,
+            "ledger": {"event_type": query.get("event_type", "all"), "page": query.get("page", 1), "page_count": 1, "page_size": query.get("page_size", 25), "query": query.get("search"), "range_days": query.get("range_days", 30), "total": 1},
+            "current_waiting": None,
             "prepared": {"automatic": 1, "human": 1, "total": 2},
-            "schema_version": "continuous-field-activity-v1", "suspensions": [],
+            "schema_version": "continuous-field-activity-v2", "suspensions": [],
         }
 
     def enable(self, grants):
@@ -938,6 +940,17 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(script.status_code, 200)
         self.assertEqual(self.client.get("/api/v1/activity").json()["prepared"]["total"], 2)
+        filtered = self.client.get(
+            "/api/v1/activity?event_type=all&range_days=30&page=1&page_size=25"
+        )
+        self.assertEqual(filtered.status_code, 200, filtered.text)
+        self.assertEqual(filtered.json()["ledger"], {
+            "event_type": "all", "page": 1, "page_count": 1, "page_size": 25,
+            "query": None, "range_days": 30, "total": 1,
+        })
+        self.assertEqual(
+            self.client.get("/api/v1/activity?range_days=8").status_code, 422
+        )
         denied = self.client.post(
             "/api/v1/activity/consent",
             headers={**self.origin, "X-CSRF-Token": "invalid"},

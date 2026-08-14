@@ -95,3 +95,10 @@ revocation stop new claims, and all target calls use the existing API-key
 adapter and guarded application service. Media mounts remain read-only; release,
 deployment publication, dashboard, bulk, rollback, and destructive authority
 remain outside this contract.
+
+The authenticated Activity ledger is a private read projection, not an
+operations console. It pages a deterministic newest-first union of durable
+review decisions, policy transitions, safeguards, guarded effects, and
+verification, with bounded search, type and date filters. It never offers
+queue administration, blind retries, telemetry, exports, or extra write
+authority; recovery and consent remain the existing server-validated actions.

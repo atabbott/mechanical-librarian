@@ -375,16 +375,16 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         payload["counts"]["claimed"] = 1
                         route.fulfill(status=response.status, json=payload)
 
-                    page.route("**/api/v1/activity", activity_poll)
+                    page.route("**/api/v1/activity?*", activity_poll)
                     page.get_by_role("link", name="Activity", exact=True).click()
-                    page.get_by_role("heading", name="Ready work is waiting safely").wait_for()
+                    page.get_by_role("heading", name="No intervention needed").wait_for()
                     self.assertGreaterEqual(activity_requests, 1)
                     page.get_by_role("link", name="Library", exact=True).click()
                     page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
                     settled_activity_requests = activity_requests
                     page.wait_for_timeout(5_500)
                     self.assertEqual(activity_requests, settled_activity_requests)
-                    page.unroute("**/api/v1/activity", activity_poll)
+                    page.unroute("**/api/v1/activity?*", activity_poll)
                     self.assertEqual(documents, initial_documents)
                     page.goto(f"{origin}/review/{case_id}?field=title&subview=review")
                     page.get_by_role("heading", name="Current review case").wait_for()
