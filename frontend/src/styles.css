@@ -453,7 +453,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .cm-policy-sidebar > header { grid-template-columns:1fr; align-items:start; }
   .cm-policy-sidebar > header small { grid-column:1; grid-row:auto; max-width:none; text-align:left; }
   .masthead nav { flex-wrap:wrap; overflow:visible; }
-  .masthead nav a { min-width:44px; flex:1 1 0; padding-inline:.45rem; }
+  .masthead nav a { min-width:44px; flex:1 1 6rem; padding-inline:.45rem; }
   .cm-policy-finish ol, .cm-policy-finish-actions { flex-wrap:wrap; }
   .cm-policy-finish li, .cm-policy-finish-actions button { min-width:0; }
   .cm-policy-finish-actions button { white-space:normal; overflow-wrap:anywhere; }
