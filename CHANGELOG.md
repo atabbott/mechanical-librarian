@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Show each Library policy chapter's exact changed-field count, including zero,
+  with chapter-specific accessible labels. Unsupported fields now explain that
+  they are read-only and cannot be changed in a draft. (#607)
+
 - Preserve safely anchored Hardcover work identity, title, and complete creator
   evidence when the requested edition enrichment exceeds its bound. The
   oversized enrichment is diagnosed without retaining any edition claims or

@@ -163,6 +163,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .cm-policy-sidebar > header small { color:var(--notice); }
 .cm-policy-transition { margin:.65rem; padding:.6rem; border:1px solid var(--notice); border-radius:.5rem; color:var(--soft); background:var(--notice-soft); font-size:.68rem; line-height:1.4; }
 .cm-policy-sidebar nav { display:grid; padding:.45rem; }
+.cm-policy-chapter-legend { margin:.1rem .65rem .55rem; color:var(--soft); font-size:.62rem; font-weight:800; text-align:right; }
 .cm-policy-sidebar nav button { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:.6rem; min-height:68px; padding:.55rem .6rem; border-color:transparent; background:transparent; text-align:left; }
 .cm-policy-sidebar nav button:hover:not(:disabled) { background:color-mix(in srgb,var(--accent-soft) 42%,transparent); }
 .cm-policy-sidebar nav button[aria-current='page'] { border-color:var(--accent); background:var(--accent-soft); }
@@ -339,7 +340,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 @media (max-width:1024px) {
   .masthead { align-items:center; flex-wrap:wrap; gap:.35rem .65rem; }
   .brand { flex:1 1 auto; }
-  .masthead nav { order:3; width:100%; overflow-x:auto; }
+  .masthead nav { order:3; width:100%; min-width:0; overflow-x:auto; }
   .shell-actions { margin-left:auto; }
   .library-workspace { grid-template-columns:minmax(280px,340px) minmax(0,1fr); }
   .attention-field-row { grid-template-columns:minmax(8rem,.7fr) minmax(0,1.4fr) auto; }
@@ -409,7 +410,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .cm-policy-sidebar > header { padding:.8rem .9rem; }
   .cm-policy-sidebar > header strong { font-size:1rem; }
   .cm-policy-sidebar > header small { max-width:16ch; font-size:.66rem; }
-  .cm-policy-sidebar nav { grid-template-columns:repeat(2,minmax(0,1fr)); padding:.45rem; }
+  .cm-policy-sidebar nav { grid-template-columns:repeat(auto-fit,minmax(8rem,1fr)); padding:.45rem; }
   .cm-policy-sidebar nav button { min-height:52px; padding:.5rem .55rem; }
   .cm-policy-sidebar nav button b { width:24px; height:24px; }
   .cm-policy-mode { margin:.1rem .55rem .55rem; padding:.65rem .45rem; }
@@ -447,6 +448,16 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .cm-dropdown-menu > button { min-height:44px; }
   .policy-workflow-actions { justify-content:flex-start; }
   .build-mismatch { align-items:flex-start; flex-direction:column; }
+}
+@media (max-width:390px) {
+  .cm-policy-sidebar > header { grid-template-columns:1fr; align-items:start; }
+  .cm-policy-sidebar > header small { grid-column:1; grid-row:auto; max-width:none; text-align:left; }
+  .masthead nav { flex-wrap:wrap; overflow:visible; }
+  .masthead nav a { min-width:44px; flex:1 1 0; padding-inline:.45rem; }
+  .cm-policy-finish ol, .cm-policy-finish-actions { flex-wrap:wrap; }
+  .cm-policy-finish li, .cm-policy-finish-actions button { min-width:0; }
+  .cm-policy-finish-actions button { white-space:normal; overflow-wrap:anywhere; }
+  .cm-policy-finish li small { overflow-wrap:anywhere; white-space:normal; }
 }
 @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; transition-duration:.01ms!important; }.cm-policy-validation-spinner,.cm-policy-validation li > span,.cm-policy-validation,.cm-policy-result,.cm-policy-activated,.cm-dropdown-menu { animation:none!important; }.cm-dropdown-trigger svg { transition:none!important; } }
 /* Variant M workspace: regular widths keep work, decision and attention in one operating surface. */
