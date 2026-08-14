@@ -141,6 +141,7 @@ export const policyImpactDisplay = (field: PolicyPreviewField): PolicyImpactDisp
         : `${current} → ${previewValue(field.desired_value)}`
     return { changed: true, title: 'Change', detail, technicalDetail }
   }
+  if (field.reason === 'target_state_unusable') return { changed: false, title: 'Needs review', detail: 'Current value is unavailable or unreadable — inspect the source before deciding', technicalDetail }
   if (field.reason === 'ambiguous_evidence') return { changed: false, title: 'Needs review', detail: `${current} remains — ${humanReason(field.reason)}`, technicalDetail }
   if (field.reason === 'policy_ignored' || field.reason === 'policy_off') return { changed: false, title: 'No change', detail: `remains ${current} — ${humanReason(field.reason)}`, technicalDetail }
   if (field.reason === 'explicit_unsupported') return { changed: false, title: 'No supported value found', detail: `${current} remains — ${humanReason(field.reason)}`, technicalDetail }
