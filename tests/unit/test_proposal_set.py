@@ -5,6 +5,10 @@ from dataclasses import replace
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.application.metadata_report import (
+    MetadataLookup,
+    qualify_provider_observation,
+)
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -473,7 +477,87 @@ def _result(proposal_set: ProposalSet, destination: TargetDestination):
     )
 
 
+def _real_tigers_corroboration_report() -> MetadataReport:
+    author_claim = _claim(
+        "open-library", "author-edition", ClaimKind.CREATOR, "Mick Herron",
+        scope=ClaimScope.WORK, role="author", order=1,
+    )
+    neutral_claim = _claim(
+        "hardcover", "neutral-edition", ClaimKind.CREATOR, "Mick Herron",
+        scope=ClaimScope.WORK, role=None, order=1,
+    )
+    author_candidate = ProviderCandidate(
+        "author-edition", "open-library-work",
+        (_claim("open-library", "author-edition", ClaimKind.TITLE, "Real Tigers", scope=ClaimScope.WORK), author_claim), (),
+        (ProviderIdentityBinding(author_claim.reference, "open-library-author-OL1", ClaimScope.WORK, "author"),),
+    )
+    neutral_candidate = ProviderCandidate(
+        "neutral-edition", "hardcover-work",
+        (_claim("hardcover", "neutral-edition", ClaimKind.TITLE, "Real Tigers", scope=ClaimScope.WORK), neutral_claim), (),
+        (ProviderIdentityBinding(neutral_claim.reference, "hardcover-author-0000000001", ClaimScope.WORK, None),),
+    )
+    return _report(
+        title=None,
+        fields=_fields(None, authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING)),
+        providers=(
+            ProviderObservation("hardcover", ProviderStatus.CANDIDATES, (), (neutral_candidate,), ProviderQueryKind.WORK, "hardcover"),
+            ProviderObservation("open-library", ProviderStatus.CANDIDATES, (), (author_candidate,), ProviderQueryKind.WORK, "open_library"),
+        ),
+    )
+
+
 class ProposalSetTests(unittest.TestCase):
+    def test_corroboration_is_provider_order_deterministic(self) -> None:
+        report = _real_tigers_corroboration_report()
+        reordered = MetadataReport.create(
+            target=report.target,
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=report.providers,
+        )
+        # Provider observations are canonically stored by name.  Evaluate the
+        # same qualified observations in reverse to prove the pure pairing
+        # seam itself has no iteration-order vote.
+        object.__setattr__(reordered, "providers", tuple(reversed(report.providers)))
+        first, second = evaluate_report(report), evaluate_report(reordered)
+        self.assertEqual(first.to_json(), second.to_json())
+        result = _result(second, TargetDestination.AUTHORS)
+        self.assertEqual(("explicit_author_corroborates_untyped_creator",), result.reasons)
+        self.assertEqual(2, len(result.alternatives[0].evidence_references))
+
+    def test_unqualified_work_lookup_cannot_corroborate_authors(self) -> None:
+        report = _real_tigers_corroboration_report()
+        lookup = MetadataLookup(
+            ProviderQueryKind.WORK, (), "Real Tigers", ("Mick Herron",),
+        )
+        author_source = qualify_provider_observation(report.providers[1], lookup)
+        mismatched_candidate = replace(
+            report.providers[0].candidates[0],
+            claims=(
+                _claim("hardcover", "neutral-edition", ClaimKind.TITLE, "Other Tigers", scope=ClaimScope.WORK),
+                _claim("hardcover", "neutral-edition", ClaimKind.CREATOR, "Mick Herron", scope=ClaimScope.WORK, role=None, order=1),
+            ),
+            identity_bindings=(),
+        )
+        mismatched = qualify_provider_observation(
+            ProviderObservation("hardcover", ProviderStatus.CANDIDATES, (), (mismatched_candidate,), authority="hardcover"),
+            lookup,
+        )
+        self.assertEqual(ProviderStatus.CANDIDATES, author_source.status)
+        self.assertEqual(ProviderStatus.NO_MATCH, mismatched.status)
+        rejected = _result(
+            evaluate_report(
+                _report(
+                    title=None,
+                    fields=_fields(None, authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING)),
+                    providers=(mismatched, author_source),
+                )
+            ),
+            TargetDestination.AUTHORS,
+        )
+        self.assertEqual(("unique_typed_candidate",), rejected.reasons)
+
     def test_untyped_creator_corroboration_rejects_closed_matrix(self) -> None:
         def candidate(
             provider: str,

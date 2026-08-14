@@ -3101,6 +3101,20 @@ class ProviderAdapterTests(unittest.TestCase):
             {ProviderEvidenceKind.FIRST_PUBLICATION_DATE},
             {evidence.kind for evidence in observation.candidates[0].evidence},
         )
+        sibling_claims = observation.candidates[0].claims
+        self.assertEqual(
+            {"Synthetic title", "9780306406157"},
+            {
+                claim.value
+                for claim in sibling_claims
+                if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
+                and claim.state is FieldState.VALID
+            },
+        )
+        self.assertIn(
+            ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+            {evidence.kind for evidence in observation.candidates[0].evidence},
+        )
 
     def test_nullable_and_malformed_contribution_authors_are_field_local(self) -> None:
         for label, role, author, expected_kind in (
