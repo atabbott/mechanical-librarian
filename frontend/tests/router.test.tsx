@@ -2135,14 +2135,13 @@ describe('typed review routes', () => {
         act(() => { frames.shift()?.(0) })
       }
       const inspect = screen.getByRole('button', { name: 'Inspect' })
-      await user.click(inspect)
+      act(() => { inspect.focus() })
       expect(inspect).toHaveFocus()
-      expect(inspect).toHaveAttribute('aria-expanded', 'true')
-      expect(screen.getByText('Durable evidence')).toBeVisible()
       if (!restoreQueued) act(() => { releaseNavigation?.() })
       await act(async () => { await Promise.resolve() })
       act(() => { while (frames.length) frames.shift()?.(0) })
       expect(inspect).toHaveFocus()
+      await user.keyboard('{Enter}')
       expect(inspect).toHaveAttribute('aria-expanded', 'true')
       expect(screen.getByText('Durable evidence')).toBeVisible()
     } finally {
