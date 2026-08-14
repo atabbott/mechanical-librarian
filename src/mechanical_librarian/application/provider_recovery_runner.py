@@ -31,6 +31,7 @@ class ProviderRecoveryStore(Protocol):
     def resume_fanout(self, *, generation: int) -> ProviderRecovery | None: ...
     def fanout_pending(self, *, recovery: ProviderRecovery) -> bool: ...
     def complete_success(self, *, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
+    def complete_missing_jobs(self, *, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
     def complete(self, *, token: str, recovery: ProviderRecovery, now: int, failure: str, retry_after: int | None) -> ProviderRecovery: ...
 
 
@@ -90,10 +91,12 @@ class ScopedProviderRecoveryRunner:
         if fanout_state is not None:
             pass
         elif canary is None:
-            # A stale package is not provider health. It closes safely and
-            # cannot create a retry storm or invoke a provider.
-            self._store.complete_success(token=token, recovery=claimed, now=self._current(current))
-            return RecoveryRun("recovered")
+            # Due health without an exact member is incomplete durable state,
+            # never evidence that the provider recovered.
+            self._store.complete_missing_jobs(
+                token=token, recovery=claimed, now=self._current(current),
+            )
+            return RecoveryRun("exhausted")
         if fanout_state is None:
             assert claimed is not None
             while canary is not None:

@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../src/api/http'
-import type { ActivityDisplayView, ActivityView, AttentionSearch, AttentionView, CaseDetailView, HistoryView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
+import type { ActivityDisplayView, ActivitySearch, ActivityView, AttentionSearch, AttentionView, CaseDetailView, HistoryView, LibrarySearch, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
 import { createApplicationRouter, detailQuery, normalizeLibrarySearch, normalizePolicySearch } from '../src/router'
 import { activityEventKeys, activityOutcome } from '../src/activityState'
 import { policyImpactDisplay, policyImpactTotals, policyRepresentationGuidance } from '../src/routes/PolicyPage'
@@ -2077,6 +2077,50 @@ describe('typed review routes', () => {
     await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
       expect.objectContaining({ eventType: 'policy', page: 2 }), expect.anything(),
     ))
+  })
+
+  it('preserves Activity query-control focus without repeating route-ready heading focus', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async (search: ActivitySearch) => activity({
+        ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 },
+      })),
+    }
+    renderRoute('/activity', http)
+
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const search = screen.getByRole('searchbox', { name: 'Search activity' })
+    await user.click(search)
+    await user.type(search, 'ab')
+    await waitFor(() => expect(search).toHaveValue('ab'))
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ q: 'ab', page: 1 }), expect.anything(),
+    ))
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveFocus())
+
+    const next = screen.getByRole('button', { name: 'Next' })
+    await user.click(next)
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ q: 'ab', page: 2 }), expect.anything(),
+    ))
+    expect(screen.getByRole('button', { name: 'Next' })).toHaveFocus()
+
+    const page = screen.getByRole('spinbutton', { name: 'Activity page number' })
+    await user.clear(page)
+    await user.type(page, '99{Enter}')
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 3 }), expect.anything(),
+    ))
+    await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveFocus())
+
+    const rows = screen.getByRole('combobox', { name: 'Rows per activity page' })
+    await user.click(rows)
+    await user.click(screen.getByRole('option', { name: '50 per page' }))
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 1, pageSize: 50 }), expect.anything(),
+    ))
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Rows per activity page' })).toHaveFocus())
   })
 
   it('keeps an unknown direct entry inside a safe shell fallback', async () => {

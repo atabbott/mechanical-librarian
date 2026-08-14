@@ -1135,7 +1135,7 @@ def create_review_pipeline(
     pipeline_holder: dict[str, ReviewPreparationPipeline] = {}
 
     def retry_member(
-        _recovery, job: ProviderRecoveryJob, heartbeat: Callable[[], None]
+        recovery_state, job: ProviderRecoveryJob, heartbeat: Callable[[], None]
     ) -> None:
         staged_report_id: str | None = None
         repository = repository_factory()
@@ -1196,7 +1196,12 @@ def create_review_pipeline(
                 job.source_report_id, report, int(time.time())
             ),
             heartbeat=heartbeat,
-        ).run(job.source_report_id, tuple(json.loads(job.lane_ids)), provider_name=job.connection, adapter=job.adapter, generation=job.generation)
+        ).run(
+            job.source_report_id, tuple(json.loads(job.lane_ids)),
+            provider_name=job.connection, adapter=job.adapter,
+            generation=job.generation,
+            generation_woken=recovery_state.attempt == 0,
+        )
         successor = MetadataReport.from_json(serialized)
         if pipeline is None or not pipeline.run_recovery_successor(
             successor.report_id, heartbeat
@@ -1233,6 +1238,45 @@ def create_review_pipeline(
         retry=retry_member, classify_failure=classify_recovery_failure,
         clock=lambda: int(time.time()), cancelled=recovery_cancel.is_set,
     )
+
+    def drain_provider_recovery_outbox() -> None:
+        """Deliver exact package cutovers idempotently into recovery state."""
+        repository = repository_factory()
+        try:
+            while rows := repository.pending_provider_recovery_outbox(limit=100):
+                for row in rows:
+                    (
+                        outbox_id, target_connection, library_name, item_id,
+                        proposal_id, report_id, case_id, checkpoint, outcome,
+                        created_at,
+                    ) = row
+                    package = (proposal_id, report_id, case_id, checkpoint, outcome)
+                    current = repository.current_review_package(
+                        target_connection, library_name, item_id,
+                    )
+                    if current == package:
+                        report = MetadataReport.from_json(repository.get(report_id))
+                        if (
+                            report.target.connection != target_connection
+                            or report.target.library != library_name
+                            or report.target.item != item_id
+                        ):
+                            raise ReviewPipelineError("projection")
+                        jobs = _provider_recovery_jobs(
+                            report, package=package, configuration=configuration,
+                            scope=report.target.library,
+                        )
+                        if jobs:
+                            recovery_runner.enqueue(jobs)
+                    repository.complete_provider_recovery_outbox(
+                        outbox_id, delivered_at=max(int(time.time()), created_at),
+                    )
+        finally:
+            repository.close()
+
+    def recover_provider(now: int):
+        drain_provider_recovery_outbox()
+        return recovery_runner.run_one(now=now)
 
     def discover(connection: str, library: str):
         with discovery_lock:
@@ -1376,24 +1420,13 @@ def create_review_pipeline(
     def after_advance(
         pipeline_repository, action: PipelineAction, output_id: str | None
     ) -> None:
-        """Persist recovery members only after atomic package cutover."""
+        """Drain the durable cutover outbox after every final advancement."""
         if not (
             action.stage == "projection"
             or (action.stage == "admission" and output_id is None)
         ) or action.report_id is None:
             return
-        report = MetadataReport.from_json(pipeline_repository.get(action.report_id))
-        package = pipeline_repository.current_review_package(
-            report.target.connection, report.target.library, report.target.item
-        )
-        if package is None or package[1] != report.report_id:
-            raise ReviewPipelineError("projection")
-        jobs = _provider_recovery_jobs(
-            report, package=package, configuration=configuration,
-            scope=report.target.library,
-        )
-        if jobs:
-            recovery_runner.enqueue(jobs)
+        drain_provider_recovery_outbox()
 
     pipeline = ReviewPreparationPipeline(
         repository_factory=repository_factory,
@@ -1429,11 +1462,12 @@ def create_review_pipeline(
         timing=timing,
     )
     pipeline_holder["pipeline"] = pipeline
+    drain_provider_recovery_outbox()
     return ReviewPreparationSupervisor(
         pipeline,
         polling_interval_seconds=configuration.review.library_polling_interval_seconds,
         graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
-        recovery_wake=lambda now: recovery_runner.run_one(now=now),
+        recovery_wake=recover_provider,
         recovery_drain=recovery_cancel.set,
         recovery_resume=recovery_cancel.clear,
         on_stop=provider_recovery.close,

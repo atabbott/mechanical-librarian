@@ -63,6 +63,34 @@ class ProviderRecoveryTests(unittest.TestCase):
             self.assertEqual("recovered", store.snapshot()[0].state)
             store.close()
 
+    def test_due_health_without_an_exact_member_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(
+                Path(directory) / "recovery.sqlite"
+            )
+            store.record(
+                ProviderRecovery.failed(
+                    connection="google", adapter="google_books", scope="books",
+                    generation=1, failure="transient", now=0, retry_after=1,
+                ),
+                occurred_at=0,
+            )
+            runner = ScopedProviderRecoveryRunner(
+                store=store, generation=1,
+                retry=lambda *_args: self.fail("provider must not run"),
+                classify_failure=lambda _: ("transient", None),
+            )
+
+            self.assertEqual("exhausted", runner.run_one(now=1, token="owner").state)
+            self.assertEqual("exhausted", store.snapshot()[0].state)
+            self.assertNotIn(
+                "recovered",
+                [row[0] for row in store._connection.execute(
+                    "SELECT state FROM provider_recovery_events"
+                )],
+            )
+            store.close()
+
     def test_interrupted_fanout_does_not_repeat_the_completed_canary(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")

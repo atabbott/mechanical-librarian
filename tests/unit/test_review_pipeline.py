@@ -2108,7 +2108,23 @@ class ProviderRecoveryPipelineTests(unittest.TestCase):
             successor.report_id,
             repository.completed_provider_retry_successor(predecessor.report_id),
         )
+        pending = repository.pending_provider_recovery_outbox()
+        self.assertEqual(2, len(pending))
+        self.assertEqual(successor.report_id, pending[-1][5])
         repository.close()
+
+        restarted = open_repository(self.path)
+        replayed = restarted.pending_provider_recovery_outbox()
+        self.assertEqual(pending, replayed)
+        for row in replayed:
+            restarted.complete_provider_recovery_outbox(
+                row[0], delivered_at=row[9],
+            )
+            restarted.complete_provider_recovery_outbox(
+                row[0], delivered_at=row[9],
+            )
+        self.assertEqual((), restarted.pending_provider_recovery_outbox())
+        restarted.close()
 
 
 class ReviewPipelineSchedulingTests(unittest.TestCase):

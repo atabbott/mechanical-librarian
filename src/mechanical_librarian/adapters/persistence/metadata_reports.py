@@ -231,6 +231,21 @@ _CURRENT_REVIEW_PACKAGES_SQL = (
     "OR (outcome IN ('no_case','retired') AND proposal_set_id IS NOT NULL AND review_case_id IS NULL AND checkpoint IS NOT NULL)), "
     "PRIMARY KEY(connection_name,library_name,item_id))"
 )
+_PROVIDER_RECOVERY_OUTBOX_SQL = (
+    "CREATE TABLE provider_recovery_outbox ("
+    "outbox_id TEXT PRIMARY KEY NOT NULL CHECK(outbox_id GLOB 'recovery_outbox_[0-9a-f]*' AND length(outbox_id)=80), "
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
+    "proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), "
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "review_case_id TEXT REFERENCES review_cases(review_case_id), "
+    "checkpoint INTEGER CHECK(checkpoint IS NULL OR checkpoint>=1), "
+    "outcome TEXT NOT NULL CHECK(outcome IN ('report_only','admitted','superseded','no_case','retired')), "
+    "created_at INTEGER NOT NULL CHECK(created_at>=0), "
+    "delivered_at INTEGER CHECK(delivered_at IS NULL OR delivered_at>=created_at), "
+    "CHECK ((outcome='report_only' AND proposal_set_id IS NULL AND review_case_id IS NULL AND checkpoint IS NULL) "
+    "OR (outcome IN ('admitted','superseded') AND proposal_set_id IS NOT NULL AND review_case_id IS NOT NULL AND checkpoint IS NOT NULL) "
+    "OR (outcome IN ('no_case','retired') AND proposal_set_id IS NOT NULL AND review_case_id IS NULL AND checkpoint IS NOT NULL)))"
+)
 _REVIEW_TRANSITIONS_SQL = (
     "CREATE TABLE review_case_transitions ("
     "transition_id TEXT PRIMARY KEY NOT NULL CHECK(transition_id GLOB 'review_transition_[0-9a-f]*' AND length(transition_id)=82), "
@@ -4380,6 +4395,17 @@ class SQLiteMetadataReportRepository:
                     "review_case_id=excluded.review_case_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
                     (action.connection, action.library, action.item_id, *pointer),
                 )
+                outbox_id = _provider_recovery_outbox_id(
+                    action.connection, action.library, action.item_id, *pointer,
+                )
+                self._connection.execute(
+                    "INSERT INTO provider_recovery_outbox(outbox_id,connection_name,"
+                    "library_name,item_id,proposal_set_id,report_id,review_case_id,"
+                    "checkpoint,outcome,created_at,delivered_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,NULL) ON CONFLICT(outbox_id) DO NOTHING",
+                    (outbox_id, action.connection, action.library, action.item_id,
+                     *pointer, completed_at),
+                )
             if target[0] == "complete":
                 transition_row = self._connection.execute(
                     "SELECT transition_id FROM metadata_policy_transition_items WHERE work_id=? AND state='pending'",
@@ -7955,6 +7981,68 @@ class SQLiteMetadataReportRepository:
         package = self.current_review_package(connection, library, item)
         return None if package is None else package[1]
 
+    def pending_provider_recovery_outbox(
+        self, *, limit: int = 100,
+    ) -> tuple[tuple[object, ...], ...]:
+        """Return bounded exact package cutovers awaiting recovery enqueue."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise MetadataReportError("provider recovery outbox query is invalid")
+        try:
+            rows = self._connection.execute(
+                "SELECT outbox_id,connection_name,library_name,item_id,"
+                "proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at "
+                "FROM provider_recovery_outbox WHERE delivered_at IS NULL "
+                "ORDER BY created_at,outbox_id LIMIT ?", (limit,),
+            ).fetchall()
+            for row in rows:
+                _validate_provider_recovery_outbox_row(row)
+            return tuple(rows)
+        except MetadataReportError:
+            raise
+        except sqlite3.Error as error:
+            raise MetadataReportError(
+                "provider recovery outbox is unavailable"
+            ) from error
+
+    def complete_provider_recovery_outbox(
+        self, outbox_id: str, *, delivered_at: int,
+    ) -> None:
+        """Mark one exact cutover delivered only after idempotent enqueue."""
+        if (type(outbox_id) is not str or type(delivered_at) is not int
+                or delivered_at < 0):
+            raise MetadataReportError("provider recovery outbox completion is invalid")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT outbox_id,connection_name,library_name,item_id,"
+                "proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at,"
+                "delivered_at FROM provider_recovery_outbox WHERE outbox_id=?",
+                (outbox_id,),
+            ).fetchone()
+            if row is None:
+                raise MetadataReportError("provider recovery outbox changed")
+            _validate_provider_recovery_outbox_row(row[:10])
+            if row[10] is None:
+                if delivered_at < row[9] or self._connection.execute(
+                    "UPDATE provider_recovery_outbox SET delivered_at=? "
+                    "WHERE outbox_id=? AND delivered_at IS NULL",
+                    (delivered_at, outbox_id),
+                ).rowcount != 1:
+                    raise MetadataReportError("provider recovery outbox changed")
+            elif type(row[10]) is not int or row[10] < row[9]:
+                raise MetadataReportError("provider recovery outbox changed")
+            self._connection.execute("COMMIT")
+        except MetadataReportError:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
+        except sqlite3.Error as error:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise MetadataReportError(
+                "provider recovery outbox is unavailable"
+            ) from error
+
     def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None:
         try:
             row = self._connection.execute(
@@ -8342,6 +8430,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_REVIEW_CASES_SQL)
             connection.execute(_REVIEW_POINTERS_SQL)
             connection.execute(_CURRENT_REVIEW_PACKAGES_SQL)
+            connection.execute(_PROVIDER_RECOVERY_OUTBOX_SQL)
             connection.execute(_REVIEW_TRANSITIONS_SQL)
             connection.execute(_REVIEW_SCANS_SQL)
             connection.execute(_REVIEW_CONTROL_SQL)
@@ -8643,6 +8732,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
         ("index", "sqlite_autoindex_current_review_case_lineages_1", None),
         ("index", "sqlite_autoindex_current_review_packages_1", None),
+        ("index", "sqlite_autoindex_provider_recovery_outbox_1", None),
         ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
         ("index", "metadata_report_cover_references_artifact_id", _COVER_ARTIFACT_INDEX_SQL),
         ("index", "metadata_report_cover_references_preview_digest", _COVER_PREVIEW_INDEX_SQL),
@@ -8702,6 +8792,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
         ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
         ("table", "current_review_packages", _CURRENT_REVIEW_PACKAGES_SQL),
+        ("table", "provider_recovery_outbox", _PROVIDER_RECOVERY_OUTBOX_SQL),
         ("table", "cover_considerations", _COVER_CONSIDERATIONS_SQL),
         ("table", "current_cover_considerations", _CURRENT_COVER_CONSIDERATIONS_SQL),
         ("table", "cover_consideration_events", _COVER_CONSIDERATION_EVENTS_SQL),
@@ -8769,6 +8860,12 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         raise MetadataReportError("database is unavailable or incompatible")
     _validate_metadata_policy_documents(connection)
     _validate_field_effect_state(connection)
+    for row in connection.execute(
+        "SELECT outbox_id,connection_name,library_name,item_id,proposal_set_id,"
+        "report_id,review_case_id,checkpoint,outcome,created_at "
+        "FROM provider_recovery_outbox"
+    ):
+        _validate_provider_recovery_outbox_row(row)
 
 
 def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:
@@ -9177,6 +9274,33 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
 
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _provider_recovery_outbox_id(
+    connection: str, library: str, item: str, proposal_id: str | None,
+    report_id: str, case_id: str | None, checkpoint: int | None, outcome: str,
+) -> str:
+    document = _canonical_json({
+        "case_id": case_id, "checkpoint": checkpoint, "connection": connection,
+        "item": item, "library": library, "outcome": outcome,
+        "proposal_id": proposal_id, "report_id": report_id,
+    })
+    return "recovery_outbox_" + hashlib.sha256(document.encode("utf-8")).hexdigest()
+
+
+def _validate_provider_recovery_outbox_row(row: tuple[object, ...]) -> None:
+    if (
+        len(row) != 10
+        or not all(type(row[index]) is str and row[index] for index in (0, 1, 2, 3, 5, 8))
+        or (row[4] is not None and (type(row[4]) is not str or not row[4]))
+        or (row[6] is not None and (type(row[6]) is not str or not row[6]))
+        or (row[7] is not None and (type(row[7]) is not int or row[7] < 1))
+        or type(row[9]) is not int or row[9] < 0
+        or row[0] != _provider_recovery_outbox_id(
+            row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]
+        )
+    ):
+        raise MetadataReportError("provider recovery outbox is invalid")
 
 
 def _operational_signal(kind: str, cause: str, scope: str, *,

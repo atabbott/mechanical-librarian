@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../api/http'
 import type { ActivityEventType, ActivitySearch, ActivityView } from '../api/http'
@@ -33,16 +33,21 @@ const dateParts = (value: number | null) => {
   }
 }
 
-function PageJump({ page, pageCount, onCommit }: { page: number, pageCount: number, onCommit: (page: number) => void }) {
+function PageJump({ page, pageCount, onCommit }: { page: number, pageCount: number, onCommit: (page: number, focusKey: string) => void }) {
   const [value, setValue] = useState(String(page))
-  const commit = () => { const requested = Number.parseInt(value, 10); if (!Number.isFinite(requested)) { setValue(String(page)); return }; onCommit(requested) }
-  return <label className="cm-activity-page-jump"><span>Page</span><input aria-label="Activity page number" inputMode="numeric" type="number" min="1" max={pageCount} value={value} onChange={(event) => setValue(event.target.value)} onBlur={commit} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setValue(String(page)); event.currentTarget.blur() } }}/><span>of {pageCount}</span></label>
+  const commit = () => { const requested = Number.parseInt(value, 10); if (!Number.isFinite(requested)) { setValue(String(page)); return }; const clamped = Math.max(1, Math.min(pageCount, requested)); setValue(String(clamped)); onCommit(clamped, 'page-jump') }
+  return <label className="cm-activity-page-jump"><span>Page</span><input data-activity-focus="page-jump" aria-label="Activity page number" inputMode="numeric" type="number" min="1" max={pageCount} value={value} onChange={(event) => setValue(event.target.value)} onBlur={commit} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { setValue(String(page)); event.currentTarget.blur() } }}/><span>of {pageCount}</span></label>
 }
 
 export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const { http, queryClient } = useReviewContext()
   const navigate = useNavigate({ from: activityRoute.fullPath })
   const search = activityRoute.useSearch()
+  const [queryText, setQueryText] = useState(search.q ?? '')
+  const queryCommit = useRef<number | null>(null)
+  useEffect(() => () => {
+    if (queryCommit.current !== null) window.clearTimeout(queryCommit.current)
+  }, [])
   useRouteReadyFocus('activity')
   const query = useQuery({
     queryKey: ['activity', search.q ?? null, search.eventType, search.rangeDays, search.page, search.pageSize],
@@ -68,7 +73,10 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const mutation = useMutation({ mutationFn: ({ path, body }: { path: string; body?: unknown }) => http.activityCommand(path, body), retry: false, onSuccess: async () => { setSelection({ source: data, names: new Set() }); setStatus('Activity state refreshed from the authoritative server.'); await queryClient.invalidateQueries({ queryKey: ['activity'] }) }, onError: async (error, command) => { if (error instanceof AmbiguousMutationError || error instanceof BuildMismatchError || (error instanceof ApiError && error.status >= 500)) { try { const refreshed = await query.refetch(); const outcome = refreshed.isError ? 'unknown' : activityOutcome(refreshed.data, command); setStatus(outcome === 'applied' ? 'The requested activity change was applied, confirmed by the authoritative server.' : 'The activity outcome could not be confirmed. No command was resent.') } catch { setStatus('The activity outcome could not be confirmed. No command was resent.') }; return } setStatus('The requested activity change failed safely. Try again.'); await queryClient.invalidateQueries({ queryKey: ['activity'] }) } })
   const selectedGrants = selectable.flatMap((library) => { const name = text(library.library); return selected.has(name) ? [{ library: name, destinations: capabilityDestinations(capability(name)).filter((destination) => destination.state === 'allowed').map((destination) => destination.destination) }] : [] })
   const toggle = (library: string) => { const next = new Set(selected); if (next.has(library)) next.delete(library); else next.add(library); setSelection({ source: data, names: next }) }
-  const changeSearch = (next: ActivitySearchUpdate) => {
+  const restoreFocus = (key: string) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-activity-focus="${key}"]`)?.focus({ preventScroll: true })))
+  }
+  const changeSearch = (next: ActivitySearchUpdate, focusKey?: string) => {
     setExpandedId(null)
     const resetsPage = Object.hasOwn(next, 'q') || Object.hasOwn(next, 'eventType') || Object.hasOwn(next, 'rangeDays') || Object.hasOwn(next, 'pageSize')
     const base: ActivitySearch = {
@@ -79,9 +87,18 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       ...(!Object.hasOwn(next, 'q') && search.q ? { q: search.q } : {}),
       ...(next.q ? { q: next.q } : {}),
     }
-    void navigate({ search: base, replace: true })
+    const key = focusKey ?? document.activeElement?.getAttribute('data-activity-focus') ?? undefined
+    void navigate({ search: base, replace: true }).then(() => { if (key) restoreFocus(key) })
   }
-  const goToPage = (page: number) => { const clamped = Math.max(1, Math.min(ledger.page_count, page)); setExpandedId(null); void navigate({ search: (previous) => ({ ...previous, page: clamped }) }) }
+  const changeQuery = (value: string) => {
+    setQueryText(value)
+    if (queryCommit.current !== null) window.clearTimeout(queryCommit.current)
+    queryCommit.current = window.setTimeout(() => {
+      queryCommit.current = null
+      changeSearch({ q: value || undefined }, 'search')
+    }, 150)
+  }
+  const goToPage = (page: number, focusKey?: string) => { const clamped = Math.max(1, Math.min(ledger.page_count, page)); setExpandedId(null); const key = focusKey ?? document.activeElement?.getAttribute('data-activity-focus') ?? undefined; void navigate({ search: (previous) => ({ ...previous, page: clamped }) }).then(() => { if (key) restoreFocus(key) }) }
   const suspensions = records(data.suspensions)
   const writes = ['claimed', 'applying', 'reconciling'].reduce((total, state) => total + count(data.counts[state]), 0)
   const providerRecovery = data.provider_recovery ?? []
@@ -112,11 +129,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       </details> : null}
     </section>
     <section className="cm-activity-ledger" aria-labelledby="activity-ledger-title">
-      <header className="cm-activity-ledger-heading"><div><h2 id="activity-ledger-title">Activity ledger</h2><p>One record for review decisions, policy changes, safeguards, writes, and verification.</p></div><label className="cm-activity-range"><span>Date range</span><Dropdown compact ariaLabel="Activity date range" value={String(search.rangeDays)} options={[{ value: '7', label: 'Last 7 days' }, { value: '30', label: 'Last 30 days' }, { value: '90', label: 'Last 90 days' }]} onChange={(value) => changeSearch({ rangeDays: Number(value) as ActivitySearch['rangeDays'] })}/></label></header>
-      <div className="cm-activity-tools"><label className="cm-activity-search"><span>Search activity</span><input aria-label="Search activity" type="search" value={search.q ?? ''} placeholder="Work, outcome, or status" onChange={(event) => changeSearch({ q: event.target.value || undefined })}/></label><div className="cm-activity-filters" aria-label="Filter activity by type">{typeOptions.map((item) => <button key={item.id} aria-pressed={search.eventType === item.id} onClick={() => changeSearch({ eventType: item.id })}>{item.label}</button>)}</div></div>
+      <header className="cm-activity-ledger-heading"><div><h2 id="activity-ledger-title">Activity ledger</h2><p>One record for review decisions, policy changes, safeguards, writes, and verification.</p></div><label className="cm-activity-range"><span>Date range</span><Dropdown compact focusKey="date-range" ariaLabel="Activity date range" value={String(search.rangeDays)} options={[{ value: '7', label: 'Last 7 days' }, { value: '30', label: 'Last 30 days' }, { value: '90', label: 'Last 90 days' }]} onChange={(value) => changeSearch({ rangeDays: Number(value) as ActivitySearch['rangeDays'] }, 'date-range')}/></label></header>
+      <div className="cm-activity-tools"><label className="cm-activity-search"><span>Search activity</span><input data-activity-focus="search" aria-label="Search activity" type="search" value={queryText} placeholder="Work, outcome, or status" onChange={(event) => changeQuery(event.target.value)}/></label><div className="cm-activity-filters" aria-label="Filter activity by type">{typeOptions.map((item) => <button data-activity-focus={`type-${item.id}`} key={item.id} aria-pressed={search.eventType === item.id} onClick={() => changeSearch({ eventType: item.id }, `type-${item.id}`)}>{item.label}</button>)}</div></div>
       <div className="cm-activity-columns" aria-hidden="true"><span>When</span><span>Type</span><span>Outcome</span><span>Status</span><span/></div>
       <div className="cm-activity-events">{data.events.length ? data.events.map((event, index) => { const expanded = expandedId === event.event_id; const currentDate = dateParts(event.occurred_at); const previousDate = index ? dateParts(data.events[index - 1]?.occurred_at ?? null).day : null; return <div className="cm-activity-event-group" key={event.event_id}>{currentDate.day !== previousDate ? <h3>{currentDate.day}</h3> : null}<article className={expanded ? 'is-expanded' : ''}><time>{currentDate.time}</time><span className={`cm-activity-category is-${event.event_type}`}>{categoryLabel[event.event_type]}</span><div className="cm-activity-outcome"><strong title={event.work_label}>{event.work_label}</strong><span>{destinationLabel(event.destination)} · {event.library}</span></div><b>{stateLabel(event.state)}</b><button aria-expanded={expanded} aria-controls={`activity-evidence-${event.event_id}`} onClick={() => setExpandedId(expanded ? null : event.event_id)}>{expanded ? 'Close' : 'Inspect'}</button>{expanded ? <div className="cm-activity-evidence" id={`activity-evidence-${event.event_id}`}><header><strong>Durable evidence</strong><span>Recorded with this outcome</span></header><dl>{event.evidence.map((item) => <div key={item.label}><dt>{item.label}</dt><dd>{item.value}</dd></div>)}</dl></div> : null}</article></div> }) : <div className="cm-activity-empty"><strong>No activity matches these filters</strong><span>Try another term or activity type.</span><button onClick={() => changeSearch({ q: undefined, eventType: 'all' })}>Clear filters</button></div>}</div>
-      <footer className="cm-activity-pagination"><div className="cm-activity-pagination-summary"><strong>{ledger.total ? `${String((ledger.page - 1) * ledger.page_size + 1)}–${String(Math.min(ledger.page * ledger.page_size, ledger.total))}` : '0'}</strong><span>of {ledger.total} events</span><label className="cm-activity-page-size"><span>Rows</span><Dropdown compact ariaLabel="Rows per activity page" value={String(search.pageSize)} options={[{ value: '25', label: '25 per page' }, { value: '50', label: '50 per page' }, { value: '100', label: '100 per page' }]} onChange={(value) => changeSearch({ pageSize: Number(value) as ActivitySearch['pageSize'] })}/></label></div><nav className="cm-activity-pagination-nav" aria-label="Activity pages"><button disabled={ledger.page === 1} onClick={() => goToPage(1)}>First</button><button disabled={ledger.page === 1} onClick={() => goToPage(ledger.page - 1)}>Previous</button><PageJump key={`${String(ledger.page)}:${search.q ?? ''}:${search.eventType}:${String(search.rangeDays)}:${String(search.pageSize)}`} page={ledger.page} pageCount={ledger.page_count} onCommit={goToPage}/><button disabled={ledger.page >= ledger.page_count} onClick={() => goToPage(ledger.page + 1)}>Next</button><button disabled={ledger.page >= ledger.page_count} onClick={() => goToPage(ledger.page_count)}>Last</button></nav></footer>
+      <footer className="cm-activity-pagination"><div className="cm-activity-pagination-summary"><strong>{ledger.total ? `${String((ledger.page - 1) * ledger.page_size + 1)}–${String(Math.min(ledger.page * ledger.page_size, ledger.total))}` : '0'}</strong><span>of {ledger.total} events</span><label className="cm-activity-page-size"><span>Rows</span><Dropdown compact focusKey="page-size" ariaLabel="Rows per activity page" value={String(search.pageSize)} options={[{ value: '25', label: '25 per page' }, { value: '50', label: '50 per page' }, { value: '100', label: '100 per page' }]} onChange={(value) => changeSearch({ pageSize: Number(value) as ActivitySearch['pageSize'] }, 'page-size')}/></label></div><nav className="cm-activity-pagination-nav" aria-label="Activity pages"><button data-activity-focus="first" disabled={ledger.page === 1} onClick={() => goToPage(1, 'first')}>First</button><button data-activity-focus="previous" disabled={ledger.page === 1} onClick={() => goToPage(ledger.page - 1, 'previous')}>Previous</button><PageJump key={`${String(ledger.page)}:${search.q ?? ''}:${search.eventType}:${String(search.rangeDays)}:${String(search.pageSize)}`} page={ledger.page} pageCount={ledger.page_count} onCommit={goToPage}/><button data-activity-focus="next" disabled={ledger.page >= ledger.page_count} onClick={() => goToPage(ledger.page + 1, 'next')}>Next</button><button data-activity-focus="last" disabled={ledger.page >= ledger.page_count} onClick={() => goToPage(ledger.page_count, 'last')}>Last</button></nav></footer>
     </section>
     <p className="activity-command-status" role={mutation.isError ? 'alert' : 'status'}>{status}</p>
   </div>

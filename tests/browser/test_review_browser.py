@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+from urllib.parse import parse_qs, urlparse
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -487,12 +488,48 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         response = route.fetch()
                         payload = response.json()
                         payload["counts"]["claimed"] = 1
+                        query = parse_qs(urlparse(route.request.url).query)
+                        payload["ledger"].update(
+                            page=int(query.get("page", ["1"])[0]),
+                            page_count=3,
+                            page_size=int(query.get("page_size", ["25"])[0]),
+                            total=75,
+                        )
                         route.fulfill(status=response.status, json=payload)
 
                     page.route("**/api/v1/activity?*", activity_poll)
                     page.get_by_role("link", name="Activity", exact=True).click()
                     page.get_by_role("heading", name="No intervention needed").wait_for()
                     self.assertGreaterEqual(activity_requests, 1)
+                    activity_search = page.get_by_role("searchbox", name="Search activity")
+                    activity_search.click()
+                    activity_search.press_sequentially("ab")
+                    self.assertEqual(activity_search.input_value(), "ab")
+                    page.wait_for_url("**/activity?*q=ab*")
+                    expect(activity_search).to_be_focused()
+                    next_page = page.get_by_role("button", name="Next", exact=True)
+                    next_page.click()
+                    page.wait_for_url("**/activity?*page=2*")
+                    expect(next_page).to_be_focused()
+                    page_number = page.get_by_role("spinbutton", name="Activity page number")
+                    page_number.fill("99")
+                    page_number.press("Enter")
+                    page.wait_for_url("**/activity?*page=3*")
+                    page_number = page.get_by_role("spinbutton", name="Activity page number")
+                    self.assertEqual(page_number.input_value(), "3")
+                    expect(page_number).to_be_focused()
+                    rows = page.get_by_role("combobox", name="Rows per activity page")
+                    rows.click()
+                    page.get_by_role("option", name="50 per page").click()
+                    expect(rows).to_be_focused()
+                    page.set_viewport_size({"width": 1440, "height": 900})
+                    activity_search = page.get_by_role("searchbox", name="Search activity")
+                    activity_search.fill("")
+                    activity_search.press_sequentially("desktop")
+                    self.assertEqual(activity_search.input_value(), "desktop")
+                    page.wait_for_url("**/activity?*q=desktop*")
+                    expect(activity_search).to_be_focused()
+                    page.set_viewport_size({"width": 390, "height": 844})
                     page.get_by_role("link", name="Library", exact=True).click()
                     page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
                     settled_activity_requests = activity_requests

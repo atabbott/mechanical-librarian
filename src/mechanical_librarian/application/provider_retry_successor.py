@@ -67,6 +67,10 @@ _RETRYABLE = frozenset({
     ProviderStatus.UNAVAILABLE,
     ProviderStatus.INCOMPLETE,
 })
+_GENERATION_WOKEN = frozenset({
+    ProviderStatus.AUTHENTICATION,
+    ProviderStatus.AUTHORIZATION,
+})
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +142,7 @@ class GenerateProviderRetrySuccessor:
         provider_name: str,
         adapter: str,
         generation: int,
+        generation_woken: bool = False,
     ) -> str:
         if (
             not isinstance(source_report_id, str)
@@ -146,6 +151,7 @@ class GenerateProviderRetrySuccessor:
             or type(lane_identities) is not tuple
             or not lane_identities
             or tuple(sorted(set(lane_identities))) != lane_identities
+            or type(generation_woken) is not bool
         ):
             raise ProviderRetrySuccessorError("provider retry request is invalid")
         repository = self._repository_factory()
@@ -155,7 +161,10 @@ class GenerateProviderRetrySuccessor:
             plan = self._plan(source)
             provider = self._provider(source, provider_name, adapter, generation)
             original = self._observation(source, provider)
-            selected = self._selected(plan, original, lane_identities)
+            selected = self._selected(
+                plan, original, lane_identities,
+                generation_woken=generation_woken,
+            )
             # This is the final external preflight: no factory or provider call
             # may follow a changed source package or rebound configuration.
             if not require_report_current(
@@ -286,13 +295,19 @@ class GenerateProviderRetrySuccessor:
             raise ProviderRetrySuccessorError("provider retry configuration changed")
         return matches[0]
 
-    def _selected(self, plan: MetadataDiscoveryPlan, original: ProviderObservation, identities: tuple[str, ...]):
+    def _selected(
+        self, plan: MetadataDiscoveryPlan, original: ProviderObservation,
+        identities: tuple[str, ...], *, generation_woken: bool = False,
+    ):
         planned = {lane.identity: lane for lane in plan.lanes}
         observed = {lane.identity: lane for lane in original.lanes}
         if set(planned) != set(observed):
             raise ProviderRetrySuccessorError("provider retry source is invalid")
         selected = tuple(planned[identity] for identity in identities if identity in planned)
-        if len(selected) != len(identities) or any(observed[lane.identity].status not in _RETRYABLE for lane in selected):
+        permitted = _RETRYABLE | (
+            _GENERATION_WOKEN if generation_woken else frozenset()
+        )
+        if len(selected) != len(identities) or any(observed[lane.identity].status not in permitted for lane in selected):
             raise ProviderRetrySuccessorError("provider retry lane is invalid")
         return selected
 
