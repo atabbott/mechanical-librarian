@@ -77,6 +77,20 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     if (!resolvedLocation) return
     const identity = locationIdentity(resolvedLocation)
     const current = search.q ?? ''
+    const external = externalTarget.current === identity
+    if (external) {
+      externalTarget.current = null
+      if (queryCommit.current !== null) { window.clearTimeout(queryCommit.current); queryCommit.current = null }
+      pendingLocalNavigations.current.length = 0
+      localNavigations.current.clear()
+      ++queryDraftVersion.current
+      ++pageNavigationVersion.current
+      ++focusVersion.current
+      canonicalQuery.current = current
+      setQueryText(current)
+      requestedPage.current = search.page
+      return
+    }
     const local = localNavigations.current.get(identity)
     if (local) {
       localNavigations.current.delete(identity)
@@ -84,7 +98,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       requestedPage.current = search.page
       return
     }
-    if (externalTarget.current !== identity && canonicalQuery.current === current) {
+    if (canonicalQuery.current === current) {
       requestedPage.current = search.page
       return
     }
