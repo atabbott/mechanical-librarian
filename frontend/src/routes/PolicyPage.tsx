@@ -19,6 +19,13 @@ interface FieldDefinition {
   unsupported?: boolean
 }
 
+interface RepresentationGuidance {
+  admitted: string
+  transformation: string
+  effect: string
+  fallback: string
+}
+
 type PolicyStage = 'editing' | 'validating' | 'preview' | 'activation' | 'activated'
 
 const fields: readonly FieldDefinition[] = [
@@ -37,6 +44,40 @@ const fields: readonly FieldDefinition[] = [
   { key: 'asin', label: 'ASIN', meaning: 'Preserve exact ASIN data or select an admitted ebook manifestation.', options: ['preserve_exact', 'ebook_manifestation'], optionLabels: { preserve_exact: 'Preserve exact ASIN', ebook_manifestation: 'Ebook manifestation' }, chapter: 'curation', automatic: false },
   { key: 'explicit', label: 'Explicit-content flag', meaning: 'This destination is visible but is not currently supported.', options: ['unsupported'], optionLabels: { unsupported: 'Not currently supported' }, chapter: 'unsupported', automatic: false, unsupported: true },
 ]
+
+// This static closed catalogue is imported by the component proof.
+// eslint-disable-next-line react-refresh/only-export-components
+export const policyRepresentationGuidance: Readonly<Record<string, RepresentationGuidance>> = {
+  'title_layout:preserve': { admitted: 'the current candidate value and its policy/audit context', transformation: 'does not transform the produced candidate', effect: 'Automatic records the exact selected Title value; Subtitle is supporting context', fallback: 'abstains when no decision is qualified' },
+  'title_layout:title_and_subtitle': { admitted: 'the current candidate value and its policy/audit context', transformation: 'does not split the produced candidate', effect: 'Automatic records the exact selected Title value; Subtitle is supporting context', fallback: 'abstains when no decision is qualified' },
+  'contributor_names:preserve': { admitted: 'the already-produced exact candidate and its policy/audit context', transformation: 'records the option without transforming the candidate', effect: 'Automatic writes only that exact selected contributor destination value', fallback: 'abstains when no decision is qualified' },
+  'contributor_names:canonical': { admitted: 'the already-produced exact candidate and its policy/audit context', transformation: 'records the option without canonicalizing the candidate', effect: 'Automatic writes only that exact selected contributor destination value', fallback: 'abstains when no decision is qualified' },
+  'language_rendering:preserve': { admitted: 'the already-produced exact candidate and its policy/audit context', transformation: 'records the option without rendering the candidate', effect: 'Automatic writes only that exact selected Language value', fallback: 'abstains when no decision is qualified' },
+  'language_rendering:display_name': { admitted: 'the already-produced exact candidate and its policy/audit context', transformation: 'records the option without rendering the candidate', effect: 'Automatic writes only that exact selected Language value', fallback: 'abstains when no decision is qualified' },
+  'subtitle:fill_empty': { admitted: 'one supported subtitle', transformation: 'uses the exact admitted text', effect: 'fills an empty Subtitle only', fallback: 'abstains when Subtitle already has a value or evidence is missing' },
+  'subtitle:corroborated_split': { admitted: 'one corroborated title and subtitle pair', transformation: 'splits only an admitted exact joined title', effect: 'sets Title and Subtitle together', fallback: 'abstains when the pair or exact join is absent' },
+  'date_precision:year': { admitted: 'the already-produced exact candidate and its policy/audit context', transformation: 'records the option without reducing the candidate', effect: 'Automatic writes only that exact selected Publication date or Publication year destination value for each qualified decision', fallback: 'abstains when no decision is qualified' },
+  'date_precision:full_date': { admitted: 'the already-produced exact candidate and its policy/audit context', transformation: 'records the option without changing candidate precision', effect: 'Automatic writes only that exact selected Publication date or Publication year destination value for each qualified decision', fallback: 'abstains when no decision is qualified' },
+  'publisher_preference:publisher': { admitted: 'the already-produced exact candidate and its policy/audit context', transformation: 'records the option without selecting a publisher value', effect: 'Automatic writes only that exact selected Publisher value', fallback: 'abstains when no decision is qualified' },
+  'publisher_preference:imprint': { admitted: 'the already-produced exact Publisher preview candidate and its policy/audit context', transformation: 'records the option without selecting an imprint value', effect: 'Policy preview shows that exact selected Publisher candidate; no Automatic decision is qualified', fallback: 'abstains when no preview candidate is available' },
+  'isbn_form:preserve_exact': { admitted: 'an already admitted exact ISBN', transformation: 'keeps its observed form', effect: 'sets ISBN', fallback: 'abstains when no exact ISBN is admitted' },
+  'isbn_form:prefer_isbn13': { admitted: 'an already admitted ISBN-13 representation', transformation: 'selects that exact existing form without conversion', effect: 'sets ISBN', fallback: 'abstains when no admitted ISBN-13 is available' },
+  'series:primary_narrative': { admitted: 'qualified series memberships', transformation: 'selects the primary narrative membership', effect: 'sets Series memberships', fallback: 'abstains when no membership is qualified' },
+  'series:source_order': { admitted: 'qualified series memberships', transformation: 'selects the first admitted source membership', effect: 'sets Series memberships', fallback: 'abstains when no membership is qualified' },
+  'series:all_qualified': { admitted: 'all qualified series memberships', transformation: 'keeps them visible in admitted order', effect: 'keeps the full context while the supported projection writes only its first membership', fallback: 'abstains when no membership is qualified' },
+  'genres:fill_empty': { admitted: 'one exact eligible source list', transformation: 'keeps the list unchanged', effect: 'fills empty Genres only', fallback: 'abstains when Genres is populated or no list is eligible' },
+  'genres:add': { admitted: 'one exact eligible source list', transformation: 'adds only values absent from Genres', effect: 'extends Genres', fallback: 'abstains when no list is eligible' },
+  'genres:replace': { admitted: 'one exact eligible source list', transformation: 'uses that list without combining providers', effect: 'replaces Genres', fallback: 'abstains when no list is eligible' },
+  'tags:off': { admitted: 'no source value', transformation: 'does not transform metadata', effect: 'leaves Tags unchanged', fallback: 'always abstains from tag changes' },
+  'tags:fill_empty': { admitted: 'one exact eligible source list', transformation: 'keeps the list unchanged', effect: 'fills empty Tags only', fallback: 'abstains when Tags is populated or no list is eligible' },
+  'tags:add': { admitted: 'one exact eligible source list', transformation: 'adds only values absent from Tags', effect: 'extends Tags', fallback: 'abstains when no list is eligible' },
+  'tags:replace': { admitted: 'one exact eligible source list', transformation: 'uses that list without combining providers', effect: 'replaces Tags', fallback: 'abstains when no list is eligible' },
+  'description_fill:safe_plain_text': { admitted: 'one exact bounded plain-text description', transformation: 'does not transform HTML', effect: 'fills an empty Description only', fallback: 'abstains when text is transformed, ambiguous, missing, or unsupported' },
+  'description_fill:google_visible_text': { admitted: 'eligible Google Books visible text only', transformation: 'turns bounded Google HTML into inert visible text', effect: 'fills an empty Description only', fallback: 'abstains without it and never falls back to Hardcover' },
+  'cover_order:fixed_source_order': { admitted: 'the fixed supported cover source order', transformation: 'keeps that order unchanged', effect: 'orders Cover review', fallback: 'abstains when no supported cover is available' },
+  'asin:preserve_exact': { admitted: 'an already admitted exact ASIN', transformation: 'keeps its observed form', effect: 'sets ASIN', fallback: 'abstains when no exact ASIN is admitted' },
+  'asin:ebook_manifestation': { admitted: 'an admitted ebook-manifestation ASIN', transformation: 'selects that exact manifestation value', effect: 'sets ASIN', fallback: 'abstains when no ebook manifestation is admitted' },
+}
 
 const chapters: readonly { key: PolicySection; label: string; description: string }[] = [
   { key: 'identity', label: 'Identity', description: 'How a work names itself and its contributors.' },
@@ -66,11 +107,12 @@ const automaticQualified = (field: FieldDefinition, option: string, qualificatio
 }
 const qualificationExplanation = (field: FieldDefinition, option: string, qualification: readonly { readonly automatic_available: boolean; readonly disposition: string; readonly field: string; readonly option: string }[]) => {
   const rich = qualification.find((entry) => entry.field === field.key && entry.option === option)
-  if (!rich || rich.automatic_available) return undefined
-  if (rich.disposition === 'policy_only') return 'This policy option is intentionally off.'
-  if (rich.disposition === 'passing_human_only') return 'This field remains unsupported and has no policy choice.'
-  if (rich.disposition === 'not_qualified') return 'This representation did not meet the Automatic qualification gate.'
-  return 'This representation has insufficient Automatic qualification coverage.'
+  if (!rich) return field.automatic ? undefined : 'Manual review only: Automatic is not qualified for this representation.'
+  if (rich.automatic_available) return undefined
+  if (rich.disposition === 'policy_only') return 'Manual review only: this policy option is intentionally off.'
+  if (rich.disposition === 'passing_human_only') return 'Manual review only: this field remains unsupported.'
+  if (rich.disposition === 'not_qualified') return 'Manual review only: this representation did not meet Automatic qualification.'
+  return 'Manual review only: this representation has insufficient Automatic qualification coverage.'
 }
 
 const Check = () => <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4L19 7" /></svg>
@@ -238,14 +280,15 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           const destination = draft.destinations[field.key] ?? (field.unsupported ? 'unsupported' : 'ask')
           const qualified = automaticQualified(field, option, data.state.rich_qualification)
           const explanation = qualificationExplanation(field, option, data.state.rich_qualification)
+          const guidance = policyRepresentationGuidance[`${field.key}:${option}`]
           const automaticAvailable = qualified && automaticAllowed
-          const qualificationLabel = explanation ?? (automaticAvailable ? 'Automatic available' : qualified ? 'Enter Preview for Automatic' : 'Automatic unavailable')
+          const qualificationLabel = explanation ?? (field.key === 'cover_order' ? 'Review context' : automaticAvailable ? 'Qualified Automatic context' : qualified ? 'Enter Preview for Automatic' : 'Policy preview context')
           const changed = fieldChanged(field)
           return <section className={`cm-policy-field ${changed ? 'is-changed' : ''}`} aria-label={field.label} key={field.key}>
             <header><span><strong>{field.label}</strong>{changed ? <small>Draft changed</small> : null}</span><p>{field.meaning}</p></header>
             {field.unsupported ? <div className="cm-policy-unavailable"><strong>Unsupported destination</strong><span>This field is shown for context only. It has no review mode or representation choice, so it cannot be changed in this draft. {qualificationLabel}</span></div> : <>
               <div className="cm-policy-mode-control"><span className="cm-policy-control-heading"><strong>Review mode</strong><small className={automaticAvailable ? 'is-qualified' : ''}>{qualificationLabel}</small></span><div className="cm-policy-posture" role="group" aria-label={`${field.label} review mode`}><button type="button" aria-pressed={destination === 'automatic'} disabled={command.isPending || !automaticAvailable} title={qualificationLabel} onClick={() => editDraft({ ...draft, destinations: { ...draft.destinations, [field.key]: 'automatic' } })}>Automatic</button><button type="button" aria-pressed={destination === 'ask'} disabled={command.isPending} onClick={() => editDraft({ ...draft, destinations: { ...draft.destinations, [field.key]: 'ask' } })}>Ask me</button><button type="button" aria-pressed={destination === 'ignore'} disabled={command.isPending} onClick={() => editDraft({ ...draft, destinations: { ...draft.destinations, [field.key]: 'ignore' } })}>Ignore</button></div></div>
-              <label className="cm-policy-representation"><span>Representation</span><Dropdown ariaLabel={`${field.label} representation`} value={option} options={field.options.map((value) => ({ value, label: field.optionLabels[value] ?? value }))} disabled={command.isPending || field.options.length === 1} onChange={(nextOption) => { const nextDestination = destination === 'automatic' && !automaticQualified(field, nextOption, data.state.rich_qualification) ? 'ask' : destination; editDraft({ ...draft, options: { ...draft.options, [field.key]: nextOption }, destinations: { ...draft.destinations, [field.key]: nextDestination } }) }}/></label>
+              <label className="cm-policy-representation"><span>Representation</span><Dropdown ariaLabel={`${field.label} representation`} value={option} options={field.options.map((value) => ({ value, label: field.optionLabels[value] ?? value }))} disabled={command.isPending || field.options.length === 1} onChange={(nextOption) => { const movesToAsk = destination === 'automatic' && !automaticQualified(field, nextOption, data.state.rich_qualification); editDraft({ ...draft, options: { ...draft.options, [field.key]: nextOption }, destinations: { ...draft.destinations, [field.key]: movesToAsk ? 'ask' : destination } }); if (movesToAsk) setStatus({ tone: 'warning', message: `${field.label} now uses a Manual review only representation, so review mode changed from Automatic to Ask me.` }) }}/>{guidance ? <small className="cm-policy-representation-guidance"><strong>{automaticAvailable ? 'Qualified Automatic context' : field.key === 'cover_order' ? 'Review context' : 'Policy preview context'}:</strong> {guidance.admitted}; {guidance.transformation}; {guidance.effect}; {guidance.fallback}. <strong>Ask me:</strong> applies the exact displayed proposal; the representation does not transform that owner-selected proposal.</small> : null}{destination === 'automatic' && !qualified ? <small className="cm-policy-representation-consequence">This representation is Manual review only. Selecting it changes review mode from Automatic to Ask me.</small> : null}</label>
             </>}
           </section>
         })}</div>
