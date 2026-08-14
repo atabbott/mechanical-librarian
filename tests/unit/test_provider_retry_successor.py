@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import unittest
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.providers import hardcover_metadata
 from mechanical_librarian.application.configuration import MediaMountConfiguration, ReportLimits
 from mechanical_librarian.application.metadata_report import (
     ProviderBinding, ProviderLaneResult, TargetFile, TargetSnapshot, metadata_discovery_plan,
@@ -15,8 +17,8 @@ from mechanical_librarian.application.provider_retry_successor import (
     ConfiguredProviderRetry, GenerateProviderRetrySuccessor, ProviderRetrySuccessorError,
 )
 from mechanical_librarian.domain.metadata_report import (
-    ClaimKind, FileFacts, LocalClaim, MetadataReport, ProviderCandidate, ProviderRequestAccounting, ProviderStatus,
-    TargetFacts,
+    ClaimKind, ClaimScope, FileFacts, LocalClaim, MetadataReport, ProviderCandidate, ProviderQueryKind, ProviderRequestAccounting, ProviderStatus,
+    TargetDestination, TargetFacts, TargetFieldState,
 )
 from mechanical_librarian.domain.failure_diagnostics import (
     FailureCategory, FailureComponent, FailureDiagnostic, FailureStage,
@@ -220,6 +222,60 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
         )
         self.assertEqual(2, merged.diagnostics[0].count)
         self.assertEqual(ProviderRequestAccounting(3, 3), merged.request_accounting)
+
+    def test_retained_work_overflow_survives_selected_isbn_no_match(self):
+        plan, work, isbn, original = self._overflow_source()
+        replacement = provider_observation("catalogue", (
+            ProviderLaneResult(isbn, ProviderStatus.NO_MATCH),
+        ), authority="open_library")
+        merged = self.service(None)._merged(plan, original, (isbn,), replacement)
+        self.assertEqual(original.edition_enrichment_overflow, merged.edition_enrichment_overflow)
+
+    def test_retry_that_erases_retained_work_overflow_fails_closed(self):
+        plan, work, isbn, original = self._overflow_source()
+        replacement = provider_observation("catalogue", (
+            ProviderLaneResult(isbn, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),
+        ), authority="open_library")
+        before = original.to_data()
+        with self.assertRaisesRegex(ProviderRetrySuccessorError, "overflow"):
+            self.service(None)._merged(plan, original, (isbn,), replacement)
+        self.assertEqual(before, original.to_data())
+
+    def _overflow_source(self):
+        title = LocalClaim.create(
+            kind=ClaimKind.TITLE, observed="Current title", canonical="Current title",
+            excerpt="Current title", applicability="not_applicable", basis="target_metadata",
+            checksum="not_applicable", applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        )
+        fields = tuple(
+            replace(field, state=TargetFieldState.VALUE, value=("Ada Example",))
+            if field.destination is TargetDestination.AUTHORS else field
+            for field in TargetSnapshot("ebook", "Current title", ()).fields
+        )
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", "Current title", (), fields=fields), (title, self.claims[0])
+        )
+        work = next(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK)
+        isbn = next(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ISBN)
+        payload = {"data": {"editions": [
+            {"id": index, "book_id": 10, "isbn_10": None, "isbn_13": None,
+             "asin": None, "title": None, "subtitle": None, "release_date": None,
+             "image": None, "publisher": None, "language": None, "contributions": []}
+            for index in range(1, 7)
+        ], "books": [{"id": 10, "title": "Current title", "description": None,
+            "release_date": None, "image": None, "contributions": [{"id": 1,
+            "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}}],
+            "book_series": [], "taggings": []}], "tags": []}}
+        witness = hardcover_metadata._parse_edition_enrichment_overflow(
+            json.dumps(payload).encode(), "catalogue"
+        )
+        assert witness is not None
+        return plan, work, isbn, provider_observation("catalogue", (
+            ProviderLaneResult(work, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+                               edition_enrichment_overflow=witness),
+            ProviderLaneResult(isbn, ProviderStatus.UNAVAILABLE),
+        ), authority="open_library")
 
     def test_real_sqlite_successor_staging_retains_the_source_package(self):
         replacement = provider_observation("catalogue", (ProviderLaneResult(self.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),), authority="open_library")
