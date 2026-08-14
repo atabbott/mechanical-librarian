@@ -3101,7 +3101,9 @@
               "waiting",
               "checking",
               "dormant",
-              "recovered"
+              "recovered",
+              "fanout",
+              "exhausted"
             ],
             "title": "State",
             "type": "string"

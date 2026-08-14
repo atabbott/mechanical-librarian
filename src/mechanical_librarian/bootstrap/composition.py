@@ -1867,6 +1867,24 @@ def run_review_activity(
         repository.close()
 
 
+def run_provider_recovery_once(
+    config_path: Path, database_path: Path, catalogue_path: Path, artifact_store_path: Path
+) -> None:
+    """Run the same one-claim recovery path used by the preparation supervisor."""
+    configuration = load_configuration_file(config_path)
+    store = SQLiteProviderRecoveryStore.open(
+        _private_root(database_path) / "provider-recovery.sqlite"
+    )
+    supervisor = create_review_pipeline(
+        configuration, database_path, catalogue_path, artifact_store_path,
+        provider_recovery=store,
+    )
+    try:
+        supervisor.recover_provider_once()
+    finally:
+        supervisor.stop()
+
+
 def run_policy_preview(
     config_path: Path, database_path: Path, document: dict[str, object]
 ) -> dict[str, object]:
@@ -1925,6 +1943,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         policy_preview_runner=run_policy_preview,
         cover_review_runner=run_cover_review,
         review_activity_runner=run_review_activity,
+        provider_recovery_runner=run_provider_recovery_once,
     )
 
 

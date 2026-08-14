@@ -38,9 +38,9 @@ accounting, or a valid edition-overflow witness.
 If a retained overflow witness would become invalid after a sibling retry, or a
 replacement lane is malformed, it fails closed before publication.
 
-The seam has no composition, scheduler, CLI, endpoint, recovery claim, canary,
-or production write caller in this constituent. F24 activation owns that
-authority.
+F24 activation composes this seam behind the existing preparation supervisor
+and its explicit owner CLI invocation. Neither path is an endpoint, bulk
+operation, or target-metadata write caller.
 
 ## Consequences
 

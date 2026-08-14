@@ -275,7 +275,12 @@ class SQLiteProviderRecoveryStore:
                     "SELECT state,MIN(next_eligible_at),count(*) "
                     "FROM provider_recovery_health GROUP BY state ORDER BY state"
                 ).fetchall()
-            return tuple({"state": row[0], "next_eligible_at": row[1], "affected_count": row[2]} for row in rows)
+                jobs = self._connection.execute(
+                    "SELECT CASE WHEN state='failed' THEN 'exhausted' ELSE 'fanout' END,"
+                    " NULL,count(*) FROM provider_recovery_jobs WHERE state IN ('queued','running','failed') "
+                    "GROUP BY CASE WHEN state='failed' THEN 'exhausted' ELSE 'fanout' END"
+                ).fetchall()
+            return tuple({"state": row[0], "next_eligible_at": row[1], "affected_count": row[2]} for row in (*rows, *jobs))
         except ProviderRecoveryStoreError:
             raise
         except sqlite3.Error as error:

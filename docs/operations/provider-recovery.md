@@ -37,3 +37,8 @@ The authenticated Activity page shows aggregate waiting, checking, dormant,
 and recovered recovery states with affected counts and any next eligible
 timestamp. It has no retry control and never exposes connection identifiers,
 provider payloads, or credentials.
+
+The owner may run `mechanical-librarian provider-recovery` with the same
+configuration, database, catalogue, and artifact paths used by the server. It
+uses the same durable one-claim path as the supervisor; it neither bypasses
+leases nor retries a completed sibling.

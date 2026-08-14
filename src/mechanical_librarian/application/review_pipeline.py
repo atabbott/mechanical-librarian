@@ -650,6 +650,12 @@ class ReviewPreparationSupervisor:
             raise ReviewPipelineError("retry")
         return self.request(connection, library)
 
+    def recover_provider_once(self) -> None:
+        """Use the same durable claim path for an explicit owner invocation."""
+        if self._recovery_wake is None:
+            raise ReviewPipelineError("recovery")
+        self._recovery_wake(self._clock())
+
     def _schedule_due(self) -> None:
         with self._schedule_lock:
             if self._polling_interval_seconds is None:
