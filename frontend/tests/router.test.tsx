@@ -2325,12 +2325,13 @@ describe('typed review routes', () => {
 
   it('gives a traversal target authority over an abandoned local page identity', async () => {
     const deferred = new Map<number, (value: ActivityView) => void>()
+    const getActivity = vi.fn((search: ActivitySearch) => {
+      if (search.page === 1) return Promise.resolve(activity({ ledger: { event_type: search.eventType, page: 1, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 } }))
+      return new Promise<ActivityView>((resolve) => { deferred.set(search.page, resolve) })
+    })
     const http: ReviewHttp = {
       ...createHttp(),
-      getActivity: vi.fn((search: ActivitySearch) => {
-        if (search.page === 1) return Promise.resolve(activity({ ledger: { event_type: search.eventType, page: 1, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 } }))
-        return new Promise<ActivityView>((resolve) => { deferred.set(search.page, resolve) })
-      }),
+      getActivity,
     }
     const user = userEvent.setup()
     const { router } = renderRoute('/activity?q=canonical&page=1', http)
@@ -2347,8 +2348,11 @@ describe('typed review routes', () => {
     try {
       fireEvent.change(screen.getByRole('searchbox', { name: 'Search activity' }), { target: { value: 'draft' } })
       act(() => router.history.back())
-      act(() => { deferred.get(2)?.(activity({ ledger: { event_type: 'all', page: 2, page_count: 3, page_size: 25, query: 'canonical', range_days: 30, total: 75 } })) })
       await act(async () => { await vi.advanceTimersByTimeAsync(151) })
+      expect(getActivity.mock.calls.some(([search]) => search.q === 'draft')).toBe(false)
+      expect(router.state.location.search).toMatchObject({ q: 'canonical', page: 2 })
+      act(() => { deferred.get(2)?.(activity({ ledger: { event_type: 'all', page: 2, page_count: 3, page_size: 25, query: 'canonical', range_days: 30, total: 75 } })) })
+      await act(async () => { await Promise.resolve() })
       expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('canonical')
       expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(2)
       expect(router.state.location.search).toMatchObject({ q: 'canonical', page: 2 })

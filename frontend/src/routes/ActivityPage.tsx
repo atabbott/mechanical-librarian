@@ -71,7 +71,15 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         if (intent) localNavigations.current.set(locationIdentity(location), intent)
       }
     }
-    if (action.type === 'BACK' || action.type === 'FORWARD' || action.type === 'GO') externalTarget.current = locationIdentity(location)
+    if (action.type === 'BACK' || action.type === 'FORWARD' || action.type === 'GO') {
+      externalTarget.current = locationIdentity(location)
+      if (queryCommit.current !== null) { window.clearTimeout(queryCommit.current); queryCommit.current = null }
+      pendingLocalNavigations.current.length = 0
+      localNavigations.current.clear()
+      ++queryDraftVersion.current
+      ++pageNavigationVersion.current
+      ++focusVersion.current
+    }
   }), [router])
   useEffect(() => {
     if (!resolvedLocation) return
