@@ -3194,6 +3194,30 @@ class ProviderAdapterTests(unittest.TestCase):
         self.assertIs(ProposalOutcome.INELIGIBLE, authors.outcome)
         self.assertEqual((), authors.alternatives)
 
+    def test_mixed_creator_candidate_with_different_typed_author_is_not_admitted(self) -> None:
+        """Mixed roles do not bypass the exact typed-author work qualification."""
+        observation = self._observe_contributions(
+            [
+                {
+                    "id": 1,
+                    "contribution": "Author",
+                    "author": {"id": 1, "name": "Completely Different"},
+                },
+                {
+                    "id": 2,
+                    "contribution": None,
+                    "author": {"id": 2, "name": "Synthetic Two"},
+                },
+            ]
+        )
+
+        qualified = qualify_provider_observation(
+            observation,
+            _work_lookup("Synthetic title", ("Synthetic One",)),
+        )
+        self.assertEqual(ProviderStatus.NO_MATCH, qualified.status)
+        self.assertEqual((), qualified.candidates)
+
     def test_reused_neutral_creator_identity_binding_fails_qualification_locally(
         self,
     ) -> None:

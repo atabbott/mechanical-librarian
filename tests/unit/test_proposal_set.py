@@ -70,6 +70,7 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalValue,
     ProposalValueError,
     ProposalValueKind,
+    _target_backed_lookup_contains,
     _ignored_policy_targets,
     evaluate_report,
 )
@@ -488,53 +489,28 @@ def _result(proposal_set: ProposalSet, destination: TargetDestination):
     )
 
 
-def _work_lane_observation(
+def _isbn_lane_observation(
     provider: str,
     candidate: ProviderCandidate,
     authority: str,
-    lane_seed: str,
-    reference: str,
+    lane,
 ) -> ProviderObservation:
-    identity = "lane_" + lane_seed * 64
-    lane = ProviderLaneObservation(
-        identity,
-        ProviderQueryKind.WORK,
-        ProviderStatus.CANDIDATES,
-        (reference,),
-        None,
-        (
-            ProviderLaneCandidate(
-                provider_lane_candidate_reference(
-                    provider, identity, candidate.identity, candidate.work_identity,
-                ),
-                candidate.identity,
-                candidate.work_identity,
-            ),
-        ),
-    )
-    return ProviderObservation(
+    return provider_observation(
         provider,
-        ProviderStatus.CANDIDATES,
-        (reference,),
-        (candidate,),
-        ProviderQueryKind.WORK,
-        authority,
-        lanes=(lane,),
+        (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, (candidate,)),),
+        authority=authority,
     )
 
 
 def _real_tigers_corroboration_report() -> MetadataReport:
-    title_claim = LocalClaim.create(
-        kind=ClaimKind.TITLE,
-        observed="Real Tigers",
-        canonical="Real Tigers",
-        excerpt="Real Tigers",
-        applicability="not_applicable",
-        checksum="not_applicable",
-        applicability_basis="not_applicable",
-        scope=ClaimScope.WORK,
-        basis="target_metadata",
+    fields = _fields(
+        "Real Tigers",
+        authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING),
     )
+    isbn = _publication_local_isbn()
+    lane = metadata_discovery_plan(
+        TargetSnapshot("ebook", "Real Tigers", (), fields=fields), (isbn,),
+    ).lanes[0]
     author_claim = _claim(
         "open-library", "author-edition", ClaimKind.CREATOR, "Mick Herron",
         scope=ClaimScope.WORK, role="author", order=1,
@@ -554,12 +530,12 @@ def _real_tigers_corroboration_report() -> MetadataReport:
         (ProviderIdentityBinding(neutral_claim.reference, "hardcover-author-0000000001", ClaimScope.WORK, None),),
     )
     return _report(
-        title=None,
-        fields=_fields(None, authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING)),
-        local_claims=(title_claim,),
+        title="Real Tigers",
+        fields=fields,
+        local_claims=(isbn,),
         providers=(
-            _work_lane_observation("hardcover", neutral_candidate, "hardcover", "1", title_claim.reference),
-            _work_lane_observation("open-library", author_candidate, "open_library", "2", title_claim.reference),
+            _isbn_lane_observation("hardcover", neutral_candidate, "hardcover", lane),
+            _isbn_lane_observation("open-library", author_candidate, "open_library", lane),
         ),
     )
 
@@ -711,10 +687,10 @@ class ProposalSetTests(unittest.TestCase):
             _result(evaluate_report(report), TargetDestination.AUTHORS).outcome,
         )
 
-    def test_mixed_discovery_requires_exact_successful_lookup_lane_membership(
+    def test_mixed_discovery_rejects_lane_shapes_without_target_evidence(
         self,
     ) -> None:
-        """An exact successful ISBN or WORK lane can corroborate its candidate."""
+        """Lane shape alone cannot turn a creator reference into target evidence."""
         report = _real_tigers_corroboration_report()
         neutral = report.providers[0].candidates[0]
         author = report.providers[1].candidates[0]
@@ -786,13 +762,16 @@ class ProposalSetTests(unittest.TestCase):
             ),
             TargetDestination.AUTHORS,
         )
-        self.assertEqual(ProposalOutcome.PROPOSE_CHANGE, result.outcome)
         self.assertEqual(
-            ("explicit_author_corroborates_untyped_creator",), result.reasons,
+            ("unique_typed_candidate",), result.reasons,
         )
-        self.assertTrue(
-            {neutral.claims[1].reference, author.claims[1].reference}
-            .issubset(result.alternatives[0].evidence_references),
+        self.assertNotIn(
+            neutral.claims[1].reference,
+            {
+                reference
+                for alternative in result.alternatives
+                for reference in alternative.evidence_references
+            },
         )
 
         isbn_only_neutral = replace(
@@ -818,10 +797,15 @@ class ProposalSetTests(unittest.TestCase):
             ),
             TargetDestination.AUTHORS,
         )
-        self.assertEqual(
-            ("explicit_author_corroborates_untyped_creator",), rejected.reasons,
+        self.assertEqual(("unique_typed_candidate",), rejected.reasons)
+        self.assertNotIn(
+            neutral.claims[1].reference,
+            {
+                reference
+                for alternative in rejected.alternatives
+                for reference in alternative.evidence_references
+            },
         )
-        self.assertIn(neutral.claims[1].reference, rejected.alternatives[0].evidence_references)
 
     def test_isbn_backed_creator_corroboration_requires_exact_complete_membership(
         self,
@@ -995,6 +979,121 @@ class ProposalSetTests(unittest.TestCase):
                     )
                 )
 
+        creator = _local_creator("Mick Herron")
+        other_isbn = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780131103627",
+            canonical="9780131103627",
+            excerpt="9780131103627",
+            applicability="unknown",
+            checksum="valid_isbn_13",
+            applicability_basis="unlabelled",
+            scope=ClaimScope.EDITION,
+        )
+        for label, local_claims, reference in (
+            ("creator ref posing as ISBN", (creator,), creator.reference),
+            ("mismatched local ISBN family", (other_isbn,), other_isbn.reference),
+        ):
+            with self.subTest(label=label):
+                source = observation("hardcover-connection", "hardcover", neutral)
+                tampered = replace(
+                    source,
+                    input_references=(reference,),
+                    lanes=(replace(source.lanes[0], input_references=(reference,)),),
+                )
+                report = MetadataReport.create(
+                    target=TargetFacts("primary", "ebooks", "item-1", fields),
+                    file=FileFacts(0, "a" * 64, "b" * 64),
+                    local_claims=local_claims,
+                    local_reasons=("opening_matter_isbn",),
+                    providers=(tampered,),
+                )
+                replayed = MetadataReport.from_json(report.to_json())
+                self.assertFalse(
+                    _target_backed_lookup_contains(
+                        replayed, replayed.providers[0], replayed.providers[0].candidates[0],
+                    )
+                )
+
+    def test_work_lane_corroboration_rejects_replayed_target_binding_tampering(
+        self,
+    ) -> None:
+        fields = _fields(
+            "Real Tigers",
+            authors=TargetField(
+                TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Mick Herron",),
+            ),
+        )
+        title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Real Tigers",
+            canonical="Real Tigers",
+            excerpt="Real Tigers",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+            basis="target_metadata",
+        )
+        lane = metadata_discovery_plan(
+            TargetSnapshot("ebook", "Real Tigers", ("Mick Herron",), fields=fields),
+            (title,),
+        ).lanes[0]
+        claim = _claim(
+            "open-connection", "edition", ClaimKind.CREATOR, "Mick Herron",
+            scope=ClaimScope.WORK, role="author",
+        )
+        candidate = ProviderCandidate(
+            "edition", "work",
+            (
+                _claim(
+                    "open-connection", "edition", ClaimKind.TITLE, "Real Tigers",
+                    scope=ClaimScope.WORK,
+                ),
+                claim,
+            ),
+        )
+        source = provider_observation(
+            "open-connection",
+            (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, (candidate,)),),
+            authority="open_library",
+        )
+        creator = _local_creator("Mick Herron")
+        wrong_title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Other Tigers",
+            canonical="Other Tigers",
+            excerpt="Other Tigers",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+            basis="target_metadata",
+        )
+        for label, local_claims, reference in (
+            ("missing title ref", (creator,), creator.reference),
+            ("wrong title ref", (wrong_title,), wrong_title.reference),
+        ):
+            with self.subTest(label=label):
+                tampered = replace(
+                    source,
+                    input_references=(reference,),
+                    lanes=(replace(source.lanes[0], input_references=(reference,)),),
+                )
+                report = MetadataReport.create(
+                    target=TargetFacts("primary", "ebooks", "item-1", fields),
+                    file=FileFacts(0, "a" * 64, "b" * 64),
+                    local_claims=local_claims,
+                    local_reasons=("opening_matter_isbn",),
+                    providers=(tampered,),
+                )
+                replayed = MetadataReport.from_json(report.to_json())
+                self.assertFalse(
+                    _target_backed_lookup_contains(
+                        replayed, replayed.providers[0], replayed.providers[0].candidates[0],
+                    )
+                )
+
     def test_reused_creator_identity_binding_fails_closed_for_corroboration(
         self,
     ) -> None:
@@ -1125,32 +1224,24 @@ class ProposalSetTests(unittest.TestCase):
                 for index, claim in enumerate(neutral_claims)
             ),
         )
-        title_claim = LocalClaim.create(
-            kind=ClaimKind.TITLE,
-            observed="Real Tigers",
-            canonical="Real Tigers",
-            excerpt="Real Tigers",
-            applicability="not_applicable",
-            checksum="not_applicable",
-            applicability_basis="not_applicable",
-            scope=ClaimScope.WORK,
-            basis="target_metadata",
+        fields = _fields(
+            "Real Tigers",
+            authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING),
         )
+        isbn = _publication_local_isbn()
+        lane = metadata_discovery_plan(
+            TargetSnapshot("ebook", "Real Tigers", (), fields=fields), (isbn,),
+        ).lanes[0]
         report = _report(
-            title=None,
-            fields=_fields(
-                None,
-                authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING),
-            ),
-            local_claims=(title_claim,),
+            title="Real Tigers",
+            fields=fields,
+            local_claims=(isbn,),
             providers=(
-                _work_lane_observation(
-                    untyped_provider, neutral_candidate, "hardcover", "3",
-                    title_claim.reference,
+                _isbn_lane_observation(
+                    untyped_provider, neutral_candidate, "hardcover", lane,
                 ),
-                _work_lane_observation(
-                    typed_provider, author_candidate, "open_library", "4",
-                    title_claim.reference,
+                _isbn_lane_observation(
+                    typed_provider, author_candidate, "open_library", lane,
                 ),
             ),
         )

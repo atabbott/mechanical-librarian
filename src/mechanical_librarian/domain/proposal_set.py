@@ -1293,7 +1293,7 @@ def _corroborated_untyped_author_observations(
         (provider, candidate, claims, bindings)
         for provider in report.providers
         for candidate in provider.candidates
-        if _target_lookup_contains(provider, candidate)
+        if _target_backed_lookup_contains(report, provider, candidate)
         if (set_value := _complete_provider_creator_set(candidate, "author")) is not None
         for claims, bindings in (set_value,)
     )
@@ -1301,7 +1301,7 @@ def _corroborated_untyped_author_observations(
         (provider, candidate, claims, bindings)
         for provider in report.providers
         for candidate in provider.candidates
-        if _target_lookup_contains(provider, candidate)
+        if _target_backed_lookup_contains(report, provider, candidate)
         if (set_value := _complete_provider_creator_set(candidate, None)) is not None
         for claims, bindings in (set_value,)
         if bindings is not None
@@ -1403,17 +1403,72 @@ def _mixed_author_creator_roles(candidate: ProviderCandidate) -> bool:
     return "author" in roles and len(roles) > 1
 
 
-def _target_lookup_contains(
-    provider: ProviderObservation, candidate: ProviderCandidate,
+def _target_backed_lookup_contains(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
 ) -> bool:
-    """Require one successful exact ISBN or WORK lookup for this candidate."""
+    """Require a successful candidate lane backed by the exact report target."""
+    local_claims = {claim.reference: claim for claim in report.local_claims}
+    targets = {field.destination: field for field in report.target.fields}
+    title = targets[TargetDestination.TITLE]
+    authors = targets[TargetDestination.AUTHORS]
+    expected_title = (
+        normalize_title(title.value)
+        if title.state is TargetFieldState.VALUE and type(title.value) is str
+        else None
+    )
+    expected_authors = (
+        tuple(normalize_title(value) for value in authors.value)
+        if authors.state is TargetFieldState.VALUE
+        and type(authors.value) is tuple
+        and authors.value
+        and all(type(value) is str for value in authors.value)
+        and len({normalize_title(value).casefold() for value in authors.value})
+        == len(authors.value)
+        else ()
+    )
+    target_title_references = tuple(
+        sorted(
+            claim.reference
+            for claim in report.local_claims
+            if claim.kind is ClaimKind.TITLE and claim.basis == "target_metadata"
+        )
+    )
     return any(
-        lane.kind in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK}
-        and lane.status is ProviderStatus.CANDIDATES
+        lane.status is ProviderStatus.CANDIDATES
         and any(
             member.edition_identity == candidate.identity
             and member.work_identity == candidate.work_identity
             for member in lane.candidates
+        )
+        and (
+            (
+                lane.kind is ProviderQueryKind.ISBN
+                and all(
+                    (claim := local_claims.get(reference)) is not None
+                    and claim.kind is ClaimKind.ISBN
+                    and claim.state is FieldState.VALID
+                    and isbn_family(claim.canonical) == lane.matched_family
+                    for reference in lane.input_references
+                )
+            )
+            or (
+                lane.kind is ProviderQueryKind.WORK
+                and expected_title is not None
+                and expected_authors
+                and lane.input_references == target_title_references
+                and lane.identity == "lane_" + hashlib.sha256(
+                    canonical_json(
+                        {
+                            "authors": list(expected_authors),
+                            "input_references": list(target_title_references),
+                            "kind": ProviderQueryKind.WORK.value,
+                            "title": expected_title,
+                        }
+                    ).encode()
+                ).hexdigest()
+            )
         )
         for lane in provider.lanes
     )

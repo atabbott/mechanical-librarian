@@ -829,7 +829,6 @@ def qualify_provider_observation(
             and claim.value is not None
         )
         untyped_creators = _complete_work_creators(candidate, None)
-        mixed_author_creator_roles = _mixed_work_creator_roles(candidate)
         neutral_bindings = complete_creator_identity_bindings(
             candidate,
             tuple(
@@ -867,7 +866,6 @@ def qualify_provider_observation(
                     untyped_creators == expected_authors
                     and neutral_bindings is not None
                 )
-                or mixed_author_creator_roles
             )
             and not disqualifying_roles
             and not variant_marker
