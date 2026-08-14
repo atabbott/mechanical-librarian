@@ -792,11 +792,28 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.get_by_text("1 draft change", exact=True).wait_for()
             page.get_by_role("button", name="Validate and preview").click()
             page.get_by_text("Impact preview is current.", exact=False).wait_for()
+            page.get_by_text(
+                "· fills the empty field with A bounded subtitle", exact=True
+            ).wait_for()
             page.get_by_text("Safe visible description <3", exact=False).wait_for()
             page.get_by_text('[{"name":"Old order","sequence":"1"}]', exact=False).wait_for()
             page.get_by_text('["Fantasy"] → ["Fantasy","Epic"]', exact=False).wait_for()
+            page.get_by_text(
+                "· remains empty — this policy leaves the field unchanged", exact=True
+            ).wait_for()
             page.get_by_text("Plus 2 more exact field outcomes", exact=False).wait_for()
             self.assertEqual(page.locator(".cm-policy-preview-list > div").count(), 6)
+            impact_labels = page.locator(".cm-policy-impact > b").all_text_contents()
+            self.assertEqual(
+                impact_labels,
+                ["Change", "Change", "Change", "No change", "Change", "Change"],
+            )
+            for detail in page.locator(".cm-policy-impact > small").all_text_contents():
+                if "→" in detail:
+                    self.assertNotIn("remains", detail)
+                    self.assertNotIn("empty", detail)
+            for label in impact_labels:
+                self.assertNotIn(label, {"projected", "abstain", "missing", "policy_off"})
             page.get_by_role("button", name="Sign out").click()
             page.get_by_text("Writes are blocked", exact=False).wait_for()
             fail_policy_persistently = True
