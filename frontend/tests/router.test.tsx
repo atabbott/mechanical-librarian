@@ -2194,6 +2194,40 @@ describe('typed review routes', () => {
     }
   })
 
+  it('keeps slow sequential search editing focused when a prior dropdown replacement settles late', async () => {
+    const deferred = new Map<string, { resolve: (value: ActivityView) => void }>()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn((search: ActivitySearch) => {
+        const key = search.q ?? `rows-${String(search.pageSize)}`
+        if (search.pageSize !== 50 && !search.q?.startsWith('desktop')) return Promise.resolve(activity({ ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 } }))
+        return new Promise<ActivityView>((resolve) => { deferred.set(key, { resolve }) })
+      }),
+    }
+    const user = userEvent.setup({ delay: 175 })
+    renderRoute('/activity', http)
+
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const rows = screen.getByRole('combobox', { name: 'Rows per activity page' })
+    await user.click(rows)
+    await user.click(screen.getByRole('option', { name: '50 per page' }))
+    await waitFor(() => expect(deferred.has('rows-50')).toBe(true))
+
+    const search = screen.getByRole('searchbox', { name: 'Search activity' })
+    await user.click(search)
+    await user.type(search, 'desktop')
+    await waitFor(() => expect(deferred.has('desktop')).toBe(true))
+    expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('desktop')
+    expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveFocus()
+
+    act(() => { deferred.get('rows-50')?.resolve(activity({ ledger: { event_type: 'all', page: 1, page_count: 3, page_size: 50, query: null, range_days: 30, total: 75 } })) })
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('desktop'))
+    expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveFocus()
+
+    act(() => { deferred.get('desktop')?.resolve(activity({ ledger: { event_type: 'all', page: 1, page_count: 3, page_size: 50, query: 'desktop', range_days: 30, total: 75 } })) })
+    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'desktop' }), expect.anything()))
+  }, 10_000)
+
   it('uses memory-history traversal, rather than synthetic popstate, as Activity query and page authority', async () => {
     const http: ReviewHttp = {
       ...createHttp(),

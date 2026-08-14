@@ -38,7 +38,7 @@ function PageJump({ page, pageCount, onCommit, onEscape }: { page: number, pageC
   const [value, setValue] = useState(String(page))
   const cancelCommit = useRef(false)
   const commit = () => { if (cancelCommit.current) { cancelCommit.current = false; setValue(String(page)); return }; const requested = Number.parseInt(value, 10); if (!Number.isFinite(requested)) { setValue(String(page)); return }; const clamped = Math.max(1, Math.min(pageCount, requested)); setValue(String(clamped)); if (clamped !== page) onCommit(clamped, 'page-jump') }
-  return <label className="cm-activity-page-jump"><span>Page</span><input data-activity-focus="page-jump" aria-label="Activity page number" inputMode="numeric" type="number" min="1" max={pageCount} value={value} onChange={(event) => setValue(event.target.value)} onBlur={commit} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { cancelCommit.current = true; onEscape(); setValue(String(page)); event.currentTarget.blur() } }}/><span>of {pageCount}</span></label>
+  return <label className="cm-activity-page-jump"><span>Page</span><input data-activity-focus="page-jump" aria-label="Activity page number" inputMode="numeric" type="number" min="1" max={pageCount} value={value} onChange={(event) => setValue(event.target.value)} onBlur={commit} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { cancelCommit.current = true; setValue(String(page)); event.currentTarget.blur(); requestAnimationFrame(onEscape) } }}/><span>of {pageCount}</span></label>
 }
 
 export default function ActivityPage({ initial }: { initial: ActivityView }) {
@@ -155,6 +155,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     void navigate({ search: base, replace: true }).then(() => { if (key) restoreFocus(key, version) })
   }
   const changeQuery = (value: string) => {
+    ++focusVersion.current
     setQueryText(value)
     const draftVersion = ++queryDraftVersion.current
     if (queryCommit.current !== null) window.clearTimeout(queryCommit.current)
