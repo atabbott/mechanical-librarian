@@ -56,6 +56,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
     open_shadow_preview_repository,
 )
+from mechanical_librarian.adapters.persistence.provider_recovery import SQLiteProviderRecoveryStore
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
     HardcoverPacer,
@@ -289,6 +290,9 @@ def compose_continuous_guarded_application(
         )
         for key in configured
     }
+    provider_recovery = SQLiteProviderRecoveryStore.open(
+        database_path.parent / "private" / "provider-recovery.sqlite"
+    )
     return ContinuousGuardedApplication(
         repository,
         applications,
@@ -299,6 +303,7 @@ def compose_continuous_guarded_application(
         preparation.request,
         graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
         scan_progress=preparation.progress,
+        provider_recovery_snapshot=provider_recovery.snapshot,
     )
 
 

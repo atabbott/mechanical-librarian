@@ -37,7 +37,8 @@ match this exact schema; there are no migrations or imports.
 
 ### Neutral or deferred
 
-- Activity/API integration and report observation binding belong to activation.
+- Activity exposes only aggregate recovery state; provider execution, replay,
+  fanout, and target writes remain outside this report-only increment.
 
 ## Validation
 

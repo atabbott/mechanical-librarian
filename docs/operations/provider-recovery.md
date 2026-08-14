@@ -16,3 +16,8 @@ Recovery state deliberately contains only bounded connection, adapter, scope,
 generation, state, attempt, and timing data. It never stores credentials,
 provider payloads, raw retry headers, query values, filesystem paths, or work
 identifiers.
+
+The authenticated Activity page shows aggregate waiting, checking, and dormant
+recovery states with affected counts and any next eligible timestamp. It has no
+retry control and never exposes connection identifiers, provider payloads, or
+credentials.

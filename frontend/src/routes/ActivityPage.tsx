@@ -84,6 +84,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const suspensions = records(data.suspensions)
   const writes = ['claimed', 'applying', 'reconciling'].reduce((total, state) => total + count(data.counts[state]), 0)
   const recoveryCount = suspensions.length
+  const providerRecovery = data.provider_recovery ?? []
   const waiting = data.prepared.total + count(data.counts.planned) + count(data.counts.retryable)
   const waitingEvent = data.current_waiting
   const needsConsent = consentCandidates.length > 0 || (!enabled.length && configured.length > 0)
@@ -96,6 +97,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       <div className="cm-activity-status-copy"><h2 id="activity-status-title">{recoveryCount ? 'Recovery needs attention' : data.paused ? 'New work is paused' : 'No intervention needed'}</h2><p>{recoveryCount ? 'Affected work remains held until its current state can be reconciled safely.' : data.paused ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.' : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}</p></div>
       <dl><div><dt>Writes in progress</dt><dd>{writes}</dd></div><div><dt>Waiting safely</dt><dd>{waiting}</dd></div><div><dt>Recovery needed</dt><dd>{recoveryCount}</dd></div></dl>
       {waitingEvent ? <div className="cm-activity-waiting"><span className="cm-activity-pulse" aria-hidden="true"/><div><strong>{waitingEvent.work_label} · {destinationLabel(waitingEvent.destination)} update</strong><span>{data.paused ? 'Resume new work when you are ready. No automatic check will start while new work is paused.' : 'Next exact-current check runs automatically. No action is required.'}</span></div></div> : null}
+      {providerRecovery.length ? <section className="activity-recovery" aria-label="Provider recovery"><h3>Provider recovery</h3>{providerRecovery.map((item, index) => <p key={`${item.state}:${String(index)}`}><strong>{item.state === 'waiting' ? 'Waiting' : item.state === 'checking' ? 'Checking' : 'Dormant'}</strong> · {item.affected_count} affected {item.affected_count === 1 ? 'scope' : 'scopes'}{item.next_eligible_at === null ? '' : ` · next eligible ${dateParts(item.next_eligible_at).time}`}</p>)}</section> : null}
       {hasAuthority ? <details className="cm-activity-authority">
         <summary><span><strong>Authority and recovery</strong><small>{recoveryCount ? `${String(recoveryCount)} recovery ${recoveryCount === 1 ? 'item' : 'items'} need review` : data.paused ? 'New work remains paused until you resume it' : 'Write permissions and pause controls'}</small></span></summary>
         <div className="cm-activity-authority-actions" aria-label="Activity authority and recovery">

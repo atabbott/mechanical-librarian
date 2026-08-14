@@ -24,6 +24,7 @@ from mechanical_librarian.domain.field_effect import (
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
+from mechanical_librarian.domain.provider_recovery import ProviderRecovery
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +91,7 @@ class ContinuousGuardedApplication:
         graceful_shutdown_seconds: int = 30,
         scan_progress: Callable[[str, str], object] | None = None,
         activity_only: bool = False,
+        provider_recovery_snapshot: Callable[[], tuple[ProviderRecovery, ...]] | None = None,
     ) -> None:
         if ((activity_only and (applications or capabilities))
                 or (not activity_only and (
@@ -115,6 +117,7 @@ class ContinuousGuardedApplication:
         self._graceful_shutdown_seconds = graceful_shutdown_seconds
         self._scan_progress = scan_progress
         self._activity_only = activity_only
+        self._provider_recovery_snapshot = provider_recovery_snapshot or (lambda: ())
         self._slot = threading.Lock()
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -596,6 +599,16 @@ class ContinuousGuardedApplication:
             "human": sum(value["human"] for value in prepared_by_library.values()),
             "total": sum(value["total"] for value in prepared_by_library.values()),
         }
+        provider_recovery_counts: dict[tuple[str, int | None], int] = {}
+        for item in self._provider_recovery_snapshot():
+            if not isinstance(item, ProviderRecovery):
+                raise GuardedApplicationError("activity")
+            key = (item.state, item.next_eligible_at)
+            provider_recovery_counts[key] = provider_recovery_counts.get(key, 0) + 1
+        provider_recovery = [
+            {"state": state, "next_eligible_at": next_eligible_at, "affected_count": affected_count}
+            for (state, next_eligible_at), affected_count in sorted(provider_recovery_counts.items())
+        ]
         return {
             **data,
             "backup_ready": self._repository.field_effect_backup_ready(),
@@ -619,6 +632,7 @@ class ContinuousGuardedApplication:
                 "total": int(page_projection["total"]),
             },
             "schema_version": "continuous-field-activity-v2",
+            "provider_recovery": provider_recovery,
         }
 
     def _capability_readiness(
