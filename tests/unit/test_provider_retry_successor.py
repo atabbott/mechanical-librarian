@@ -34,12 +34,13 @@ class _Inspector:
 
 class _Repository:
     def __init__(self, report):
-        self.values = {report.report_id: report.to_json()}; self.current_id = report.report_id; self.package_id = report.report_id
+        self.values = {report.report_id: report.to_json()}; self.current_id = report.report_id; self.package = (None, report.report_id, None, None, "report_only")
     def get(self, report_id): return self.values[report_id]
     def current_optional(self, *_args): return self.values[self.current_id]
-    def current_review_package_report(self, *_args): return self.package_id
-    def publish(self, report, currentness, expected_current=None, after_publication=None, *, expected_package_report=None):
-        if expected_current != self.current_id or expected_package_report != self.package_id or not currentness(): raise ProviderRetrySuccessorError("stale")
+    def current_review_package(self, *_args): return self.package
+    def current_review_package_report(self, *_args): return self.package[1]
+    def publish(self, report, currentness, expected_current=None, after_publication=None, *, expected_package=None):
+        if expected_current != self.current_id or expected_package != self.package or not currentness(): raise ProviderRetrySuccessorError("stale")
         self.values[report.report_id] = report.to_json(); self.current_id = report.report_id
         if after_publication is not None: after_publication(self, report)
         return report.to_json()
@@ -85,7 +86,7 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
         after = next(lane for lane in successor.providers[0].lanes if lane.identity == self.success.identity).to_data()
         self.assertEqual(before, after)
         self.assertNotEqual(self.report.report_id, successor.report_id)
-        self.assertEqual(self.report.report_id, self.repository.package_id)
+        self.assertEqual(self.report.report_id, self.repository.package[1])
 
     def test_none_returning_staging_receipt_succeeds(self):
         replacement = provider_observation("catalogue", (ProviderLaneResult(self.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),), authority="open_library")
@@ -128,6 +129,42 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "target or media"):
             service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)
         self.assertEqual([], provider.plans)
+
+    def test_same_report_package_advancement_prevents_factory_dispatch(self):
+        replacement = provider_observation("catalogue", (), authority="open_library")
+        provider = _Provider(replacement)
+
+        class AdvancingTarget:
+            reads = 0
+            def read(_self, _item):
+                _self.reads += 1
+                if _self.reads == 2:
+                    self.repository.package = (None, self.report.report_id, None, None, "no_case")
+                return self.snapshot
+
+        service = GenerateProviderRetrySuccessor(
+            target=AdvancingTarget(), inspector=_Inspector(),
+            repository_factory=lambda: self.repository,
+            provider_resolver=lambda *_args: ConfiguredProviderRetry(
+                ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2
+            ),
+            mount=MediaMountConfiguration("books", "/container", "/service", True),
+            limits=ReportLimits(), after_publication=lambda *_args: None,
+        )
+        with self.assertRaisesRegex(Exception, "target or media"):
+            service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)
+        self.assertEqual([], provider.plans)
+
+    def test_malformed_replacement_leaves_predecessor_current(self):
+        provider = _Provider(provider_observation(
+            "catalogue", (ProviderLaneResult(self.failed, ProviderStatus.MALFORMED),), authority="open_library"
+        ))
+        service = self.service(ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2
+        ))
+        with self.assertRaisesRegex(ProviderRetrySuccessorError, "result"):
+            service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)
+        self.assertEqual(self.report.report_id, self.repository.current_id)
 
     def test_merge_uses_one_timestamp_and_retains_bounded_evidence(self):
         diagnostic = FailureDiagnostic(
@@ -227,7 +264,7 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
 
     def test_rejects_report_current_but_not_current_package_before_dispatch(self):
         provider = _Provider(provider_observation("catalogue", (), authority="open_library"))
-        self.repository.package_id = "not-the-source"
+        self.repository.package = ("proposal", "not-the-source", "case", 2, "admitted")
         service = self.service(ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2))
         with self.assertRaisesRegex(Exception, "target or media"):
             service.run(self.report.report_id, (self.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)

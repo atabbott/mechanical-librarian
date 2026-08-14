@@ -249,31 +249,29 @@ class MetadataPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
             source = _report("Source")
-            other = MetadataReport.create(
-                target=source.target,
-                file=FileFacts(0, "c" * 64, source.file.content_digest),
-                local_claims=source.local_claims,
-                local_reasons=source.local_reasons,
-                providers=source.providers,
-            )
             successor = _report("Successor")
             try:
                 repository.publish(source, lambda: True)
-                repository.publish(other, lambda: True)
+                repository._connection.execute("PRAGMA foreign_keys=OFF")
+                repository._connection.execute(
+                    "UPDATE current_review_packages SET proposal_set_id=?,checkpoint=1,outcome='no_case'",
+                    ("proposal_set_" + "a" * 64,),
+                )
+                repository._connection.execute("PRAGMA foreign_keys=ON")
 
                 with self.assertRaisesRegex(MetadataReportError, "review package changed"):
                     repository.publish(
                         successor,
                         lambda: True,
                         source.report_id,
-                        expected_package_report=source.report_id,
+                        expected_package=(None, source.report_id, None, None, "report_only"),
                     )
 
                 self.assertEqual(source.to_json(), repository.current(
                     source.target.connection, source.target.library,
                     source.target.item, source.file.identity,
                 ))
-                self.assertEqual(other.report_id, repository.current_review_package_report(
+                self.assertEqual(("proposal_set_" + "a" * 64, source.report_id, None, 1, "no_case"), repository.current_review_package(
                     source.target.connection, source.target.library, source.target.item
                 ))
                 self.assertIsNone(repository._connection.execute(

@@ -4562,7 +4562,7 @@ class SQLiteMetadataReportRepository:
         expected_current: str | None = None,
         after_publication: Callable[[object, MetadataReport], None] | None = None,
         *,
-        expected_package_report: str | None = None,
+        expected_package: tuple[str | None, str, str | None, int | None, str] | None = None,
     ) -> str:
         if type(report) is not MetadataReport or not callable(currentness):
             raise MetadataReportError("report publication failed")
@@ -4587,9 +4587,9 @@ class SQLiteMetadataReportRepository:
             self._connection.execute("BEGIN IMMEDIATE")
             if self._binding is not None:
                 self._binding.require_current()
-            if expected_package_report is not None and self.current_review_package_report(
+            if expected_package is not None and self.current_review_package(
                 report.target.connection, report.target.library, report.target.item
-            ) != expected_package_report:
+            ) != expected_package:
                 raise MetadataReportError("current review package changed")
             current = self._connection.execute(
                 "SELECT r.report_id,r.connection_name,r.library_name,r.item_id,r.file_identity,r.content_digest,r.schema_version,r.document_digest,r.document FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
@@ -7747,21 +7747,34 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("persisted current report is unavailable")
         return document
 
-    def current_review_package_report(
+    def current_review_package(
         self, connection: str, library: str, item: str
-    ) -> str | None:
+    ) -> tuple[str | None, str, str | None, int | None, str] | None:
         try:
             row = self._connection.execute(
-                "SELECT report_id FROM current_review_packages WHERE connection_name=? AND library_name=? AND item_id=?",
+                "SELECT proposal_set_id,report_id,review_case_id,checkpoint,outcome FROM current_review_packages WHERE connection_name=? AND library_name=? AND item_id=?",
                 (connection, library, item),
             ).fetchone()
         except sqlite3.Error as error:
             raise MetadataReportError("persisted review package is invalid") from error
         if row is None:
             return None
-        if len(row) != 1 or type(row[0]) is not str:
+        if (
+            len(row) != 5
+            or (row[0] is not None and type(row[0]) is not str)
+            or type(row[1]) is not str
+            or (row[2] is not None and type(row[2]) is not str)
+            or (row[3] is not None and type(row[3]) is not int)
+            or type(row[4]) is not str
+        ):
             raise MetadataReportError("persisted review package is invalid")
-        return row[0]
+        return row
+
+    def current_review_package_report(
+        self, connection: str, library: str, item: str
+    ) -> str | None:
+        package = self.current_review_package(connection, library, item)
+        return None if package is None else package[1]
 
     def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None:
         try:

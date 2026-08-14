@@ -172,7 +172,7 @@ class GenerateProviderRetrySuccessor:
                 currentness,
                 source.report_id,
                 stage,
-                expected_package_report=source.report_id,
+                expected_package=current[1],
             )
             if published != successor.to_json() or repository.get(successor.report_id) != published:
                 raise ProviderRetrySuccessorError("provider retry publication failed")
@@ -192,19 +192,23 @@ class GenerateProviderRetrySuccessor:
         except (KeyError, ReportValueError, MetadataReportError) as error:
             raise ProviderRetrySuccessorError("provider retry source is invalid") from error
 
-    def _current_source(self, repository: ReportRepository, source: MetadataReport) -> str:
+    def _current_source(
+        self, repository: ReportRepository, source: MetadataReport
+    ) -> tuple[str, tuple[str | None, str, str | None, int | None, str]]:
         document = repository.current_optional(
             source.target.connection, source.target.library, source.target.item, source.file.identity
+        )
+        package = repository.current_review_package(
+            source.target.connection, source.target.library, source.target.item
         )
         if (
             document is None
             or MetadataReport.from_json(document).report_id != source.report_id
-            or repository.current_review_package_report(
-                source.target.connection, source.target.library, source.target.item
-            ) != source.report_id
+            or package is None
+            or package[1] != source.report_id
         ):
             raise CurrentnessError("target or media changed")
-        return document
+        return document, package
 
     def _plan(self, source: MetadataReport) -> MetadataDiscoveryPlan:
         snapshot = self._target.read(source.target.item)
@@ -277,6 +281,8 @@ class GenerateProviderRetrySuccessor:
             raise ProviderRetrySuccessorError("provider retry result is invalid")
         if {lane.identity for lane in observation.lanes} != {lane.identity for lane in selected}:
             raise ProviderRetrySuccessorError("provider retry result is invalid")
+        if any(lane.status is ProviderStatus.MALFORMED for lane in observation.lanes):
+            raise ProviderRetrySuccessorError("provider retry result is invalid")
         return observation
 
     def _merged(self, plan, original, selected, replacement) -> ProviderObservation:
@@ -285,6 +291,14 @@ class GenerateProviderRetrySuccessor:
         new_candidates = self._canonical_candidates(replacement.candidates)
         old_lanes = self._canonical_lanes(original.lanes)
         new_lanes = self._canonical_lanes(replacement.lanes)
+
+        if original.edition_enrichment_overflow is not None and any(
+            lane.kind.value == "work"
+            and lane.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+            and lane.identity not in selected_ids
+            for lane in original.lanes
+        ):
+            raise ProviderRetrySuccessorError("provider retry overflow cannot be retained")
 
         aggregate_accessed_at = replacement.accessed_at or original.accessed_at
 
