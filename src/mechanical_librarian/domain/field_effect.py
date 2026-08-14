@@ -119,6 +119,23 @@ def project_decision_value(destination: str, value: object) -> object:
 
 
 @dataclass(frozen=True, slots=True)
+class FieldEffectNoChange:
+    """Immutable automatic decision terminal fact; it never authorizes a write."""
+    decision_id: str
+    review_case_id: str
+    report_id: str
+    connection: str
+    library: str
+    work_id: str
+    destination: str
+    target_fingerprint: str
+    target_version: str
+    origin: str
+    occurred_at: int
+    event_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class EffectAuthority:
     decision_id: str
     review_case_id: str

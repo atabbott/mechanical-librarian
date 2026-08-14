@@ -51,6 +51,7 @@ from mechanical_librarian.domain.field_effect import (
     authority_to_data,
     canonical_json as canonical_effect_json,
     field_value_version,
+    project_decision_value,
 )
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
@@ -419,6 +420,14 @@ _FIELD_EFFECTS_SQL = (
     "('planned','claimed','applying','reconciling','retryable','verified','stale','superseded','abandoned')), "
     "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072))"
+)
+_FIELD_EFFECT_NO_CHANGES_SQL = (
+    "CREATE TABLE field_effect_no_changes ("
+    "decision_id TEXT PRIMARY KEY NOT NULL REFERENCES automatic_decisions(decision_id), "
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, work_id TEXT NOT NULL, destination TEXT NOT NULL, "
+    "target_fingerprint TEXT NOT NULL, target_version TEXT NOT NULL, origin TEXT NOT NULL CHECK(origin='automatic_policy'), "
+    "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), event_id TEXT NOT NULL UNIQUE) WITHOUT ROWID"
 )
 _FIELD_EFFECT_ACTIONS_SQL = (
     "CREATE TABLE field_effect_actions ("
@@ -1105,6 +1114,36 @@ class SQLiteMetadataReportRepository:
                 "pre_value": pre_value,
                 "dependency_digests": dependency_digests}
 
+    def record_current_field_effect_no_change(
+        self, decision: AutomaticDecision, occurred_at: int,
+    ) -> bool:
+        """Atomically persist an equal automatic candidate without write authority."""
+        if type(decision) is not AutomaticDecision or type(occurred_at) is not int or occurred_at < 0:
+            raise FieldEffectError("authority_binding")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            source = self.field_effect_authority_source(decision)
+            desired = project_decision_value(decision.destination, source["decision_value"])
+            if desired != source["pre_value"]:
+                self._connection.commit()
+                return False
+            core = {"decision_id": decision.decision_id, "review_case_id": decision.review_case_id,
+                "report_id": decision.report_id, "connection": source["connection"], "library": source["library"],
+                "work_id": source["work_id"], "destination": decision.destination,
+                "target_fingerprint": decision.target_fingerprint, "target_version": source["target_version"],
+                "origin": "automatic_policy", "occurred_at": occurred_at}
+            event_id = "field_effect_no_change_" + hashlib.sha256(canonical_effect_json(core).encode()).hexdigest()
+            self._connection.execute(
+                "INSERT OR IGNORE INTO field_effect_no_changes(decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (decision.decision_id, decision.review_case_id, decision.report_id, source["connection"], source["library"], source["work_id"], decision.destination, decision.target_fingerprint, source["target_version"], "automatic_policy", occurred_at, event_id),
+            )
+            self._connection.commit()
+            return True
+        except (sqlite3.Error, FieldEffectError, TypeError, ValueError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError): raise
+            raise FieldEffectError("authority_binding") from error
+
     def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool:
         current = (self._connection.execute(
             "SELECT current FROM field_effect_authorities WHERE decision_id=?",
@@ -1450,7 +1489,7 @@ class SQLiteMetadataReportRepository:
                 "hold.destination=automatic.destination AND hold.active=1)"
                 ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
                 "WHERE effect.decision_id=pending.decision_id AND "
-                "effect.state NOT IN ('superseded','abandoned')) " + cursor +
+                "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) " + cursor +
                 "ORDER BY pending.occurred_at,pending.decision_id LIMIT ?",
                 (*parameters, limit),
             ).fetchall()
@@ -1492,7 +1531,7 @@ class SQLiteMetadataReportRepository:
                 "ON lineage.review_case_id=pending.review_case_id "
                 "WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
                 "WHERE effect.decision_id=pending.decision_id AND "
-                "effect.state NOT IN ('superseded','abandoned')) "
+                "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
                 "GROUP BY lineage.connection_name,lineage.library_name,pending.origin "
                 "ORDER BY lineage.connection_name,lineage.library_name,pending.origin"
             ).fetchall()
@@ -8012,6 +8051,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_FIELD_EFFECT_MANUAL_HOLDS_SQL)
             connection.execute(_FIELD_EFFECTS_SQL)
             connection.execute(_FIELD_EFFECT_EVENTS_SQL)
+            connection.execute(_FIELD_EFFECT_NO_CHANGES_SQL)
             connection.execute(_FIELD_EFFECT_ACTIONS_SQL)
             connection.execute(_FIELD_EFFECT_CLEANUPS_SQL)
             connection.execute(_SHADOW_DECISION_OUTCOMES_SQL)
@@ -8352,6 +8392,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "field_effect_consents", _FIELD_EFFECT_CONSENTS_SQL),
         ("table", "field_effect_manual_holds", _FIELD_EFFECT_MANUAL_HOLDS_SQL),
         ("table", "field_effect_events", _FIELD_EFFECT_EVENTS_SQL),
+        ("table", "field_effect_no_changes", _FIELD_EFFECT_NO_CHANGES_SQL),
         ("table", "field_effects", _FIELD_EFFECTS_SQL),
         ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
         ("table", "metadata_reports", _REPORTS_SQL),
