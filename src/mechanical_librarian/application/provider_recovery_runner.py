@@ -26,9 +26,9 @@ class ProviderRecoveryStore(Protocol):
     def complete_exhausted_scope(self, *, job: ProviderRecoveryJob, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
     def complete_canary_failure(self, *, job: ProviderRecoveryJob, token: str, recovery: ProviderRecovery, now: int, failure: str, retry_after: int | None) -> ProviderRecovery: ...
     def authorize_fanout(self, *, job: ProviderRecoveryJob, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
-    def finish_fanout(self, *, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
+    def finish_fanout(self, *, recovery: ProviderRecovery, token: str, now: int) -> ProviderRecovery: ...
     def interrupt_fanout(self, *, job: ProviderRecoveryJob, token: str, recovery: ProviderRecovery, now: int, failure: str, retry_after: int | None) -> ProviderRecovery: ...
-    def resume_fanout(self, *, generation: int) -> ProviderRecovery | None: ...
+    def resume_fanout(self, *, generation: int, now: int, token: str) -> ProviderRecovery | None: ...
     def fanout_pending(self, *, recovery: ProviderRecovery) -> bool: ...
     def complete_success(self, *, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
     def complete_missing_jobs(self, *, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
@@ -77,7 +77,9 @@ class ScopedProviderRecoveryRunner:
     def run_one(self, *, now: int, token: str | None = None) -> RecoveryRun:
         token = token or uuid4().hex
         current = self._current(now)
-        fanout_state = self._store.resume_fanout(generation=self._generation)
+        fanout_state = self._store.resume_fanout(
+            generation=self._generation, now=current, token=token,
+        )
         claimed = None if fanout_state is not None else self._store.claim_one(
             generation=self._generation, now=current, token=token,
         )
@@ -145,17 +147,16 @@ class ScopedProviderRecoveryRunner:
         assert fanout_state is not None
         fanout = 0
         while not self._cancelled():
-            member_token = uuid4().hex
             current = self._current(current)
             member = self._store.claim_job(
-                recovery=fanout_state, token=member_token, now=current,
+                recovery=fanout_state, token=token, now=current,
             )
             if member is None:
                 break
             try:
                 def renew_member(
                     active: ProviderRecoveryJob = member,
-                    claim_token: str = member_token,
+                    claim_token: str = token,
                 ) -> None:
                     self._store.renew_job(
                         job=active, token=claim_token,
@@ -165,7 +166,7 @@ class ScopedProviderRecoveryRunner:
                 self._retry(fanout_state, member, renew_member)
                 current = self._current(current)
                 self._store.complete_job(
-                    job=member, token=member_token, now=current, success=True,
+                    job=member, token=token, now=current, success=True,
                 )
                 fanout += 1
             except Exception as error:
@@ -173,27 +174,27 @@ class ScopedProviderRecoveryRunner:
                 failure, retry_after = self._classify_failure(error)
                 if failure == "stale":
                     self._store.complete_stale_job(
-                        job=member, token=member_token, now=current,
+                        job=member, token=token, now=current,
                     )
                 elif failure in {
                     "transient", "rate_limited", "authentication",
                     "authorization", "configuration",
                 }:
                     self._store.interrupt_fanout(
-                        job=member, token=member_token, recovery=fanout_state,
+                        job=member, token=token, recovery=fanout_state,
                         now=current, failure=failure, retry_after=retry_after,
                     )
                     return RecoveryRun("waiting", fanout)
                 else:
                     self._store.complete_job(
-                        job=member, token=member_token, now=current, success=False,
+                        job=member, token=token, now=current, success=False,
                     )
         if self._cancelled():
             return RecoveryRun("fanout", fanout)
         if self._store.fanout_pending(recovery=fanout_state):
             return RecoveryRun("fanout", fanout)
         completed = self._store.finish_fanout(
-            recovery=fanout_state, now=self._current(current),
+            recovery=fanout_state, token=token, now=self._current(current),
         )
         return RecoveryRun(completed.state, fanout)
 

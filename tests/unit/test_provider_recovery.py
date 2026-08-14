@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
@@ -17,6 +18,8 @@ import mechanical_librarian.adapters.persistence.provider_recovery as recovery_p
 from mechanical_librarian.domain.metadata_report import ProviderStatus
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP, ProviderRecovery, ProviderRecoveryError
 from mechanical_librarian.application.provider_recovery_runner import ScopedProviderRecoveryRunner
+from mechanical_librarian.application.metadata_report import CredentialError
+from mechanical_librarian.application.provider_retry_successor import ProviderRetrySuccessorError
 
 
 class ProviderRecoveryTests(unittest.TestCase):
@@ -108,17 +111,17 @@ class ProviderRecoveryTests(unittest.TestCase):
             with self.assertRaises(KeyboardInterrupt):
                 runner.run_one(now=1, token="owner")
             # The canary job is durably complete while the scope lease remains
-            # in checking state.  A new claimant after expiry continues at the
-            # unfinished sibling rather than recontacting the canary.
+            # in fanout state.  A new claimant waits for that scope lease to
+            # expire, then continues without recontacting the canary.
             resumed: list[str] = []
             next_runner = ScopedProviderRecoveryRunner(
                 store=store, generation=1,
                 retry=lambda _, member, __: resumed.append(member.member_id),
                 classify_failure=lambda _: ("transient", None),
             )
-            self.assertEqual("fanout", next_runner.run_one(now=62, token="next").state)
+            self.assertEqual("idle", next_runner.run_one(now=62, token="next").state)
             self.assertEqual("recovered", next_runner.run_one(now=302, token="next-later").state)
-            self.assertEqual(["sibling-b", "sibling-a"], resumed)
+            self.assertEqual(["sibling-a", "sibling-b"], resumed)
             self.assertEqual(["canary", "sibling-a"], calls)
             store.close()
 
@@ -139,6 +142,128 @@ class ProviderRecoveryTests(unittest.TestCase):
             self.assertEqual(["report-canary"], calls)
             current = store.snapshot()[0]
             self.assertEqual(("waiting", 2, 14_401), (current.state, current.attempt, current.next_eligible_at))
+            store.close()
+
+    def test_attempt_five_job_is_never_persisted_as_attempt_six(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            store.record(ProviderRecovery.failed(
+                connection="google", adapter="google_books", scope="books",
+                generation=1, failure="transient", now=0, retry_after=1,
+            ), occurred_at=0)
+            store.enqueue_jobs((replace(self._job("canary"), attempt=5),))
+            runner = ScopedProviderRecoveryRunner(
+                store=store, generation=1,
+                retry=lambda *_: self.fail("exhausted member must not dispatch"),
+                classify_failure=lambda _: ("transient", None),
+            )
+            self.assertEqual("exhausted", runner.run_one(now=1, token="owner").state)
+            self.assertEqual(
+                [("queued", 5)],
+                store._connection.execute(
+                    "SELECT state,attempt FROM provider_recovery_jobs"
+                ).fetchall(),
+            )
+            self.assertEqual("exhausted", store.snapshot()[0].state)
+            store.close()
+
+    def test_credential_failure_is_dormant_not_requeued(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            store.record(ProviderRecovery.failed(
+                connection="google", adapter="google_books", scope="books",
+                generation=1, failure="transient", now=0, retry_after=1,
+            ), occurred_at=0)
+            store.enqueue_jobs((self._job("canary"),))
+            runner = ScopedProviderRecoveryRunner(
+                store=store, generation=1,
+                retry=lambda *_: (_ for _ in ()).throw(CredentialError("credential")),
+                classify_failure=lambda error: (
+                    "authentication" if isinstance(error, CredentialError) else "transient", None
+                ),
+            )
+            self.assertEqual("waiting", runner.run_one(now=1, token="owner").state)
+            self.assertEqual("dormant", store.snapshot()[0].state)
+            self.assertIsNone(store.claim_one(generation=1, now=100_000, token="later"))
+            store.close()
+
+    def test_terminal_successor_failure_exhausts_without_requeue(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            store.record(ProviderRecovery.failed(
+                connection="google", adapter="google_books", scope="books",
+                generation=1, failure="transient", now=0, retry_after=1,
+            ), occurred_at=0)
+            store.enqueue_jobs((self._job("canary"), self._job("sibling")))
+            runner = ScopedProviderRecoveryRunner(
+                store=store, generation=1,
+                retry=lambda *_: (_ for _ in ()).throw(ProviderRetrySuccessorError("terminal")),
+                classify_failure=lambda error: (
+                    "terminal" if isinstance(error, ProviderRetrySuccessorError) else "transient", None
+                ),
+            )
+            self.assertEqual("exhausted", runner.run_one(now=1, token="owner").state)
+            self.assertEqual("exhausted", store.snapshot()[0].state)
+            self.assertEqual(
+                {"failed"},
+                {row[0] for row in store._connection.execute(
+                    "SELECT state FROM provider_recovery_jobs"
+                )},
+            )
+            store.close()
+
+    def test_reenqueue_refreshes_current_package_and_invalidates_running_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            store.record(ProviderRecovery.failed(
+                connection="google", adapter="google_books", scope="books",
+                generation=1, failure="transient", now=0, retry_after=1,
+            ), occurred_at=0)
+            original = self._job("member")
+            current = replace(
+                original, file_identity="current-file", source_report_id="current-report",
+                package_report_id="current-package", lane_ids='["current"]',
+            )
+            self.assertEqual(1, store.enqueue_jobs((original,)))
+            claimed = store.claim_one(generation=1, now=1, token="owner")
+            assert claimed is not None
+            running = store.claim_job(recovery=claimed, token="owner", now=1)
+            assert running is not None
+            self.assertEqual(1, store.enqueue_jobs((current,)))
+            self.assertEqual(
+                ("current-file", "current-report", "current-package", '["current"]', "queued", 0),
+                store._connection.execute(
+                    "SELECT file_identity,source_report_id,package_report_id,lane_ids,state,attempt "
+                    "FROM provider_recovery_jobs"
+                ).fetchone(),
+            )
+            with self.assertRaises(ProviderRecoveryStoreError):
+                store.complete_job(job=running, token="owner", now=1, success=True)
+            store.close()
+
+    def test_generation_reconciliation_keeps_current_duplicate_member(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            store.record(ProviderRecovery.failed(
+                connection="google", adapter="google_books", scope="books",
+                generation=1, failure="transient", now=0, retry_after=1,
+            ), occurred_at=0)
+            stale = self._job("member")
+            current = replace(
+                stale, generation=2, source_report_id="current-report",
+                package_report_id="current-package",
+            )
+            store.enqueue_jobs((stale,))
+            store.enqueue_jobs((current,))
+            self.assertEqual(1, store.reconcile_generation(generation=2, now=2))
+            self.assertEqual(
+                [(2, "current-report", "current-package")],
+                store._connection.execute(
+                    "SELECT generation,source_report_id,package_report_id "
+                    "FROM provider_recovery_jobs"
+                ).fetchall(),
+            )
+            self.assertEqual("waiting", store.snapshot()[0].state)
             store.close()
 
     def test_shared_failure_during_fanout_stops_uncontacted_siblings_and_reopens_scope(self) -> None:

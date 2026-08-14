@@ -57,7 +57,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
     open_shadow_preview_repository,
 )
-from mechanical_librarian.adapters.persistence.provider_recovery import SQLiteProviderRecoveryStore
+from mechanical_librarian.adapters.persistence.provider_recovery import ProviderRecoveryStoreError, SQLiteProviderRecoveryStore
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HardcoverMetadataProvider,
     HardcoverPacer,
@@ -1214,6 +1214,8 @@ def create_review_pipeline(
             repository.close()
 
     def classify_recovery_failure(error: Exception) -> tuple[str, int | None]:
+        if isinstance(error, CredentialError):
+            return "authentication", None
         if isinstance(error, ProviderRetryDisabled):
             return "disabled", None
         if isinstance(error, ProviderRetrySharedFailure):
@@ -1224,6 +1226,8 @@ def create_review_pipeline(
             return failure, error.retry_after
         if isinstance(error, ProviderRetrySuccessorError) and "configuration" in str(error):
             return "configuration", None
+        if isinstance(error, ProviderRetrySuccessorError):
+            return "terminal", None
         if isinstance(error, (CurrentnessError, TargetNotFoundError)):
             return "stale", None
         return "transient", None
@@ -1274,8 +1278,11 @@ def create_review_pipeline(
                 repository.close()
 
     def recover_provider(now: int):
-        drain_provider_recovery_outbox()
-        return recovery_runner.run_one(now=now)
+        try:
+            drain_provider_recovery_outbox()
+            return recovery_runner.run_one(now=now)
+        except ProviderRecoveryStoreError as error:
+            raise ReviewPipelineError("recovery") from error
 
     def discover(connection: str, library: str):
         with discovery_lock:
