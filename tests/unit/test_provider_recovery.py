@@ -4,11 +4,14 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.provider_recovery import ProviderRecoveryStoreError, SQLiteProviderRecoveryStore
+from mechanical_librarian.bootstrap.composition import _record_provider_recovery_observations
 import mechanical_librarian.adapters.persistence.provider_recovery as recovery_persistence
+from mechanical_librarian.domain.metadata_report import ProviderStatus
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP, ProviderRecovery, ProviderRecoveryError
 
 
@@ -95,6 +98,42 @@ class ProviderRecoveryTests(unittest.TestCase):
             connection.close()
             with self.assertRaises(ProviderRecoveryStoreError):
                 SQLiteProviderRecoveryStore.open(path)
+
+    def test_mixed_lane_health_preserves_provider_connection_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            report = SimpleNamespace(providers=(
+                SimpleNamespace(
+                    provider="catalogue-a", status=ProviderStatus.CANDIDATES,
+                    lanes=(SimpleNamespace(status=ProviderStatus.AUTHENTICATION),),
+                ),
+                SimpleNamespace(
+                    provider="catalogue-b", status=ProviderStatus.UNAVAILABLE,
+                    lanes=(),
+                ),
+                SimpleNamespace(
+                    provider="excluded", status=ProviderStatus.DISABLED, lanes=(),
+                ),
+            ))
+            _record_provider_recovery_observations(
+                store, report,
+                adapters={
+                    "catalogue-a": "hardcover", "catalogue-b": "hardcover",
+                    "excluded": "open_library",
+                },
+                scope="books", generation=1, now=0,
+            )
+            self.assertEqual(
+                {
+                    ("catalogue-a", "hardcover", "books", "dormant"),
+                    ("catalogue-b", "hardcover", "books", "waiting"),
+                },
+                {
+                    (item.connection, item.adapter, item.scope, item.state)
+                    for item in store.snapshot(limit=2)
+                },
+            )
+            store.close()
 
     def test_owner_completion_and_backoff_transition_are_atomic(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -217,3 +256,50 @@ class ProviderRecoveryTests(unittest.TestCase):
                     current = store.claim_one(generation=1, now=current.next_eligible_at or 0, token="owner")
                     assert current is not None
             self.assertEqual(("waiting", 5, 10 + 4 + 86_400), (current.state, current.attempt, current.next_eligible_at))
+
+    def test_activity_aggregates_128_distinct_deadlines_without_truncation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            for number in range(128):
+                store.record(
+                    ProviderRecovery.failed(
+                        connection=f"waiting-{number}", adapter="hardcover",
+                        scope="books", generation=1, failure="transient", now=0,
+                        retry_after=number + 1,
+                    ),
+                    occurred_at=0,
+                )
+            store.observe_failure(
+                connection="dormant", adapter="hardcover", scope="books",
+                generation=1, failure="authentication", now=0,
+            )
+            self.assertIsNotNone(store.claim_one(generation=1, now=1, token="owner"))
+            self.assertEqual(
+                (
+                    {"state": "checking", "next_eligible_at": None, "affected_count": 1},
+                    {"state": "dormant", "next_eligible_at": None, "affected_count": 1},
+                    {"state": "waiting", "next_eligible_at": 2, "affected_count": 127},
+                ),
+                store.activity_snapshot(),
+            )
+            store.close()
+
+    def test_orphan_shape_valid_event_rejects_store_open(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "recovery.sqlite"
+            store = SQLiteProviderRecoveryStore.open(path)
+            store.observe_failure(
+                connection="known", adapter="hardcover", scope="books",
+                generation=1, failure="authentication", now=0,
+            )
+            store.close()
+            connection = sqlite3.connect(path)
+            connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute(
+                "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
+                ("orphan", "hardcover", "books", 1, "dormant", 0, None, 0),
+            )
+            connection.commit()
+            connection.close()
+            with self.assertRaises(ProviderRecoveryStoreError):
+                SQLiteProviderRecoveryStore.open(path)

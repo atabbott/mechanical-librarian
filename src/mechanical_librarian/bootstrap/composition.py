@@ -292,8 +292,7 @@ def compose_continuous_guarded_application(
         for key in configured
     }
     if provider_recovery is None:
-        provider_recovery = SQLiteProviderRecoveryStore.open(private_root / "provider-recovery.sqlite")
-        provider_recovery.reconcile_generation(generation=configuration.provider_recovery_generation, now=int(time.time()))
+        raise ConfigurationError("provider recovery store is unavailable")
     return ContinuousGuardedApplication(
         repository,
         applications,
@@ -309,7 +308,7 @@ def compose_continuous_guarded_application(
 
 
 def compose_field_effect_activity_projection(
-    configuration, repository,
+    configuration, repository, provider_recovery: SQLiteProviderRecoveryStore | None = None,
 ) -> ContinuousGuardedApplication:
     """Compose the shared Activity projection without write-capable adapters."""
     configured = tuple(
@@ -328,6 +327,11 @@ def compose_field_effect_activity_projection(
         lambda _connection, _library: None,
         graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
         activity_only=True,
+        provider_recovery_snapshot=(
+            provider_recovery.activity_snapshot
+            if provider_recovery is not None
+            else None
+        ),
     )
 
 
@@ -700,7 +704,15 @@ def _provider_statuses(report: MetadataReport) -> tuple[ProviderStatus, ...]:
     )
 
 
-def _record_provider_recovery_observations(store: SQLiteProviderRecoveryStore, report: MetadataReport, *, connection: str, scope: str, generation: int, now: int) -> None:
+def _record_provider_recovery_observations(
+    store: SQLiteProviderRecoveryStore,
+    report: MetadataReport,
+    *,
+    adapters: dict[str, str],
+    scope: str,
+    generation: int,
+    now: int,
+) -> None:
     """Persist only terminal F22 provider classifications; never retry them."""
     failures = {
         ProviderStatus.AUTHENTICATION: "authentication", ProviderStatus.AUTHORIZATION: "authorization",
@@ -708,9 +720,20 @@ def _record_provider_recovery_observations(store: SQLiteProviderRecoveryStore, r
         ProviderStatus.INCOMPLETE: "transient",
     }
     for observation in report.providers:
-        failure = failures.get(observation.status)
+        statuses = (observation.status, *(lane.status for lane in observation.lanes))
+        terminal = tuple(failures[status] for status in statuses if status in failures)
+        failure = (
+            next((value for value in terminal if value in {"authentication", "authorization", "configuration"}), None)
+            or next((value for value in terminal if value in {"rate_limited", "transient"}), None)
+        )
         if failure is not None:
-            store.observe_failure(connection=connection, adapter=observation.provider, scope=scope, generation=generation, failure=failure, now=now)
+            adapter = adapters.get(observation.provider)
+            if adapter is None:
+                raise ReviewPipelineError("configuration")
+            store.observe_failure(
+                connection=observation.provider, adapter=adapter, scope=scope,
+                generation=generation, failure=failure, now=now,
+            )
 
 
 class _NonClosingRepository:
@@ -1035,8 +1058,8 @@ def create_review_pipeline(
         else None
     )
     discovery_lock = threading.Lock()
-    private_root = _private_root(database_path) if private_root is None else private_root
-    provider_recovery = provider_recovery or SQLiteProviderRecoveryStore.open(private_root / "provider-recovery.sqlite")
+    if provider_recovery is None:
+        raise ConfigurationError("provider recovery store is unavailable")
     provider_recovery.reconcile_generation(
         generation=configuration.provider_recovery_generation, now=int(time.time())
     )
@@ -1109,6 +1132,18 @@ def create_review_pipeline(
         except CredentialError as error:
             if error.provider is None:
                 raise ReviewPipelineError("authentication") from error
+            provider = next(
+                (value for value in configuration.providers if value.name == error.provider),
+                None,
+            )
+            if provider is None:
+                raise ReviewPipelineError("configuration") from error
+            provider_recovery.observe_failure(
+                connection=provider.name, adapter=provider.adapter,
+                scope=action.library,
+                generation=configuration.provider_recovery_generation,
+                failure="authentication", now=int(time.time()),
+            )
             raise ReviewPipelineError(
                 "authentication", root=error.provider
             ) from error
@@ -1120,7 +1155,9 @@ def create_review_pipeline(
     def providers(pipeline_repository, report_id: str):
         value = MetadataReport.from_json(pipeline_repository.get(report_id))
         _record_provider_recovery_observations(
-            provider_recovery, value, connection=value.target.connection, scope=value.target.library,
+            provider_recovery, value,
+            adapters={provider.name: provider.adapter for provider in configuration.providers},
+            scope=value.target.library,
             generation=configuration.provider_recovery_generation, now=int(time.time()),
         )
         return _provider_statuses(value)
@@ -1696,12 +1733,22 @@ def run_review_activity(
     if configuration.review is None:
         raise ConfigurationError("review configuration is unavailable")
     repository = open_repository(database_path, create=False)
+    provider_recovery = None
     try:
-        projection = compose_field_effect_activity_projection(
-            configuration, repository
-        )
+        recovery_path = database_path.parent / "private" / "provider-recovery.sqlite"
+        if recovery_path.is_file():
+            provider_recovery = SQLiteProviderRecoveryStore.open(recovery_path)
+            projection = compose_field_effect_activity_projection(
+                configuration, repository, provider_recovery
+            )
+        else:
+            projection = compose_field_effect_activity_projection(
+                configuration, repository
+            )
         return projection.activity()
     finally:
+        if provider_recovery is not None:
+            provider_recovery.close()
         repository.close()
 
 

@@ -247,9 +247,10 @@ class SQLiteProviderRecoveryStore:
     def activity_snapshot(self) -> tuple[dict[str, int | str | None], ...]:
         try:
             with self._lock:
-                rows = self._connection.execute("SELECT state,next_eligible_at,count(*) FROM provider_recovery_health GROUP BY state,next_eligible_at ORDER BY state,next_eligible_at LIMIT 101").fetchall()
-            if len(rows) > 100:
-                raise ProviderRecoveryStoreError("provider recovery query is invalid")
+                rows = self._connection.execute(
+                    "SELECT state,MIN(next_eligible_at),count(*) "
+                    "FROM provider_recovery_health GROUP BY state ORDER BY state"
+                ).fetchall()
             return tuple({"state": row[0], "next_eligible_at": row[1], "affected_count": row[2]} for row in rows)
         except ProviderRecoveryStoreError:
             raise
@@ -273,7 +274,9 @@ def _validate(connection: sqlite3.Connection) -> None:
                 raise ProviderRecoveryStoreError("provider recovery database is unavailable or incompatible")
         for row in connection.execute("SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at FROM provider_recovery_events"):
             ProviderRecovery(*row[:7])
-            if type(row[7]) is not int or not 0 <= row[7] <= MAX_TIMESTAMP or (row[4] == "checking" and row[6] is not None):
+            if (row[:3] not in members or type(row[7]) is not int
+                    or not 0 <= row[7] <= MAX_TIMESTAMP
+                    or (row[4] == "checking" and row[6] is not None)):
                 raise ProviderRecoveryStoreError("provider recovery database is unavailable or incompatible")
     except (sqlite3.Error, ProviderRecoveryError, TypeError, OverflowError) as error:
         raise ProviderRecoveryStoreError("provider recovery database is unavailable or incompatible") from error
