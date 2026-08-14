@@ -206,7 +206,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
 
   const hasAuthority = enabled.length > 0 || suspensions.length > 0 || needsConsent
 
-  return <div className="cm-activity-route">
+  return <div className="cm-activity-route" onFocusCapture={() => { ++focusVersion.current }}>
     <header className="cm-page-heading" tabIndex={-1} data-route-focus><div><h1>Activity and recovery</h1><p>See what needs attention now and inspect the durable record of reviews, policy changes, safeguards, and verified updates.</p></div><span className="cm-activity-calm">{recoveryCount ? 'Recovery available' : data.paused ? 'New work paused' : 'No action required'}</span></header>
     <section className="cm-activity-status" aria-labelledby="activity-status-title">
       <div className="cm-activity-status-copy"><h2 id="activity-status-title">{recoveryCount ? 'Recovery needs attention' : data.paused ? 'New work is paused' : 'No intervention needed'}</h2><p>{dormantRecovery ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.` : recoveryCount ? 'Affected work remains held until its current state can be reconciled safely.' : data.paused ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.' : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}</p></div>
