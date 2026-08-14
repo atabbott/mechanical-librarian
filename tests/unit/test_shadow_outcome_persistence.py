@@ -141,7 +141,13 @@ def _staged_projection_action(repository, work_id: str) -> PipelineAction:
         (row[4], row[5], row[10]),
     ).fetchone()
     assert checkpoint is not None
-    return PipelineAction(*row, lineage_checkpoint=checkpoint[0])
+    generation = repository._connection.execute(
+        "SELECT generation FROM metadata_policy_state WHERE singleton=1"
+    ).fetchone()
+    assert generation is not None
+    return PipelineAction(
+        *row, lineage_checkpoint=checkpoint[0], policy_generation=generation[0]
+    )
 
 
 def _digest(value: object) -> str:

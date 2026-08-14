@@ -73,6 +73,7 @@ class PipelineAction:
     review_case_id: str | None = None
     source_fingerprint: str | None = None
     lineage_checkpoint: int | None = None
+    policy_generation: int | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -103,6 +104,10 @@ class PipelineAction:
         if self.lineage_checkpoint is not None and (
             type(self.lineage_checkpoint) is not int
             or self.lineage_checkpoint < 1
+        ):
+            raise ReviewPipelineError("state")
+        if self.policy_generation is not None and (
+            type(self.policy_generation) is not int or self.policy_generation < 1
         ):
             raise ReviewPipelineError("state")
 
