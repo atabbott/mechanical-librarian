@@ -15,8 +15,10 @@ authorization, and configuration failures are dormant.
 
 After correcting a dormant condition, increment the positive
 `provider_recovery_generation` in the `config-v6` file and restart the
-container. Startup first drains committed package cutovers from the durable
-outbox, then rejects persisted generations newer than configuration and
+container. Startup first performs a read-only generation compatibility check;
+it rejects persisted generations newer than configuration before any outbox
+delivery or database mutation. It then drains committed package cutovers from
+the durable outbox and
 advances every older row atomically. Authentication and authorization wake only
 when that delivered exact job proves the new configured generation; otherwise
 they remain dormant. Outbox delivery and job registration are idempotent, so a

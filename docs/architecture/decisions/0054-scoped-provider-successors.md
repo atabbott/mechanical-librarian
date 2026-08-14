@@ -16,7 +16,7 @@ An internal application seam accepts an exact source report, the current
 provider connection/adapter/generation identity, and an explicit non-empty set
 of failed lane identities. It revalidates the source target and file, resolves
 the current persisted source report, reconstructs the same discovery lanes,
-and dispatches only `rate_limited`, `unavailable`, or `incomplete` lanes.
+and dispatches only explicitly selected retry-eligible lanes.
 
 Authentication, authorization, rate-limit, unavailable, and incomplete
 terminal observations are classified before publication and become typed,

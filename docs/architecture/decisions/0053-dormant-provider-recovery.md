@@ -39,8 +39,10 @@ restart and authorizes fanout without another provider request.
 Health rows are exact-current and events are append-only. Existing state must
 match this exact schema; there are no migrations or imports.
 
-Startup first drains committed package-cutover outbox rows into durable exact
-jobs, then rejects a persisted generation newer than configuration and advances
+Startup first performs a read-only compatibility check that rejects a persisted
+generation newer than configuration before either database changes or outbox
+delivery. It then drains committed package-cutover outbox rows into durable exact
+jobs and advances
 every older row. A delivered job at the configured generation is the durable
 provenance that authorizes an authentication or authorization wake; without it
 the row remains dormant. Checking

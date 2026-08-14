@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
@@ -99,6 +100,61 @@ class _GoogleProvider:
 
 
 class ProviderRecoveryCompositionTests(unittest.TestCase):
+    def test_generation_rollback_rejects_before_cutover_delivery(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            recovery_path = root / "recovery.sqlite"
+            recovery = SQLiteProviderRecoveryStore.open(recovery_path)
+            recovery.observe_failure(
+                connection="google", adapter="google_books", scope="ebooks",
+                generation=2, failure="authentication", now=1,
+            )
+            repository = open_repository(database)
+            proposal_id = "proposal_set_" + "1" * 64
+            report_id = "metadata_report_" + "2" * 64
+            case_id = "review_case_" + "3" * 64
+            outbox_id = _provider_recovery_outbox_id(
+                "primary", "ebooks", "item-1", proposal_id, report_id,
+                case_id, 1, "admitted",
+            )
+            repository._connection.execute("PRAGMA foreign_keys=OFF")
+            repository._connection.execute(
+                "INSERT INTO provider_recovery_outbox(outbox_id,connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at,delivered_at) VALUES(?,?,?,?,?,?,?,?,?,?,NULL)",
+                (outbox_id, "primary", "ebooks", "item-1", proposal_id,
+                 report_id, case_id, 1, "admitted", 1),
+            )
+            repository._connection.execute("PRAGMA foreign_keys=ON")
+            repository._connection.commit()
+            repository.close()
+            metadata_before = database.read_bytes()
+            recovery_before = recovery_path.read_bytes()
+            configuration = ApplicationConfiguration(
+                (TargetConnectionConfiguration("primary", "https://example.invalid", "/run/target-token"),),
+                (LibraryConfiguration("ebooks", "primary", "library-1", "ebook", "books", ("google",)),),
+                (MediaMountConfiguration("books", "/container", "/service", True),),
+                (ProviderConnectionConfiguration("google", True, False, None, "google_books"),),
+                provider_recovery_generation=1,
+                review=ReviewWebConfiguration("https://review.example.invalid", "/run/owner-password"),
+            )
+            composition.CoverArtifactStore(root / "artifacts", create=True)
+            with self.assertRaisesRegex(Exception, "generation is stale"):
+                composition.create_review_pipeline(
+                    configuration, database, root / "catalogue.sqlite",
+                    root / "artifacts", provider_recovery=recovery,
+                )
+            self.assertEqual(metadata_before, database.read_bytes())
+            self.assertEqual(recovery_before, recovery_path.read_bytes())
+            check = sqlite3.connect(database)
+            self.assertEqual(
+                1,
+                check.execute(
+                    "SELECT count(*) FROM provider_recovery_outbox WHERE delivered_at IS NULL"
+                ).fetchone()[0],
+            )
+            check.close()
+            recovery.close()
+
     def test_restart_delivers_generation_cutover_once_after_dormant_auth_health(self) -> None:
         """A persisted F22 cutover wakes dormant owner-recovery health on restart."""
         with tempfile.TemporaryDirectory() as temporary:

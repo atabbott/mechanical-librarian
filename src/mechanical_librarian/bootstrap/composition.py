@@ -1458,6 +1458,9 @@ def create_review_pipeline(
         timing=timing,
     )
     pipeline_holder["pipeline"] = pipeline
+    provider_recovery.require_generation_compatible(
+        generation=configuration.provider_recovery_generation
+    )
     drain_provider_recovery_outbox()
     provider_recovery.reconcile_generation(
         generation=configuration.provider_recovery_generation, now=int(time.time())

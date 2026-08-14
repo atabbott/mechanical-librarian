@@ -66,6 +66,25 @@ class SQLiteProviderRecoveryStore:
         except (sqlite3.Error, OverflowError) as error:
             raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
+    def require_generation_compatible(self, *, generation: int) -> None:
+        """Reject rollback before another durable store is touched."""
+        if type(generation) is not int or generation < 1:
+            raise ProviderRecoveryStoreError("provider recovery generation is invalid")
+        try:
+            with self._lock:
+                newer = self._connection.execute(
+                    "SELECT 1 FROM provider_recovery_health WHERE generation>? LIMIT 1",
+                    (generation,),
+                ).fetchone()
+            if newer is not None:
+                raise ProviderRecoveryStoreError("provider recovery generation is stale")
+        except ProviderRecoveryStoreError:
+            raise
+        except (sqlite3.Error, OverflowError) as error:
+            raise ProviderRecoveryStoreError(
+                "provider recovery persistence is unavailable"
+            ) from error
+
     def _reconcile_generation(self, generation: int, now: int) -> int:
         try:
             self._connection.execute("BEGIN IMMEDIATE")

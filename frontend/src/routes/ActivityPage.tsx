@@ -46,10 +46,15 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const search = activityRoute.useSearch()
   const [queryText, setQueryText] = useState(search.q ?? '')
   const queryCommit = useRef<number | null>(null)
+  const localQueryNavigation = useRef<string | null>(null)
   useEffect(() => () => {
     if (queryCommit.current !== null) window.clearTimeout(queryCommit.current)
   }, [])
   useEffect(() => {
+    if (localQueryNavigation.current === (search.q ?? '')) {
+      localQueryNavigation.current = null
+      return
+    }
     if (queryCommit.current !== null) { window.clearTimeout(queryCommit.current); queryCommit.current = null }
     const sync = window.setTimeout(() => setQueryText(search.q ?? ''), 0)
     return () => window.clearTimeout(sync)
@@ -101,6 +106,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     if (queryCommit.current !== null) window.clearTimeout(queryCommit.current)
     queryCommit.current = window.setTimeout(() => {
       queryCommit.current = null
+      localQueryNavigation.current = value
       changeSearch({ q: value || undefined }, 'search')
     }, 150)
   }
