@@ -38,7 +38,7 @@ function PageJump({ page, pageCount, onCommit, onEdit }: { page: number, pageCou
   const [value, setValue] = useState(String(page))
   const cancelCommit = useRef(false)
   const commit = () => { if (cancelCommit.current) { cancelCommit.current = false; setValue(String(page)); return }; const requested = Number.parseInt(value, 10); if (!Number.isFinite(requested)) { setValue(String(page)); return }; const clamped = Math.max(1, Math.min(pageCount, requested)); setValue(String(clamped)); if (clamped !== page) onCommit(clamped, 'page-jump') }
-  return <label className="cm-activity-page-jump"><span>Page</span><input data-activity-focus="page-jump" aria-label="Activity page number" inputMode="numeric" type="number" min="1" max={pageCount} value={value} onChange={(event) => { onEdit(); setValue(event.target.value) }} onBlur={commit} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { event.preventDefault(); cancelCommit.current = true; setValue(String(page)) } }}/><span>of {pageCount}</span></label>
+  return <label className="cm-activity-page-jump"><span>Page</span><input data-activity-focus="page-jump" aria-label="Activity page number" inputMode="numeric" type="number" min="1" max={pageCount} value={value} onChange={(event) => { cancelCommit.current = false; onEdit(); setValue(event.target.value) }} onBlur={commit} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); if (event.key === 'Escape') { event.preventDefault(); cancelCommit.current = true; setValue(String(page)) } }}/><span>of {pageCount}</span></label>
 }
 
 export default function ActivityPage({ initial }: { initial: ActivityView }) {
@@ -51,51 +51,52 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const queryCommit = useRef<number | null>(null)
   const queryDraftVersion = useRef(0)
   const canonicalQuery = useRef(search.q ?? '')
-  const localQueryNavigations = useRef(new Map<string, number>())
+  const pendingLocalNavigations = useRef<{ q: string, draftVersion: number }[]>([])
+  const localNavigations = useRef(new Map<string, { q: string, draftVersion: number }>())
   const externalTarget = useRef<string | null>(null)
   const requestedPage = useRef(search.page)
   const pageNavigationVersion = useRef(0)
-  const localPageNavigations = useRef(new Map<number, number>())
   const focusVersion = useRef(0)
   const [focusRequest, setFocusRequest] = useState<{ key: string, version: number } | null>(null)
   useEffect(() => () => {
     if (queryCommit.current !== null) window.clearTimeout(queryCommit.current)
   }, [])
-  useEffect(() => {
-    const current = search.q ?? ''
-    if (canonicalQuery.current === current) return
-    canonicalQuery.current = current
-    const navigationVersion = localQueryNavigations.current.get(current)
-    if (navigationVersion !== undefined) {
-      localQueryNavigations.current.delete(current)
-      if (navigationVersion <= queryDraftVersion.current) return
-    }
-    if (queryCommit.current !== null) { window.clearTimeout(queryCommit.current); queryCommit.current = null }
-    const draftVersion = queryDraftVersion.current
-    const sync = window.setTimeout(() => { if (queryDraftVersion.current === draftVersion) setQueryText(current) }, 0)
-    return () => window.clearTimeout(sync)
-  }, [search.q])
-  useEffect(() => {
-    const navigationVersion = localPageNavigations.current.get(search.page)
-    if (navigationVersion !== undefined) {
-      localPageNavigations.current.delete(search.page)
-      if (navigationVersion < pageNavigationVersion.current) return
-    }
-    requestedPage.current = search.page
-  }, [search.page])
   useEffect(() => router.history.subscribe(({ action, location }) => {
+    if (action.type === 'PUSH' || action.type === 'REPLACE') {
+      const q = new URL(location.href, window.location.origin).searchParams.get('q') ?? ''
+      const pending = pendingLocalNavigations.current
+      const index = pending.findIndex((intent) => intent.q === q)
+      if (index !== -1) {
+        const [intent] = pending.splice(index, 1)
+        if (intent) localNavigations.current.set(locationIdentity(location), intent)
+      }
+    }
     if (action.type === 'BACK' || action.type === 'FORWARD' || action.type === 'GO') externalTarget.current = locationIdentity(location)
   }), [router])
   useEffect(() => {
-    if (!resolvedLocation || externalTarget.current !== locationIdentity(resolvedLocation)) return
+    if (!resolvedLocation) return
+    const identity = locationIdentity(resolvedLocation)
+    const current = search.q ?? ''
+    const local = localNavigations.current.get(identity)
+    if (local) {
+      localNavigations.current.delete(identity)
+      canonicalQuery.current = local.q
+      requestedPage.current = search.page
+      return
+    }
+    if (externalTarget.current !== identity && canonicalQuery.current === current) {
+      requestedPage.current = search.page
+      return
+    }
     externalTarget.current = null
     if (queryCommit.current !== null) { window.clearTimeout(queryCommit.current); queryCommit.current = null }
-    localQueryNavigations.current.clear()
-    localPageNavigations.current.clear()
+    pendingLocalNavigations.current.length = 0
+    localNavigations.current.clear()
     ++queryDraftVersion.current
     ++pageNavigationVersion.current
     ++focusVersion.current
-    setQueryText(search.q ?? '')
+    canonicalQuery.current = current
+    setQueryText(current)
     requestedPage.current = search.page
   }, [resolvedLocation, search.page, search.q])
   useEffect(() => {
@@ -152,27 +153,26 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     }
     const key = focusKey ?? document.activeElement?.getAttribute('data-activity-focus') ?? undefined
     const version = ++focusVersion.current
+    pendingLocalNavigations.current.push({ q: base.q ?? '', draftVersion: queryDraftVersion.current })
     void navigate({ search: base, replace: true }).then(() => { if (key) restoreFocus(key, version) })
   }
   const changeQuery = (value: string) => {
     ++focusVersion.current
     setQueryText(value)
-    const draftVersion = ++queryDraftVersion.current
+    ++queryDraftVersion.current
     if (queryCommit.current !== null) window.clearTimeout(queryCommit.current)
     queryCommit.current = window.setTimeout(() => {
       queryCommit.current = null
-      localQueryNavigations.current.set(value, draftVersion)
       changeSearch({ q: value || undefined }, 'search')
     }, 150)
   }
   const clearFilters = () => {
     ++queryDraftVersion.current
     if (queryCommit.current !== null) { window.clearTimeout(queryCommit.current); queryCommit.current = null }
-    localQueryNavigations.current.clear()
     setQueryText('')
     changeSearch({ q: undefined, eventType: 'all' }, 'clear-filters')
   }
-  const goToPage = (target: number | ((page: number) => number), focusKey?: string) => { const requested = typeof target === 'function' ? target(requestedPage.current) : target; const clamped = Math.max(1, Math.min(ledger.page_count, requested)); requestedPage.current = clamped; const navigationVersion = ++pageNavigationVersion.current; localPageNavigations.current.set(clamped, navigationVersion); setExpandedId(null); const key = focusKey ?? document.activeElement?.getAttribute('data-activity-focus') ?? undefined; const restoredKey = (clamped === 1 && (key === 'first' || key === 'previous')) || (clamped === ledger.page_count && (key === 'next' || key === 'last')) ? 'page-jump' : key; const version = ++focusVersion.current; if (restoredKey) restoreFocus(restoredKey, version); void navigate({ search: (previous) => ({ ...previous, page: clamped }) }) }
+  const goToPage = (target: number | ((page: number) => number), focusKey?: string) => { const requested = typeof target === 'function' ? target(requestedPage.current) : target; const clamped = Math.max(1, Math.min(ledger.page_count, requested)); requestedPage.current = clamped; ++pageNavigationVersion.current; setExpandedId(null); const key = focusKey ?? document.activeElement?.getAttribute('data-activity-focus') ?? undefined; const restoredKey = (clamped === 1 && (key === 'first' || key === 'previous')) || (clamped === ledger.page_count && (key === 'next' || key === 'last')) ? 'page-jump' : key; const version = ++focusVersion.current; const next = { ...search, page: clamped }; pendingLocalNavigations.current.push({ q: next.q ?? '', draftVersion: queryDraftVersion.current }); void navigate({ search: () => next }).then(() => { if (restoredKey) restoreFocus(restoredKey, version) }) }
   const suspensions = records(data.suspensions)
   const writes = ['claimed', 'applying', 'reconciling'].reduce((total, state) => total + count(data.counts[state]), 0)
   const providerRecovery = data.provider_recovery ?? []

@@ -481,6 +481,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     light_mode.click()
                     page.get_by_role("button", name="Use dark mode").wait_for()
                     activity_requests = 0
+                    held_page_size_response = []
 
                     def activity_poll(route) -> None:
                         nonlocal activity_requests
@@ -495,6 +496,9 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                             page_size=int(query.get("page_size", ["25"])[0]),
                             total=75,
                         )
+                        if query.get("page_size") == ["50"] and not held_page_size_response:
+                            held_page_size_response.append((route, response, payload))
+                            return
                         route.fulfill(status=response.status, json=payload)
 
                     page.route("**/api/v1/activity?*", activity_poll)
@@ -537,7 +541,17 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     expect(rows).to_be_focused()
                     page.set_viewport_size({"width": 1440, "height": 900})
                     activity_search = page.get_by_role("searchbox", name="Search activity")
+                    search_node = activity_search.element_handle()
+                    self.assertIsNotNone(search_node)
                     activity_search.fill("")
+                    self.assertEqual(activity_search.input_value(), "")
+                    expect(activity_search).to_be_focused()
+                    self.assertEqual(len(held_page_size_response), 1)
+                    held_route, held_response, held_payload = held_page_size_response[0]
+                    held_route.fulfill(status=held_response.status, json=held_payload)
+                    self.assertEqual(activity_search.input_value(), "")
+                    expect(activity_search).to_be_focused()
+                    self.assertTrue(search_node.evaluate("node => node.isConnected"))
                     activity_search.press_sequentially("desktop")
                     self.assertEqual(activity_search.input_value(), "desktop")
                     page.wait_for_url("**/activity?*q=desktop*")

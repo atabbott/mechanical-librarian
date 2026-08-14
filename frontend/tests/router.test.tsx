@@ -2163,6 +2163,31 @@ describe('typed review routes', () => {
     ))
   })
 
+  it('commits the next page edit once after an Escape cancellation', async () => {
+    const user = userEvent.setup()
+    const getActivity = vi.fn(async (search: ActivitySearch) => activity({
+      ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 },
+    }))
+    renderRoute('/activity', { ...createHttp(), getActivity })
+
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const page = screen.getByRole('spinbutton', { name: 'Activity page number' })
+    const callsBeforeEscape = getActivity.mock.calls.length
+    await user.clear(page)
+    await user.type(page, '2{Escape}')
+    expect(page).toHaveValue(1)
+    expect(page).toHaveFocus()
+    expect(getActivity).toHaveBeenCalledTimes(callsBeforeEscape)
+
+    await user.clear(page)
+    await user.type(page, '2')
+    await user.click(screen.getByRole('searchbox', { name: 'Search activity' }))
+    await waitFor(() => expect(getActivity).toHaveBeenLastCalledWith(
+      expect.objectContaining({ page: 2 }), expect.anything(),
+    ))
+    expect(getActivity.mock.calls.filter(([search]) => search.page === 2)).toHaveLength(1)
+  })
+
   it.each([['a', 'ab'], ['ab', 'a']] as const)('keeps the latest Activity query draft when deferred replacements complete %s then %s', async (first, second) => {
     const deferred = new Map<string, { resolve: (value: ActivityView) => void }>()
     const http: ReviewHttp = {
@@ -2248,14 +2273,17 @@ describe('typed review routes', () => {
     await waitFor(() => expect(resolveRows).toBeTypeOf('function'))
     search.focus()
     await user.clear(search)
-    await user.type(search, 'desktop')
     expect(screen.getByRole('searchbox', { name: 'Search activity' })).toBe(search)
-    expect(search).toHaveValue('desktop')
+    expect(search).toHaveValue('')
     expect(search).toHaveFocus()
 
     act(() => { resolveRows?.(activity({ ledger: { event_type: 'all', page: 1, page_count: 3, page_size: 50, query: 'ab', range_days: 30, total: 75 } })) })
-    await waitFor(() => expect(search).toHaveValue('desktop'))
+    await waitFor(() => expect(search).toHaveValue(''))
     expect(screen.getByRole('searchbox', { name: 'Search activity' })).toBe(search)
+    expect(search).toHaveFocus()
+
+    await user.type(search, 'desktop')
+    expect(search).toHaveValue('desktop')
     expect(search).toHaveFocus()
     await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(expect.objectContaining({ q: 'desktop' }), expect.anything()))
   })
@@ -2265,6 +2293,7 @@ describe('typed review routes', () => {
       ...createHttp(),
       getActivity: vi.fn(async (search: ActivitySearch) => activity({ ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 } })),
     }
+    const user = userEvent.setup()
     const { router } = renderRoute('/activity?q=first&page=1', http)
 
     await screen.findByRole('heading', { name: 'Activity and recovery' })
@@ -2272,6 +2301,9 @@ describe('typed review routes', () => {
     await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('second'))
     await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(2))
 
+    const editingSearch = screen.getByRole('searchbox', { name: 'Search activity' })
+    await user.clear(editingSearch)
+    await user.type(editingSearch, 'editing')
     act(() => router.history.back())
     await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveValue('first'))
     await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(1))
