@@ -7,6 +7,11 @@
 
 ## Unreleased
 
+- Keep retained metadata provenance at each Library review choice: current
+  local presence, named corroborating sources, rationale, deterministic
+  recommendation status, and limitations can be inspected in place without
+  replacing the owner decision workspace. (#640)
+
 - Pause only review-preparation work that shares an unavailable Audiobookshelf
   connection. The owner can run one authenticated, CSRF-protected bounded
   connection check; recovery resumes the retained checkpoint without rerunning

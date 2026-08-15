@@ -33,6 +33,7 @@ const detail: CaseDetailView = {
   title: 'A Book',
   authors: [],
   subtitle: 'Books · local',
+  comparisonNotices: [],
   fields: [{
     classification: 'needs_attention',
     classificationReason: 'This field needs your review.',
@@ -46,6 +47,7 @@ const detail: CaseDetailView = {
     currentValue: 'Old title',
     currentRaw: 'Old title',
     proposedValues: [{ kind: 'text', value: 'New title' }],
+    choiceContexts: [],
     proposalId: 'proposal-1',
     targetFingerprint: 'fingerprint-1',
     humanDecision: null,
@@ -275,6 +277,24 @@ describe('typed review routes', () => {
     expect(screen.queryByRole('button', { name: 'Preparation unavailable' })).toBeNull()
   })
 
+  it('shows bounded provider absence once at the selected-work comparison boundary', async () => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        comparisonNotices: [
+          'Provider limitation: Open Library — Provider returned no matching metadata.',
+        ],
+      })),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    const condition = await screen.findByRole('complementary', { name: 'Provider comparison condition' })
+    expect(condition).toHaveTextContent('Open Library')
+    expect(condition).toHaveTextContent('Provider returned no matching metadata.')
+    expect(within(condition).getAllByText(/Provider limitation/u)).toHaveLength(1)
+  })
+
   it('keeps Variant M field, automatic, evidence, and apply context in the responsive Library workspace', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]
@@ -304,21 +324,36 @@ describe('typed review routes', () => {
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [{ ...titleField, effectCapability: 'allowed', provenance: ['Local catalogue: Old title'] }, automaticField] })),
-      getEvidence: vi.fn(async () => ({
-        schema_version: 'review-case-evidence-v2', review_case_id: 'case-1', next_cursor: null,
-        items: [{ reference: 'evidence-1', kind: 'title', source: 'provider_claim', provider: 'Open Library', candidate: null, fact: 'New title' }],
-      })),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [{ ...titleField, effectCapability: 'allowed', notices: ['competing_evidence'], choiceContexts: [
+        { alternativeId: null, selection: 'current', rationale: 'Keep the value currently held by the local library.', recommendation: 'no_recommendation', recommendationReason: 'No deterministic recommendation is retained for the current value.', limitations: [], evidence: [{ source: 'Local library record', observation: 'Title: Old title', role: 'local_presence' }] },
+        { alternativeId: 'alternative-title-1', selection: 'proposed', rationale: 'This retained alternative is eligible for owner selection.', recommendation: 'no_recommendation', recommendationReason: 'No deterministic recommendation is retained for this alternative.', limitations: [], evidence: [{ source: 'Open Library', observation: 'Title: New title', role: 'external_corroboration' }] },
+      ] as const }, automaticField] })),
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
     expect(await screen.findByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
     expect(screen.getByText('Eligible for guarded planning')).toBeVisible()
-    await user.click(screen.getByText('Source ledger'))
+    const evidenceButtons = screen.getAllByRole('button', { name: /Evidence for/u })
+    const currentEvidence = evidenceButtons[0]
+    const proposedEvidence = evidenceButtons[1]
+    if (!currentEvidence || !proposedEvidence) throw new Error('choice evidence controls are missing')
+    expect(currentEvidence).toHaveAccessibleName('Evidence for Current value: Old title')
+    expect(proposedEvidence).toHaveAccessibleName('Evidence for Alternative 1: New title')
+    await user.click(currentEvidence)
+    expect(currentEvidence).toHaveFocus()
+    expect(currentEvidence).toHaveAttribute('aria-controls', 'choice-evidence-current')
+    expect(await screen.findByText('Local library record')).toBeVisible()
+    expect(screen.getByText('Title: Old title')).toBeVisible()
+    expect(screen.getByText('Local presence')).toBeVisible()
+    expect(screen.getAllByText('No recommendation retained').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Source ledger')).not.toBeInTheDocument()
+    await user.click(currentEvidence)
+    expect(currentEvidence).toHaveFocus()
+    await user.click(proposedEvidence)
     expect(await screen.findByText('Open Library')).toBeVisible()
-    expect(screen.getByText('New title', { selector: '[role="cell"]' })).toBeVisible()
-    expect(screen.getByText('Provider claim · Title')).toBeVisible()
-    expect(screen.getAllByText(/2 named sources/u).length).toBeGreaterThan(0)
+    expect(screen.getByText('Title: New title')).toBeVisible()
+    expect(screen.getByText('External corroboration')).toBeVisible()
+    expect(screen.getAllByText('Competing evidence').length).toBeGreaterThan(0)
     await user.click(screen.getByText('1 automatic or recorded field'))
     expect(screen.getByText('Resolved automatically · Atlas Cycle 2.5')).toBeVisible()
     expect(screen.getByText('Automatic handling recorded this field; you may inspect or override it.')).toBeVisible()
@@ -330,6 +365,7 @@ describe('typed review routes', () => {
     if (!base) throw new Error('cover fixture requires a field')
     const consideration = {
       id: `cover_consideration_${'c'.repeat(64)}`,
+      choiceContexts: [{ alternativeId: null, selection: 'current', evidence: [], limitations: [], rationale: 'Keep the local cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }, { alternativeId: `cover_transport_ref_${'2'.repeat(64)}`, selection: 'proposed', evidence: [{ source: 'Open Library', role: 'external_corroboration', observation: 'Retained catalogue cover supports this choice.' }], limitations: [], rationale: 'Selectable retained cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }],
       current: true,
       candidates: [
         { artifactId: `cover_${'a'.repeat(64)}`, height: 1200, identity: { outcome: 'verified_manifestation_match' }, incumbent: true, observation: null, originalSha256: 'a'.repeat(64), ordinal: 0, previewSha256: '1'.repeat(64), reference: `cover_transport_ref_${'1'.repeat(64)}`, selectable: false, sourceKinds: ['audiobookshelf_current'], state: 'incumbent', width: 800 },
@@ -382,6 +418,7 @@ describe('typed review routes', () => {
     })
     const consideration = {
       id: `cover_consideration_${'c'.repeat(64)}`,
+      choiceContexts: [{ alternativeId: null, selection: 'current', evidence: [], limitations: [], rationale: 'Keep the local cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }, { alternativeId: reference(2), selection: 'proposed', evidence: [], limitations: [], rationale: 'Selectable retained cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }, { alternativeId: reference(3), selection: 'proposed', evidence: [], limitations: [], rationale: 'Selectable retained cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }, { alternativeId: reference(4), selection: 'proposed', evidence: [], limitations: [], rationale: 'Selectable retained cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }],
       current: true,
       candidates: [candidate(1, true), candidate(2), candidate(3), candidate(4), { ...candidate(5), selectable: false, identity: { outcome: 'verified_work_match', reasons: ['accepted_work_identifier'] }, observation: { composition: 'dense', medium: 'photographic', promotional_text: 'absent', tie_in_branding: 'absent' } }, { ...candidate(6), selectable: false, identity: { outcome: 'verified_work_match', reasons: ['accepted_work_identifier'] }, observation: { composition: 'dense', medium: 'photographic', promotional_text: 'present', tie_in_branding: 'absent' } }],
       incumbent: { reference: reference(1), state: 'available' as const },
@@ -405,8 +442,8 @@ describe('typed review routes', () => {
     renderRoute('/library?lens=all&preview=case-1&field=cover', http)
 
     const comparison = await screen.findByLabelText('Choose a cover')
-    expect(within(comparison).getByText('One candidate is recommended as advice only.')).toBeVisible()
-    expect(within(comparison).getByText(/Recommended/u)).toBeVisible()
+    expect(within(comparison).getByText('Recommendation is unavailable; comparison remains manual.')).toBeVisible()
+    expect(within(comparison).queryByText(/Recommended/u)).not.toBeInTheDocument()
     await user.click(within(comparison).getByText('Reasons retained'))
     expect(within(comparison).getByText('Preview unavailable')).toBeVisible()
     expect(within(comparison).getByText('Observations ambiguous')).toBeVisible()
@@ -416,10 +453,12 @@ describe('typed review routes', () => {
   })
 
   it('retains an explicit keep-current control when the incumbent preview is unavailable', async () => {
+    const user = userEvent.setup()
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
     const consideration = {
       id: `cover_consideration_${'u'.repeat(64)}`,
+      choiceContexts: [{ alternativeId: null, selection: 'current', evidence: [{ source: 'Local library record', role: 'local_presence', observation: 'Current cover preview is unavailable; local presence is retained.' }], limitations: ['preview_unavailable'], rationale: 'Keep the retained local cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }, { alternativeId: `cover_transport_ref_${'a'.repeat(64)}`, selection: 'proposed', evidence: [], limitations: [], rationale: 'Selectable retained cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }],
       current: true,
       candidates: [{ artifactId: `cover_${'a'.repeat(64)}`, height: 1200, identity: { outcome: 'plausible_match' }, incumbent: false, observation: null, originalSha256: 'a'.repeat(64), ordinal: 1, previewSha256: 'a'.repeat(64), reference: `cover_transport_ref_${'a'.repeat(64)}`, selectable: true, sourceKinds: ['provider'], state: 'acceptable', width: 800 }],
       incumbent: { reference: `cover_transport_ref_${'b'.repeat(64)}`, state: 'unavailable' as const }, omissions: [], policy: null,
@@ -429,7 +468,34 @@ describe('typed review routes', () => {
     renderRoute('/library?lens=all&preview=case-1&field=cover', { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })) })
 
     expect(await screen.findByRole('button', { name: /Current cover.*Unavailable/u })).toBeVisible()
+    const evidence = screen.getByRole('button', { name: 'Evidence for Current cover' })
+    await user.click(evidence)
+    expect(evidence).toHaveFocus()
+    expect(screen.getByText('Local presence')).toBeVisible()
+    expect(screen.getByText('Preview unavailable')).toBeVisible()
+    expect(screen.getByRole('button', { name: /Current cover.*Unavailable/u })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('3')
+  })
+
+  it('closes cached cover evidence after client-side A to B to A work navigation', async () => {
+    const user = userEvent.setup()
+    const baseField = detail.fields[0]
+    const baseWork = library.works[0]
+    if (!baseField || !baseWork) throw new Error('cover reset fixture requires a work and field')
+    const cover = (id: string): CaseDetailView => ({ ...detail, id, fields: [{ ...baseField, destination: 'cover', proposedValues: [{ kind: 'cover', value: 'cover-alt' }], coverConsideration: { id: `consideration-${id}`, current: true, candidates: [{ artifactId: 'cover-current', height: 100, identity: {}, incumbent: true, observation: null, originalSha256: 'a'.repeat(64), ordinal: 0, previewSha256: 'b'.repeat(64), reference: 'current', selectable: true, sourceKinds: [], state: 'available', width: 100 }, { artifactId: 'cover-alt', height: 100, identity: {}, incumbent: false, observation: null, originalSha256: 'c'.repeat(64), ordinal: 1, previewSha256: 'd'.repeat(64), reference: 'alternative', selectable: true, sourceKinds: [], state: 'available', width: 100 }], choiceContexts: [{ alternativeId: null, selection: 'current', evidence: [{ source: 'Local library record', role: 'local_presence', observation: 'Local cover retained.' }], limitations: [], rationale: 'Current cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation.' }, { alternativeId: 'alternative', selection: 'proposed', evidence: [], limitations: [], rationale: 'Alternative cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation.' }], incumbent: { reference: 'current', state: 'available' }, omissions: [], policy: { status: 'abstained', recommended_candidate_reference: null, acceptable_candidate_references: [] }, policyPreferences: { avoidPromotionalText: false, avoidTieInBranding: false, preferMinimalComposition: false }, policyReference: 'policy', reviewerStatus: 'completed', targetFingerprint: 'fingerprint' } }] })
+    const twoWorks: LibraryView = { ...library, works: [{ ...baseWork, title: 'Work A' }, { ...baseWork, id: 'case-2', reviewCaseId: 'case-2', title: 'Work B' }] }
+    const http = { ...createHttp(), getLibrary: vi.fn(async () => twoWorks), getCaseDetail: vi.fn(async (id: string) => cover(id)) }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    const evidence = await screen.findByRole('button', { name: 'Evidence for Current cover' })
+    await user.click(evidence)
+    expect(screen.getByLabelText('Current cover evidence')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Work B' }))
+    await screen.findByRole('button', { name: 'Evidence for Current cover' })
+    expect(screen.queryByLabelText('Current cover evidence')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Work A' }))
+    await screen.findByRole('button', { name: 'Evidence for Current cover' })
+    expect(screen.queryByLabelText('Current cover evidence')).not.toBeInTheDocument()
+    expect(http.recordDecision).not.toHaveBeenCalled()
   })
 
   it('prepares a missing cover comparison inside the Library workflow', async () => {
@@ -438,6 +504,7 @@ describe('typed review routes', () => {
     if (!base) throw new Error('cover fixture requires a field')
     const consideration = {
       id: `cover_consideration_${'p'.repeat(64)}`, current: true,
+      choiceContexts: [{ alternativeId: null, selection: 'current', evidence: [], limitations: [], rationale: 'Keep the local cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }, { alternativeId: `cover_transport_ref_${'a'.repeat(64)}`, selection: 'proposed', evidence: [], limitations: [], rationale: 'Selectable retained cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }],
       candidates: [{ artifactId: `cover_${'a'.repeat(64)}`, height: 1200, identity: { outcome: 'plausible_match' }, incumbent: false, observation: null, originalSha256: 'a'.repeat(64), ordinal: 1, previewSha256: 'a'.repeat(64), reference: `cover_transport_ref_${'a'.repeat(64)}`, selectable: true, sourceKinds: ['provider'], state: 'acceptable', width: 800 }],
       incumbent: { reference: `cover_transport_ref_${'b'.repeat(64)}`, state: 'unavailable' as const }, omissions: [], policy: null,
       policyPreferences: { avoidPromotionalText: false, avoidTieInBranding: false, preferMinimalComposition: false }, policyReference: `cover_policy_${'p'.repeat(64)}`, reviewerStatus: 'completed', targetFingerprint: 'fingerprint-cover',
@@ -477,6 +544,7 @@ describe('typed review routes', () => {
         decision: { actor: 'owner', decision_id: 'decision-cover', destination: 'cover', occurred_at: 2, outcome: 'accept', proposal_id: 'proposal-cover', review_case_id: 'case-1', selected_value: { kind: 'cover', value: `cover_${'a'.repeat(64)}` }, target_fingerprint: 'fingerprint-cover' },
         consideration: {
           schema_version: 'cover-consideration-v1', consideration_id: `cover_consideration_${'c'.repeat(64)}`, current: false,
+          choice_contexts: [],
           candidates: [{ artifact_id: `cover_${'a'.repeat(64)}`, height: 1200, identity: { candidate_reference: reference, evidence_references: [], outcome: 'verified_work_match', preview_reference: `cover_preview_${'2'.repeat(64)}`, reasons: [] }, incumbent: false, observation: { candidate_reference: reference, composition: 'minimal', medium: 'illustration', preview_sha256: '3'.repeat(64), preview_variant: 'normalized', promotional_text: 'absent', tie_in_branding: 'absent' }, original_sha256: '4'.repeat(64), ordinal: 0, preview_sha256: '3'.repeat(64), reference, selectable: true, source_kinds: ['epub'], state: 'acceptable', transport_sha256: '5'.repeat(64), width: 800 }],
           incumbent: { reference: null, state: 'absent' }, omissions: [], policy_preferences: { avoid_promotional_text: true, avoid_tie_in_branding: false, prefer_minimal_composition: true, schema_version: 'cover-policy-v1' }, policy_reference: `cover_policy_${'6'.repeat(64)}`, reviewer_status: 'completed', supersedes_id: null, target_fingerprint: 'fingerprint-cover',
           policy: { acceptable_candidate_references: [reference], cover_packet_reference: `cover_packet_${'7'.repeat(64)}`, identity_classifier_reference: `cover_identity_${'8'.repeat(64)}`, identity_report_sha256: '9'.repeat(64), observation_report_sha256: 'a'.repeat(64), observation_taxonomy_reference: `cover_taxonomy_${'b'.repeat(64)}`, policy_reference: `cover_policy_${'6'.repeat(64)}`, reasons: ['minimal_composition_preferred'], recommended_candidate_reference: reference, schema_version: 'cover-policy-report-v1', status: 'recommended' },
@@ -493,22 +561,24 @@ describe('typed review routes', () => {
     expect(screen.getByRole('list', { name: 'Historical cover candidates' })).toHaveTextContent('composition minimal')
   })
 
-  it('keeps retained case provenance visible when supplemental evidence fails', async () => {
+  it('keeps retained per-choice provenance in Library without loading diagnostic evidence', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [{ ...titleField, provenance: ['Local catalogue record: retained current value'] }] })),
-      getEvidence: vi.fn(async () => { throw new Error('supplemental evidence unavailable') }),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [{ ...titleField, choiceContexts: [{ alternativeId: null, selection: 'current', rationale: 'Keep the value currently held by the local library.', recommendation: 'no_recommendation', recommendationReason: 'No deterministic recommendation is retained for the current value.', limitations: [], evidence: [{ source: 'Local library record', observation: 'Title: retained current value', role: 'local_presence' }] }, { alternativeId: 'alternative-title-1', selection: 'proposed', rationale: 'This retained alternative is eligible for owner selection.', recommendation: 'no_recommendation', recommendationReason: 'No deterministic recommendation is retained for this alternative.', limitations: [], evidence: [{ source: 'Open Library', observation: 'Title: New title', role: 'external_corroboration' }] }] as const }] })),
+      getEvidence: vi.fn(async () => { throw new Error('diagnostic evidence unavailable') }),
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
-    expect(await screen.findByText(/Supplemental evidence could not be loaded/u)).toHaveAttribute('role', 'alert')
-    await user.click(screen.getByText('Source ledger'))
-    expect(screen.getByText('Local catalogue record')).toBeVisible()
-    expect(screen.getByText('retained current value')).toBeVisible()
-    expect(screen.getByText(/1 named source below/u)).toBeVisible()
+    const evidenceButton = (await screen.findAllByRole('button', { name: /Evidence for/u }))[0]
+    if (!evidenceButton) throw new Error('current choice evidence control is missing')
+    await user.click(evidenceButton)
+    expect(screen.getByText('Local library record')).toBeVisible()
+    expect(screen.getByText('Title: retained current value')).toBeVisible()
+    expect(http.getEvidence).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText('Comparison condition')).not.toBeInTheDocument()
   })
 
   it('keeps frozen field positions after an earlier field is decided', async () => {
@@ -600,6 +670,10 @@ describe('typed review routes', () => {
     await user.click(choice)
     expect(choice).toHaveAttribute('aria-pressed', 'true')
     expect(choice).toHaveTextContent('Recording…')
+    const competing = screen.getByRole('button', { name: 'Choose proposed value: New title' })
+    expect(competing).toBeDisabled()
+    fireEvent.click(competing)
+    expect(http.recordDecision).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).not.toHaveAttribute('aria-current', 'true')
 
     await act(async () => { release?.() })

@@ -41,6 +41,15 @@ from mechanical_librarian.application.review_web import (
     ReviewWebError,
     _decode_cursor,
     _encode_cursor,
+    _choice_observation,
+    _choice_contexts,
+    _evidence_by_reference,
+    _choice_limitations,
+    _choice_rationale,
+    _choice_source_label,
+    _current_value_present,
+    _provider_comparison_notices,
+    _provider_label,
     _provider_outcomes,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -727,6 +736,17 @@ class ReviewWebTests(unittest.TestCase):
                 }
             ],
             "consideration_id": consideration_id,
+            "choice_contexts": [
+                {
+                    "alternative_id": None,
+                    "evidence": [{"observation": "Local library cover retained.", "role": "local_presence", "source": "Local library record"}],
+                    "limitations": [],
+                    "rationale": "Keep the retained local cover.",
+                    "recommendation": "no_recommendation",
+                    "recommendation_reason": "No deterministic recommendation is retained for the current cover.",
+                    "selection": "current",
+                }
+            ],
             "current": True,
             "incumbent": {"reference": candidate_reference, "state": "available"},
             "omissions": [],
@@ -1423,11 +1443,76 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual("candidate", field["automatic_decision"]["outcome"])
         self.assertEqual(self.case.proposals[0]["result"]["alternatives"][0]["alternative_id"], field["automatic_decision"]["candidate_id"])
         self.assertEqual(self.case.proposals[0]["result"]["alternatives"][0]["value"], field["automatic_decision"]["selected_value"])
+        recommended = [
+            context for context in field["choice_contexts"]
+            if context["recommendation"] == "recommended"
+        ]
+        self.assertEqual(1, len(recommended))
+        self.assertEqual(
+            self.case.proposals[0]["result"]["alternatives"][0]["alternative_id"],
+            recommended[0]["alternative_id"],
+        )
         self.assertNotIn("qualification_manifest_sha256", field["automatic_decision"])
+        ignored = json.loads(self.repository.decisions["title"])
+        ignored["outcome"] = "ignore"
+        ignored["candidate_id"] = None
+        self.repository.decisions["title"] = json.dumps(
+            ignored, separators=(",", ":"), sort_keys=True
+        )
+        ignored_detail = self.client.get(
+            f"/api/v1/review-cases/{self.case.review_case_id}"
+        )
+        self.assertEqual(200, ignored_detail.status_code)
+        ignored_field = next(
+            value for value in ignored_detail.json()["fields"]
+            if value["destination"] == "title"
+        )
+        self.assertTrue(all(
+            context["recommendation"] == "no_recommendation"
+            for context in ignored_field["choice_contexts"]
+        ))
         malformed = json.loads(self.repository.decisions["title"])
+        malformed["outcome"] = "candidate"
         malformed["candidate_id"] = "alternative_" + "f" * 64
         self.repository.decisions["title"] = json.dumps(malformed, separators=(",", ":"), sort_keys=True)
         self.assertEqual(404, self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}").status_code)
+
+    def test_choice_contexts_build_the_evidence_index_once(self) -> None:
+        proposal = self.case.proposals[0]
+        result = proposal["result"]
+        alternatives = json.loads(json.dumps(result["alternatives"]))
+        references = alternatives[0]["evidence_references"]
+        alternatives[0]["evidence_references"] = references * 4
+        repeated_result = {**result, "alternatives": alternatives}
+        with patch(
+            "mechanical_librarian.application.review_web._evidence_by_reference",
+            wraps=_evidence_by_reference,
+        ) as indexed:
+            contexts = _choice_contexts(
+                alternatives,
+                repeated_result,
+                self.repository.report,
+                {"state": "value", "value": "Title"},
+            )
+
+        self.assertEqual(1, indexed.call_count)
+        self.assertEqual(len(alternatives) + 1, len(contexts))
+        self.assertLess(len(json.dumps(contexts)), 16_384)
+        selected_result = {
+            **result,
+            "selected_alternative_id": result["alternatives"][0]["alternative_id"],
+        }
+        ignored_contexts = _choice_contexts(
+            result["alternatives"],
+            selected_result,
+            self.repository.report,
+            {"state": "value", "value": "Title"},
+            {"outcome": "ignore", "candidate_id": None},
+        )
+        self.assertTrue(all(
+            context["recommendation"] == "no_recommendation"
+            for context in ignored_contexts
+        ))
 
     def test_automatic_safety_bodies_are_closed_before_control_access(self) -> None:
         login = self._login()
@@ -1455,6 +1540,29 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(title["deterministic_disposition"], "unresolved_choice")
         self.assertTrue(title["needs_attention"])
+        contexts = title["choice_contexts"]
+        self.assertEqual(len(contexts), len(title["proposed_values"]) + 1)
+        self.assertEqual(contexts[0]["selection"], "current")
+        self.assertEqual(contexts[0]["evidence"][0]["source"], "Local library record")
+        self.assertEqual(
+            contexts[0]["rationale"],
+            "Keep the value currently held by the local library.",
+        )
+        self.assertTrue(all(
+            context["recommendation"] == "no_recommendation"
+            for context in contexts
+        ))
+        self.assertTrue(all(
+            "{" not in observation["observation"]
+            for context in contexts
+            for observation in context["evidence"]
+        ))
+        self.assertIn("insufficient_independent_corroboration", title["notices"])
+        self.assertEqual([], contexts[0]["limitations"])
+        self.assertEqual(
+            ["insufficient_independent_corroboration"],
+            contexts[1]["limitations"],
+        )
         self.assertFalse(detail.json()["fields"][-1]["needs_attention"])
         self.assertNotIn("model_advice", detail.json())
         evidence = self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}/evidence")
@@ -1965,6 +2073,117 @@ class ReviewWebTests(unittest.TestCase):
         self.now += 601
         expired = self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}")
         self.assertEqual(expired.status_code, 401)
+
+    def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names(
+        self,
+    ) -> None:
+        observation = _choice_observation({
+            "fact": json.dumps({
+                "kind": "title\x00private",
+                "value": "\x00" + "hostile-value" * 40,
+            }),
+            "provider": "private-connection-name",
+            "source": "provider_claim",
+        })
+        self.assertLessEqual(len(observation), 188)
+        self.assertNotIn("\x00", observation)
+        self.assertNotIn("private", observation)
+        self.assertTrue(observation.startswith("Metadata: "))
+        self.assertEqual(
+            _choice_source_label({
+                "fact": "{}",
+                "provider": "private-connection-name",
+                "source": "provider_claim",
+            }),
+            "Provider evidence (name unavailable)",
+        )
+        replacing = {
+            "assessment": "replaces_target",
+            "scope": "edition",
+            "correlations": ["correlation_" + "a" * 64],
+        }
+        self.assertEqual(
+            _choice_rationale(replacing, True),
+            "This alternative replaces the local value using edition-specific evidence with retained supporting evidence.",
+        )
+        self.assertTrue(_current_value_present("Present title"))
+        self.assertTrue(_current_value_present(["Ada Example"]))
+        self.assertTrue(_current_value_present("2024-01-01"))
+        self.assertFalse(_current_value_present(None))
+        self.assertFalse(_current_value_present(""))
+        self.assertFalse(_current_value_present([]))
+
+    def test_provider_comparison_notices_keep_only_safe_material_failures(self) -> None:
+        source = _report()
+        report = MetadataReport.create(
+            target=source.target, file=source.file, local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=(
+                ProviderObservation("hardcover-main", ProviderStatus.DISABLED, authority="hardcover"),
+                ProviderObservation("open-library-main", ProviderStatus.NO_MATCH, authority="open_library"),
+                ProviderObservation("private-connection", ProviderStatus.UNAVAILABLE),
+            ),
+        )
+        self.assertEqual(
+            _provider_comparison_notices(report),
+            [
+                "Provider limitation: Open Library — Provider returned no matching metadata.",
+                "Provider limitation: Provider (name unavailable) — Provider returned a bounded terminal status.",
+            ],
+        )
+        affected_case = ReviewCase.create(evaluate_report(report), report)
+        projected = InspectCurrentReviewCase(
+            _Repository(affected_case, report)
+        ).run(affected_case.review_case_id)
+        self.assertEqual(
+            _provider_comparison_notices(report),
+            projected["comparison_notices"],
+        )
+        unaffected = InspectCurrentReviewCase(self.repository).run(
+            self.case.review_case_id
+        )
+        self.assertEqual([], unaffected["comparison_notices"])
+        self.assertEqual("Google Books", _provider_label("google_books"))
+        self.assertEqual("Provider (name unavailable)", _provider_label(None))
+        for spoofed_name in (
+            "google-books-private-instance",
+            "open-library-owner-home",
+        ):
+            spoofed = MetadataReport.create(
+                target=source.target,
+                file=source.file,
+                local_claims=source.local_claims,
+                local_reasons=source.local_reasons,
+                providers=(
+                    ProviderObservation(
+                        spoofed_name,
+                        ProviderStatus.UNAVAILABLE,
+                    ),
+                ),
+            )
+            self.assertEqual(
+                [
+                    "Provider limitation: Provider (name unavailable) — Provider returned a bounded terminal status.",
+                ],
+                _provider_comparison_notices(spoofed),
+            )
+
+    def test_choice_limitations_leave_multi_alternative_global_reasons_field_scoped(self) -> None:
+        first = {"alternative_id": "alternative-a"}
+        result = {"alternatives": [first, {"alternative_id": "alternative-b"}], "reasons": ["competing_evidence"]}
+        self.assertEqual([], _choice_limitations(first, result))
+        self.assertIn("competing_evidence", result["reasons"])
+
+    def test_choice_limitations_attach_only_single_exact_choice_reason(self) -> None:
+        alternative = {"alternative_id": "alternative-a"}
+        result = {"alternatives": [alternative], "reasons": ["insufficient_independent_corroboration"]}
+        self.assertEqual(["insufficient_independent_corroboration"], _choice_limitations(alternative, result))
+        self.assertEqual([], _choice_limitations({"alternative_id": "alternative-b"}, result))
+
+    def test_choice_limitations_do_not_invent_provider_terminal_attribution(self) -> None:
+        alternative = {"alternative_id": "alternative-a"}
+        result = {"alternatives": [alternative], "reasons": ["provider_no_match", "provider_unavailable"]}
+        self.assertEqual([], _choice_limitations(alternative, result))
 
     def test_openapi_is_deterministic_and_secret_free(self) -> None:
         anonymous = self.client.get("/api/v1/openapi.json")

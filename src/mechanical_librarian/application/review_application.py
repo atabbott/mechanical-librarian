@@ -72,6 +72,7 @@ class BrowserStateOwner(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class CaseDetailView:
+    comparison_notices: tuple[str, ...]
     current: bool
     fields: tuple[dict[str, object], ...]
     review_case_id: str
@@ -81,6 +82,7 @@ class CaseDetailView:
     @classmethod
     def from_data(cls, value: dict[str, object]) -> "CaseDetailView":
         return cls(
+            tuple(str(item) for item in value["comparison_notices"]),  # type: ignore[arg-type]
             bool(value["current"]),
             tuple(dict(item) for item in value["fields"]),  # type: ignore[arg-type]
             str(value["review_case_id"]),
@@ -90,6 +92,7 @@ class CaseDetailView:
 
     def to_data(self) -> dict[str, object]:
         return {
+            "comparison_notices": list(self.comparison_notices),
             "current": self.current,
             "fields": [dict(item) for item in self.fields],
             "review_case_id": self.review_case_id,

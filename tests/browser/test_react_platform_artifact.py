@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -522,8 +523,8 @@ class ReactPlatformArtifactTests(unittest.TestCase):
 
             for case_id, label, retry in (
                 ("case-1", "Advisory visual review complete", False),
-                ("case-2", "Advisory review unavailable", True),
-                ("case-3", "Advisory review unavailable", True),
+                ("case-2", "Manual comparison available", True),
+                ("case-3", "Manual comparison available", True),
             ):
                 self._browser_stage = f"cover-library:{case_id}"
                 page.goto(
@@ -536,11 +537,12 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     "advice only" if not retry else "comparison remains manual",
                     comparison.inner_text(),
                 )
-                for choice in comparison.get_by_role("button").all():
-                    if choice.inner_text() == "Retry advisory review":
-                        continue
+                for choice in comparison.locator("button[aria-pressed]").all():
                     expect(choice).to_be_enabled()
                     expect(choice).to_have_attribute("aria-pressed", "false")
+                for evidence in comparison.get_by_role("button", name=re.compile(r"^Evidence for .+ cover$")).all():
+                    expect(evidence).to_be_enabled()
+                    expect(evidence).to_have_attribute("aria-expanded", "false")
                 self.assertEqual(
                     1 if retry else 0,
                     comparison.get_by_role(
@@ -551,6 +553,49 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     capture_visual_proof(
                         "library-completed" if case_id == "case-1" else "library-failed"
                     )
+                if case_id == "case-1":
+                    current_evidence = comparison.get_by_role("button", name="Evidence for Current cover")
+                    current_evidence.click()
+                    expect(current_evidence).to_have_attribute("aria-expanded", "true")
+                    comparison.get_by_text("Local library record", exact=True).wait_for()
+                    expect(comparison.locator(".library-cover-card.is-current")).to_have_attribute("aria-pressed", "false")
+                    alternative_evidence = comparison.get_by_role("button", name="Evidence for Alternative 1 cover")
+                    alternative_evidence.focus()
+                    page.keyboard.press("Enter")
+                    expect(alternative_evidence).to_be_focused()
+                    expect(alternative_evidence).to_have_attribute("aria-expanded", "true")
+                    comparison.get_by_text("Open Library", exact=True).wait_for()
+                    comparison.get_by_text("External corroboration", exact=True).wait_for()
+                    expect(comparison.locator(".library-cover-card:not(.is-current)")).to_have_attribute("aria-pressed", "false")
+                if case_id == "case-3":
+                    unavailable_evidence = comparison.get_by_role("button", name="Evidence for Current cover")
+                    unavailable_evidence.focus()
+                    page.keyboard.press("Enter")
+                    expect(unavailable_evidence).to_have_attribute("aria-expanded", "true")
+                    comparison.get_by_text("Local presence", exact=True).wait_for()
+                    comparison.get_by_text("Preview unavailable", exact=True).wait_for()
+
+            self._browser_stage = "cover-library:cached-work-reset"
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.goto("https://react-platform.invalid/library?lens=all&preview=case-1&field=cover")
+            page.locator(".library-works").wait_for()
+            page.locator(".workspace-detail").wait_for()
+            page.get_by_role("button", name="Evidence for Current cover").click()
+            page.get_by_text("Local library record", exact=True).wait_for()
+            work_b = page.locator(".library-work-row").filter(has_text=LONG_TITLE).locator(".work-select")
+            self.assertEqual(1, work_b.count())
+            work_b.click()
+            page.locator(".field-filmstrip").wait_for()
+            page.locator(".field-filmstrip").get_by_role("button", name=re.compile(r"Cover")).click()
+            page.get_by_role("region", name="Choose a cover").wait_for()
+            self.assertEqual(0, page.locator(".choice-evidence").count())
+            work_a = page.locator(".library-work-row").filter(has_text=_HOSTILE).locator(".work-select")
+            self.assertEqual(1, work_a.count())
+            work_a.click()
+            page.locator(".field-filmstrip").wait_for()
+            page.locator(".field-filmstrip").get_by_role("button", name=re.compile(r"Cover")).click()
+            page.get_by_role("region", name="Choose a cover").wait_for()
+            self.assertEqual(0, page.locator(".choice-evidence").count())
 
             missing_case_error_start = len(errors)
             for _ in range(2):
@@ -591,7 +636,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 0,
             )
             expect(page.locator(".workspace-detail .direct-choice-grid .value-choice")).to_have_count(4)
-            expect(page.locator(".workspace-detail .direct-choice button")).to_have_count(5)
+            expect(page.locator(".workspace-detail .choice-evidence-toggle")).to_have_count(4)
             expect(page.locator(".library-works")).to_be_visible()
             expect(page.locator(".workspace-detail")).to_be_visible()
             # #598 keeps automatic, unsupported, and recorded siblings in the
@@ -600,14 +645,9 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertIn("Title", page.locator(".field-filmstrip").inner_text())
             self.assertIn("Cover", page.locator(".field-filmstrip").inner_text())
             self.assertFalse(page.locator(".automatic-resolution-details").evaluate("node => node.open"))
-            self.assertFalse(page.locator(".source-ledger").evaluate("node => node.open"))
             self.assertLess(
                 page.locator(".direct-choice").bounding_box()["y"],
                 page.locator(".automatic-resolution-details").bounding_box()["y"],
-            )
-            self.assertLess(
-                page.locator(".direct-choice").bounding_box()["y"],
-                page.locator(".source-ledger").bounding_box()["y"],
             )
             page.locator(".automatic-resolution-details summary").click()
             automatic_context = page.locator(".automatic-resolution-details").inner_text()
@@ -615,14 +655,30 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertIn("Series", automatic_context)
             self.assertIn("Resolved automatically", automatic_context)
             self.assertIn("No eligible change", automatic_context)
-            page.locator(".source-ledger summary").click()
-            workspace_evidence = page.locator(".workspace-detail .source-ledger").inner_text()
-            self.assertIn("Source", workspace_evidence)
-            self.assertIn("Observed value", workspace_evidence)
-            self.assertIn("Basis", workspace_evidence)
-            self.assertIn("Local catalogue record", workspace_evidence)
-            self.assertIn("Project Gutenberg record", workspace_evidence)
-            self.assertIn("Google Books catalogue record", workspace_evidence)
+            current_evidence = page.get_by_role(
+                "button", name="Evidence for Current value: Current <script> title"
+            )
+            current_evidence.click()
+            expect(current_evidence).to_be_focused()
+            expect(current_evidence).to_have_attribute("aria-expanded", "true")
+            expect(page.locator("#choice-evidence-current")).to_be_visible()
+            workspace_evidence = page.locator("#choice-evidence-current").inner_text()
+            self.assertIn("Local library record", workspace_evidence)
+            self.assertIn("Local presence", workspace_evidence)
+            self.assertIn("No recommendation retained", page.locator(".metadata-choice.is-current").inner_text())
+            proposed_evidence = page.get_by_role(
+                "button", name="Evidence for Alternative 1: The Clockmaker's Cartography"
+            )
+            proposed_evidence.focus()
+            page.keyboard.press("Enter")
+            expect(proposed_evidence).to_be_focused()
+            expect(proposed_evidence).to_have_attribute("aria-expanded", "true")
+            self.assertIn("Open Library", page.locator(".choice-evidence").nth(1).inner_text())
+            self.assertEqual(page.locator(".source-ledger").count(), 0)
+            self.assertGreaterEqual(current_evidence.bounding_box()["height"], 40)
+            page.goto("https://react-platform.invalid/library?lens=all&preview=case-2")
+            expect(page.locator(".choice-evidence")).to_have_count(0)
+            page.goto("https://react-platform.invalid/library?lens=all&preview=case-1")
             self.assertIn("Guarded from external update", page.locator(".field-apply-context").inner_text())
             self.assertEqual(page.get_by_role("button", name="Previous").count(), 0)
             self.assertEqual(page.get_by_role("button", name="Next").count(), 0)
@@ -777,14 +833,12 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 page.locator(".brand").bounding_box()["y"]
                 + page.locator(".brand").bounding_box()["height"],
             )
-            self.assertEqual(
-                page.locator(".source-ledger-head").evaluate(
-                    "node => getComputedStyle(node).display"
-                ),
-                "none",
+            compact_evidence = page.get_by_role(
+                "button", name="Evidence for Current value: Current <script> title"
             )
-            page.locator(".source-ledger summary").click()
-            self.assertIn("Observed value", page.locator(".source-ledger").inner_text())
+            self.assertGreaterEqual(compact_evidence.bounding_box()["height"], 44)
+            compact_evidence.click()
+            expect(page.locator("#choice-evidence-current")).to_be_visible()
             page.locator(".attention-toggle").click()
             expect(page.locator(".attention-rail")).to_be_visible()
             expect(page.locator(".library-works")).to_be_visible()
@@ -850,7 +904,6 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertIn("Title", page.locator(".field-filmstrip").inner_text())
             self.assertIn("Cover", page.locator(".field-filmstrip").inner_text())
             self.assertFalse(page.locator(".automatic-resolution-details").evaluate("node => node.open"))
-            self.assertFalse(page.locator(".source-ledger").evaluate("node => node.open"))
             self.assertLess(
                 page.locator(".direct-choice").bounding_box()["y"],
                 page.locator(".automatic-resolution-details").bounding_box()["y"],
@@ -859,15 +912,12 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             compact_context = page.locator(".automatic-resolution-details").inner_text()
             self.assertIn("Resolved automatically", compact_context)
             self.assertIn("No eligible change", compact_context)
-            page.locator(".source-ledger summary").click()
-            expect(page.locator(".source-ledger")).to_be_visible()
-            self.assertEqual(
-                page.locator(".source-ledger-head").evaluate(
-                    "node => getComputedStyle(node).display"
-                ),
-                "none",
+            compact_evidence = page.get_by_role(
+                "button", name="Evidence for Current value: Current <script> title"
             )
-            self.assertIn("Observed value", page.locator(".source-ledger").inner_text())
+            self.assertGreaterEqual(compact_evidence.bounding_box()["height"], 44)
+            compact_evidence.click()
+            expect(page.locator("#choice-evidence-current")).to_be_visible()
             self.assertIn("Guarded from external update", page.locator(".field-apply-context").inner_text())
             self.assertEqual(page.get_by_role("button", name="Previous").count(), 0)
             self.assertEqual(page.get_by_role("button", name="Next").count(), 0)
@@ -1064,7 +1114,8 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 ".workspace-detail .direct-choice-grid"
             )
             self.assertIn("Current <script> title", linked_choices.inner_text())
-            self.assertEqual(linked_choices.locator("button").count(), 4)
+            self.assertEqual(linked_choices.locator(".choice-select").count(), 4)
+            self.assertEqual(linked_choices.locator(".choice-evidence-toggle").count(), 4)
             page.go_back()
             page.locator(".attention-rail").wait_for()
             page.go_back()

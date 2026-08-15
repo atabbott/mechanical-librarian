@@ -79,6 +79,14 @@ every source assessment, evidence lineage, source-specific problem fact, and
 contradiction. The displayed aggregate is the current deterministic policy
 result, not a union of historical risks or the verdict of one strongest row.
 
+The Library decision canvas projects that retained lineage onto each current or
+proposed value: local presence, named external corroboration, eligibility
+rationale, recommendation status, and any material limitation stay attached to
+the choice. `Recommended` appears only for an authoritative deterministic
+selection; otherwise the canvas explicitly records that there is no
+recommendation. The full Review and Evidence views remain available for
+bounded diagnostics without displacing the choice workspace.
+
 A `ReviewGroup` is a display/query projection for confirmed instances of the
 same work, such as an Audiobookshelf ebook and audiobook or a future target in
 another adapter. It may contain identity labels, link method, link confidence,

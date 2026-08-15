@@ -203,6 +203,7 @@ class _CoverPolicyReport(_ClosedModel):
 
 class _CoverConsiderationResponse(_ClosedModel):
     candidates: list[_CoverCandidate]
+    choice_contexts: list["_ChoiceContext"]
     consideration_id: str
     current: bool
     incumbent: _CoverIncumbent
@@ -232,6 +233,7 @@ class _ReviewField(_ClosedModel):
     navigation_role: Literal["attention", "inspect"]
     notices: list[str]
     proposed_values: list[_ProposedValue]
+    choice_contexts: list["_ChoiceContext"]
     provenance: list[str]
     preservation_only: bool
     corroboration_sources: list[str]
@@ -239,6 +241,22 @@ class _ReviewField(_ClosedModel):
     target_fingerprint: str
     uncertainty: list[str]
     cover_consideration: _CoverConsiderationResponse | None = None
+
+
+class _ChoiceEvidence(_ClosedModel):
+    observation: str
+    role: Literal["external_corroboration", "local_presence"]
+    source: str
+
+
+class _ChoiceContext(_ClosedModel):
+    alternative_id: str | None
+    evidence: list[_ChoiceEvidence]
+    limitations: list[str]
+    rationale: str
+    recommendation: Literal["no_recommendation", "recommended"]
+    recommendation_reason: str
+    selection: Literal["current", "proposed"]
 
 
 class _TargetIdentity(_ClosedModel):
@@ -250,6 +268,7 @@ class _TargetIdentity(_ClosedModel):
 
 
 class _CaseDetailResponse(_ClosedModel):
+    comparison_notices: list[str]
     current: bool
     fields: list[_ReviewField]
     review_case_id: str
