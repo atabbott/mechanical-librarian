@@ -206,6 +206,9 @@ class ReviewPreparationPipeline:
             [ReviewPipelineRepository, str], tuple[str, str | None]
         ],
         project: Callable[[ReviewPipelineRepository, PipelineAction], bool | str],
+        before_projection: Callable[[ReviewPipelineRepository, PipelineAction], None] = (
+            lambda *_args: None
+        ),
         after_advance: Callable[
             [ReviewPipelineRepository, PipelineAction, str | None], None
         ] = lambda *_args: None,
@@ -225,6 +228,7 @@ class ReviewPreparationPipeline:
         self._propose = propose
         self._admit = admit
         self._project = project
+        self._before_projection = before_projection
         self._after_advance = after_advance
         self._clock = clock
         self._timing = timing or StageTimer(None)
@@ -474,6 +478,10 @@ class ReviewPreparationPipeline:
                 _, output_id = self._admit(repository, action.proposal_set_id)
             elif action.stage == "projection":
                 if action.review_case_id is not None:
+                    # Advisory cover review settles before F22's projection
+                    # transaction, so a stale or persistence failure cannot
+                    # publish a package without the required comparison.
+                    self._before_projection(repository, action)
                     repository.begin_review_pipeline_output()
                     output_transaction = True
                     projection = self._project(repository, action)

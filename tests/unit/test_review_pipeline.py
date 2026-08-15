@@ -1029,6 +1029,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             "books",
         )]
         extracted: list[str] = []
+        prepared: list[str] = []
 
         def publish_report(repository, __: PipelineAction, ___: bool):
             extracted.append(report.report_id)
@@ -1052,6 +1053,9 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             propose=publish_proposal,
             admit=admit,
             project=lambda _, action: (action.review_case_id or "").startswith("review_case_"),
+            before_projection=lambda _, action: prepared.append(
+                action.review_case_id or ""
+            ),
             clock=lambda: 20,
         )
         pipeline.request("primary", "ebooks")
@@ -1064,6 +1068,8 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             ("completed", 1, 1, 1),
         )
         self.assertEqual(len(extracted), 1)
+        self.assertEqual(len(prepared), 1)
+        self.assertTrue(prepared[0].startswith("review_case_"))
 
         pipeline.request("primary", "ebooks")
         self.assertTrue(pipeline.run_next(1))

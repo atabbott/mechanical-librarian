@@ -233,10 +233,15 @@ not durable audit truth.
 `cover_reviewer_profile_file` is optional. When absent, installed cover review
 uses the fully supported model-free manual path. When present, it must be an
 absolute owner-only regular no-follow file containing the already-qualified
-contained-reviewer profile; its exact bytes bind every observation. The three
-`cover_*` booleans form the closed deterministic advisory policy. They never
-grant decision or write authority, and changing them invalidates pending cover
-effects until the owner considers and selects under the current policy.
+contained-reviewer profile; its exact bytes bind every observation. During
+ordinary review preparation, a configured qualified reviewer performs one
+bounded advisory comparison before the review package becomes visible. An
+absent, unready, unavailable, refusing, malformed, or failed reviewer records
+the same safe manual-comparison state instead; it never selects, downloads,
+queues, applies, or writes a cover. The three `cover_*` booleans form the
+closed deterministic advisory policy. They never grant decision or write
+authority, and changing them invalidates pending cover effects until the owner
+considers and selects under the current policy.
 
 There are no provider defaults, inheritance, overrides, weights, priorities,
 configurable fallback rules, environment substitutions, or undocumented
