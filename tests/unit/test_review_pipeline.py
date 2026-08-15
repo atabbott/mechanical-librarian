@@ -354,6 +354,21 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         reopened.close()
         self.assertEqual((condition.connection, condition.state), ("primary", "paused"))
 
+    def test_restart_retires_removed_active_scope_before_any_orphan_claim(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+        repository.request_review_scan("removed", "old-library", "lib-2", _PRODUCER, 2)
+        repository.recover_review_pipeline((("primary", "fiction", "lib-1", _PRODUCER),))
+        first = repository.claim_review_pipeline_action(3)
+        self.assertIsNotNone(first)
+        self.assertEqual(first.connection, "primary")
+        self.assertIsNone(repository.claim_review_pipeline_action(4))
+        retired = repository._connection.execute(
+            "SELECT state FROM review_preparation_scans WHERE connection_name='removed'"
+        ).fetchone()
+        repository.close()
+        self.assertEqual(retired, ("completed_with_failures",))
+
     def test_unexpected_owner_probe_durably_returns_to_paused(self) -> None:
         repository = open_repository(self.path)
         repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)

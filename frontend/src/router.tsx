@@ -77,7 +77,9 @@ export const ConnectionNotice = ({ data, checking, onCheck, error }: { data: Pre
     : condition.state === 'recovered'
       ? 'Preparation resumed from its retained checkpoint. Completed reviews remain available.'
       : `${connectionCopy(condition.code)} ${String(paused)} preparation ${paused === 1 ? 'work is' : 'works are'} safely paused. Completed reviews remain available.`
-  return <section className={`connection-notice is-${condition.state}`} aria-live="polite" aria-label="Shared library connection status"><div><strong>{title}</strong><span>{copy}</span></div><dl><div><dt>Ready</dt><dd>{String(ready)}</dd></div><div><dt>Safely paused</dt><dd>{String(paused)}</dd></div></dl>{condition.state === 'paused' ? <button disabled={checking} aria-busy={checking || undefined} onClick={() => onCheck(condition.connection)}>Check connection again</button> : <button disabled>{condition.state === 'recovered' ? 'Recovered' : 'Checking connection…'}</button>}{error ? <p role="alert">Connection checking could not be completed. Preparation remains safely paused.</p> : null}</section>
+  const canCheck = condition.state === 'paused' && !checking
+  const action = condition.state === 'paused' ? 'Check connection again' : condition.state === 'recovered' ? 'Recovered' : 'Checking connection…'
+  return <section className={`connection-notice is-${condition.state}`} aria-live="polite" aria-label="Shared library connection status"><div><strong>{title}</strong><span>{copy}</span></div><dl><div><dt>Ready</dt><dd>{String(ready)}</dd></div><div><dt>Safely paused</dt><dd>{String(paused)}</dd></div></dl><button disabled={!canCheck} aria-busy={checking || undefined} onClick={() => { if (canCheck) onCheck(condition.connection) }}>{action}</button>{error ? <p role="alert">Connection checking could not be completed. Preparation remains safely paused.</p> : null}</section>
 }
 
 export const PreparationNotice = () => {

@@ -23,6 +23,7 @@ class ProviderRecoveryStore(Protocol):
     def renew_job(self, *, job: ProviderRecoveryJob, token: str, now: int) -> None: ...
     def complete_job(self, *, job: ProviderRecoveryJob, token: str, now: int, success: bool) -> None: ...
     def complete_stale_job(self, *, job: ProviderRecoveryJob, token: str, now: int) -> None: ...
+    def release_target_hold(self, *, job: ProviderRecoveryJob, token: str, recovery: ProviderRecovery, now: int) -> None: ...
     def complete_exhausted_scope(self, *, job: ProviderRecoveryJob, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
     def complete_canary_failure(self, *, job: ProviderRecoveryJob, token: str, recovery: ProviderRecovery, now: int, failure: str, retry_after: int | None) -> ProviderRecovery: ...
     def authorize_fanout(self, *, job: ProviderRecoveryJob, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
@@ -116,6 +117,11 @@ class ScopedProviderRecoveryRunner:
                 except Exception as error:
                     failure, retry_after = self._classify_failure(error)
                     current = self._current(current)
+                    if failure == "target_held":
+                        self._store.release_target_hold(
+                            job=canary, token=token, recovery=claimed, now=current,
+                        )
+                        return RecoveryRun("target_held")
                     if failure == "stale":
                         self._store.complete_stale_job(
                             job=canary, token=token, now=current,
@@ -172,6 +178,11 @@ class ScopedProviderRecoveryRunner:
             except Exception as error:
                 current = self._current(current)
                 failure, retry_after = self._classify_failure(error)
+                if failure == "target_held":
+                    self._store.release_target_hold(
+                        job=member, token=token, recovery=fanout_state, now=current,
+                    )
+                    return RecoveryRun("target_held", fanout)
                 if failure == "stale":
                     self._store.complete_stale_job(
                         job=member, token=token, now=current,

@@ -3665,6 +3665,24 @@ class SQLiteMetadataReportRepository:
                     f"WHERE connection_name NOT IN ({placeholders})",
                     configured_connections,
                 )
+            configured_scopes = {(connection, library) for connection, library, *_ in producers}
+            active_scans = self._connection.execute(
+                "SELECT scan_id,connection_name,library_name FROM review_preparation_scans "
+                "WHERE state IN ('queued','discovering','processing')"
+            ).fetchall()
+            for scan_id, connection, library in active_scans:
+                if (connection, library) in configured_scopes:
+                    continue
+                self._connection.execute(
+                    "UPDATE review_preparation_work SET state='stale',failure_code='stale',"
+                    "failure_root=NULL WHERE scan_id=? AND state IN ('queued','running')",
+                    (scan_id,),
+                )
+                self._connection.execute(
+                    "UPDATE review_preparation_scans SET state='completed_with_failures' "
+                    "WHERE scan_id=? AND state IN ('queued','discovering','processing')",
+                    (scan_id,),
+                )
             for connection, library, library_id, producer_fingerprint in producers:
                 row = self._connection.execute(
                     "SELECT scan_id,state,library_id,producer_fingerprint "

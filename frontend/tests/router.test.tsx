@@ -1780,6 +1780,7 @@ describe('typed review routes', () => {
     await user.click(check)
     expect((await screen.findAllByText('Checking library connection')).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
     expect(check).toHaveFocus()
+    expect(screen.getByRole('button', { name: 'Checking connection…' })).toHaveFocus()
     expect(screen.getByDisplayValue('A Book')).toBeVisible()
 
     await router.navigate({ to: '/review/$reviewCaseId', params: { reviewCaseId: 'case-1' }, search: { field: 'title', subview: 'review' } })
@@ -1788,6 +1789,25 @@ describe('typed review routes', () => {
     settle?.(recovered)
     expect((await screen.findAllByText('Library connection recovered')).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
     expect(screen.getByRole('heading', { name: 'Current review case' })).toBeVisible()
+  })
+
+  it('restores the actionable paused connection notice when mutation and refetch fail', async () => {
+    const user = userEvent.setup()
+    const connection = { connection: 'primary', code: 'unavailable' as const, state: 'paused' as const, affected: 2, updated_at: 1 }
+    const paused: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [], connections: [connection] }
+    let calls = 0
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => { calls += 1; if (calls > 1) throw new Error('refetch failed'); return paused }),
+      preparationAction: vi.fn(async () => { throw new Error('mutation failed') }),
+    }
+    renderRoute('/library?lens=all', http)
+    const check = await screen.findByRole('button', { name: 'Check connection again' })
+    await user.click(check)
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Check connection again' })).toHaveFocus())
+    expect(screen.getByText('Safely paused').parentElement).toHaveTextContent('2')
+    expect(screen.getByRole('alert')).toHaveTextContent('Connection checking could not be completed')
   })
 
   it('moves focus to the persistent main landmark when polling removes preparation activity', async () => {

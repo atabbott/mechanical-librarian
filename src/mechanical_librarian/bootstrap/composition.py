@@ -1043,7 +1043,13 @@ def _current_resolved_policy(configuration, repository, library: str):
     return configured_resolution
 
 
+class _TargetConnectionHeld(CurrentnessError):
+    """Private runner signal: retain provider recovery unchanged for a target hold."""
+
+
 def _classify_provider_recovery_failure(error: Exception) -> tuple[str, int | None]:
+    if isinstance(error, _TargetConnectionHeld):
+        return "target_held", None
     if isinstance(error, CredentialError) or (
         isinstance(error, ProviderRetrySuccessorError)
         and isinstance(error.__cause__, CredentialError)
@@ -1234,7 +1240,7 @@ def create_review_pipeline(
                 pipeline.hold_connection(job.target_connection, error.code)
             # This is a target hold, not provider evidence: retain the
             # completed provider observation and stop successor backoff.
-            raise CurrentnessError("target or media changed") from None
+            raise _TargetConnectionHeld("target connection is held") from None
         except CurrentnessError as error:
             # Currentness deliberately hides target details at the report
             # boundary, but retains the closed target condition as its cause.
@@ -1246,6 +1252,7 @@ def create_review_pipeline(
             if isinstance(cause, TargetConnectionError):
                 if pipeline is not None:
                     pipeline.hold_connection(job.target_connection, cause.code)
+                raise _TargetConnectionHeld("target connection is held") from None
             raise
         successor = MetadataReport.from_json(serialized)
         if pipeline is None or not pipeline.run_recovery_successor(
