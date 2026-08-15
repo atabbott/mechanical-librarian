@@ -14,16 +14,19 @@ interface ChunkRecoveryRuntime {
 const browserRuntime: ChunkRecoveryRuntime = {
   attemptedBuild: () => {
     const state: unknown = window.history.state
-    return typeof state === 'object' && state !== null && !Array.isArray(state)
-      && typeof (state as Record<string, unknown>)[stateKey] === 'string'
+    return typeof state === 'object' &&
+      state !== null &&
+      !Array.isArray(state) &&
+      typeof (state as Record<string, unknown>)[stateKey] === 'string'
       ? (state as Record<string, string>)[stateKey]
       : undefined
   },
   markAttempt: (buildIdentity) => {
     const state: unknown = window.history.state
-    const current = typeof state === 'object' && state !== null && !Array.isArray(state)
-      ? state as Record<string, unknown>
-      : {}
+    const current =
+      typeof state === 'object' && state !== null && !Array.isArray(state)
+        ? (state as Record<string, unknown>)
+        : {}
     window.history.replaceState({ ...current, [stateKey]: buildIdentity }, '', window.location.href)
   },
   reload: () => window.location.reload(),
@@ -31,9 +34,11 @@ const browserRuntime: ChunkRecoveryRuntime = {
 
 export class ChunkRecoveryError extends Error {
   constructor(readonly exhausted: boolean) {
-    super(exhausted
-      ? 'The application update is still unavailable after one safe reload.'
-      : 'Reloading once to retrieve the current application update.')
+    super(
+      exhausted
+        ? 'The application update is still unavailable after one safe reload.'
+        : 'Reloading once to retrieve the current application update.',
+    )
     this.name = 'ChunkRecoveryError'
   }
 }
@@ -42,9 +47,8 @@ let currentBuildIdentity: string | undefined
 let attemptedBuildIdentity: string | undefined
 
 export const configureChunkRecovery = (buildIdentity: string | undefined) => {
-  currentBuildIdentity = buildIdentity && buildPattern.test(buildIdentity)
-    ? buildIdentity
-    : undefined
+  currentBuildIdentity =
+    buildIdentity && buildPattern.test(buildIdentity) ? buildIdentity : undefined
   attemptedBuildIdentity = browserRuntime.attemptedBuild()
 }
 

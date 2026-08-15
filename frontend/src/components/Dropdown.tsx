@@ -1,5 +1,14 @@
 import { createPortal } from 'react-dom'
-import { type CSSProperties, type KeyboardEvent, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import {
+  type CSSProperties,
+  type KeyboardEvent,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 
 interface DropdownOption {
   value: string
@@ -14,7 +23,15 @@ interface DropdownPosition {
   above: boolean
 }
 
-export function Dropdown(props: { ariaLabel: string; value: string; options: readonly DropdownOption[]; onChange: (value: string) => void; disabled?: boolean; compact?: boolean; focusKey?: string }) {
+export function Dropdown(props: {
+  ariaLabel: string
+  value: string
+  options: readonly DropdownOption[]
+  onChange: (value: string) => void
+  disabled?: boolean
+  compact?: boolean
+  focusKey?: string
+}) {
   const listboxId = useId()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([])
@@ -22,7 +39,10 @@ export function Dropdown(props: { ariaLabel: string; value: string; options: rea
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const [position, setPosition] = useState<DropdownPosition | null>(null)
-  const selectedIndex = Math.max(0, props.options.findIndex((option) => option.value === props.value))
+  const selectedIndex = Math.max(
+    0,
+    props.options.findIndex((option) => option.value === props.value),
+  )
   const selected = props.options[selectedIndex]
 
   const updatePosition = useCallback(() => {
@@ -31,7 +51,10 @@ export function Dropdown(props: { ariaLabel: string; value: string; options: rea
     const rect = trigger.getBoundingClientRect()
     const viewportGap = 8
     const layoutless = rect.width === 0 && rect.height === 0
-    if (!layoutless && (rect.bottom < viewportGap || rect.top > window.innerHeight - viewportGap)) { setOpen(false); return }
+    if (!layoutless && (rect.bottom < viewportGap || rect.top > window.innerHeight - viewportGap)) {
+      setOpen(false)
+      return
+    }
     if (layoutless) {
       setPosition({ left: viewportGap, top: viewportGap, width: 190, maxHeight: 280, above: false })
       return
@@ -62,7 +85,11 @@ export function Dropdown(props: { ariaLabel: string; value: string; options: rea
     const closeOnOutsidePress = (event: PointerEvent) => {
       const target = event.target
       if (!(target instanceof Node)) return
-      if (!triggerRef.current?.contains(target) && !document.getElementById(listboxId)?.contains(target)) setOpen(false)
+      if (
+        !triggerRef.current?.contains(target) &&
+        !document.getElementById(listboxId)?.contains(target)
+      )
+        setOpen(false)
     }
     const updateMenuPosition = () => updatePosition()
     document.addEventListener('pointerdown', closeOnOutsidePress)
@@ -92,16 +119,33 @@ export function Dropdown(props: { ariaLabel: string; value: string; options: rea
     optionRefs.current[next]?.focus()
   }
   const handleTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp' || event.key === 'Enter' || event.key === ' ') {
+    if (
+      event.key === 'ArrowDown' ||
+      event.key === 'ArrowUp' ||
+      event.key === 'Enter' ||
+      event.key === ' '
+    ) {
       event.preventDefault()
       openMenu()
     }
   }
   const handleOptionKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    if (event.key === 'ArrowDown') { event.preventDefault(); focusOption(index + 1) }
-    if (event.key === 'ArrowUp') { event.preventDefault(); focusOption(index - 1) }
-    if (event.key === 'Home') { event.preventDefault(); focusOption(0) }
-    if (event.key === 'End') { event.preventDefault(); focusOption(props.options.length - 1) }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      focusOption(index + 1)
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault()
+      focusOption(index - 1)
+    }
+    if (event.key === 'Home') {
+      event.preventDefault()
+      focusOption(0)
+    }
+    if (event.key === 'End') {
+      event.preventDefault()
+      focusOption(props.options.length - 1)
+    }
     if (event.key === 'Escape' || event.key === 'Tab') {
       setOpen(false)
       if (event.key === 'Escape') {
@@ -115,10 +159,71 @@ export function Dropdown(props: { ariaLabel: string; value: string; options: rea
     returnFocusOnCloseRef.current = true
     setOpen(false)
   }
-  const menuStyle: CSSProperties | undefined = position ? { left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight } : undefined
+  const menuStyle: CSSProperties | undefined = position
+    ? {
+        left: position.left,
+        top: position.top,
+        width: position.width,
+        maxHeight: position.maxHeight,
+      }
+    : undefined
 
-  return <div className={`cm-dropdown ${props.compact ? 'is-compact' : ''}`}>
-    <button ref={triggerRef} data-activity-focus={props.focusKey} type="button" className="cm-dropdown-trigger" role="combobox" aria-label={props.ariaLabel} aria-haspopup="listbox" aria-expanded={open} aria-controls={listboxId} disabled={props.disabled} onClick={() => open ? setOpen(false) : openMenu()} onKeyDown={handleTriggerKeyDown}><span>{selected?.label ?? props.value}</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg></button>
-    {open && position ? createPortal(<div id={listboxId} className={`cm-dropdown-menu ${position.above ? 'is-above' : ''}`} role="listbox" aria-label={props.ariaLabel} style={menuStyle}>{props.options.map((option, index) => <button key={option.value} ref={(element) => { optionRefs.current[index] = element }} type="button" role="option" aria-selected={option.value === props.value} className={index === activeIndex ? 'is-active' : ''} onFocus={() => setActiveIndex(index)} onKeyDown={(event) => handleOptionKeyDown(event, index)} onClick={() => choose(option.value)}><span>{option.label}</span>{option.value === props.value ? <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4L19 7" /></svg> : null}</button>)}</div>, document.body) : null}
-  </div>
+  return (
+    <div className={`cm-dropdown ${props.compact ? 'is-compact' : ''}`}>
+      <button
+        ref={triggerRef}
+        data-activity-focus={props.focusKey}
+        type="button"
+        className="cm-dropdown-trigger"
+        role="combobox"
+        aria-label={props.ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={listboxId}
+        disabled={props.disabled}
+        onClick={() => (open ? setOpen(false) : openMenu())}
+        onKeyDown={handleTriggerKeyDown}
+      >
+        <span>{selected?.label ?? props.value}</span>
+        <svg aria-hidden="true" viewBox="0 0 24 24">
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      </button>
+      {open && position
+        ? createPortal(
+            <div
+              id={listboxId}
+              className={`cm-dropdown-menu ${position.above ? 'is-above' : ''}`}
+              role="listbox"
+              aria-label={props.ariaLabel}
+              style={menuStyle}
+            >
+              {props.options.map((option, index) => (
+                <button
+                  key={option.value}
+                  ref={(element) => {
+                    optionRefs.current[index] = element
+                  }}
+                  type="button"
+                  role="option"
+                  aria-selected={option.value === props.value}
+                  className={index === activeIndex ? 'is-active' : ''}
+                  onFocus={() => setActiveIndex(index)}
+                  onKeyDown={(event) => handleOptionKeyDown(event, index)}
+                  onClick={() => choose(option.value)}
+                >
+                  <span>{option.label}</span>
+                  {option.value === props.value ? (
+                    <svg aria-hidden="true" viewBox="0 0 24 24">
+                      <path d="m5 12 4 4L19 7" />
+                    </svg>
+                  ) : null}
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
+    </div>
+  )
 }
