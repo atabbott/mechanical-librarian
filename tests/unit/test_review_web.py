@@ -47,6 +47,7 @@ from mechanical_librarian.application.review_web import (
     _choice_source_label,
     _current_value_present,
     _provider_comparison_notices,
+    _provider_label,
     _provider_outcomes,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -2063,6 +2064,8 @@ class ReviewWebTests(unittest.TestCase):
                 "Provider limitation: Provider (name unavailable) — Provider returned a bounded terminal status.",
             ],
         )
+        self.assertEqual("Google Books", _provider_label("google-books-main"))
+        self.assertEqual("Provider (name unavailable)", _provider_label("private-instance"))
 
     def test_choice_limitations_leave_multi_alternative_global_reasons_field_scoped(self) -> None:
         first = {"alternative_id": "alternative-a"}

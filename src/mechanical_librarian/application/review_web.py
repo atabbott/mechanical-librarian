@@ -361,7 +361,7 @@ class InspectCurrentReviewCase:
                     "navigation_role": classification.navigation_role,
                     "needs_attention": classification.needs_attention,
                     "preservation_only": classification.preservation_only,
-                    "notices": [*reasons, *_provider_comparison_notices(report)],
+                    "notices": reasons,
                     "proposed_values": [
                         alternative["value"] for alternative in alternatives
                     ],
