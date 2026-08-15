@@ -651,6 +651,10 @@ describe('typed review routes', () => {
     await user.click(choice)
     expect(choice).toHaveAttribute('aria-pressed', 'true')
     expect(choice).toHaveTextContent('Recording…')
+    const competing = screen.getByRole('button', { name: 'Choose proposed value: New title' })
+    expect(competing).toBeDisabled()
+    fireEvent.click(competing)
+    expect(http.recordDecision).toHaveBeenCalledTimes(1)
     expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).not.toHaveAttribute('aria-current', 'true')
 
     await act(async () => { release?.() })

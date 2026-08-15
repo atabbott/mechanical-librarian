@@ -42,6 +42,8 @@ from mechanical_librarian.application.review_web import (
     _decode_cursor,
     _encode_cursor,
     _choice_observation,
+    _choice_contexts,
+    _evidence_by_reference,
     _choice_limitations,
     _choice_rationale,
     _choice_source_label,
@@ -1441,11 +1443,76 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual("candidate", field["automatic_decision"]["outcome"])
         self.assertEqual(self.case.proposals[0]["result"]["alternatives"][0]["alternative_id"], field["automatic_decision"]["candidate_id"])
         self.assertEqual(self.case.proposals[0]["result"]["alternatives"][0]["value"], field["automatic_decision"]["selected_value"])
+        recommended = [
+            context for context in field["choice_contexts"]
+            if context["recommendation"] == "recommended"
+        ]
+        self.assertEqual(1, len(recommended))
+        self.assertEqual(
+            self.case.proposals[0]["result"]["alternatives"][0]["alternative_id"],
+            recommended[0]["alternative_id"],
+        )
         self.assertNotIn("qualification_manifest_sha256", field["automatic_decision"])
+        ignored = json.loads(self.repository.decisions["title"])
+        ignored["outcome"] = "ignore"
+        ignored["candidate_id"] = None
+        self.repository.decisions["title"] = json.dumps(
+            ignored, separators=(",", ":"), sort_keys=True
+        )
+        ignored_detail = self.client.get(
+            f"/api/v1/review-cases/{self.case.review_case_id}"
+        )
+        self.assertEqual(200, ignored_detail.status_code)
+        ignored_field = next(
+            value for value in ignored_detail.json()["fields"]
+            if value["destination"] == "title"
+        )
+        self.assertTrue(all(
+            context["recommendation"] == "no_recommendation"
+            for context in ignored_field["choice_contexts"]
+        ))
         malformed = json.loads(self.repository.decisions["title"])
+        malformed["outcome"] = "candidate"
         malformed["candidate_id"] = "alternative_" + "f" * 64
         self.repository.decisions["title"] = json.dumps(malformed, separators=(",", ":"), sort_keys=True)
         self.assertEqual(404, self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}").status_code)
+
+    def test_choice_contexts_build_the_evidence_index_once(self) -> None:
+        proposal = self.case.proposals[0]
+        result = proposal["result"]
+        alternatives = json.loads(json.dumps(result["alternatives"]))
+        references = alternatives[0]["evidence_references"]
+        alternatives[0]["evidence_references"] = references * 4
+        repeated_result = {**result, "alternatives": alternatives}
+        with patch(
+            "mechanical_librarian.application.review_web._evidence_by_reference",
+            wraps=_evidence_by_reference,
+        ) as indexed:
+            contexts = _choice_contexts(
+                alternatives,
+                repeated_result,
+                self.repository.report,
+                {"state": "value", "value": "Title"},
+            )
+
+        self.assertEqual(1, indexed.call_count)
+        self.assertEqual(len(alternatives) + 1, len(contexts))
+        self.assertLess(len(json.dumps(contexts)), 16_384)
+        selected_result = {
+            **result,
+            "selected_alternative_id": result["alternatives"][0]["alternative_id"],
+        }
+        ignored_contexts = _choice_contexts(
+            result["alternatives"],
+            selected_result,
+            self.repository.report,
+            {"state": "value", "value": "Title"},
+            {"outcome": "ignore", "candidate_id": None},
+        )
+        self.assertTrue(all(
+            context["recommendation"] == "no_recommendation"
+            for context in ignored_contexts
+        ))
 
     def test_automatic_safety_bodies_are_closed_before_control_access(self) -> None:
         login = self._login()

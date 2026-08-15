@@ -317,9 +317,10 @@ class InspectCurrentReviewCase:
                     **automatic_decision,
                     "selected_value": selected,
                 }
+            evidence = _evidence_by_reference(report)
             choice_contexts = _choice_contexts(
                 alternatives, result, report, target_fields[destination],
-                automatic_decision, _evidence_by_reference(report),
+                automatic_decision, evidence,
             )
             classification = classify_review_field(
                 attention_candidate=_needs_attention(
