@@ -342,7 +342,7 @@ describe('typed review routes', () => {
       reviewerStatus: 'failed', targetFingerprint: 'fingerprint-cover',
     } as const
     const coverField = { ...base, destination: 'cover', currentValue: `cover_${'a'.repeat(64)}`, currentRaw: `cover_${'a'.repeat(64)}`, proposalId: 'proposal-cover', targetFingerprint: 'fingerprint-cover', proposedValues: [{ kind: 'cover', value: `cover_${'b'.repeat(64)}` }], coverConsideration: consideration }
-    const retryCoverConsideration = vi.fn(async () => consideration)
+    const retryCoverConsideration = vi.fn(async () => { throw new Error('retry failed') })
     const recordDecision = vi.fn(async () => ({ schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-cover', destination: 'cover', occurred_at: 1, outcome: 'accept' as const, proposal_id: 'proposal-cover', review_case_id: 'case-1', selected_value: { kind: 'cover', value: `cover_${'b'.repeat(64)}` }, target_fingerprint: 'fingerprint-cover' }))
     const getHistory = vi.fn(async () => ({ schema_version: 'review-case-history-v1' as const, review_case_id: 'case-1', items: [], next_cursor: null }))
     const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })), getHistory, retryCoverConsideration, recordDecision }
@@ -354,10 +354,10 @@ describe('typed review routes', () => {
     expect(screen.getByText(/Observation or recommendation is unavailable/u)).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Retry advisory review' }))
     await waitFor(() => expect(retryCoverConsideration).toHaveBeenCalledWith('case-1'))
-    await waitFor(() => expect(getHistory).toHaveBeenCalledTimes(2))
+    expect(await screen.findByRole('alert')).toHaveTextContent('The advisory retry failed safely. The existing cover and manual choices are unchanged.')
     await user.click(screen.getByRole('button', { name: 'Choose this cover' }))
     await waitFor(() => expect(recordDecision).toHaveBeenCalledWith('case-1', expect.objectContaining({ considerationId: consideration.id, outcome: 'accept', selectedValue: { kind: 'cover', value: `cover_${'b'.repeat(64)}` } })))
-    await waitFor(() => expect(getHistory).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(getHistory).toHaveBeenCalledTimes(2))
   })
 
   it('keeps the current cover pinned beside a complete eligible gallery and retains advisory reasons', async () => {
@@ -1923,6 +1923,9 @@ describe('typed review routes', () => {
     ['accepted', { events: [{ work_label: 'Accepted work', state: 'accept', origin: 'human' }] }, 'Accepted'],
     ['kept current', { events: [{ work_label: 'Kept work', state: 'keep_current', origin: 'human' }] }, 'Kept current'],
     ['rejected', { events: [{ work_label: 'Rejected work', state: 'reject', origin: 'human' }] }, 'Rejected'],
+    ['completed automatic cover advice', { events: [{ work_label: 'Cover work', state: 'completed', origin: 'automatic_pipeline' }] }, 'Cover advice completed'],
+    ['unavailable owner cover retry', { events: [{ work_label: 'Cover work', state: 'unavailable', origin: 'owner_retry' }] }, 'Cover advice unavailable'],
+    ['failed owner cover retry', { events: [{ work_label: 'Cover work', state: 'failed', origin: 'owner_retry' }] }, 'Cover advice failed safely'],
   ])('keeps the protected ledger row truthful for %s work', async (_name, current, rowStatus) => {
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity(current)) }
     renderRoute('/activity', http)

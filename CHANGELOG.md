@@ -7,6 +7,11 @@
 
 ## Unreleased
 
+- Run one configured, qualified cover-reviewer comparison during ordinary
+  review preparation before the review package is published. Advice remains
+  immutable, exact-current, and owner-only; unavailable or failed reviewers
+  retain the manual comparison and never gain cover-write authority. (#600)
+
 - Preserve valid unlabelled Hardcover work creators as neutral,
   identity-bound evidence and admit one deterministic authors proposal only
   when a distinct provider's complete explicit author set exactly corroborates

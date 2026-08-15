@@ -1971,7 +1971,8 @@
           },
           "kind": {
             "enum": [
-              "considered",
+              "automatic_prepared",
+              "owner_retry_prepared",
               "superseded",
               "selected",
               "kept_incumbent",

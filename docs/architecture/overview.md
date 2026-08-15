@@ -151,7 +151,7 @@ progression and reconciles one current per-work row on a later scan; immutable
 reports, ProposalSets, ReviewCases, decisions, and audit transitions retain
 their existing authority. These rules are the current-runtime application
 of repository-wide ADR-0013.
-The `metadata-report-v25` document retains all 16 ordered Audiobookshelf target
+The `metadata-report-v26` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
 source capability

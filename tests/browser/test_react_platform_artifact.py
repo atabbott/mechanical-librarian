@@ -128,6 +128,38 @@ class ReactPlatformArtifactTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             page = browser.new_page(viewport={"width": 390, "height": 844})
+            capture_directory = os.environ.get("ML_VISUAL_CAPTURE_DIR")
+
+            def capture_visual_proof(name: str) -> None:
+                if capture_directory is None:
+                    return
+                output = Path(capture_directory)
+                output.mkdir(parents=True, exist_ok=True)
+                viewport = page.viewport_size
+                try:
+                    for scheme in ("light", "dark"):
+                        control = "Use dark mode" if scheme == "dark" else "Use light mode"
+                        if page.get_by_role("button", name=control).count():
+                            page.get_by_role("button", name=control).click()
+                        page.emulate_media(reduced_motion="reduce")
+                        for width, height, size in (
+                            (1440, 900, "desktop"),
+                            (390, 844, "compact"),
+                        ):
+                            page.set_viewport_size({"width": width, "height": height})
+                            page.screenshot(
+                                path=str(output / f"{name}-{size}-{scheme}.png"),
+                                full_page=True,
+                            )
+                finally:
+                    page.emulate_media(
+                        color_scheme="light", reduced_motion="no-preference"
+                    )
+                    if page.get_by_role("button", name="Use light mode").count():
+                        page.get_by_role("button", name="Use light mode").click()
+                    if viewport is not None:
+                        page.set_viewport_size(viewport)
+
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
             page.on(
@@ -201,6 +233,20 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                         recovery.get_by_role("button", name="Retry", exact=False).count(),
                         0,
                     )
+                    activity_ledger = page.locator(".cm-activity-ledger")
+                    for work, label in (
+                        ("Synthetic completed cover advice", "Cover advice completed"),
+                        ("Synthetic unavailable cover advice", "Cover advice unavailable"),
+                        ("Synthetic failed cover advice", "Cover advice failed safely"),
+                        ("Synthetic stale cover advice", "Stale"),
+                        ("Synthetic superseded cover advice", "Superseded"),
+                    ):
+                        row = activity_ledger.get_by_text(
+                            work, exact=True
+                        ).locator("xpath=ancestor::article")
+                        expect(row).to_have_count(1)
+                        expect(row.get_by_text(label, exact=True)).to_have_count(1)
+                    capture_visual_proof("activity-labels")
                     self.assertTrue(
                         page.locator(".cm-activity-ledger").evaluate(
                             "node => node.previousElementSibling?.classList.contains('cm-activity-status')"
@@ -406,6 +452,67 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     before_entry + (2 if path == "/activity" else 1),
                 )
 
+            for case_id, status, retry in (
+                ("case-1", "Advisory visual review complete", False),
+                ("case-2", "Manual comparison available", True),
+                ("case-3", "Manual comparison available", True),
+            ):
+                self._browser_stage = f"cover-detail:{case_id}"
+                page.goto(
+                    f"https://react-platform.invalid/review/{case_id}"
+                    "?field=cover&subview=review"
+                )
+                page.get_by_text(status, exact=True).wait_for()
+                expect(page.get_by_role("button", name="Keep current cover")).to_have_attribute(
+                    "aria-pressed", "false"
+                )
+                expect(page.get_by_role("button", name="Choose this cover")).to_have_attribute(
+                    "aria-pressed", "false"
+                )
+                expect(page.get_by_role("button", name="Take no action")).to_have_attribute(
+                    "aria-pressed", "false"
+                )
+                self.assertEqual(
+                    1 if retry else 0,
+                    page.get_by_role("button", name="Retry advisory review").count(),
+                )
+                if case_id in {"case-1", "case-2"}:
+                    capture_visual_proof(
+                        "detail-completed" if case_id == "case-1" else "detail-failed"
+                    )
+
+            for case_id, label, retry in (
+                ("case-1", "Advisory visual review complete", False),
+                ("case-2", "Advisory review unavailable", True),
+                ("case-3", "Advisory review unavailable", True),
+            ):
+                self._browser_stage = f"cover-library:{case_id}"
+                page.goto(
+                    "https://react-platform.invalid/library?lens=all"
+                    f"&preview={case_id}&field=cover"
+                )
+                comparison = page.get_by_role("region", name="Choose a cover")
+                comparison.get_by_text(label, exact=True).wait_for()
+                self.assertIn(
+                    "advice only" if not retry else "comparison remains manual",
+                    comparison.inner_text(),
+                )
+                for choice in comparison.get_by_role("button").all():
+                    if choice.inner_text() == "Retry advisory review":
+                        continue
+                    expect(choice).to_be_enabled()
+                    expect(choice).to_have_attribute("aria-pressed", "false")
+                self.assertEqual(
+                    1 if retry else 0,
+                    comparison.get_by_role(
+                        "button", name="Retry advisory review"
+                    ).count(),
+                )
+                if case_id in {"case-1", "case-2"}:
+                    capture_visual_proof(
+                        "library-completed" if case_id == "case-1" else "library-failed"
+                    )
+
             missing_case_error_start = len(errors)
             for _ in range(2):
                 response = page.goto(
@@ -450,8 +557,9 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             expect(page.locator(".workspace-detail")).to_be_visible()
             # #598 keeps automatic, unsupported, and recorded siblings in the
             # primary strip; only server-classified attention advances normally.
-            expect(page.locator(".field-filmstrip button")).to_have_count(4)
+            expect(page.locator(".field-filmstrip button")).to_have_count(5)
             self.assertIn("Title", page.locator(".field-filmstrip").inner_text())
+            self.assertIn("Cover", page.locator(".field-filmstrip").inner_text())
             self.assertFalse(page.locator(".automatic-resolution-details").evaluate("node => node.open"))
             self.assertFalse(page.locator(".source-ledger").evaluate("node => node.open"))
             self.assertLess(
@@ -699,8 +807,9 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.locator(".attention-queue-item").first.click()
             expect(page.locator(".workspace-detail")).to_be_visible()
             expect(page.locator(".library-works")).to_be_hidden()
-            expect(page.locator(".field-filmstrip button")).to_have_count(4)
+            expect(page.locator(".field-filmstrip button")).to_have_count(5)
             self.assertIn("Title", page.locator(".field-filmstrip").inner_text())
+            self.assertIn("Cover", page.locator(".field-filmstrip").inner_text())
             self.assertFalse(page.locator(".automatic-resolution-details").evaluate("node => node.open"))
             self.assertFalse(page.locator(".source-ledger").evaluate("node => node.open"))
             self.assertLess(
@@ -953,6 +1062,32 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertEqual(documents, before_navigation)
             page.get_by_role("link", name="Policy", exact=True).click()
             page.get_by_role("heading", name="Library policy").wait_for()
+            page.get_by_role("navigation", name="Policy chapters").get_by_role(
+                "button", name="Curation"
+            ).click()
+            expect(page.locator("#policy-curation")).to_be_focused()
+            cover_policy = page.get_by_role("region", name="Cover")
+            cover_policy.get_by_text(
+                "Cover review uses the fixed supported source order.", exact=True
+            ).wait_for()
+            expect(
+                cover_policy.get_by_role("button", name="Automatic")
+            ).to_be_disabled()
+            expect(
+                cover_policy.get_by_role("button", name="Ask me")
+            ).to_have_attribute("aria-pressed", "true")
+            cover_representation = cover_policy.get_by_role(
+                "combobox", name="Cover representation"
+            )
+            expect(cover_representation).to_be_disabled()
+            expect(cover_representation).to_have_text("Fixed supported source order")
+            self.assertIn("Manual review only", cover_policy.inner_text())
+            self.assertNotIn("Automatic writes", cover_policy.inner_text())
+            capture_visual_proof("policy-cover")
+            page.get_by_role("navigation", name="Policy chapters").get_by_role(
+                "button", name="Identity"
+            ).click()
+            expect(page.locator("#policy-identity")).to_be_focused()
             page.locator(".cm-policy-finish").get_by_text(
                 "Draft matches the active policy", exact=True
             ).wait_for()

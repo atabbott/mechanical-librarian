@@ -320,7 +320,7 @@ class _HistoryCoverItem(_ClosedModel):
     decision: _DecisionProjection | None
     decision_id: str | None
     kind: Literal[
-        "considered", "superseded", "selected", "kept_incumbent", "no_action", "stale"
+        "automatic_prepared", "owner_retry_prepared", "superseded", "selected", "kept_incumbent", "no_action", "stale"
     ]
     occurred_at: int
     review_case_id: str

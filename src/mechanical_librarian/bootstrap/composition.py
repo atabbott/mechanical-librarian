@@ -51,6 +51,7 @@ from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.batch_manifest import create as create_batch_manifest, read as read_batch_manifest
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
+    ContainedReviewerProcessError,
     read_contained_reviewer_profile,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import (
@@ -131,7 +132,9 @@ from mechanical_librarian.application.provider_retry_successor import (
     ProviderRetrySuccessorError,
 )
 from mechanical_librarian.application.review_application import (
+    ReviewApplicationError,
     compose_review_application,
+    prepare_cover_consideration,
 )
 from mechanical_librarian.application.cover_consideration import CoverConsiderationService
 from mechanical_librarian.application.cover_policy import CoverPolicy
@@ -139,7 +142,10 @@ from mechanical_librarian.application.decision_preview import preview_shadow_dec
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
 from mechanical_librarian.domain.proposal_set import ProposalSet
-from mechanical_librarian.domain.review_case import ReviewAdmissionResult
+from mechanical_librarian.domain.review_case import (
+    ReviewAdmissionResult,
+    ReviewAdmissionStaleError,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -1427,6 +1433,33 @@ def create_review_pipeline(
         except Exception as error:
             raise ReviewPipelineError("projection") from error
 
+    def prepare_cover(pipeline_repository, action: PipelineAction) -> None:
+        if action.review_case_id is None:
+            return
+        try:
+            snapshot = lambda: pipeline_repository.read_staged_cover_preparation(
+                action
+            )
+            if snapshot() is None:
+                return
+            considerations = _compose_cover_considerations(
+                pipeline_repository, artifact_store_path, configuration.review
+            )
+            prepare_cover_consideration(
+                None,
+                considerations,
+                action.review_case_id,
+                serialized=lambda call: call(),
+                snapshot=snapshot,
+                finalize=pipeline_repository.atomic_cover_preparation,
+            )
+        except ReviewAdmissionStaleError as error:
+            raise ReviewPipelineError("stale") from error
+        except ReviewApplicationError as error:
+            raise ReviewPipelineError(error.code) from error
+        except Exception as error:
+            raise ReviewPipelineError("persistence") from error
+
     def after_advance(
         pipeline_repository, action: PipelineAction, output_id: str | None
     ) -> None:
@@ -1468,6 +1501,7 @@ def create_review_pipeline(
         propose=propose,
         admit=admit,
         project=project,
+        before_projection=prepare_cover,
         after_advance=after_advance,
         timing=timing,
     )
@@ -1874,11 +1908,16 @@ def _compose_cover_considerations(
             artifacts = CoverArtifactStore(artifact_store_path, create=False)
         return artifacts
 
-    reviewer_profile = (
-        None
-        if review.cover_reviewer_profile_file is None
-        else read_contained_reviewer_profile(Path(review.cover_reviewer_profile_file))
-    )
+    try:
+        reviewer_profile = (
+            None
+            if review.cover_reviewer_profile_file is None
+            else read_contained_reviewer_profile(Path(review.cover_reviewer_profile_file))
+        )
+    except ContainedReviewerProcessError:
+        # Never dispatch an unqualified profile. The shared consideration
+        # operation records the manual-comparison-unavailable terminal state.
+        reviewer_profile = None
     policy = CoverPolicy(
         avoid_promotional_text=review.cover_avoid_promotional_text,
         avoid_tie_in_branding=review.cover_avoid_tie_in_branding,

@@ -16,7 +16,26 @@ const words = (value: string) => value.replaceAll('_', ' ').replace(/\b\w/g, (le
 const destinationLabel = (destination: string) => words(destination)
 const capabilityDestinations = (capability: Record<string, unknown> | undefined) => records(capability?.destinations).map((destination) => ({ destination: text(destination.destination), state: text(destination.state, 'not_ready'), consented: destination.consented === true }))
 const capabilityLabel = (state: string) => ({ allowed: 'Ready for consent', partially_allowed: 'Some destinations are ready', connection_unavailable: 'Connection needs checking', insufficient_permission: 'Permission is unavailable', field_unavailable: 'A field is unavailable', not_ready: 'Not ready yet' }[state] ?? 'Not ready yet')
-const stateLabel = (state: string) => ({ accept: 'Accepted', keep_current: 'Kept current', reject: 'Rejected', no_change_required: 'No change required', applying: 'Applying', claimed: 'Preparing', planned: 'Planned', reconciling: 'Checking', retryable: 'Waiting safely', verified: 'Verified', stale: 'Stale', superseded: 'Superseded', abandoned: 'Stopped safely' }[state] ?? 'Recorded')
+const stateLabel = (state: string) => ({
+  accept: 'Accepted',
+  keep_current: 'Kept current',
+  reject: 'Rejected',
+  completed: 'Cover advice completed',
+  unavailable: 'Cover advice unavailable',
+  failed: 'Cover advice failed safely',
+  selected: 'Owner cover choice recorded',
+  retry: 'Manual cover retry',
+  no_change_required: 'No change required',
+  applying: 'Applying',
+  claimed: 'Preparing',
+  planned: 'Planned',
+  reconciling: 'Checking',
+  retryable: 'Waiting safely',
+  verified: 'Verified',
+  stale: 'Stale',
+  superseded: 'Superseded',
+  abandoned: 'Stopped safely',
+}[state] ?? 'Recorded')
 const categoryLabel: Record<ActivityEventType, string> = { review: 'Review', policy: 'Policy', metadata: 'Metadata', safety: 'Safety', unknown: 'Recorded' }
 const typeOptions = [
   { id: 'all', label: 'All' }, { id: 'review', label: 'Reviews' }, { id: 'policy', label: 'Policy' },

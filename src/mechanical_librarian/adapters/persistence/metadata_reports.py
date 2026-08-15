@@ -113,7 +113,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v25'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v26'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -364,7 +364,7 @@ _COVER_CONSIDERATION_EVENTS_SQL = (
     "event_id TEXT PRIMARY KEY NOT NULL CHECK(event_id GLOB 'cover_consideration_event_[0-9a-f]*' AND length(event_id)=90), "
     "consideration_id TEXT NOT NULL REFERENCES cover_considerations(consideration_id), "
     "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
-    "kind TEXT NOT NULL CHECK(kind IN ('considered','superseded','selected','kept_incumbent','no_action','stale')), "
+    "kind TEXT NOT NULL CHECK(kind IN ('automatic_prepared','owner_retry_prepared','superseded','selected','kept_incumbent','no_action','stale')), "
     "decision_id TEXT, occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 4096))"
 )
@@ -2089,7 +2089,7 @@ class SQLiteMetadataReportRepository:
             or page_size not in {25, 50, 100}
         ):
             raise FieldEffectError("invalid_activity_query")
-        document_limit = 2_097_152
+        document_limit = 12_582_912
         scalar_limit = 512
         # The selected page and its joined report documents are validated
         # below.  Do not rescan every historical document on each poll: that
@@ -2150,12 +2150,14 @@ class SQLiteMetadataReportRepository:
               JOIN metadata_reports report ON report.report_id=no_change.report_id
             UNION ALL
             SELECT event.event_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, 'cover', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END,
-                   event.occurred_at, 'human', review.report_id, event.kind, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END,
+                   event.occurred_at, CASE event.kind WHEN 'automatic_prepared' THEN 'automatic_pipeline' WHEN 'owner_retry_prepared' THEN 'owner_retry' WHEN 'selected' THEN 'human' WHEN 'kept_incumbent' THEN 'human' WHEN 'no_action' THEN 'human' ELSE 'unknown' END, review.report_id,
+                   CASE WHEN event.kind IN ('automatic_prepared','owner_retry_prepared') THEN json_extract(consideration.document, '$.reviewer_status') ELSE event.kind END, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END,
                    event.document,
-                   CASE WHEN event.kind IN ('stale','superseded') THEN 'safety' ELSE 'review' END,
-                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'cover_safeguard', NULL, event.review_case_id, NULL, event.consideration_id,
-                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END
+                   CASE WHEN event.kind IN ('stale','superseded') THEN 'safety' WHEN event.kind='automatic_prepared' THEN 'metadata' WHEN event.kind IN ('owner_retry_prepared','selected','kept_incumbent','no_action') THEN 'review' ELSE 'unknown' END,
+                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'cover_safeguard', CASE WHEN json_extract(consideration.document, '$.reviewer_status') IN ('completed','unavailable','failed') THEN json_object('reviewer_status', json_extract(consideration.document, '$.reviewer_status')) ELSE '{}' END, event.review_case_id, NULL, event.consideration_id,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) AND typeof(consideration.document)='text' AND length(CAST(consideration.document AS BLOB)) BETWEEN 2 AND 12582912 AND json_valid(consideration.document) THEN 1 ELSE 0 END
               FROM cover_consideration_events event
+              JOIN cover_considerations consideration ON consideration.consideration_id=event.consideration_id
               JOIN review_cases review ON review.review_case_id=event.review_case_id
               JOIN metadata_reports report ON report.report_id=review.report_id
             UNION ALL
@@ -2359,6 +2361,12 @@ class SQLiteMetadataReportRepository:
                         ):
                             raise FieldEffectError("persistence")
                     elif source_kind == "cover_safeguard":
+                        if source_document is None:
+                            raise FieldEffectError("persistence")
+                        consideration = json.loads(source_document)
+                        if type(consideration) is not dict:
+                            raise FieldEffectError("persistence")
+                        reviewer_status = consideration.get("reviewer_status")
                         event_keys = {
                             "consideration_id", "decision_id", "kind", "occurred_at",
                             "review_case_id", "schema_version",
@@ -2367,7 +2375,22 @@ class SQLiteMetadataReportRepository:
                             set(raw) != event_keys
                             or raw.get("schema_version") != "cover-consideration-event-v1"
                             or raw.get("consideration_id") != source_identity
-                            or raw.get("kind") != state
+                            or raw.get("kind") not in {
+                                "automatic_prepared", "owner_retry_prepared", "superseded", "selected",
+                                "kept_incumbent", "no_action", "stale",
+                            }
+                            or (
+                                raw.get("kind") in {"automatic_prepared", "owner_retry_prepared"}
+                                and reviewer_status not in {"completed", "unavailable", "failed"}
+                            )
+                            or state != (
+                                reviewer_status if raw.get("kind") in {"automatic_prepared", "owner_retry_prepared"}
+                                else raw.get("kind")
+                            )
+                            or (raw.get("kind") == "automatic_prepared" and (origin, projected_type) != ("automatic_pipeline", "metadata"))
+                            or (raw.get("kind") == "owner_retry_prepared" and (origin, projected_type) != ("owner_retry", "review"))
+                            or (raw.get("kind") in {"selected", "kept_incumbent", "no_action"} and (origin, projected_type) != ("human", "review"))
+                            or (raw.get("kind") in {"stale", "superseded"} and (origin, projected_type) != ("unknown", "safety"))
                             or raw.get("occurred_at") != occurred_at
                             or raw.get("review_case_id") != source_parent_id
                             or _canonical_json(raw) != document
@@ -5160,6 +5183,37 @@ class SQLiteMetadataReportRepository:
         except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
             raise MetadataReportError("review case is unavailable") from error
 
+    def read_staged_cover_preparation(
+        self, action: PipelineAction
+    ) -> tuple[str, str, bool] | None:
+        """Read only the claimed staged cover facts before F22 package cutover."""
+        if action.review_case_id is None:
+            raise MetadataReportError("review case is unavailable")
+        try:
+            self._require_staged_shadow_projection_current(action.review_case_id, action)
+            row = self._connection.execute(
+                "SELECT review.document,report.document FROM review_cases review "
+                "JOIN metadata_reports report ON report.report_id=review.report_id "
+                "WHERE review.review_case_id=? AND review.report_id=?",
+                (action.review_case_id, action.report_id),
+            ).fetchone()
+            if row is None or len(row) != 2:
+                raise MetadataReportError("review case is unavailable")
+            case = ReviewCase.from_json(row[0])
+            report = MetadataReport.from_json(row[1])
+            if case.review_case_id != action.review_case_id or case.report_id != report.report_id:
+                raise MetadataReportError("review case is unavailable")
+            cover = next(
+                (proposal for proposal in case.proposals
+                 if proposal["destination"] == "cover"),
+                None,
+            )
+            if cover is None or cover["result"]["outcome"] == "ineligible":
+                return None
+            return report.to_json(), str(cover["proposal_id"]), False
+        except (sqlite3.Error, ReviewCaseValueError, ReportValueError, KeyError, TypeError) as error:
+            raise MetadataReportError("review case is unavailable") from error
+
     def get_review_case_report(self, review_case_id: str) -> str:
         try:
             return self._source_report_for_review_case(review_case_id).to_json()
@@ -7166,6 +7220,20 @@ class SQLiteMetadataReportRepository:
             ),
         )
 
+    def atomic_cover_preparation(self, call: Callable[[], object]) -> object:
+        """Serialize staged final-currentness and the durable consideration write."""
+        if self._connection.in_transaction:
+            return call()
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            result = call()
+            self._connection.commit()
+            return result
+        except Exception:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            raise
+
     def record_cover_consideration(
         self,
         document: str,
@@ -7175,6 +7243,7 @@ class SQLiteMetadataReportRepository:
         replay_digest: str,
         supersedes_id: str | None,
         occurred_at: int,
+        preparation_kind: str = "automatic_prepared",
     ) -> str:
         try:
             value = json.loads(document)
@@ -7191,7 +7260,12 @@ class SQLiteMetadataReportRepository:
             consideration_id = value["consideration_id"]
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise MetadataReportError("cover consideration is invalid") from error
-        with self._connection:
+        if preparation_kind not in {"automatic_prepared", "owner_retry_prepared"}:
+            raise MetadataReportError("cover preparation kind is invalid")
+        owns_transaction = not self._connection.in_transaction
+        try:
+            if owns_transaction:
+                self._connection.execute("BEGIN IMMEDIATE")
             existing = self._connection.execute(
                 "SELECT document FROM cover_considerations WHERE consideration_id=?",
                 (consideration_id,),
@@ -7199,6 +7273,8 @@ class SQLiteMetadataReportRepository:
             if existing is not None:
                 if existing != (document,):
                     raise MetadataReportError("cover consideration disagrees")
+                if owns_transaction:
+                    self._connection.commit()
                 return document
             current = self._connection.execute(
                 "SELECT consideration_id FROM current_cover_considerations WHERE review_case_id=?",
@@ -7230,8 +7306,18 @@ class SQLiteMetadataReportRepository:
                 (review_case_id, consideration_id),
             )
             self._record_cover_consideration_event(
-                consideration_id, review_case_id, "considered", occurred_at
+                consideration_id, review_case_id, preparation_kind, occurred_at
             )
+            if owns_transaction:
+                self._connection.commit()
+        except sqlite3.Error as error:
+            if owns_transaction and self._connection.in_transaction:
+                self._connection.rollback()
+            raise MetadataReportError("cover consideration is unavailable") from error
+        except MetadataReportError:
+            if owns_transaction and self._connection.in_transaction:
+                self._connection.rollback()
+            raise
         return document
 
     def record_cover_consideration_outcome(

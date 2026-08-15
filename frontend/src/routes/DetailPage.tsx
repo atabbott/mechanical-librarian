@@ -55,7 +55,7 @@ function CoverChoices({ reviewCaseId, field, disabled, submit }: { reviewCaseId:
       </article>
     })}</div>
     <button aria-pressed={coverSelected('reject')} className={coverSelected('reject') ? 'secondary-action is-selected' : 'secondary-action'} disabled={disabled} onClick={() => submit('reject')}>Take no action</button>
-    {consideration.reviewerStatus === 'failed' ? <button className="secondary-action" disabled={disabled || retry.isPending} onClick={() => retry.mutate()}>Retry advisory review</button> : null}
+    {consideration.reviewerStatus === 'failed' || consideration.reviewerStatus === 'unavailable' ? <button className="secondary-action" disabled={disabled || retry.isPending} onClick={() => retry.mutate()}>Retry advisory review</button> : null}
     {retry.isError ? <p role="alert">The advisory retry failed safely. The existing cover and manual choices are unchanged.</p> : null}
     {consideration.omissions.length ? <p className="cover-omissions">{String(consideration.omissions.length)} unsafe or unavailable source{consideration.omissions.length === 1 ? '' : 's'} retained in history.</p> : null}
   </section>
