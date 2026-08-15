@@ -868,18 +868,17 @@ def _choice_contexts(
 
 def _choice_limitations(alternative: dict[str, object], result: dict[str, object]) -> list[str]:
     """Keep material comparison constraints with their retained alternative lineage."""
-    correlations = alternative.get("correlations")
-    if not isinstance(correlations, list) or not correlations:
+    alternatives = result.get("alternatives")
+    alternative_id = alternative.get("alternative_id")
+    if not isinstance(alternatives, list) or len(alternatives) != 1 or alternative_id is None:
+        return []
+    only = alternatives[0]
+    if not isinstance(only, dict) or only.get("alternative_id") != alternative_id:
         return []
     reasons = result.get("reasons")
     if not isinstance(reasons, list):
         return []
-    material = {
-        "competing_evidence", "date_refinement_requires_corroboration",
-        "date_year_conflict", "field_policy_conflict",
-        "insufficient_independent_corroboration", "no_safe_bibliographic_combination",
-        "populated_subjective_field", "bibliographic_combination_unresolved",
-    }
+    material = {"insufficient_independent_corroboration", "populated_subjective_field", "date_refinement_requires_corroboration", "date_year_conflict"}
     return [reason for reason in reasons if isinstance(reason, str) and reason in material][:3]
 
 

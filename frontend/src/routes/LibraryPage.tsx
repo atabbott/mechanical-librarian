@@ -90,7 +90,11 @@ function MetadataChoice({ context, current, expanded, label, onChoose, recording
   </article>
 }
 
-function LibraryCoverChoices({ reviewCaseId, field, disabled, pending, phase, choose }: { reviewCaseId: string; field: ReviewField; disabled: boolean; pending: DecisionCommand | null; phase: 'recording' | 'confirmed' | 'failed' | null; choose: (outcome: DecisionCommand['outcome'], selectedValue?: DecisionCommand['selectedValue']) => void }) {
+function LibraryCoverChoices(props: { reviewCaseId: string; field: ReviewField; disabled: boolean; pending: DecisionCommand | null; phase: 'recording' | 'confirmed' | 'failed' | null; choose: (outcome: DecisionCommand['outcome'], selectedValue?: DecisionCommand['selectedValue']) => void }) {
+  return <LibraryCoverChoicesContent key={props.reviewCaseId} {...props}/>
+}
+
+function LibraryCoverChoicesContent({ reviewCaseId, field, disabled, pending, phase, choose }: { reviewCaseId: string; field: ReviewField; disabled: boolean; pending: DecisionCommand | null; phase: 'recording' | 'confirmed' | 'failed' | null; choose: (outcome: DecisionCommand['outcome'], selectedValue?: DecisionCommand['selectedValue']) => void }) {
   const { http } = useReviewContext()
   const queryClient = useQueryClient()
   const consideration = field.coverConsideration

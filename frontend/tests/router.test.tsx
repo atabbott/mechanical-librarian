@@ -458,6 +458,27 @@ describe('typed review routes', () => {
     expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('3')
   })
 
+  it('closes cached cover evidence after client-side A to B to A work navigation', async () => {
+    const user = userEvent.setup()
+    const baseField = detail.fields[0]
+    const baseWork = library.works[0]
+    if (!baseField || !baseWork) throw new Error('cover reset fixture requires a work and field')
+    const cover = (id: string): CaseDetailView => ({ ...detail, id, fields: [{ ...baseField, destination: 'cover', proposedValues: [{ kind: 'cover', value: 'cover-alt' }], coverConsideration: { id: `consideration-${id}`, current: true, candidates: [{ artifactId: 'cover-current', height: 100, identity: {}, incumbent: true, observation: null, originalSha256: 'a'.repeat(64), ordinal: 0, previewSha256: 'b'.repeat(64), reference: 'current', selectable: true, sourceKinds: [], state: 'acceptable', width: 100 }, { artifactId: 'cover-alt', height: 100, identity: {}, incumbent: false, observation: null, originalSha256: 'c'.repeat(64), ordinal: 1, previewSha256: 'd'.repeat(64), reference: 'alternative', selectable: true, sourceKinds: [], state: 'available', width: 100 }], choiceContexts: [{ alternativeId: null, selection: 'current', evidence: [{ source: 'Local library record', role: 'local_presence', observation: 'Local cover retained.' }], limitations: [], rationale: 'Current cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation.' }, { alternativeId: 'alternative', selection: 'proposed', evidence: [], limitations: [], rationale: 'Alternative cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation.' }], incumbent: { reference: 'current', state: 'available' }, omissions: [], policy: { status: 'abstained', recommended_candidate_reference: null, acceptable_candidate_references: [] }, policyPreferences: { avoidPromotionalText: false, avoidTieInBranding: false, preferMinimalComposition: false }, policyReference: 'policy', reviewerStatus: 'completed', targetFingerprint: 'fingerprint' } }] })
+    const twoWorks: LibraryView = { ...library, works: [{ ...baseWork, title: 'Work A' }, { ...baseWork, id: 'case-2', reviewCaseId: 'case-2', title: 'Work B' }] }
+    const http = { ...createHttp(), getLibrary: vi.fn(async () => twoWorks), getCaseDetail: vi.fn(async (id: string) => cover(id)) }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    const evidence = await screen.findByRole('button', { name: 'Evidence for Current cover' })
+    await user.click(evidence)
+    expect(screen.getByLabelText('Current cover evidence')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Work B' }))
+    await screen.findByRole('button', { name: 'Evidence for Current cover' })
+    expect(screen.queryByLabelText('Current cover evidence')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Work A' }))
+    await screen.findByRole('button', { name: 'Evidence for Current cover' })
+    expect(screen.queryByLabelText('Current cover evidence')).not.toBeInTheDocument()
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
   it('prepares a missing cover comparison inside the Library workflow', async () => {
     const user = userEvent.setup()
     const base = detail.fields[0]

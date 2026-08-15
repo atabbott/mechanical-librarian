@@ -481,9 +481,9 @@ def _case(case_id: str) -> dict[str, object]:
                             "ordinal": 0,
                             "preview_sha256": "b" * 64,
                             "reference": "cover-ref-current",
-                            "selectable": False,
+                            "selectable": case_id != "case-3",
                             "source_kinds": ["synthetic"],
-                            "state": "available",
+                            "state": "acceptable" if case_id == "case-1" else "available",
                             "width": 800,
                         }] if case_id != "case-3" else []),
                         {
@@ -531,7 +531,7 @@ def _case(case_id: str) -> dict[str, object]:
                     ],
                     "current": True,
                     "incumbent": {
-                        "reference": "cover-ref-current",
+                        "reference": None if case_id == "case-3" else "cover-ref-current",
                         "state": "unavailable" if case_id == "case-3" else "available",
                     },
                     "omissions": [],
@@ -553,7 +553,19 @@ def _case(case_id: str) -> dict[str, object]:
                             "status": "recommended",
                         }
                         if reviewer_status == "completed"
-                        else None
+                        else {
+                            "acceptable_candidate_references": [],
+                            "cover_packet_reference": "cover-packet-synthetic",
+                            "identity_classifier_reference": "cover-identity-synthetic",
+                            "identity_report_sha256": "e" * 64,
+                            "observation_report_sha256": None,
+                            "observation_taxonomy_reference": "cover-taxonomy-synthetic",
+                            "policy_reference": "cover-policy-synthetic",
+                            "reasons": [],
+                            "recommended_candidate_reference": None,
+                            "schema_version": "cover-policy-report-v1",
+                            "status": "abstained",
+                        }
                     ),
                     "policy_preferences": {
                         "avoid_promotional_text": False,

@@ -11,6 +11,7 @@ import {
   SessionExpiredError,
   mapLibrary,
   mapPreparation,
+  mapCoverConsideration,
 } from '../src/api/http'
 
 const token = 'a'.repeat(32)
@@ -22,6 +23,39 @@ const csrf = {
 }
 
 describe('ReviewApiClient', () => {
+  it('fails closed on cover candidate, policy, incumbent, and recommendation relationship contradictions', () => {
+    const context = (alternative_id: string | null, selection: 'current' | 'proposed', recommendation: 'recommended' | 'no_recommendation' = 'no_recommendation') => ({ alternative_id, selection, recommendation, recommendation_reason: recommendation === 'recommended' ? 'Authoritative policy recommendation.' : 'No recommendation retained.', rationale: 'Retained cover choice.', limitations: [], evidence: [] })
+    const candidate = (overrides: Record<string, unknown> = {}) => ({ artifact_id: 'artifact-1', height: 100, identity: {}, incumbent: false, observation: null, original_sha256: 'a'.repeat(64), ordinal: 0, preview_sha256: 'b'.repeat(64), reference: 'candidate-1', selectable: true, source_kinds: [], state: 'available', width: 100, ...overrides })
+    const policy = (overrides: Record<string, unknown> = {}) => ({ status: 'abstained', recommended_candidate_reference: null, acceptable_candidate_references: [], ...overrides })
+    const payload = (overrides: Record<string, unknown> = {}) => ({ schema_version: 'cover-consideration-v1', consideration_id: 'consideration', current: true, candidates: [candidate()], choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed')], incumbent: { state: 'absent', reference: null }, omissions: [], policy: policy(), policy_preferences: { avoid_promotional_text: false, avoid_tie_in_branding: false, prefer_minimal_composition: false }, policy_reference: 'policy', reviewer_status: 'completed', supersedes_id: null, target_fingerprint: 'fingerprint', ...overrides })
+
+    expect(mapCoverConsideration(payload())?.choiceContexts).toHaveLength(2)
+    expect(mapCoverConsideration(payload({ candidates: [], choice_contexts: [context(null, 'current')], policy: null }))).not.toBeNull()
+    expect(mapCoverConsideration(payload({ candidates: [candidate({ state: 'recommended' })], policy: policy({ status: 'recommended', recommended_candidate_reference: 'candidate-1', acceptable_candidate_references: ['candidate-1'] }), choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed', 'recommended')] }))?.choiceContexts[1]?.recommendation).toBe('recommended')
+    expect(mapCoverConsideration(payload({ candidates: [candidate({ incumbent: true, state: 'recommended' })], incumbent: { state: 'available', reference: 'candidate-1' }, policy: policy({ status: 'recommended', recommended_candidate_reference: 'candidate-1', acceptable_candidate_references: ['candidate-1'] }), choice_contexts: [context(null, 'current', 'recommended')] }))?.choiceContexts[0]?.recommendation).toBe('recommended')
+    expect(mapCoverConsideration(payload({ incumbent: { state: 'unavailable', reference: null } }))?.incumbent.state).toBe('unavailable')
+    const invalid: readonly [string, Record<string, unknown>][] = [
+      ['policy-null-candidates', { policy: null }],
+      ['invalid-candidate-enum', { candidates: [candidate({ state: 'incumbent' })] }],
+      ['duplicate-reference', { candidates: [candidate(), candidate({ artifact_id: 'artifact-2', ordinal: 1 })] }],
+      ['duplicate-artifact', { candidates: [candidate(), candidate({ reference: 'candidate-2', ordinal: 1 })] }],
+      ['duplicate-ordinal', { candidates: [candidate(), candidate({ reference: 'candidate-2', artifact_id: 'artifact-2' })] }],
+      ['noncanonical-ordinal', { candidates: [candidate({ ordinal: 1 })] }],
+      ['absent-reference', { incumbent: { state: 'absent', reference: 'candidate-1' } }],
+      ['unavailable-reference', { candidates: [], choice_contexts: [context(null, 'current')], incumbent: { state: 'unavailable', reference: 'candidate-1' }, policy: null }],
+      ['unavailable-incumbent-candidate', { incumbent: { state: 'unavailable', reference: null }, candidates: [candidate({ incumbent: true })] }],
+      ['available-incumbent-missing', { incumbent: { state: 'available', reference: 'candidate-1' } }],
+      ['available-incumbent-mismatch', { candidates: [candidate({ incumbent: true })], incumbent: { state: 'available', reference: 'other' }, choice_contexts: [context(null, 'current')] }],
+      ['excluded-selectable', { candidates: [candidate({ state: 'excluded', selectable: true })] }],
+      ['acceptable-outside-policy', { candidates: [candidate({ state: 'acceptable' })] }],
+      ['available-inside-acceptable', { candidates: [candidate()], policy: policy({ acceptable_candidate_references: ['candidate-1'] }) }],
+      ['recommended-nonselectable', { candidates: [candidate({ state: 'recommended', selectable: false })], policy: policy({ status: 'recommended', recommended_candidate_reference: 'candidate-1', acceptable_candidate_references: ['candidate-1'] }), choice_contexts: [context(null, 'current')] }],
+      ['recommended-ref-nonmember', { candidates: [candidate({ state: 'recommended' })], policy: policy({ status: 'recommended', recommended_candidate_reference: 'candidate-1', acceptable_candidate_references: [] }), choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed', 'recommended')] }],
+      ['multiple-incumbents', { candidates: [candidate({ incumbent: true }), candidate({ incumbent: true, reference: 'candidate-2', artifact_id: 'artifact-2', ordinal: 1 })], incumbent: { state: 'available', reference: 'candidate-1' }, choice_contexts: [context(null, 'current')] }],
+      ['stray-recommendation-context', { choice_contexts: [context(null, 'current', 'recommended'), context('candidate-1', 'proposed')] }],
+    ]
+    for (const [label, overrides] of invalid) expect(() => mapCoverConsideration(payload(overrides)), label).toThrow(ApiError)
+  })
   it('preserves present and absent series sequences in the mapped review value', () => {
     const detail = (series: readonly Record<string, unknown>[], choiceContexts: unknown = [{ alternative_id: null, evidence: [], limitations: [], rationale: 'The local library has no retained value for this field.', recommendation: 'no_recommendation', recommendation_reason: 'No deterministic recommendation is retained for the current value.', selection: 'current' }]) => mapCaseDetail({
       schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true,

@@ -42,6 +42,7 @@ from mechanical_librarian.application.review_web import (
     _decode_cursor,
     _encode_cursor,
     _choice_observation,
+    _choice_limitations,
     _choice_rationale,
     _choice_source_label,
     _current_value_present,
@@ -1488,6 +1489,12 @@ class ReviewWebTests(unittest.TestCase):
             for context in contexts
             for observation in context["evidence"]
         ))
+        self.assertIn("insufficient_independent_corroboration", title["notices"])
+        self.assertEqual([], contexts[0]["limitations"])
+        self.assertEqual(
+            ["insufficient_independent_corroboration"],
+            contexts[1]["limitations"],
+        )
         self.assertFalse(detail.json()["fields"][-1]["needs_attention"])
         self.assertNotIn("model_advice", detail.json())
         evidence = self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}/evidence")
@@ -2056,6 +2063,23 @@ class ReviewWebTests(unittest.TestCase):
                 "Provider limitation: Provider (name unavailable) — Provider returned a bounded terminal status.",
             ],
         )
+
+    def test_choice_limitations_leave_multi_alternative_global_reasons_field_scoped(self) -> None:
+        first = {"alternative_id": "alternative-a"}
+        result = {"alternatives": [first, {"alternative_id": "alternative-b"}], "reasons": ["competing_evidence"]}
+        self.assertEqual([], _choice_limitations(first, result))
+        self.assertIn("competing_evidence", result["reasons"])
+
+    def test_choice_limitations_attach_only_single_exact_choice_reason(self) -> None:
+        alternative = {"alternative_id": "alternative-a"}
+        result = {"alternatives": [alternative], "reasons": ["insufficient_independent_corroboration"]}
+        self.assertEqual(["insufficient_independent_corroboration"], _choice_limitations(alternative, result))
+        self.assertEqual([], _choice_limitations({"alternative_id": "alternative-b"}, result))
+
+    def test_choice_limitations_do_not_invent_provider_terminal_attribution(self) -> None:
+        alternative = {"alternative_id": "alternative-a"}
+        result = {"alternatives": [alternative], "reasons": ["provider_no_match", "provider_unavailable"]}
+        self.assertEqual([], _choice_limitations(alternative, result))
 
     def test_openapi_is_deterministic_and_secret_free(self) -> None:
         anonymous = self.client.get("/api/v1/openapi.json")

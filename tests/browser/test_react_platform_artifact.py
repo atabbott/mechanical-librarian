@@ -575,6 +575,28 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     comparison.get_by_text("Local presence", exact=True).wait_for()
                     comparison.get_by_text("Preview unavailable", exact=True).wait_for()
 
+            self._browser_stage = "cover-library:cached-work-reset"
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.goto("https://react-platform.invalid/library?lens=all&preview=case-1&field=cover")
+            page.locator(".library-works").wait_for()
+            page.locator(".workspace-detail").wait_for()
+            page.get_by_role("button", name="Evidence for Current cover").click()
+            page.get_by_text("Local library record", exact=True).wait_for()
+            work_b = page.locator(".library-work-row").filter(has_text=LONG_TITLE).locator(".work-select")
+            self.assertEqual(1, work_b.count())
+            work_b.click()
+            page.locator(".field-filmstrip").wait_for()
+            page.locator(".field-filmstrip").get_by_role("button", name=re.compile(r"Cover")).click()
+            page.get_by_role("region", name="Choose a cover").wait_for()
+            self.assertEqual(0, page.locator(".choice-evidence").count())
+            work_a = page.locator(".library-work-row").filter(has_text=_HOSTILE).locator(".work-select")
+            self.assertEqual(1, work_a.count())
+            work_a.click()
+            page.locator(".field-filmstrip").wait_for()
+            page.locator(".field-filmstrip").get_by_role("button", name=re.compile(r"Cover")).click()
+            page.get_by_role("region", name="Choose a cover").wait_for()
+            self.assertEqual(0, page.locator(".choice-evidence").count())
+
             missing_case_error_start = len(errors)
             for _ in range(2):
                 response = page.goto(
