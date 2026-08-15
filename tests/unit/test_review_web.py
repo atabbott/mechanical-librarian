@@ -732,6 +732,17 @@ class ReviewWebTests(unittest.TestCase):
                 }
             ],
             "consideration_id": consideration_id,
+            "choice_contexts": [
+                {
+                    "alternative_id": None,
+                    "evidence": [{"observation": "Local library cover retained.", "role": "local_presence", "source": "Local library record"}],
+                    "limitations": [],
+                    "rationale": "Keep the retained local cover.",
+                    "recommendation": "no_recommendation",
+                    "recommendation_reason": "No deterministic recommendation is retained for the current cover.",
+                    "selection": "current",
+                }
+            ],
             "current": True,
             "incumbent": {"reference": candidate_reference, "state": "available"},
             "omissions": [],
