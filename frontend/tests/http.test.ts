@@ -23,14 +23,14 @@ const csrf = {
 
 describe('ReviewApiClient', () => {
   it('preserves present and absent series sequences in the mapped review value', () => {
-    const detail = (series: readonly Record<string, unknown>[]) => mapCaseDetail({
+    const detail = (series: readonly Record<string, unknown>[], choiceContexts: unknown = [{ alternative_id: null, evidence: [], limitations: [], rationale: 'The local library has no retained value for this field.', recommendation: 'no_recommendation', recommendation_reason: 'No deterministic recommendation is retained for the current value.', selection: 'current' }]) => mapCaseDetail({
       schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true,
       target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
       fields: [{
         classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, navigation_role: 'attention', preservation_only: false,
         destination: 'series', deterministic_disposition: 'review', effect_capability: 'manual',
         needs_attention: true, manual_hold: false, current: { value: series },
-        proposed_values: [], proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',
+        proposed_values: [], choice_contexts: choiceContexts, proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',
         human_decision: null, automatic_decision: null, notices: [], provenance: [],
         corroboration_sources: [],
       }],
@@ -38,6 +38,7 @@ describe('ReviewApiClient', () => {
 
     expect(detail([{ name: 'Archive', sequence: '2.5' }]).fields[0]?.currentValue).toBe('Archive · 2.5')
     expect(detail([{ name: 'Standalone' }]).fields[0]?.currentValue).toBe('Standalone')
+    expect(() => detail([], [])).toThrow(new ApiError(502, 'misaligned_choice_contexts'))
   })
 
   it('requires exact creator corroboration source lists in case-detail responses', () => {
@@ -48,7 +49,7 @@ describe('ReviewApiClient', () => {
         classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, navigation_role: 'attention', preservation_only: false,
         destination: 'authors', deterministic_disposition: 'review', effect_capability: 'manual',
         needs_attention: true, manual_hold: false, current: { value: ['Ada Example'] },
-        proposed_values: [], proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',
+        proposed_values: [], choice_contexts: [{ alternative_id: null, evidence: [], limitations: [], rationale: 'The local library has no retained value for this field.', recommendation: 'no_recommendation', recommendation_reason: 'No deterministic recommendation is retained for the current value.', selection: 'current' }], proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',
         human_decision: null, automatic_decision: null, notices: [], provenance: [],
         corroboration_sources,
       }],

@@ -269,6 +269,37 @@ def _field(
         "proposed_values": [
             {"kind": "synthetic", "value": value} for value in proposed
         ],
+        "choice_contexts": [
+            {
+                "alternative_id": None,
+                "evidence": [{
+                    "observation": "This value is currently present in the local library.",
+                    "role": "local_presence",
+                    "source": "Local library record",
+                }],
+                "limitations": notices or [],
+                "rationale": "Keep the value currently held by the local library.",
+                "recommendation": "no_recommendation",
+                "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+                "selection": "current",
+            },
+            *[
+                {
+                    "alternative_id": f"alternative-{destination}-{index}",
+                    "evidence": [{
+                        "observation": "A synthetic catalogue observation supports this choice.",
+                        "role": "external_corroboration",
+                        "source": "Open Library",
+                    }],
+                    "limitations": notices or [],
+                    "rationale": "This retained alternative is eligible for owner selection.",
+                    "recommendation": "no_recommendation",
+                    "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+                    "selection": "proposed",
+                }
+                for index, _ in enumerate(proposed, start=1)
+            ],
+        ],
         "preservation_only": preservation_only if preservation_only is not None else False,
         "proposal_id": f"proposal-{destination}",
         "target_fingerprint": "f" * 64,

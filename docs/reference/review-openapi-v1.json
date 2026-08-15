@@ -957,6 +957,99 @@
         "title": "_CaseDetailResponse",
         "type": "object"
       },
+      "_ChoiceContext": {
+        "additionalProperties": false,
+        "properties": {
+          "alternative_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alternative Id"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/_ChoiceEvidence"
+            },
+            "title": "Evidence",
+            "type": "array"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Limitations",
+            "type": "array"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          },
+          "recommendation": {
+            "enum": [
+              "no_recommendation",
+              "recommended"
+            ],
+            "title": "Recommendation",
+            "type": "string"
+          },
+          "recommendation_reason": {
+            "title": "Recommendation Reason",
+            "type": "string"
+          },
+          "selection": {
+            "enum": [
+              "current",
+              "proposed"
+            ],
+            "title": "Selection",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alternative_id",
+          "evidence",
+          "limitations",
+          "rationale",
+          "recommendation",
+          "recommendation_reason",
+          "selection"
+        ],
+        "title": "_ChoiceContext",
+        "type": "object"
+      },
+      "_ChoiceEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "observation": {
+            "title": "Observation",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "external_corroboration",
+              "local_presence"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "observation",
+          "role",
+          "source"
+        ],
+        "title": "_ChoiceEvidence",
+        "type": "object"
+      },
       "_CoverCandidate": {
         "additionalProperties": false,
         "properties": {
@@ -3213,6 +3306,13 @@
               }
             ]
           },
+          "choice_contexts": {
+            "items": {
+              "$ref": "#/components/schemas/_ChoiceContext"
+            },
+            "title": "Choice Contexts",
+            "type": "array"
+          },
           "classification": {
             "enum": [
               "needs_attention",
@@ -3351,6 +3451,7 @@
           "navigation_role",
           "notices",
           "proposed_values",
+          "choice_contexts",
           "provenance",
           "preservation_only",
           "corroboration_sources",

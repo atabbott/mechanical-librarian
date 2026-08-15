@@ -41,6 +41,11 @@ from mechanical_librarian.application.review_web import (
     ReviewWebError,
     _decode_cursor,
     _encode_cursor,
+    _choice_observation,
+    _choice_rationale,
+    _choice_source_label,
+    _current_value_present,
+    _provider_comparison_notices,
     _provider_outcomes,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -1455,6 +1460,23 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(title["deterministic_disposition"], "unresolved_choice")
         self.assertTrue(title["needs_attention"])
+        contexts = title["choice_contexts"]
+        self.assertEqual(len(contexts), len(title["proposed_values"]) + 1)
+        self.assertEqual(contexts[0]["selection"], "current")
+        self.assertEqual(contexts[0]["evidence"][0]["source"], "Local library record")
+        self.assertEqual(
+            contexts[0]["rationale"],
+            "Keep the value currently held by the local library.",
+        )
+        self.assertTrue(all(
+            context["recommendation"] == "no_recommendation"
+            for context in contexts
+        ))
+        self.assertTrue(all(
+            "{" not in observation["observation"]
+            for context in contexts
+            for observation in context["evidence"]
+        ))
         self.assertFalse(detail.json()["fields"][-1]["needs_attention"])
         self.assertNotIn("model_advice", detail.json())
         evidence = self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}/evidence")
@@ -1965,6 +1987,64 @@ class ReviewWebTests(unittest.TestCase):
         self.now += 601
         expired = self.client.get(f"/api/v1/review-cases/{self.case.review_case_id}")
         self.assertEqual(expired.status_code, 401)
+
+    def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names(
+        self,
+    ) -> None:
+        observation = _choice_observation({
+            "fact": json.dumps({
+                "kind": "title\x00private",
+                "value": "\x00" + "hostile-value" * 40,
+            }),
+            "provider": "private-connection-name",
+            "source": "provider_claim",
+        })
+        self.assertLessEqual(len(observation), 188)
+        self.assertNotIn("\x00", observation)
+        self.assertNotIn("private", observation)
+        self.assertTrue(observation.startswith("Metadata: "))
+        self.assertEqual(
+            _choice_source_label({
+                "fact": "{}",
+                "provider": "private-connection-name",
+                "source": "provider_claim",
+            }),
+            "Provider evidence (name unavailable)",
+        )
+        replacing = {
+            "assessment": "replaces_target",
+            "scope": "edition",
+            "correlations": ["correlation_" + "a" * 64],
+        }
+        self.assertEqual(
+            _choice_rationale(replacing, True),
+            "This alternative replaces the local value using edition-specific evidence with retained supporting evidence.",
+        )
+        self.assertTrue(_current_value_present("Present title"))
+        self.assertTrue(_current_value_present(["Ada Example"]))
+        self.assertTrue(_current_value_present("2024-01-01"))
+        self.assertFalse(_current_value_present(None))
+        self.assertFalse(_current_value_present(""))
+        self.assertFalse(_current_value_present([]))
+
+    def test_provider_comparison_notices_keep_only_safe_material_failures(self) -> None:
+        source = _report()
+        report = MetadataReport.create(
+            target=source.target, file=source.file, local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=(
+                ProviderObservation("hardcover", ProviderStatus.DISABLED),
+                ProviderObservation("open-library", ProviderStatus.NO_MATCH),
+                ProviderObservation("private-connection", ProviderStatus.UNAVAILABLE),
+            ),
+        )
+        self.assertEqual(
+            _provider_comparison_notices(report),
+            [
+                "Provider limitation: Open Library — Provider returned no matching metadata.",
+                "Provider limitation: Provider (name unavailable) — Provider returned a bounded terminal status.",
+            ],
+        )
 
     def test_openapi_is_deterministic_and_secret_free(self) -> None:
         anonymous = self.client.get("/api/v1/openapi.json")

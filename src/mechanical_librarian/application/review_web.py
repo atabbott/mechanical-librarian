@@ -6,6 +6,7 @@ import hashlib
 import json
 import secrets
 import base64
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
@@ -301,6 +302,13 @@ class InspectCurrentReviewCase:
             )
             reasons = result["reasons"]
             assert type(reasons) is list
+            comparison_notices = [
+                *reasons,
+                *_provider_comparison_notices(report),
+            ]
+            choice_contexts = _choice_contexts(
+                alternatives, result, report, target_fields[destination],
+            )
             decision = decisions.get(destination)
             automatic_decision = automatic.get(destination)
             if automatic_decision is not None:
@@ -356,10 +364,11 @@ class InspectCurrentReviewCase:
                     "navigation_role": classification.navigation_role,
                     "needs_attention": classification.needs_attention,
                     "preservation_only": classification.preservation_only,
-                    "notices": reasons,
+                    "notices": comparison_notices,
                     "proposed_values": [
                         alternative["value"] for alternative in alternatives
                     ],
+                    "choice_contexts": choice_contexts,
                     "provenance": references,
                     "corroboration_sources": _corroboration_source_labels(
                         report, references, reasons,
@@ -792,6 +801,138 @@ def _corroboration_source_labels(
     return [labels[authority] for authority in sorted(authorities)]
 
 
+def _choice_contexts(
+    alternatives: list[dict[str, object]],
+    result: dict[str, object],
+    report: MetadataReport,
+    target: dict[str, object],
+) -> list[dict[str, object]]:
+    """Project retained proposal lineage into owner-readable choice context."""
+    selected = result.get("selected_alternative_id")
+    selected_id = selected if type(selected) is str else None
+    local_value_present = target.get("state") == "value" and _current_value_present(
+        target.get("value")
+    )
+    contexts: list[dict[str, object]] = [{
+        "alternative_id": None,
+        "evidence": ([{
+            "observation": "This value is currently present in the local library.",
+            "role": "local_presence",
+            "source": "Local library record",
+        }] if local_value_present else []),
+        "limitations": [],
+        "rationale": (
+            "Keep the value currently held by the local library."
+            if local_value_present else
+            "The local library has no retained value for this field."
+        ),
+        "recommendation": "no_recommendation",
+        "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+        "selection": "current",
+    }]
+    evidence = _evidence_by_reference(report)
+    for alternative in alternatives:
+        references = alternative["evidence_references"]
+        assert type(references) is list
+        rows = [
+            _choice_evidence(evidence[reference])
+            for reference in references
+            if reference in evidence
+        ]
+        alternative_id = alternative["alternative_id"]
+        assert type(alternative_id) is str
+        recommended = alternative_id == selected_id
+        contexts.append({
+            "alternative_id": alternative_id,
+            "evidence": rows,
+            "limitations": [],
+            "rationale": _choice_rationale(alternative, bool(rows)),
+            "recommendation": "recommended" if recommended else "no_recommendation",
+            "recommendation_reason": (
+                "Deterministic policy selected this retained alternative."
+                if recommended else "No deterministic recommendation is retained for this alternative."
+            ),
+            "selection": "proposed",
+        })
+    return contexts
+
+
+def _current_value_present(value: object) -> bool:
+    if value is None or value == "":
+        return False
+    return not (type(value) is list and not value)
+
+
+def _choice_rationale(alternative: dict[str, object], supported: bool) -> str:
+    assessment = {
+        "fills_empty": "fills an empty local value",
+        "preserves_target": "preserves the local value",
+        "replaces_target": "replaces the local value",
+    }.get(alternative.get("assessment"), "retains a proposal value")
+    scope = {
+        "cover": "cover-specific",
+        "edition": "edition-specific",
+        "work": "work-level",
+    }.get(alternative.get("scope"), "retained")
+    evidence = "with retained supporting evidence" if supported else "from the retained proposal"
+    return f"This alternative {assessment} using {scope} evidence {evidence}."
+
+
+def _choice_evidence(evidence: dict[str, str | None]) -> dict[str, str]:
+    return {
+        "observation": _choice_observation(evidence),
+        "role": "local_presence" if evidence["source"] == "local" else "external_corroboration",
+        "source": _choice_source_label(evidence),
+    }
+
+
+def _choice_source_label(evidence: dict[str, str | None]) -> str:
+    labels = {
+        "google_books": "Google Books",
+        "hardcover": "Hardcover",
+        "open_library": "Open Library",
+    }
+    provider = evidence["provider"]
+    if provider in labels:
+        return labels[provider]
+    if evidence["source"] == "local":
+        return "Local library record"
+    return "Provider evidence (name unavailable)"
+
+
+def _choice_observation(evidence: dict[str, str | None]) -> str:
+    try:
+        fact = json.loads(evidence["fact"] or "{}")
+    except (TypeError, ValueError):
+        return "A retained observation supports this choice."
+    if type(fact) is not dict:
+        return "A retained observation supports this choice."
+    kind = {
+        "authors": "Contributors",
+        "description": "Description",
+        "isbn": "ISBN",
+        "publication_date": "Publication date",
+        "series": "Series membership",
+        "title": "Title",
+    }.get(fact.get("kind"), "Metadata")
+    value = fact.get("value", fact.get("observed"))
+    if type(value) in {str, int, float}:
+        return f"{kind}: {_choice_text(value)}"
+    return f"{kind} observation retained."
+
+
+def _choice_text(value: str | int | float) -> str:
+    text = str(value)
+    cleaned = "".join(
+        character for character in text
+        if not unicodedata.category(character).startswith("C")
+    )
+    normalized = " ".join(cleaned.split())
+    if not normalized:
+        return "Value retained"
+    return normalized[:160] + ("…" if len(normalized) > 160 else "")
+
+
 def _bounded_token(value: object) -> bool:
     return type(value) is str and 32 <= len(value) <= 128 and value.strip() == value
 
@@ -1026,8 +1167,26 @@ def _provider_outcomes(report: MetadataReport) -> list[dict[str, object]]:
             if status in successful:
                 continue
             kind = (lane.kind if provider.lanes else provider.query_kind).value
-            outcomes.append({"provider_requests": provider.request_accounting.logical_requests, "lane_kind": kind, "provider": provider.provider, "reason": "Provider returned no matching metadata." if status == "no_match" else "Provider returned a bounded terminal status.", "status": status})
+            outcomes.append({"provider_requests": provider.request_accounting.logical_requests, "lane_kind": kind, "provider": _provider_label(provider.provider), "reason": "Provider returned no matching metadata." if status == "no_match" else "Provider returned a bounded terminal status.", "status": status})
     return outcomes
+
+
+def _provider_label(provider: str) -> str:
+    return {
+        "google_books": "Google Books",
+        "google-books": "Google Books",
+        "hardcover": "Hardcover",
+        "open_library": "Open Library",
+        "open-library": "Open Library",
+    }.get(provider, "Provider (name unavailable)")
+
+
+def _provider_comparison_notices(report: MetadataReport) -> list[str]:
+    notices = {
+        f"Provider limitation: {outcome['provider']} — {outcome['reason']}"
+        for outcome in _provider_outcomes(report)
+    }
+    return sorted(notices)[:3]
 
 
 def _library_item(

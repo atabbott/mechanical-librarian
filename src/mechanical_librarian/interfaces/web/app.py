@@ -232,6 +232,7 @@ class _ReviewField(_ClosedModel):
     navigation_role: Literal["attention", "inspect"]
     notices: list[str]
     proposed_values: list[_ProposedValue]
+    choice_contexts: list["_ChoiceContext"]
     provenance: list[str]
     preservation_only: bool
     corroboration_sources: list[str]
@@ -239,6 +240,22 @@ class _ReviewField(_ClosedModel):
     target_fingerprint: str
     uncertainty: list[str]
     cover_consideration: _CoverConsiderationResponse | None = None
+
+
+class _ChoiceEvidence(_ClosedModel):
+    observation: str
+    role: Literal["external_corroboration", "local_presence"]
+    source: str
+
+
+class _ChoiceContext(_ClosedModel):
+    alternative_id: str | None
+    evidence: list[_ChoiceEvidence]
+    limitations: list[str]
+    rationale: str
+    recommendation: Literal["no_recommendation", "recommended"]
+    recommendation_reason: str
+    selection: Literal["current", "proposed"]
 
 
 class _TargetIdentity(_ClosedModel):

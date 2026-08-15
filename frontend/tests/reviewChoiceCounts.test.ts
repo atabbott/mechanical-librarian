@@ -6,7 +6,7 @@ import { ownerChoiceCount } from '../src/reviewChoiceCounts'
 type Field = CaseDetailView['fields'][number]
 
 const field = (coverConsideration: NonNullable<Field['coverConsideration']> | null): Field => ({
-  automaticDecision: null, classification: 'needs_attention', classificationReason: 'This field needs your review.', corroborationSources: [], coverConsideration, currentRaw: null, currentValue: 'Current cover', destination: 'cover', disposition: 'review', editable: true, effectCapability: 'manual', humanDecision: null, manualHold: false, needsAttention: true, navigationRole: 'attention', notices: [], preservationOnly: false, proposalId: 'proposal-cover', proposedValues: [], provenance: [], targetFingerprint: 'fingerprint-cover',
+  automaticDecision: null, choiceContexts: [], classification: 'needs_attention', classificationReason: 'This field needs your review.', corroborationSources: [], coverConsideration, currentRaw: null, currentValue: 'Current cover', destination: 'cover', disposition: 'review', editable: true, effectCapability: 'manual', humanDecision: null, manualHold: false, needsAttention: true, navigationRole: 'attention', notices: [], preservationOnly: false, proposalId: 'proposal-cover', proposedValues: [], provenance: [], targetFingerprint: 'fingerprint-cover',
 })
 
 const candidate = (ordinal: number, overrides: Partial<NonNullable<Field['coverConsideration']>['candidates'][number]> = {}) => ({

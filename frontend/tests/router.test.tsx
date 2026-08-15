@@ -46,6 +46,7 @@ const detail: CaseDetailView = {
     currentValue: 'Old title',
     currentRaw: 'Old title',
     proposedValues: [{ kind: 'text', value: 'New title' }],
+    choiceContexts: [],
     proposalId: 'proposal-1',
     targetFingerprint: 'fingerprint-1',
     humanDecision: null,
@@ -304,21 +305,36 @@ describe('typed review routes', () => {
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [{ ...titleField, effectCapability: 'allowed', provenance: ['Local catalogue: Old title'] }, automaticField] })),
-      getEvidence: vi.fn(async () => ({
-        schema_version: 'review-case-evidence-v2', review_case_id: 'case-1', next_cursor: null,
-        items: [{ reference: 'evidence-1', kind: 'title', source: 'provider_claim', provider: 'Open Library', candidate: null, fact: 'New title' }],
-      })),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [{ ...titleField, effectCapability: 'allowed', notices: ['competing_evidence'], choiceContexts: [
+        { alternativeId: null, selection: 'current', rationale: 'Keep the value currently held by the local library.', recommendation: 'no_recommendation', recommendationReason: 'No deterministic recommendation is retained for the current value.', limitations: [], evidence: [{ source: 'Local library record', observation: 'Title: Old title', role: 'local_presence' }] },
+        { alternativeId: 'alternative-title-1', selection: 'proposed', rationale: 'This retained alternative is eligible for owner selection.', recommendation: 'no_recommendation', recommendationReason: 'No deterministic recommendation is retained for this alternative.', limitations: [], evidence: [{ source: 'Open Library', observation: 'Title: New title', role: 'external_corroboration' }] },
+      ] as const }, automaticField] })),
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
     expect(await screen.findByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
     expect(screen.getByText('Eligible for guarded planning')).toBeVisible()
-    await user.click(screen.getByText('Source ledger'))
+    const evidenceButtons = screen.getAllByRole('button', { name: /Evidence for/u })
+    const currentEvidence = evidenceButtons[0]
+    const proposedEvidence = evidenceButtons[1]
+    if (!currentEvidence || !proposedEvidence) throw new Error('choice evidence controls are missing')
+    expect(currentEvidence).toHaveAccessibleName('Evidence for Current value: Old title')
+    expect(proposedEvidence).toHaveAccessibleName('Evidence for Alternative 1: New title')
+    await user.click(currentEvidence)
+    expect(currentEvidence).toHaveFocus()
+    expect(currentEvidence).toHaveAttribute('aria-controls', 'choice-evidence-current')
+    expect(await screen.findByText('Local library record')).toBeVisible()
+    expect(screen.getByText('Title: Old title')).toBeVisible()
+    expect(screen.getByText('Local presence')).toBeVisible()
+    expect(screen.getAllByText('No recommendation retained').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Source ledger')).not.toBeInTheDocument()
+    await user.click(currentEvidence)
+    expect(currentEvidence).toHaveFocus()
+    await user.click(proposedEvidence)
     expect(await screen.findByText('Open Library')).toBeVisible()
-    expect(screen.getByText('New title', { selector: '[role="cell"]' })).toBeVisible()
-    expect(screen.getByText('Provider claim · Title')).toBeVisible()
-    expect(screen.getAllByText(/2 named sources/u).length).toBeGreaterThan(0)
+    expect(screen.getByText('Title: New title')).toBeVisible()
+    expect(screen.getByText('External corroboration')).toBeVisible()
+    expect(screen.getAllByText('Competing evidence').length).toBeGreaterThan(0)
     await user.click(screen.getByText('1 automatic or recorded field'))
     expect(screen.getByText('Resolved automatically · Atlas Cycle 2.5')).toBeVisible()
     expect(screen.getByText('Automatic handling recorded this field; you may inspect or override it.')).toBeVisible()
@@ -493,22 +509,24 @@ describe('typed review routes', () => {
     expect(screen.getByRole('list', { name: 'Historical cover candidates' })).toHaveTextContent('composition minimal')
   })
 
-  it('keeps retained case provenance visible when supplemental evidence fails', async () => {
+  it('keeps retained per-choice provenance in Library without loading diagnostic evidence', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const http: ReviewHttp = {
       ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [{ ...titleField, provenance: ['Local catalogue record: retained current value'] }] })),
-      getEvidence: vi.fn(async () => { throw new Error('supplemental evidence unavailable') }),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [{ ...titleField, choiceContexts: [{ alternativeId: null, selection: 'current', rationale: 'Keep the value currently held by the local library.', recommendation: 'no_recommendation', recommendationReason: 'No deterministic recommendation is retained for the current value.', limitations: [], evidence: [{ source: 'Local library record', observation: 'Title: retained current value', role: 'local_presence' }] }, { alternativeId: 'alternative-title-1', selection: 'proposed', rationale: 'This retained alternative is eligible for owner selection.', recommendation: 'no_recommendation', recommendationReason: 'No deterministic recommendation is retained for this alternative.', limitations: [], evidence: [{ source: 'Open Library', observation: 'Title: New title', role: 'external_corroboration' }] }] as const }] })),
+      getEvidence: vi.fn(async () => { throw new Error('diagnostic evidence unavailable') }),
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
-    expect(await screen.findByText(/Supplemental evidence could not be loaded/u)).toHaveAttribute('role', 'alert')
-    await user.click(screen.getByText('Source ledger'))
-    expect(screen.getByText('Local catalogue record')).toBeVisible()
-    expect(screen.getByText('retained current value')).toBeVisible()
-    expect(screen.getByText(/1 named source below/u)).toBeVisible()
+    const evidenceButton = (await screen.findAllByRole('button', { name: /Evidence for/u }))[0]
+    if (!evidenceButton) throw new Error('current choice evidence control is missing')
+    await user.click(evidenceButton)
+    expect(screen.getByText('Local library record')).toBeVisible()
+    expect(screen.getByText('Title: retained current value')).toBeVisible()
+    expect(http.getEvidence).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText('Comparison condition')).not.toBeInTheDocument()
   })
 
   it('keeps frozen field positions after an earlier field is decided', async () => {
