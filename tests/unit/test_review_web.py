@@ -2713,7 +2713,7 @@ class ReviewWebTests(unittest.TestCase):
             canonical_origin="https://review.test",
             owner_password_hash_file=str(self.hash_path),
         )
-        with self.assertRaises(Exception):
+        with self.assertRaises(ReviewWebError):
             create_transport_test_app(self.repository, configuration)
 
 
@@ -3721,7 +3721,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 reopened.revoke_review_session("e" * 64, "f" * 64, 200),
                 "unauthorized",
             )
-            with self.assertRaises(Exception):
+            with self.assertRaises(MetadataReportError):
                 reopened.authenticate_review_session("a" * 64, 152)
             self.assertEqual(
                 reopened.rotate_review_session_csrf("a" * 64, "d" * 64, 152),

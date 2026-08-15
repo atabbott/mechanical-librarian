@@ -219,12 +219,12 @@ class CatalogueRepositoryTests(unittest.TestCase):
             connection.commit()
             connection.close()
             altered = path.read_bytes()
-            with self.assertRaises(Exception):
+            with self.assertRaises(CatalogueError):
                 open_catalogue(path)
             self.assertEqual(path.read_bytes(), altered)
             link = Path(directory) / "link.sqlite"
             os.symlink(path, link)
-            with self.assertRaises(Exception):
+            with self.assertRaises(OSError):
                 open_catalogue(link)
             self.assertNotEqual(before, altered)
 
@@ -239,7 +239,7 @@ class CatalogueRepositoryTests(unittest.TestCase):
             connection.commit()
             connection.close()
             before = path.read_bytes()
-            with self.assertRaises(Exception):
+            with self.assertRaises(CatalogueError):
                 open_catalogue(path)
             self.assertEqual(path.read_bytes(), before)
 
@@ -268,7 +268,7 @@ class CatalogueRepositoryTests(unittest.TestCase):
             replacement = Path(directory) / "replacement.sqlite"
             replacement.write_bytes(b"replacement")
             os.replace(replacement, path)
-            with self.assertRaises(Exception):
+            with self.assertRaises(CatalogueError):
                 repository.publish("a" * 64, (_entry("item-2"),))
             self.assertEqual(repository.inspect("a" * 64), (_entry(),))
             repository.close()

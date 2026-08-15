@@ -31,7 +31,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
-from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.field_effects import (
+    GuardedApplicationError,
+    GuardedFieldApplication,
+)
 from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
@@ -1065,7 +1068,7 @@ class FieldEffectTests(unittest.TestCase):
         self.assertEqual(self.service.apply(stale.plan.plan_id).failure, "dependency")
         self.dependencies.current_value = True
         self.service.set_paused(True)
-        with self.assertRaises(Exception):
+        with self.assertRaises(GuardedApplicationError):
             self.service.apply(ready.plan.plan_id)
         self.assertEqual(self.service.status(ready.plan.plan_id).state, "planned")
         self.service.set_paused(False)
@@ -1096,7 +1099,7 @@ class FieldEffectTests(unittest.TestCase):
             scope="destination", connection="primary", destination="title",
             reason="field_unavailable", changed_at=self.clock(),
         )
-        with self.assertRaises(Exception):
+        with self.assertRaises(GuardedApplicationError):
             self.service.apply(operation.plan.plan_id)
         self.assertEqual(self.service.status(operation.plan.plan_id).state, "planned")
 
@@ -1730,7 +1733,7 @@ class FieldEffectTests(unittest.TestCase):
         connection.execute("ALTER TABLE field_effects ADD COLUMN drift TEXT")
         connection.commit()
         connection.close()
-        with self.assertRaises(Exception):
+        with self.assertRaises(MetadataReportError):
             open_repository(path, create=False)
         self.repository = open_repository(Path(self.temporary.name) / "fresh.sqlite")
 
@@ -1803,7 +1806,7 @@ class FieldEffectTests(unittest.TestCase):
         connection.execute(trigger)
         connection.commit()
         connection.close()
-        with self.assertRaises(Exception):
+        with self.assertRaises(MetadataReportError):
             open_repository(path, create=False)
         self.repository = open_repository(Path(self.temporary.name) / "fresh.sqlite")
         self.service._repository = self.repository
@@ -1815,7 +1818,7 @@ class FieldEffectTests(unittest.TestCase):
         connection.execute(statement, parameters)
         connection.commit()
         connection.close()
-        with self.assertRaises(Exception):
+        with self.assertRaises(MetadataReportError):
             open_repository(path, create=False)
         self.repository = open_repository(Path(self.temporary.name) / "fresh.sqlite")
         self.service._repository = self.repository
@@ -2024,7 +2027,7 @@ class FieldEffectDomainTests(unittest.TestCase):
             (True, "v1"),
         ):
             with self.subTest(work_id=work_id, target_version=target_version):
-                with self.assertRaises(Exception):
+                with self.assertRaises(FieldEffectError):
                     create(work_id, target_version)
 
     def test_series_is_one_atomic_destination_and_state_machine_rejects_skips(self) -> None:
@@ -2045,7 +2048,7 @@ class FieldEffectDomainTests(unittest.TestCase):
             consent=consent, capability_digest=CAPABILITY, created_at=1,
         )
         operation = FieldEffectOperation(plan, updated_at=1)
-        with self.assertRaises(Exception):
+        with self.assertRaises(FieldEffectError):
             operation.transition("verified", at=2)
 
         for member, invalid in (
@@ -2055,15 +2058,15 @@ class FieldEffectDomainTests(unittest.TestCase):
             with self.subTest(member=member):
                 raw = operation.to_data()
                 raw[member] = invalid
-                with self.assertRaises(Exception):
+                with self.assertRaises(FieldEffectError):
                     FieldEffectOperation.from_json(json.dumps(raw))
         raw = operation.to_data()
         raw["plan"]["created_at"] = True
-        with self.assertRaises(Exception):
+        with self.assertRaises(FieldEffectError):
             FieldEffectOperation.from_json(json.dumps(raw))
         raw = operation.to_data()
         raw["plan"]["consent"]["granted_at"] = True
-        with self.assertRaises(Exception):
+        with self.assertRaises(FieldEffectError):
             FieldEffectOperation.from_json(json.dumps(raw))
 
 

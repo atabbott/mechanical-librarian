@@ -6,7 +6,10 @@ import threading
 import unittest
 from pathlib import Path
 
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    MetadataReportError,
+    open_repository,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
@@ -35,6 +38,7 @@ from mechanical_librarian.domain.proposal_set import (
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionIncompatibleError,
     ReviewAdmissionResult,
+    ReviewAdmissionStaleError,
     ReviewCase,
     ReviewCaseValueError,
     ReviewTransition,
@@ -333,7 +337,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             repository.publish_proposal(stale)
             current = _report("Changed", "c", "d")
             repository.publish(current, lambda: True)
-            with self.assertRaises(Exception):
+            with self.assertRaises(ReviewAdmissionStaleError):
                 repository.admit_review_case(stale)
             self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone())
             self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM review_case_transitions").fetchone())
@@ -490,7 +494,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             )
             repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
             repository._connection.commit()
-            with self.assertRaises(Exception):
+            with self.assertRaises(MetadataReportError):
                 repository.admit_review_case(proposal)
             repository.close()
 
@@ -530,7 +534,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             proposal = self._actionable(report)
             repository.publish_proposal(proposal)
             repository._connection.execute("CREATE TRIGGER injected_review_transition_failure BEFORE INSERT ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'injected'); END")
-            with self.assertRaises(Exception):
+            with self.assertRaises(MetadataReportError):
                 repository.admit_review_case(proposal)
             self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone())
             self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM current_review_case_lineages").fetchone())
@@ -554,7 +558,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             connection.commit()
             connection.close()
             before = old.read_bytes()
-            with self.assertRaises(Exception):
+            with self.assertRaises(MetadataReportError):
                 open_repository(old, create=False)
             self.assertEqual(before, old.read_bytes())
 
@@ -569,7 +573,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             self.assertEqual(proposal.to_json(), repository.get_proposal(proposal.proposal_set_id))
             repository._connection.execute("DROP TRIGGER review_cases_no_update")
             repository._connection.execute("UPDATE review_cases SET document='{}' WHERE review_case_id=?", (case_id,))
-            with self.assertRaises(Exception):
+            with self.assertRaises(MetadataReportError):
                 repository.get_review_case(case_id)
             self.assertEqual(proposal.to_json(), repository.get_proposal(proposal.proposal_set_id))
             repository.close()
@@ -595,7 +599,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             repository._connection.execute("PRAGMA foreign_keys=OFF")
             repository._connection.execute("UPDATE current_review_case_lineages SET review_case_id='bad' WHERE item_id='item-1'")
             repository._connection.execute("PRAGMA foreign_keys=ON")
-            with self.assertRaises(Exception):
+            with self.assertRaises(MetadataReportError):
                 repository.get_review_case(case_id)
             repository.close()
 
@@ -606,7 +610,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             repository.close()
             os.chmod(database, 0o400)
             try:
-                with self.assertRaises(Exception):
+                with self.assertRaises(MetadataReportError):
                     open_repository(database, create=False)
             finally:
                 os.chmod(database, 0o600)
@@ -648,7 +652,7 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             proposal = self._actionable(report)
             repository.publish_proposal(proposal)
             repository._connection.execute("CREATE TRIGGER injected_full BEFORE INSERT ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END")
-            with self.assertRaises(Exception):
+            with self.assertRaises(MetadataReportError):
                 repository.admit_review_case(proposal)
             for table in ("review_cases", "review_case_transitions", "current_review_case_lineages"):
                 self.assertEqual((0,), repository._connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone())

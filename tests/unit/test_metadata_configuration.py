@@ -13,6 +13,7 @@ from mechanical_librarian.application.configuration import (
     ProviderConnectionConfiguration,
     TargetConnectionConfiguration,
 )
+from mechanical_librarian.application.metadata_report import CredentialError
 from mechanical_librarian.infrastructure.configuration import (
     ConfigurationInput,
     configuration_schema_json,
@@ -431,11 +432,11 @@ class CredentialBoundaryTests(unittest.TestCase):
             secret.chmod(0o600)
             self.assertEqual(read_secret(str(secret)), "token-value")
             secret.chmod(0o644)
-            with self.assertRaises(Exception):
+            with self.assertRaises(CredentialError):
                 read_secret(str(secret))
             link = root / "link"
             link.symlink_to(secret)
-            with self.assertRaises(Exception):
+            with self.assertRaises(CredentialError):
                 read_secret(str(link))
 
     def test_target_authorization_is_confined_to_current_item_get(self) -> None:
