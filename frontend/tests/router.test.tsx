@@ -421,8 +421,8 @@ describe('typed review routes', () => {
     renderRoute('/library?lens=all&preview=case-1&field=cover', http)
 
     const comparison = await screen.findByLabelText('Choose a cover')
-    expect(within(comparison).getByText('One candidate is recommended as advice only.')).toBeVisible()
-    expect(within(comparison).getByText(/Recommended/u)).toBeVisible()
+    expect(within(comparison).getByText('Recommendation is unavailable; comparison remains manual.')).toBeVisible()
+    expect(within(comparison).queryByText(/Recommended/u)).not.toBeInTheDocument()
     await user.click(within(comparison).getByText('Reasons retained'))
     expect(within(comparison).getByText('Preview unavailable')).toBeVisible()
     expect(within(comparison).getByText('Observations ambiguous')).toBeVisible()

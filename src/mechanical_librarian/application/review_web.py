@@ -302,13 +302,6 @@ class InspectCurrentReviewCase:
             )
             reasons = result["reasons"]
             assert type(reasons) is list
-            comparison_notices = [
-                *reasons,
-                *_provider_comparison_notices(report),
-            ]
-            choice_contexts = _choice_contexts(
-                alternatives, result, report, target_fields[destination],
-            )
             decision = decisions.get(destination)
             automatic_decision = automatic.get(destination)
             if automatic_decision is not None:
@@ -324,6 +317,10 @@ class InspectCurrentReviewCase:
                     **automatic_decision,
                     "selected_value": selected,
                 }
+            choice_contexts = _choice_contexts(
+                alternatives, result, report, target_fields[destination],
+                automatic_decision,
+            )
             classification = classify_review_field(
                 attention_candidate=_needs_attention(
                     proposal, snapshot.automatic_attention_destinations,
@@ -364,7 +361,7 @@ class InspectCurrentReviewCase:
                     "navigation_role": classification.navigation_role,
                     "needs_attention": classification.needs_attention,
                     "preservation_only": classification.preservation_only,
-                    "notices": comparison_notices,
+                    "notices": reasons,
                     "proposed_values": [
                         alternative["value"] for alternative in alternatives
                     ],
@@ -806,6 +803,7 @@ def _choice_contexts(
     result: dict[str, object],
     report: MetadataReport,
     target: dict[str, object],
+    automatic_decision: dict[str, object] | None = None,
 ) -> list[dict[str, object]]:
     """Project retained proposal lineage into owner-readable choice context."""
     selected = result.get("selected_alternative_id")
@@ -813,21 +811,32 @@ def _choice_contexts(
     local_value_present = target.get("state") == "value" and _current_value_present(
         target.get("value")
     )
+    preserves = [item for item in alternatives if item.get("assessment") == "preserves_target"]
+    current_rows = [
+        _choice_evidence(row)
+        for item in preserves
+        for reference in item.get("evidence_references", [])
+        if type(reference) is str and reference in _evidence_by_reference(report)
+        for row in [_evidence_by_reference(report)[reference]]
+    ]
+    current_recommended = automatic_decision is not None and automatic_decision.get("outcome") in {"keep_current", "preserves_target"}
     contexts: list[dict[str, object]] = [{
         "alternative_id": None,
         "evidence": ([{
             "observation": "This value is currently present in the local library.",
             "role": "local_presence",
             "source": "Local library record",
-        }] if local_value_present else []),
+        }] if local_value_present else []) + current_rows,
         "limitations": [],
         "rationale": (
-            "Keep the value currently held by the local library."
+            ("Deterministic policy retained the local value."
+             if current_recommended else "Keep the value currently held by the local library.")
             if local_value_present else
             "The local library has no retained value for this field."
         ),
-        "recommendation": "no_recommendation",
-        "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+        "recommendation": "recommended" if current_recommended else "no_recommendation",
+        "recommendation_reason": ("Deterministic policy retained the local value."
+                                  if current_recommended else "No deterministic recommendation is retained for the current value."),
         "selection": "current",
     }]
     evidence = _evidence_by_reference(report)

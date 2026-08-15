@@ -64,7 +64,7 @@ const choiceContext = (field: ReviewField, alternativeId: string | null) => fiel
 const materialComparisonReasons = new Set([
   'bibliographic_combination_unresolved', 'competing_evidence', 'date_refinement_requires_corroboration', 'date_year_conflict', 'field_policy_conflict', 'insufficient_independent_corroboration', 'no_safe_bibliographic_combination', 'populated_subjective_field',
 ])
-const comparisonNotices = (field: ReviewField) => field.notices.filter((notice) => materialComparisonReasons.has(notice) || notice.startsWith('Provider limitation: '))
+const comparisonNotices = (field: ReviewField) => field.notices.filter((notice) => materialComparisonReasons.has(notice))
 
 function MetadataChoice({ context, current, expanded, label, onChoose, recording, selected, toggle, value }: { context: ChoiceContextView | undefined; current: boolean; expanded: boolean; label: string; onChoose: () => void; recording: boolean; selected: boolean; toggle: () => void; value: string }) {
   const limitations = context?.limitations ?? []
@@ -98,7 +98,7 @@ function LibraryCoverChoices({ reviewCaseId, field, disabled, pending, phase, ch
   const expanded = candidates.length > 3
   const incumbent = candidates.find((candidate) => candidate.incumbent)
   const alternatives = candidates.filter((candidate) => !candidate.incumbent)
-  const recommended = typeof consideration.policy?.recommended_candidate_reference === 'string' ? consideration.policy.recommended_candidate_reference : null
+  const recommended = consideration.policy?.status === 'recommended' && typeof consideration.policy.recommended_candidate_reference === 'string' && consideration.candidates.some((candidate) => candidate.reference === consideration.policy?.recommended_candidate_reference && candidate.selectable && candidate.state === 'acceptable') ? consideration.policy.recommended_candidate_reference : null
   const acceptableReferences = Array.isArray(consideration.policy?.acceptable_candidate_references) && consideration.policy.acceptable_candidate_references.every((reference): reference is string => typeof reference === 'string') ? consideration.policy.acceptable_candidate_references : []
   const policyStatus = typeof consideration.policy?.status === 'string' ? consideration.policy.status : null
   const policyReasons = Array.isArray(consideration.policy?.reasons) ? consideration.policy.reasons.filter((reason): reason is string => typeof reason === 'string').slice(0, 2) : []
@@ -232,7 +232,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     return () => media.removeEventListener('change', selectWideDefault)
   }, [data.works, navigate])
 
-  const select = (reviewCaseId: string, field?: string) => { if (complete?.id !== reviewCaseId) { setComplete(null); setCompletionInspection(null) } void navigate({ search: (current) => {
+  const select = (reviewCaseId: string, field?: string) => { if (reviewCaseId !== selectedReviewCaseId) setExpandedChoiceState({ work: reviewCaseId, keys: new Set() }); if (complete?.id !== reviewCaseId) { setComplete(null); setCompletionInspection(null) } void navigate({ search: (current) => {
     const next = { ...current, preview: reviewCaseId }
     if (field) next.field = field
     else delete next.field
@@ -266,7 +266,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     delete next.attention
     return next
   } }) }
-  const selectFromQueue = (reviewCaseId: string, field: string) => { setComplete(null); setCompletionInspection(null); void navigate({ search: (current) => {
+  const selectFromQueue = (reviewCaseId: string, field: string) => { if (reviewCaseId !== selectedReviewCaseId) setExpandedChoiceState({ work: reviewCaseId, keys: new Set() }); setComplete(null); setCompletionInspection(null); void navigate({ search: (current) => {
     const next = { ...current, preview: reviewCaseId, field }
     delete next.attention
     return next
