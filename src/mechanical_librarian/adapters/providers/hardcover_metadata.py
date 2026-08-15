@@ -1003,7 +1003,7 @@ def _parse_candidates(
                             identity_bindings,
                             key=lambda value: (
                                 value.scope.value,
-                                value.role,
+                                value.role or "",
                                 value.source_ordinal,
                                 value.identity,
                                 value.claim_reference,
@@ -1592,13 +1592,17 @@ def _contributions(
             for index, kind in enumerate((ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR))
         ]
     for item in contributions:
-        try:
-            role = validate_role_projection(item["contribution"]).casefold()
-        except EvidenceValueError:
-            if rejected: rejected.reject()
-            claims.append(_state_claim(provider, identity, ClaimKind.CONTRIBUTOR, FieldState.MALFORMED, scope, local, offset + len(claims)))
-            continue
-        kind = ClaimKind.CREATOR if role == "author" else ClaimKind.CONTRIBUTOR
+        raw_role = item["contribution"]
+        if raw_role is None:
+            role = None
+        else:
+            try:
+                role = validate_role_projection(raw_role).casefold()
+            except EvidenceValueError:
+                if rejected: rejected.reject()
+                claims.append(_state_claim(provider, identity, ClaimKind.CONTRIBUTOR, FieldState.MALFORMED, scope, local, offset + len(claims)))
+                continue
+        kind = ClaimKind.CREATOR if role in {None, "author"} else ClaimKind.CONTRIBUTOR
         author = _field_local_author(item["author"], rejected)
         if author is None:
             claims.append(_state_claim(provider, identity, kind, FieldState.MALFORMED, scope, local, offset + len(claims)))
@@ -1607,8 +1611,7 @@ def _contributions(
             author_id = _identifier(author["id"])
         except ValueError:
             author_id = None
-            if rejected:
-                rejected.reject()
+            if rejected: rejected.reject()
         claim = _claim(
             provider,
             identity,
@@ -1616,7 +1619,7 @@ def _contributions(
             author["name"],
             scope,
             "not_applicable",
-            "author" if kind is ClaimKind.CREATOR else role,
+            role,
             local,
             offset + len(claims),
             rejected,
@@ -1634,7 +1637,7 @@ def _contributions(
                     claim.reference,
                     f"hardcover-author-{author_id:010d}",
                     ClaimScope.WORK,
-                    "author",
+                    role,
                     len(identity_bindings),
                 )
             )

@@ -749,10 +749,16 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 page.locator("#field-authors .direct-choice-grid .value-choice").count(),
                 3,
             )
+            author_notices = page.locator("#field-authors .field-notices")
+            expect(author_notices).to_be_visible()
+            expect(author_notices).to_contain_text("Corroborated creator sources")
+            expect(author_notices).to_contain_text("Hardcover · Open Library")
+            self.assertNotIn("provider_", author_notices.inner_text())
             page.get_by_role("button", name="subtitle", exact=True).click()
             page.get_by_text("No eligible proposed values.", exact=True).wait_for()
             page.get_by_role("button", name="Evidence", exact=True).click()
             page.get_by_role("heading", name="Evidence and source ledger").wait_for()
+            page.locator(".evidence-item").first.wait_for()
             self.assertEqual(page.locator(".evidence-item").count(), 3)
             page.get_by_role("button", name="Load more evidence").click()
             expect(page.locator(".evidence-item")).to_have_count(6)

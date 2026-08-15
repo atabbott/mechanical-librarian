@@ -30,6 +30,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderRequestAccounting,
     ProviderQueryKind,
+    complete_creator_identity_bindings,
     ProviderStatus,
     PublicationDateRelation,
     TargetDestination,
@@ -827,6 +828,17 @@ def qualify_provider_observation(
             and claim.state is FieldState.VALID
             and claim.value is not None
         )
+        untyped_creators = _complete_work_creators(candidate, None)
+        neutral_bindings = complete_creator_identity_bindings(
+            candidate,
+            tuple(
+                claim
+                for claim in candidate.claims
+                if claim.scope is ClaimScope.WORK
+                and claim.kind is ClaimKind.CREATOR
+                and claim.role is None
+            ),
+        )
         disqualifying_roles = {
             claim.role
             for claim in candidate.claims
@@ -845,8 +857,16 @@ def qualify_provider_observation(
             blocked_work_identities.add(qualification_identity)
         if (
             titles == (expected_title,)
-            and len(authors) == len(expected_authors)
-            and authors == expected_authors
+            and (
+                (
+                    len(authors) == len(expected_authors)
+                    and authors == expected_authors
+                )
+                or (
+                    untyped_creators == expected_authors
+                    and neutral_bindings is not None
+                )
+            )
             and not disqualifying_roles
             and not variant_marker
         ):
@@ -864,6 +884,33 @@ def qualify_provider_observation(
             accessed_at=observation.accessed_at,
         )
     candidate = min(next(iter(qualified.values())), key=lambda value: value.identity)
+    neutral_creators = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK
+        and claim.kind is ClaimKind.CREATOR
+        and claim.role is None
+    )
+    neutral_bindings = complete_creator_identity_bindings(candidate, neutral_creators)
+    reject_neutral_creators = (
+        neutral_bindings is not None
+        and len({binding.identity for binding in neutral_bindings})
+        != len(neutral_bindings)
+    )
+    reject_mixed_author_creators = _mixed_work_creator_roles(candidate)
+    reject_creator_authority = (
+        reject_neutral_creators or reject_mixed_author_creators
+    )
+    rejected_creator_references = {
+        claim.reference for claim in neutral_creators
+    } if reject_neutral_creators else set()
+    if reject_mixed_author_creators:
+        rejected_creator_references.update(
+            claim.reference
+            for claim in candidate.claims
+            if claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.CREATOR
+        )
     allowed_claims = {
         ClaimKind.TITLE,
         ClaimKind.CREATOR,
@@ -872,6 +919,11 @@ def qualify_provider_observation(
         ClaimKind.DESCRIPTION,
         ClaimKind.GENRE,
         ClaimKind.TAG,
+    }
+    neutral_rejection_sibling_claims = {
+        ClaimKind.ISBN,
+        ClaimKind.ASIN,
+        ClaimKind.PUBLICATION_DATE,
     }
     allowed_evidence = {
         ProviderEvidenceKind.AUTHOR_IDENTITY,
@@ -884,7 +936,16 @@ def qualify_provider_observation(
     filtered_claims = tuple(
         claim
         for claim in candidate.claims
-        if claim.scope is ClaimScope.WORK and claim.kind in allowed_claims
+        if claim.reference not in rejected_creator_references
+        and (
+            (claim.scope is ClaimScope.WORK and claim.kind in allowed_claims)
+            or (
+                reject_creator_authority
+                and claim.scope is ClaimScope.EDITION
+                and claim.kind in neutral_rejection_sibling_claims
+                and claim.state is FieldState.VALID
+            )
+        )
     )
     filtered_references = {claim.reference for claim in filtered_claims}
     filtered = ProviderCandidate(
@@ -895,21 +956,30 @@ def qualify_provider_observation(
             value
             for value in candidate.evidence
             if (
-                value.scope is ClaimScope.WORK
-                and value.kind in allowed_evidence
-            )
-            or (
-                value.scope is ClaimScope.EDITION
-                and value.kind
-                is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
-                and value.date_normalized is not None
-                and value.date_confidence is DateLinkConfidence.UNRESOLVED
+                not (
+                    reject_creator_authority
+                    and value.kind in {
+                        ProviderEvidenceKind.AUTHOR_IDENTITY,
+                        ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+                    }
+                )
                 and (
-                    not value.links
-                    or any(
-                        link.publication_date_relation
-                        is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
-                        for link in value.links
+                    value.scope is ClaimScope.WORK
+                    and value.kind in allowed_evidence
+                )
+                or (
+                    value.scope is ClaimScope.EDITION
+                    and value.kind
+                    is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                    and value.date_normalized is not None
+                    and value.date_confidence is DateLinkConfidence.UNRESOLVED
+                    and (
+                        not value.links
+                        or any(
+                            link.publication_date_relation
+                            is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+                            for link in value.links
+                        )
                     )
                 )
             )
@@ -930,6 +1000,43 @@ def qualify_provider_observation(
         accessed_at=observation.accessed_at,
         diagnostics=observation.diagnostics,
     )
+
+
+def _complete_work_creators(
+    candidate: ProviderCandidate, role: str | None
+) -> tuple[str, ...] | None:
+    """Return one closed work creator set without inferring an omitted role."""
+    creators = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
+    )
+    if (
+        not creators
+        or any(
+            claim.role != role
+            or claim.state is not FieldState.VALID
+            or claim.value is None
+            for claim in creators
+        )
+        or any(
+            claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.CONTRIBUTOR
+            for claim in candidate.claims
+        )
+    ):
+        return None
+    return tuple(normalize_title(claim.value).casefold() for claim in creators)
+
+
+def _mixed_work_creator_roles(candidate: ProviderCandidate) -> bool:
+    """A typed author set cannot be projected from a mixed creator collection."""
+    roles = {
+        claim.role
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
+    }
+    return "author" in roles and len(roles) > 1
 
 
 def _variant_marker(value: str) -> bool:

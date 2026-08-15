@@ -145,8 +145,8 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v24`. Every earlier report discriminator,
-including `metadata-report-v22`, remains offline and requires a clean current
+discriminator is `metadata-report-v25`. Every earlier report discriminator,
+including immediate prior `metadata-report-v24`, remains offline and requires a clean current
 database under ADR-0013.
 
 Google Books descriptions use one inert, bounded
@@ -221,8 +221,20 @@ parsed name-to-identity bindings may treat multiple names for one provider
 identity as aliases. Incomplete bindings remain non-authoritative and direct
 complete-name comparison still applies; conflicting complete bindings,
 reordered, duplicated, multi-author-inverted or role/scope-incompatible sets
-cannot agree. Alternative
-work titles remain distinct original claims bound to the same admitted work;
+cannot agree.
+An unlabelled Hardcover creator remains a neutral, identity-bound work claim
+when its complete ordered set exactly substantiates an existing target-backed
+successful ISBN or work lookup. It never becomes author evidence by itself.
+An author-labelled creator collection that also contains neutral or other
+creator roles is rejected as a whole rather than projected as a typed subset.
+One independently qualified provider's complete explicit author set compares
+complete ordered identity bindings first. Provider-native identity namespaces are not a global
+person registry, so nonmatching namespaces fall back only to exact closed
+normalized names.
+Repeated endpoints and providers with the same authority are one source;
+partial, duplicated, reordered, mixed-role, malformed, or contradictory sets
+remain unresolved.
+Alternative work titles remain distinct original claims bound to the same admitted work;
 titles are never assembled from subtitles. Fuzzy matching, token subsets,
 variant/translation/abridgement markers, provider rank and repeated queries do
 not create agreement or independent corroboration.

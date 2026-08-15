@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v7` policy. It does not construct or contact a metadata or
+`fixed-conservative-v8` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -15,10 +15,11 @@ or typed source-only inspector.
 Success is exactly one canonical `proposal-set-v4` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v4` documents under `fixed-conservative-v7` and the exact current
+Only `proposal-set-v4` documents under `fixed-conservative-v8` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
-`fixed-conservative-v4`, `fixed-conservative-v5`, or `fixed-conservative-v6`
+`fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`, or
+`fixed-conservative-v7`
 table shape is incompatible and is rejected before
 mutation; there is no proposal migration, import, conversion, or compatibility
 parser.

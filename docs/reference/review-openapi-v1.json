@@ -3153,6 +3153,13 @@
               }
             ]
           },
+          "corroboration_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Corroboration Sources",
+            "type": "array"
+          },
           "cover_consideration": {
             "anyOf": [
               {
@@ -3250,6 +3257,7 @@
           "notices",
           "proposed_values",
           "provenance",
+          "corroboration_sources",
           "proposal_id",
           "target_fingerprint",
           "uncertainty"

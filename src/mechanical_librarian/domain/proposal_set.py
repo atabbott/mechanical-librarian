@@ -35,6 +35,9 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderCandidate,
     ProviderClaim,
     ProviderEvidenceKind,
+    ProviderIdentityBinding,
+    ProviderQueryKind,
+    ProviderStatus,
     TargetDestination,
     TargetField,
     TargetFieldState,
@@ -52,7 +55,7 @@ from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 
 
 PROPOSAL_SCHEMA = "proposal-set-v4"
-POLICY_VERSION = "fixed-conservative-v7"
+POLICY_VERSION = "fixed-conservative-v8"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -185,7 +188,11 @@ _DESTINATION_DATE_SEMANTICS: dict[
 
 _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.PROPOSE_CHANGE: frozenset(
-        {("unique_safe_cover",), ("unique_typed_candidate",)}
+        {
+            ("unique_safe_cover",),
+            ("unique_typed_candidate",),
+            ("explicit_author_corroborates_untyped_creator",),
+        }
     ),
     ProposalOutcome.ACCEPTABLE_CHOICE: frozenset(
         {("field_policy_acceptable_choice",)}
@@ -886,6 +893,7 @@ class _Observed:
     representation: str
     date_event: DateEvent | None = None
     date_precision: DatePrecision | None = None
+    corroborated_untyped_creator: bool = False
 
 
 def _ignored_policy_targets(
@@ -1209,6 +1217,11 @@ def _list_observations(
             )
     for provider in report.providers:
         for candidate in provider.candidates:
+            if (
+                destination is TargetDestination.AUTHORS
+                and _mixed_author_creator_roles(candidate)
+            ):
+                continue
             if destination is TargetDestination.AUTHORS and any(
                 claim.kind is ClaimKind.CONTRIBUTOR
                 and claim.scope is ClaimScope.WORK
@@ -1267,7 +1280,340 @@ def _list_observations(
                         _provider_representation(provider, candidate),
                     )
                 )
+    if destination is TargetDestination.AUTHORS:
+        values.extend(_corroborated_untyped_author_observations(report))
     return tuple(values)
+
+
+def _corroborated_untyped_author_observations(
+    report: MetadataReport,
+) -> tuple[_Observed, ...]:
+    """Pair only one complete neutral creator set with a distinct author set."""
+    authors = tuple(
+        (provider, candidate, claims, bindings)
+        for provider in report.providers
+        for candidate in provider.candidates
+        if _target_backed_lookup_contains(report, provider, candidate)
+        if (set_value := _complete_provider_creator_set(candidate, "author")) is not None
+        for claims, bindings in (set_value,)
+    )
+    untyped = tuple(
+        (provider, candidate, claims, bindings)
+        for provider in report.providers
+        for candidate in provider.candidates
+        if _target_backed_lookup_contains(report, provider, candidate)
+        if (set_value := _complete_provider_creator_set(candidate, None)) is not None
+        for claims, bindings in (set_value,)
+        if bindings is not None
+    )
+    observations: list[_Observed] = []
+    for author_provider, author_candidate, author_claims, author_bindings in authors:
+        for neutral_provider, neutral_candidate, neutral_claims, neutral_bindings in untyped:
+            if (
+                author_provider.authority is None
+                or neutral_provider.authority is None
+                or author_provider.authority == neutral_provider.authority
+                or author_provider.provider == neutral_provider.provider
+            ):
+                continue
+            if not _creator_sets_match(
+                author_claims,
+                author_bindings,
+                neutral_claims,
+                neutral_bindings,
+            ):
+                continue
+            observations.append(
+                _Observed(
+                    _value(
+                        TargetDestination.AUTHORS,
+                        tuple(claim.value for claim in author_claims if claim.value is not None),
+                    ),
+                    tuple(
+                        claim.reference
+                        for claim in (*author_claims, *neutral_claims)
+                    ),
+                    _correlation(
+                        "creator-corroboration:"
+                        + ":".join(
+                            sorted(
+                                (author_provider.authority, neutral_provider.authority)
+                            )
+                        )
+                    ),
+                    ProposalScope.WORK,
+                    _representation(
+                        canonical_json(
+                            {
+                                "author": _provider_representation(author_provider, author_candidate),
+                                "untyped": _provider_representation(neutral_provider, neutral_candidate),
+                            }
+                        )
+                    ),
+                    corroborated_untyped_creator=True,
+                )
+            )
+    return tuple(observations)
+
+
+def _complete_provider_creator_set(
+    candidate: ProviderCandidate, role: str | None,
+) -> tuple[
+    tuple[ProviderClaim, ...], tuple[ProviderIdentityBinding, ...] | None
+] | None:
+    creators = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.CREATOR and claim.scope is ClaimScope.WORK
+    )
+    if (
+        not creators
+        or any(
+            claim.role != role
+            or claim.state is not FieldState.VALID
+            or claim.value is None
+            for claim in creators
+        )
+        or any(
+            claim.kind is ClaimKind.CONTRIBUTOR and claim.scope is ClaimScope.WORK
+            for claim in candidate.claims
+        )
+        or len({creator_comparison_key(claim.value or "") for claim in creators})
+        != len(creators)
+    ):
+        return None
+    bindings = complete_creator_identity_bindings(candidate, creators)
+    if any(
+        binding.scope is ClaimScope.WORK and binding.role == role
+        for binding in candidate.identity_bindings
+    ) and bindings is None:
+        return None
+    if bindings is not None and len({binding.identity for binding in bindings}) != len(bindings):
+        return None
+    return creators, bindings
+
+
+def _mixed_author_creator_roles(candidate: ProviderCandidate) -> bool:
+    """Never project an author subset from a mixed WORK creator collection."""
+    roles = {
+        claim.role
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
+    }
+    return "author" in roles and len(roles) > 1
+
+
+def _target_backed_lookup_contains(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+) -> bool:
+    """Require a successful candidate lane backed by the exact report target."""
+    local_claims = {claim.reference: claim for claim in report.local_claims}
+    targets = {field.destination: field for field in report.target.fields}
+    title = targets[TargetDestination.TITLE]
+    authors = targets[TargetDestination.AUTHORS]
+    expected_title = (
+        normalize_title(title.value)
+        if title.state is TargetFieldState.VALUE and type(title.value) is str
+        else None
+    )
+    expected_authors = (
+        tuple(normalize_title(value) for value in authors.value)
+        if authors.state is TargetFieldState.VALUE
+        and type(authors.value) is tuple
+        and authors.value
+        and all(type(value) is str for value in authors.value)
+        and len({normalize_title(value).casefold() for value in authors.value})
+        == len(authors.value)
+        else ()
+    )
+    target_title_references = tuple(
+        sorted(
+            claim.reference
+            for claim in report.local_claims
+            if claim.kind is ClaimKind.TITLE and claim.basis == "target_metadata"
+        )
+    )
+    target_titles_are_exact = all(
+        (claim := local_claims.get(reference)) is not None
+        and claim.kind is ClaimKind.TITLE
+        and claim.basis == "target_metadata"
+        and claim.state is FieldState.VALID
+        and type(claim.canonical) is str
+        and normalize_title(claim.canonical).casefold() == expected_title.casefold()
+        for reference in target_title_references
+    ) if expected_title is not None else False
+    return any(
+        lane.status is ProviderStatus.CANDIDATES
+        and any(
+            member.edition_identity == candidate.identity
+            and member.work_identity == candidate.work_identity
+            for member in lane.candidates
+        )
+        and (
+            (
+                lane.kind is ProviderQueryKind.ISBN
+                and lane.input_references == tuple(
+                    sorted(
+                        claim.reference
+                        for claim in _isbn_family_claims(
+                            report, lane.matched_family,
+                        )
+                    )
+                )
+                and lane.identity == _discovery_lane_identity(
+                    {
+                        "canonical_isbns": sorted(
+                            {
+                                claim.canonical
+                                for claim in _isbn_family_claims(
+                                    report, lane.matched_family,
+                                )
+                            }
+                        ),
+                        "input_references": list(lane.input_references),
+                        "kind": ProviderQueryKind.ISBN.value,
+                        "matched_family": lane.matched_family,
+                    }
+                )
+            )
+            or (
+                lane.kind is ProviderQueryKind.WORK
+                and expected_title is not None
+                and expected_authors
+                and lane.input_references == target_title_references
+                and target_titles_are_exact
+                and _candidate_replays_work_qualification(
+                    candidate, expected_title, expected_authors,
+                )
+                and lane.identity == _discovery_lane_identity(
+                    {
+                        "authors": list(expected_authors),
+                        "input_references": list(target_title_references),
+                        "kind": ProviderQueryKind.WORK.value,
+                        "title": expected_title,
+                    }
+                )
+            )
+        )
+        for lane in provider.lanes
+    )
+
+
+def _discovery_lane_identity(payload: dict[str, object]) -> str:
+    return "lane_" + hashlib.sha256(canonical_json(payload).encode()).hexdigest()
+
+
+def _isbn_family_claims(
+    report: MetadataReport, family: str | None,
+) -> tuple[LocalClaim, ...]:
+    return tuple(
+        claim
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.ISBN
+        and claim.canonical is not None
+        and isbn_family(claim.canonical) == family
+    )
+
+
+def _candidate_replays_work_qualification(
+    candidate: ProviderCandidate,
+    expected_title: str,
+    expected_authors: tuple[str, ...],
+) -> bool:
+    """Replay the closed WORK candidate test before granting lane authority."""
+    titles = tuple(
+        normalize_title(claim.value).casefold()
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK
+        and claim.kind is ClaimKind.TITLE
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
+    creators = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
+    )
+    if (
+        titles != (expected_title.casefold(),)
+        or not creators
+        or any(
+            claim.state is not FieldState.VALID or claim.value is None
+            for claim in creators
+        )
+        or any(
+            claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.CONTRIBUTOR
+            and claim.role in {"abridger", "adapter", "translator"}
+            for claim in candidate.claims
+        )
+        or any(
+            _variant_marker(claim.value)
+            for claim in candidate.claims
+            if claim.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}
+            and claim.state is FieldState.VALID
+            and claim.value is not None
+        )
+    ):
+        return False
+    creator_names = tuple(
+        normalize_title(claim.value).casefold() for claim in creators
+    )
+    expected = tuple(value.casefold() for value in expected_authors)
+    if all(claim.role == "author" for claim in creators):
+        return creator_names == expected
+    if not all(claim.role is None for claim in creators):
+        return False
+    return (
+        creator_names == expected
+        and complete_creator_identity_bindings(candidate, creators) is not None
+    )
+
+
+def _variant_marker(value: str) -> bool:
+    tokens = {
+        "".join(character for character in token if character.isalnum())
+        for token in normalize_title(value).casefold().split()
+    }
+    return bool(
+        tokens
+        & {
+            "abridgement",
+            "abridgment",
+            "abridged",
+            "adaptation",
+            "adapted",
+            "translation",
+            "translated",
+        }
+    )
+
+
+def _creator_sets_match(
+    authors: tuple[ProviderClaim, ...],
+    author_bindings: tuple[ProviderIdentityBinding, ...] | None,
+    untyped: tuple[ProviderClaim, ...],
+    untyped_bindings: tuple[ProviderIdentityBinding, ...] | None,
+) -> bool:
+    if len(authors) != len(untyped) or untyped_bindings is None:
+        return False
+    names_match = tuple(
+        creator_comparison_key(claim.value or "") for claim in authors
+    ) == tuple(
+        creator_comparison_key(claim.value or "") for claim in untyped
+    )
+    if author_bindings is not None:
+        identities_match = tuple(
+            binding.identity for binding in author_bindings
+        ) == tuple(binding.identity for binding in untyped_bindings)
+        if identities_match:
+            return names_match
+        # Provider adapters retain their opaque, provider-namespaced person
+        # identifiers.  Different namespaces are not a cross-provider identity
+        # registry, so the closed name comparison is the permitted fallback.
+    return names_match
 
 
 def _provider_author_bindings_allow_observation(
@@ -1946,7 +2292,17 @@ def _evaluate(
         ProposalOutcome.PROPOSE_CHANGE,
         alternatives,
         alternative.alternative_id,
-        ("unique_typed_candidate",),
+        (
+            "explicit_author_corroborates_untyped_creator"
+            if destination is TargetDestination.AUTHORS
+            and any(
+                observed.corroborated_untyped_creator
+                and set(observed.references)
+                <= set(alternative.evidence_references)
+                for observed in observations
+            )
+            else "unique_typed_candidate",
+        ),
         dependencies,
     )
 

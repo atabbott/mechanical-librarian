@@ -48,6 +48,7 @@ const detail: CaseDetailView = {
     automaticDecision: null,
     notices: [],
     provenance: [],
+    corroborationSources: [],
   }],
 }
 
@@ -215,6 +216,18 @@ describe('typed review routes', () => {
     const targets = document.querySelectorAll('[data-route-focus]')
     expect(targets).toHaveLength(1)
     expect(targets[0]).toHaveClass('selected-work-header')
+  })
+
+  it('loads evidence only after the owner opens the Evidence subview', async () => {
+    const user = userEvent.setup()
+    const getEvidence = vi.fn(async () => ({ schema_version: 'review-case-evidence-v2', review_case_id: 'case-1', items: [], next_cursor: null }))
+    const http: ReviewHttp = { ...createHttp(), getEvidence }
+    renderRoute('/review/case-1?field=title&subview=review', http)
+
+    expect(await screen.findByRole('heading', { name: 'Current review case' })).toBeVisible()
+    expect(getEvidence).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Evidence' }))
+    await waitFor(() => expect(getEvidence).toHaveBeenCalledTimes(1))
   })
 
   it('loads the critical library query and progressively reveals detail', async () => {
@@ -2077,6 +2090,65 @@ describe('typed review routes', () => {
     await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
       expect.objectContaining({ eventType: 'policy', page: 2 }), expect.anything(),
     ))
+  })
+
+  it.each([
+    ['after the stale restore is queued', true],
+    ['before the final navigation resolves', false],
+  ])('keeps Inspect focused when Activity All navigation completes %s', async (_ordering, restoreQueued) => {
+    const user = userEvent.setup()
+    const frames: FrameRequestCallback[] = []
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    let releaseNavigation: (() => void) | undefined
+    let restoreNavigation: (() => void) | undefined
+    const view = (search: ActivitySearch) => activity({
+      ledger: { event_type: search.eventType, page: search.page, page_count: 1, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 1 },
+      events: [{ evidence: [{ label: 'Record', value: 'retained' }], work_label: 'Focused activity' }],
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn((search: ActivitySearch) => Promise.resolve(view(search))),
+    }
+    try {
+      const { router } = renderRoute('/activity', http)
+      await screen.findByRole('heading', { name: 'Activity and recovery' })
+      frames.length = 0
+      await user.click(screen.getByRole('button', { name: 'Reviews' }))
+      await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
+        expect.objectContaining({ eventType: 'review' }), expect.anything(),
+      ))
+      const originalNavigate = router.navigate.bind(router)
+      const delayedNavigate = vi.spyOn(router, 'navigate').mockImplementation(async (options) => {
+        const result = await originalNavigate(options)
+        return await new Promise<typeof result>((resolve) => { releaseNavigation = () => resolve(result) })
+      })
+      restoreNavigation = () => delayedNavigate.mockRestore()
+      await user.click(screen.getByRole('button', { name: 'All' }))
+      await waitFor(() => expect(releaseNavigation).toBeTypeOf('function'))
+      if (restoreQueued) {
+        act(() => { releaseNavigation?.() })
+        await waitFor(() => expect(frames).not.toHaveLength(0))
+        act(() => { frames.shift()?.(0) })
+      }
+      const inspect = screen.getByRole('button', { name: 'Inspect' })
+      act(() => { inspect.focus() })
+      expect(inspect).toHaveFocus()
+      if (!restoreQueued) act(() => { releaseNavigation?.() })
+      await act(async () => { await Promise.resolve() })
+      act(() => { while (frames.length) frames.shift()?.(0) })
+      expect(inspect).toHaveFocus()
+      await user.keyboard('{Enter}')
+      expect(inspect).toHaveAttribute('aria-expanded', 'true')
+      expect(screen.getByText('Durable evidence')).toBeVisible()
+    } finally {
+      requestFrame.mockRestore()
+      cancelFrame.mockRestore()
+      restoreNavigation?.()
+    }
   })
 
   it('preserves Activity drafts and control focus across interleaved route completion', async () => {
