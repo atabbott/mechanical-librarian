@@ -1987,7 +1987,7 @@ class ProviderAdapterTests(unittest.TestCase):
                 return httpx.Response(
                     503,
                     headers={"content-encoding": "gzip"},
-                    stream=_HostileEncodedProviderStream(raw_body),
+                    stream=_HostileEncodedProviderStream(raw_body),  # noqa: B023 - closure is created and consumed within this iteration
                 )
 
             encoded = HardcoverMetadataProvider(
@@ -2019,7 +2019,7 @@ class ProviderAdapterTests(unittest.TestCase):
             encoded = HardcoverMetadataProvider(
                 "catalogue",
                 httpx.Client(
-                    transport=httpx.MockTransport(lambda _: response)
+                    transport=httpx.MockTransport(lambda _: response)  # noqa: B023 - closure is created and consumed within this iteration
                 ),
                 1_024,
                 sleep=lambda _: self.fail(
@@ -2071,8 +2071,8 @@ class ProviderAdapterTests(unittest.TestCase):
                 calls += 1
                 headers = (
                     {}
-                    if retry_after is None
-                    else {"retry-after": retry_after}
+                    if retry_after is None  # noqa: B023 - closure is created and consumed within this iteration
+                    else {"retry-after": retry_after}  # noqa: B023 - closure is created and consumed within this iteration
                 )
                 return httpx.Response(429, headers=headers)
 
@@ -4720,11 +4720,11 @@ class ProviderAdapterTests(unittest.TestCase):
             requests: list[httpx.Request] = []
 
             def handler(request: httpx.Request) -> httpx.Response:
-                requests.append(request)
+                requests.append(request)  # noqa: B023 - closure is created and consumed within this iteration
                 return httpx.Response(
                     200,
                     headers={"content-type": "application/json"},
-                    content=payload + (b" " if oversized else b""),
+                    content=payload + (b" " if oversized else b""),  # noqa: B023 - closure is created and consumed within this iteration
                 )
 
             observation = HardcoverMetadataProvider(
@@ -5021,7 +5021,7 @@ class ProviderAdapterTests(unittest.TestCase):
             calls: list[int] = []
 
             def handler(request: httpx.Request, code: int = status_code) -> httpx.Response:
-                calls.append(1)
+                calls.append(1)  # noqa: B023 - closure is created and consumed within this iteration
                 return httpx.Response(code)
 
             provider = HardcoverMetadataProvider(
@@ -5306,8 +5306,8 @@ class AudiobookshelfItemTests(unittest.TestCase):
                     transport=httpx.MockTransport(
                         lambda _request: httpx.Response(
                             200,
-                            headers={"content-type": content_type},
-                            content=body,
+                            headers={"content-type": content_type},  # noqa: B023 - closure is created and consumed within this iteration
+                            content=body,  # noqa: B023 - closure is created and consumed within this iteration
                         )
                     )
                 )
@@ -6159,7 +6159,7 @@ class AudiobookshelfItemTests(unittest.TestCase):
                         lambda request: httpx.Response(
                             200,
                             headers={"content-type": "application/json"},
-                            json=payload,
+                            json=payload,  # noqa: B023 - closure is created and consumed within this iteration
                         )
                     )
                 ),

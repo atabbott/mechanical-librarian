@@ -302,7 +302,7 @@ class OpenLibraryMetadataProvider:
                         if lookup.kind is ProviderQueryKind.ISBN
                         else _WORK_SEARCH_PROJECTION
                     ),
-                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),
+                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),  # noqa: B023 - `ledger.resolve` calls `execute` before it returns, so the lambda only ever sees this lane's lookup
                 )
                 observation = qualify_provider_observation(physical, lookup)
                 results.append(

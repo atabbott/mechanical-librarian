@@ -114,7 +114,7 @@ class ScopedProviderRecoveryRunner:
                 ) -> None:
                     self._store.renew_job(
                         job=member, token=claim_token,
-                        now=self._current(current),
+                        now=self._current(current),  # noqa: B023 - `current` is deliberately read late: the renewal must use the newest clock reading, and `self._retry` invokes the renewal before `current` is next reassigned
                     )
 
                 try:
@@ -171,7 +171,7 @@ class ScopedProviderRecoveryRunner:
                 ) -> None:
                     self._store.renew_job(
                         job=active, token=claim_token,
-                        now=self._current(current),
+                        now=self._current(current),  # noqa: B023 - `current` is deliberately read late: the renewal must use the newest clock reading, and `self._retry` invokes the renewal before `current` is next reassigned
                     )
 
                 self._retry(fanout_state, member, renew_member)

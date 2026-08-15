@@ -677,7 +677,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                             lambda request: httpx.Response(
                                 200,
                                 headers={"content-type": "application/json"},
-                                json=values[request.url.path],
+                                json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
                             )
                         )
                     ),
@@ -787,7 +787,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                             lambda request: httpx.Response(
                                 200,
                                 headers={"content-type": "application/json"},
-                                json=values[request.url.path],
+                                json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
                             )
                         )
                     ),
@@ -952,7 +952,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                             lambda request: httpx.Response(
                                 200,
                                 headers={"content-type": "application/json"},
-                                json=values[request.url.path],
+                                json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
                             )
                         )
                     ),
@@ -1389,13 +1389,13 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             requests: list[str] = []
 
             def handler(request: httpx.Request) -> httpx.Response:
-                requests.append(request.url.path)
+                requests.append(request.url.path)  # noqa: B023 - closure is created and consumed within this iteration
                 if request.url.path == "/search.json":
                     value = {
                         "docs": [
                             {
                                 "key": "/works/OL5W",
-                                "author_name": authors,
+                                "author_name": authors,  # noqa: B023 - closure is created and consumed within this iteration
                                 "editions": {
                                     "docs": [{"key": "/books/OL1M"}]
                                 },
@@ -1706,7 +1706,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 "open_library",
                 httpx.Client(
                     transport=httpx.MockTransport(
-                        lambda request: requests.append(request)
+                        lambda request: requests.append(request)  # noqa: B023 - closure is created and consumed within this iteration
                         or httpx.Response(500)
                     )
                 ),
@@ -1794,11 +1794,11 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             requests: list[httpx.Request] = []
 
             def handler(request: httpx.Request) -> httpx.Response:
-                requests.append(request)
+                requests.append(request)  # noqa: B023 - closure is created and consumed within this iteration
                 return httpx.Response(
                     200,
                     headers={"content-type": "application/json"},
-                    content=payload + (b" " if oversized else b""),
+                    content=payload + (b" " if oversized else b""),  # noqa: B023 - closure is created and consumed within this iteration
                 )
 
             observation = OpenLibraryMetadataProvider(
@@ -2459,14 +2459,14 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             requests: list[httpx.Request] = []
 
             def handler(request: httpx.Request) -> httpx.Response:
-                requests.append(request)
+                requests.append(request)  # noqa: B023 - closure is created and consumed within this iteration
                 if request.url.path == "/search.json":
                     return httpx.Response(
                         200,
                         headers={"content-type": "application/json"},
                         json=_search("/books/OL1M"),
                     )
-                return failure()
+                return failure()  # noqa: B023 - closure is created and consumed within this iteration
 
             provider = OpenLibraryMetadataProvider(
                 "open_library",
@@ -2508,22 +2508,22 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             starts: list[float] = []
 
             def sleep(delay: float) -> None:
-                sleeps.append(delay)
-                now[0] += delay
+                sleeps.append(delay)  # noqa: B023 - closure is created and consumed within this iteration
+                now[0] += delay  # noqa: B023 - closure is created and consumed within this iteration
 
             def handler(_: httpx.Request) -> httpx.Response:
-                starts.append(now[0])
-                return responses.pop(0)
+                starts.append(now[0])  # noqa: B023 - closure is created and consumed within this iteration
+                return responses.pop(0)  # noqa: B023 - closure is created and consumed within this iteration
 
             provider = OpenLibraryMetadataProvider(
                 "open_library",
                 httpx.Client(transport=httpx.MockTransport(handler)),
                 65_536,
                 pacer=OpenLibraryPacer(
-                    clock=lambda: now[0],
+                    clock=lambda: now[0],  # noqa: B023 - closure is created and consumed within this iteration
                     sleep=sleep,
                 ),
-                clock=lambda: now[0],
+                clock=lambda: now[0],  # noqa: B023 - closure is created and consumed within this iteration
                 sleep=sleep,
                 jitter=lambda: 0.0,
             )
@@ -2717,7 +2717,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 return httpx.Response(
                     503,
                     headers={"content-encoding": "gzip"},
-                    stream=_HostileEncodedStream(raw_body),
+                    stream=_HostileEncodedStream(raw_body),  # noqa: B023 - closure is created and consumed within this iteration
                 )
 
             encoded = OpenLibraryMetadataProvider(
@@ -2748,7 +2748,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
             encoded = OpenLibraryMetadataProvider(
                 "open_library",
                 httpx.Client(
-                    transport=httpx.MockTransport(lambda _: response)
+                    transport=httpx.MockTransport(lambda _: response)  # noqa: B023 - closure is created and consumed within this iteration
                 ),
                 1_024,
                 pacer=OpenLibraryPacer(sleep=lambda _: None),
@@ -2983,7 +2983,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 "open_library",
                 httpx.Client(
                     transport=httpx.MockTransport(
-                        lambda _: responses.pop(0)
+                        lambda _: responses.pop(0)  # noqa: B023 - closure is created and consumed within this iteration
                     )
                 ),
                 65_536,
@@ -3097,7 +3097,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                             lambda request: httpx.Response(
                                 200,
                                 headers={"content-type": "application/json"},
-                                json=values[request.url.path],
+                                json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
                             )
                         )
                     ),
@@ -3135,7 +3135,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                             lambda request: httpx.Response(
                                 200,
                                 headers={"content-type": "application/json"},
-                                json=values[request.url.path],
+                                json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
                             )
                         )
                     ),
@@ -3282,7 +3282,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                             lambda request: httpx.Response(
                                 200,
                                 headers={"content-type": "application/json"},
-                                json=values[request.url.path],
+                                json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
                             )
                         )
                     ),
@@ -3373,7 +3373,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                             lambda request: httpx.Response(
                                 200,
                                 headers={"content-type": "application/json"},
-                                json=values[request.url.path],
+                                json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
                             )
                         )
                     ),
@@ -3463,7 +3463,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 return httpx.Response(
                     200,
                     headers={"content-type": "application/json"},
-                    json=values[request.url.path],
+                    json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
                 )
 
             observation = OpenLibraryMetadataProvider(

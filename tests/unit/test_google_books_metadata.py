@@ -538,7 +538,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
                 return httpx.Response(
                     503,
                     headers={"content-encoding": "gzip"},
-                    stream=_HostileEncodedStream(raw_body),
+                    stream=_HostileEncodedStream(raw_body),  # noqa: B023 - closure is created and consumed within this iteration
                 )
 
             provider = GoogleBooksMetadataProvider(
@@ -566,7 +566,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             provider = GoogleBooksMetadataProvider(
                 "google_books",
                 httpx.Client(
-                    transport=httpx.MockTransport(lambda _: response)
+                    transport=httpx.MockTransport(lambda _: response)  # noqa: B023 - closure is created and consumed within this iteration
                 ),
                 1_024,
                 sleep=lambda _: self.fail(
@@ -703,7 +703,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             requests: list[httpx.Request] = []
 
             def handler(request: httpx.Request) -> httpx.Response:
-                requests.append(request)
+                requests.append(request)  # noqa: B023 - closure is created and consumed within this iteration
                 return httpx.Response(
                     200,
                     headers={"content-type": "application/json"},
@@ -912,7 +912,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
                             lambda _: httpx.Response(
                                 200,
                                 headers={"content-type": "application/json"},
-                                json=payload,
+                                json=payload,  # noqa: B023 - closure is created and consumed within this iteration
                             )
                         )
                     ),
@@ -964,9 +964,9 @@ class GoogleBooksMetadataTests(unittest.TestCase):
                     httpx.Client(
                         transport=httpx.MockTransport(
                             lambda _: httpx.Response(
-                                status_code,
+                                status_code,  # noqa: B023 - closure is created and consumed within this iteration
                                 headers={"content-type": "application/json"},
-                                json=payload,
+                                json=payload,  # noqa: B023 - closure is created and consumed within this iteration
                             )
                         )
                     ),
@@ -1058,7 +1058,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
                             lambda _: httpx.Response(
                                 200,
                                 headers={"content-type": "application/json"},
-                                json={"totalItems": 1, "items": [volume]},
+                                json={"totalItems": 1, "items": [volume]},  # noqa: B023 - closure is created and consumed within this iteration
                             )
                         )
                     ),
@@ -1146,7 +1146,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
                         lambda _: httpx.Response(
                             200,
                             headers={"content-type": "application/json"},
-                            content=payload,
+                            content=payload,  # noqa: B023 - closure is created and consumed within this iteration
                         )
                     )
                 ),

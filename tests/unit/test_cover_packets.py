@@ -600,7 +600,7 @@ class CoverPacketTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(
                 ValueError, "normalization failed"
             ):
-                prepare_cover_packet(_report((source,)).to_json(), lambda *_: payload)
+                prepare_cover_packet(_report((source,)).to_json(), lambda *_: payload)  # noqa: B023 - closure is created and consumed within this iteration
 
     def test_five_candidate_scenario_binds_packet_attempt_and_image_order(self) -> None:
         payloads = [_preview(index) for index in range(5)]
@@ -736,12 +736,12 @@ class CoverPacketTests(unittest.TestCase):
 
                 class FailingReviewer:
                     def __init__(self, _profile: object) -> None:
-                        instances.append(self)
+                        instances.append(self)  # noqa: B023 - closure is created and consumed within this iteration
 
                     def run_cover(self, _request, dispatched):
-                        dispatched(100 + len(instances), 100 + len(instances), "synthetic")
+                        dispatched(100 + len(instances), 100 + len(instances), "synthetic")  # noqa: B023 - closure is created and consumed within this iteration
                         raise reviewer_adapter.ContainedReviewerProcessError(
-                            code, count=19, digest="b" * 64
+                            code, count=19, digest="b" * 64  # noqa: B023 - closure is created and consumed within this iteration
                         )
 
                 with (
@@ -1987,7 +1987,7 @@ class CoverIdentityTests(unittest.TestCase):
                 )
                 result = json.loads(
                     _classify_identity(
-                        report, packet, images, lambda *_: payload
+                        report, packet, images, lambda *_: payload  # noqa: B023 - closure is created and consumed within this iteration
                     ).document
                 )
                 self.assertEqual(result["candidates"][0]["outcome"], expected)
@@ -2012,7 +2012,7 @@ class CoverIdentityTests(unittest.TestCase):
                 )
                 value = json.loads(
                     _classify_identity(
-                        report, packet, images, lambda *_: payload
+                        report, packet, images, lambda *_: payload  # noqa: B023 - closure is created and consumed within this iteration
                     ).document
                 )
                 self.assertEqual(value["candidates"][0]["outcome"], expected)

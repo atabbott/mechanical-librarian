@@ -374,25 +374,25 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                     private_tail: int = 0,
                     first_payload: bytes | None = None,
                 ) -> tuple[bytes, ...]:
-                    bound = original_require_network(
+                    bound = original_require_network(  # noqa: B023 - closure is created and consumed within this iteration
                         *paths,
                         private_first=private_first,
                         private_tail=private_tail,
                         first_payload=first_payload,
                     )
-                    config.write_bytes(b'{"connections":[{"endpoint":"https://live.invalid"}]}')
-                    secret.write_bytes(b"replacement credential")
+                    config.write_bytes(b'{"connections":[{"endpoint":"https://live.invalid"}]}')  # noqa: B023 - closure is created and consumed within this iteration
+                    secret.write_bytes(b"replacement credential")  # noqa: B023 - closure is created and consumed within this iteration
                     return bound
 
                 def operation(config_path: Path, *_args: object) -> str:
-                    self.assertNotEqual(config_path, config)
+                    self.assertNotEqual(config_path, config)  # noqa: B023 - closure is created and consumed within this iteration
                     execution = json.loads(config_path.read_text(encoding="utf-8"))
                     connection = execution["connections"][0]
                     self.assertEqual(
                         connection["endpoint"], "http://127.0.0.1:8765"
                     )
                     execution_secret = Path(connection["secret_file"])
-                    self.assertNotEqual(execution_secret, secret)
+                    self.assertNotEqual(execution_secret, secret)  # noqa: B023 - closure is created and consumed within this iteration
                     self.assertEqual(
                         execution_secret.read_bytes(), b"admitted credential"
                     )

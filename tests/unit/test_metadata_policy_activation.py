@@ -702,11 +702,11 @@ class MetadataPolicyActivationTests(unittest.TestCase):
                     lambda: True,
                     None,
                     lambda value, exact: value.complete_review_extraction_publication(
-                        extraction,
+                        extraction,  # noqa: B023 - closure is created and consumed within this iteration
                         exact.report_id,
                         27,
                         provider_failure_code=(
-                            "provider" if outcome == "provider" else None
+                            "provider" if outcome == "provider" else None  # noqa: B023 - closure is created and consumed within this iteration
                         ),
                     ),
                 )

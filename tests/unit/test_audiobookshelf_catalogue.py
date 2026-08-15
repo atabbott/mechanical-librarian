@@ -78,7 +78,7 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
 
     def test_strict_stream_json_rejects_duplicates_nonfinite_and_depth(self) -> None:
         for body in (b'{"a":1,"a":2}', b'{"a":NaN}', b"[" * 101 + b"]" * 101):
-            client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, headers={"content-type": "application/json"}, content=body)), base_url="https://abs.invalid")
+            client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, headers={"content-type": "application/json"}, content=body)), base_url="https://abs.invalid")  # noqa: B023 - closure is created and consumed within this iteration
             with client, self.assertRaises(CatalogueError):
                 _get(client, "/api/libraries", 65_536, 1)
 

@@ -900,30 +900,30 @@ class ReviewWebTests(unittest.TestCase):
 
                 class _FieldApplication(_ActivityApplication):
                     def start(self):
-                        calls.append("field-start")
+                        calls.append("field-start")  # noqa: B023 - closure is created and consumed within this iteration
                         return (0, 0, 0)
 
                     def close_admission(self) -> None:
-                        calls.append("field-close")
+                        calls.append("field-close")  # noqa: B023 - closure is created and consumed within this iteration
 
                     def wait_for_drain(self, deadline=None) -> None:
-                        calls.append(("field-wait", deadline))
-                        if failing_worker == "field":
+                        calls.append(("field-wait", deadline))  # noqa: B023 - closure is created and consumed within this iteration
+                        if failing_worker == "field":  # noqa: B023 - closure is created and consumed within this iteration
                             raise GuardedApplicationError("shutdown_timeout")
 
                 class _Preparation:
                     def start(self) -> None:
-                        calls.append("preparation-start")
+                        calls.append("preparation-start")  # noqa: B023 - closure is created and consumed within this iteration
 
                     def begin_drain(self) -> None:
-                        calls.append("preparation-close")
+                        calls.append("preparation-close")  # noqa: B023 - closure is created and consumed within this iteration
 
                     def stop(self, deadline=None) -> None:
-                        calls.append(("preparation-wait", deadline))
-                        if failing_worker == "preparation":
+                        calls.append(("preparation-wait", deadline))  # noqa: B023 - closure is created and consumed within this iteration
+                        if failing_worker == "preparation":  # noqa: B023 - closure is created and consumed within this iteration
                             raise ReviewPipelineError("shutdown_timeout")
 
-                self.repository.close = lambda: closed.append(True)
+                self.repository.close = lambda: closed.append(True)  # noqa: B023 - closure is created and consumed within this iteration
                 app = create_transport_test_app(
                     self.repository, configuration, close_repository=True,
                     field_application=_FieldApplication(),
@@ -3155,24 +3155,24 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                     writer = None
                     try:
                         connection = sqlite3.connect(
-                            writer_path,
+                            writer_path,  # noqa: B023 - closure is created and consumed within this iteration
                             isolation_level=None,
                         )
                         connection.execute("PRAGMA foreign_keys=ON")
                         connection.execute("PRAGMA busy_timeout=5000")
                         writer = SQLiteMetadataReportRepository(connection)
                         writer._connection.set_trace_callback(
-                            lambda statement: inserted.set()
+                            lambda statement: inserted.set()  # noqa: B023 - closure is created and consumed within this iteration
                             if statement.startswith("INSERT INTO human_decisions")
                             else None
                         )
-                        writer.record_human_decision(decision)
+                        writer.record_human_decision(decision)  # noqa: B023 - closure is created and consumed within this iteration
                     except BaseException as error:
-                        writer_errors.append(error)
+                        writer_errors.append(error)  # noqa: B023 - closure is created and consumed within this iteration
                     finally:
                         if writer is not None:
                             writer.close()
-                        finished.set()
+                        finished.set()  # noqa: B023 - closure is created and consumed within this iteration
 
                 started = False
 
@@ -3184,7 +3184,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                         threading.Thread(
                             target=write_decision, daemon=True
                         ).start()
-                        self.assertTrue(inserted.wait(5))
+                        self.assertTrue(inserted.wait(5))  # noqa: B023 - closure is created and consumed within this iteration
                     return result
 
                 if surface == "case":
@@ -3192,21 +3192,21 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                     patched = patch.object(
                         reader,
                         "get_review_case",
-                        side_effect=lambda *args: interleave(original, *args),
+                        side_effect=lambda *args: interleave(original, *args),  # noqa: B023 - closure is created and consumed within this iteration
                     )
                 elif surface == "library":
                     original = reader.list_current_review_case_documents
                     patched = patch.object(
                         reader,
                         "list_current_review_case_documents",
-                        side_effect=lambda *args: interleave(original, *args),
+                        side_effect=lambda *args: interleave(original, *args),  # noqa: B023 - closure is created and consumed within this iteration
                     )
                 else:
                     original = reader.list_current_attention_documents
                     patched = patch.object(
                         reader,
                         "list_current_attention_documents",
-                        side_effect=lambda *args: interleave(original, *args),
+                        side_effect=lambda *args: interleave(original, *args),  # noqa: B023 - closure is created and consumed within this iteration
                     )
 
                 with patched:

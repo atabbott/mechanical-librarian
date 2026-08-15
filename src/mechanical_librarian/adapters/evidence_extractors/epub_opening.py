@@ -2848,7 +2848,7 @@ def _recognize(projection: _Projection, source, resource_identity: str, resource
             date_precision: DatePrecision | None = None,
             role: str | None = None,
         ) -> None:
-            candidates.append(
+            candidates.append(  # noqa: B023 - `add` is defined, called, and discarded inside one element iteration, and `candidates` is rebound at the top of every iteration
                 (
                     field,
                     value,

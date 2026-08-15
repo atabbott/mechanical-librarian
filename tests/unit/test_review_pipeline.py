@@ -196,7 +196,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                             "target_client",
                             side_effect=lambda *_args: httpx.Client(
                                 transport=httpx.MockTransport(
-                                    lambda _request: httpx.Response(status)
+                                    lambda _request: httpx.Response(status)  # noqa: B023 - closure is created and consumed within this iteration
                                 )
                             ),
                         )
@@ -308,7 +308,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                     source_fingerprint="c" * 64, **identifiers,
                 )
                 pipeline = ReviewPreparationPipeline(
-                    repository_factory=lambda: repository,
+                    repository_factory=lambda: repository,  # noqa: B023 - closure is created and consumed within this iteration
                     libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
                     discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
                     extract=lambda *_: (_ for _ in ()).throw(AssertionError()),

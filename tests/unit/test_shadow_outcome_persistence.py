@@ -1406,8 +1406,8 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 calls: list[object] = []
 
                 def dispatch(*args):
-                    calls.append(args)
-                    return reviewer(*args)
+                    calls.append(args)  # noqa: B023 - closure is created and consumed within this iteration
+                    return reviewer(*args)  # noqa: B023 - closure is created and consumed within this iteration
 
                 with patch.object(composition, "read_contained_reviewer_profile", return_value=b"profile"), patch.object(composition, "run_cover_packet_reviewer", side_effect=dispatch):
                     supervisor = composition.create_review_pipeline(

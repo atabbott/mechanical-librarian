@@ -961,7 +961,7 @@ class ContainedReviewerTests(unittest.TestCase):
                      patch.object(adapter, "_process_start_token", return_value="9876"), \
                      patch.object(adapter, "_safe_start_token", return_value="9876"), \
                      patch.object(adapter, "_wait_for_exit", side_effect=failure), \
-                     patch.object(adapter, "_kill_and_prove_dead", side_effect=lambda pid, pgid, token: killed.append((pid, pgid, token))):
+                     patch.object(adapter, "_kill_and_prove_dead", side_effect=lambda pid, pgid, token: killed.append((pid, pgid, token))):  # noqa: B023 - closure is created and consumed within this iteration
                     with self.assertRaisesRegex(Exception, code):
                         reviewer._run_gated([], artifact, artifact, 1, 2, 3, lambda *_: None, credential_descriptor=4)
                 self.assertEqual(killed, [(4321, 4321, "9876")])

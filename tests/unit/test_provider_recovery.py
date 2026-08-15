@@ -575,7 +575,7 @@ class ProviderRecoveryTests(unittest.TestCase):
                 calls: list[str] = []
                 runner = ScopedProviderRecoveryRunner(
                     store=store, generation=2,
-                    retry=lambda _, member, __: calls.append(member.member_id),
+                    retry=lambda _, member, __: calls.append(member.member_id),  # noqa: B023 - closure is created and consumed within this iteration
                     classify_failure=lambda _: ("transient", None),
                 )
                 self.assertEqual("recovered", runner.run_one(now=20).state)

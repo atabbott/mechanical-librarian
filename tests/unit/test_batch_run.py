@@ -51,7 +51,7 @@ class ForegroundBatchRunTests(unittest.TestCase):
             selections = (BatchSelection("primary", "books", "library", "item", "a" * 64, "singular-supported", True), BatchSelection("primary", "books", "library", "item-2", "a" * 64, "singular-supported", True))
             lines = []
             calls = []
-            result=ForegroundBatchRun(snapshot=CatalogueSnapshot(1,"b"*64,(first,second)),selections=selections,projection=lambda:"p",expected_projection="p",current_entry=lambda *_: second if _[-1][-1]=="item-2" else first,report=lambda value:(calls.append(value.item_id) or ("report",(status,))),emit=lines.append).run()
+            result=ForegroundBatchRun(snapshot=CatalogueSnapshot(1,"b"*64,(first,second)),selections=selections,projection=lambda:"p",expected_projection="p",current_entry=lambda *_: second if _[-1][-1]=="item-2" else first,report=lambda value:(calls.append(value.item_id) or ("report",(status,))),emit=lines.append).run()  # noqa: B023 - closure is created and consumed within this iteration
             self.assertEqual((calls,[line.get("outcome") for line in lines[:-1]],lines[-1]["summary"]["stopped"],result),(["item"],["completed","stopped"],True,False))
 
     def test_inspection_continues_and_generic_metadata_stops(self) -> None:

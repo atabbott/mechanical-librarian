@@ -329,7 +329,7 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
                     authority="open_library",
                 ))
                 service = self.service(ConfiguredProviderRetry(
-                    ProviderBinding("catalogue", True, lambda: provider, "open_library"),
+                    ProviderBinding("catalogue", True, lambda: provider, "open_library"),  # noqa: B023 - closure is created and consumed within this iteration
                     "open_library", 2,
                 ))
                 with self.assertRaises(ProviderRetrySharedFailure) as raised:

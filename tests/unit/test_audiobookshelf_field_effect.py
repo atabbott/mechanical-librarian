@@ -447,7 +447,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                         wrote = True
                         return httpx.Response(200)
                     if request.url.path.endswith("/cover"):
-                        if phase == "preclaim" or wrote:
+                        if phase == "preclaim" or wrote:  # noqa: B023 - closure is created and consumed within this iteration
                             return httpx.Response(
                                 200, headers={"content-type": "image/jpeg"},
                                 content=oversized,
@@ -481,7 +481,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                     FakeCapabilityObserver("e" * 64), current,
                     FakeDependencyCurrentness(), current,
                     PrivateCoverRecoveryStore(root / "recovery", lambda _: b""),
-                    FakeForwardReevaluation(), lambda: next(ticks),
+                    FakeForwardReevaluation(), lambda: next(ticks),  # noqa: B023 - closure is created and consumed within this iteration
                 )
                 result = service.apply(plan.plan_id)
                 self.assertEqual(
@@ -505,14 +505,14 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                 requests: list[str] = []
 
                 def handle(request: httpx.Request) -> httpx.Response:
-                    requests.append(request.method)
+                    requests.append(request.method)  # noqa: B023 - closure is created and consumed within this iteration
                     if request.method == "GET":
-                        return httpx.Response(200, headers={"content-type": "application/json"}, json=detail)
-                    detail["media"]["metadata"]["title"] = "After"
-                    detail["updatedAt"] = 8
-                    if outcome == "transport_loss":
+                        return httpx.Response(200, headers={"content-type": "application/json"}, json=detail)  # noqa: B023 - closure is created and consumed within this iteration
+                    detail["media"]["metadata"]["title"] = "After"  # noqa: B023 - closure is created and consumed within this iteration
+                    detail["updatedAt"] = 8  # noqa: B023 - closure is created and consumed within this iteration
+                    if outcome == "transport_loss":  # noqa: B023 - closure is created and consumed within this iteration
                         raise httpx.ReadError("response lost", request=request)
-                    return httpx.Response(outcome)
+                    return httpx.Response(outcome)  # noqa: B023 - closure is created and consumed within this iteration
 
                 target = AudiobookshelfFieldEffectTarget(
                     client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handle)),
@@ -533,7 +533,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                     repository, target, FakeBackupReadiness(), FakeCapabilityObserver("e" * 64),
                     current, FakeDependencyCurrentness(), current,
                     PrivateCoverRecoveryStore(root / "recovery", lambda _: b""),
-                    FakeForwardReevaluation(), lambda: next(ticks),
+                    FakeForwardReevaluation(), lambda: next(ticks),  # noqa: B023 - closure is created and consumed within this iteration
                 )
                 self.assertEqual(service.apply(plan.plan_id).state, "verified")
                 self.assertEqual(requests.count("PATCH"), 1)
