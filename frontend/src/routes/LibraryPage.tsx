@@ -6,7 +6,7 @@ import type { SyntheticEvent } from 'react'
 import { displayValue } from '../api/http'
 import type { CaseDetailView, DecisionCommand, EvidenceView, LibraryView, LibraryWorkView } from '../api/http'
 import { useRouteReadyFocus } from '../focus'
-import { detailQuery, libraryRoute, PreparationActivity, useReviewContext } from '../router'
+import { detailQuery, libraryRoute, PreparationNotice, useReviewContext } from '../router'
 import { actionable, useReviewDecisionController } from '../reviewDecisionController'
 import { automaticChoiceSelected } from '../reviewAutomaticSelection'
 import { ownerChoiceCount } from '../reviewChoiceCounts'
@@ -297,7 +297,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         return next
       } })}>Attention <strong>{data.counts.attention}</strong></button>
     </header>
-    <PreparationActivity route/>
+    <PreparationNotice/>
     <div className={`library-workspace${search.preview ? ' has-selection' : ''}${search.attention === 'open' ? ' attention-open' : ''}`}>
       <section className="library-works" aria-labelledby="library-works-title">
         <div className="library-works-heading"><h2 id="library-works-title">Works</h2><span>{data.counts.all} total</span></div>

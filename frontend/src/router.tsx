@@ -36,15 +36,52 @@ const policyStateQuery = (http: ReviewHttp) => queryOptions({ queryKey: ['policy
 const shadowQuery = (http: ReviewHttp) => queryOptions({ queryKey: ['policy', 'shadow'] as const, queryFn: ({ signal }) => http.getShadowPosture(signal), staleTime: 15_000, retry: false })
 const safetyQuery = (http: ReviewHttp) => queryOptions({ queryKey: ['policy', 'safety'] as const, queryFn: ({ signal }) => http.getAutomaticSafety(signal), staleTime: 15_000, retry: false })
 const activityQuery = (http: ReviewHttp, search: ActivitySearch) => queryOptions({ queryKey: ['activity', search.q ?? null, search.eventType, search.rangeDays, search.page, search.pageSize] as const, queryFn: ({ signal }) => http.getActivity(search, signal), staleTime: 4_000, retry: false })
+export const preparationQuery = (http: ReviewHttp) => queryOptions({ queryKey: ['review-preparation'] as const, queryFn: ({ signal }) => http.getPreparation(signal), staleTime: 1_000, retry: false, refetchInterval: (result) => { const value = result.state.data; return value?.active || value?.actionable || value?.paused ? 1_500 : 15_000 } })
 
 const routeTitle = (path: string) => path.startsWith('/review/') ? 'Review case' : path === '/library' ? 'Library' : path === '/attention' ? 'Attention' : path === '/policy' ? 'Policy' : path === '/activity' ? 'Activity' : 'Page unavailable'
 
-export const PreparationActivity = ({ route = false }: { route?: boolean }) => {
+export const usePreparation = () => {
   const { http, queryClient } = rootRoute.useRouteContext()
-  const [open, setOpen] = useState(false)
-  const trigger = useRef<HTMLButtonElement>(null)
   const previousSnapshot = useRef<string | null>(null)
-  const query = useQuery({ queryKey: ['review-preparation'], queryFn: ({ signal }) => http.getPreparation(signal), staleTime: 1_000, retry: false, refetchInterval: (result) => { const value = result.state.data; return value?.active || value?.actionable || value?.paused ? 1_500 : 15_000 } })
+  const query = useQuery(preparationQuery(http))
+  const data = query.data
+  const snapshot = data ? JSON.stringify(data) : null
+  useEffect(() => {
+    if (snapshot === null) return
+    if (previousSnapshot.current === null) { previousSnapshot.current = snapshot; return }
+    if (previousSnapshot.current === snapshot) return
+    previousSnapshot.current = snapshot
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['library'] }),
+      queryClient.invalidateQueries({ queryKey: ['attention'] }),
+    ])
+  }, [queryClient, snapshot])
+  return { data, queryClient, http }
+}
+
+const connectionCopy = (code: 'tls' | 'authentication' | 'authorization' | 'unavailable') => ({
+  tls: 'The library connection needs its secure connection settings checked by its owner.',
+  authentication: 'The library connection needs its sign-in settings checked by its owner.',
+  authorization: 'The library connection needs its access permission checked by its owner.',
+  unavailable: 'The library connection is unavailable and needs an owner check.',
+}[code])
+
+export const ConnectionNotice = ({ data, checking, onCheck, error }: { data: PreparationView | undefined; checking: boolean; onCheck: (connection: string) => void; error: boolean }) => {
+  const condition = data?.connections?.find((item) => item.state !== 'recovered') ?? data?.connections?.[0]
+  if (!condition) return null
+  const ready = data?.libraries.reduce((total, item) => total + item.ready, 0) ?? 0
+  const paused = condition.state === 'recovered' ? 0 : condition.affected
+  const title = condition.state === 'checking' ? 'Checking library connection' : condition.state === 'recovered' ? 'Library connection recovered' : 'Library connection needs attention'
+  const copy = condition.state === 'checking'
+    ? 'Preparation remains safely paused while the configured connection is checked.'
+    : condition.state === 'recovered'
+      ? 'Preparation resumed from its retained checkpoint. Completed reviews remain available.'
+      : `${connectionCopy(condition.code)} ${String(paused)} preparation ${paused === 1 ? 'work is' : 'works are'} safely paused. Completed reviews remain available.`
+  return <section className={`connection-notice is-${condition.state}`} aria-live="polite" aria-label="Shared library connection status"><div><strong>{title}</strong><span>{copy}</span></div><dl><div><dt>Ready</dt><dd>{String(ready)}</dd></div><div><dt>Safely paused</dt><dd>{String(paused)}</dd></div></dl>{condition.state === 'paused' ? <button disabled={checking} aria-busy={checking || undefined} onClick={() => onCheck(condition.connection)}>Check connection again</button> : <button disabled>{condition.state === 'recovered' ? 'Recovered' : 'Checking connection…'}</button>}{error ? <p role="alert">Connection checking could not be completed. Preparation remains safely paused.</p> : null}</section>
+}
+
+export const PreparationNotice = () => {
+  const { data, queryClient, http } = usePreparation()
   const action = useMutation({
     mutationFn: (path: string) => http.preparationAction(path),
     retry: false,
@@ -74,28 +111,32 @@ export const PreparationActivity = ({ route = false }: { route?: boolean }) => {
       ])
     },
   })
-  const data = query.data
-  const snapshot = data ? JSON.stringify(data) : null
-  useEffect(() => {
-    if (snapshot === null) return
-    if (previousSnapshot.current === null) { previousSnapshot.current = snapshot; return }
-    if (previousSnapshot.current === snapshot) return
-    previousSnapshot.current = snapshot
-    void Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['library'] }),
-      queryClient.invalidateQueries({ queryKey: ['attention'] }),
-    ])
-  }, [queryClient, snapshot])
+  return <ConnectionNotice data={data} checking={action.isPending} error={action.isError} onCheck={(connection) => action.mutate(`${encodeURIComponent(connection)}/check-connection`)}/>
+}
+
+export const PreparationActivity = () => {
+  const { data, queryClient, http } = usePreparation()
+  const [open, setOpen] = useState(false)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const action = useMutation({
+    mutationFn: (path: string) => http.preparationAction(path),
+    retry: false,
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['library'] }),
+        queryClient.invalidateQueries({ queryKey: ['attention'] }),
+      ])
+    },
+  })
   const unavailable = !data || (!data.active && !data.actionable && !data.paused)
   useEffect(() => {
     if (!open || !unavailable) return
     requestAnimationFrame(() => { document.getElementById('main-content')?.focus({ preventScroll: true }); setOpen(false) })
   }, [open, unavailable])
-  if (!route || (unavailable && !open)) return null
+  if (unavailable && !open) return null
   const close = () => { trigger.current?.focus(); setOpen(false) }
-  const condition = data?.connections?.find((item) => item.state !== 'recovered') ?? data?.connections?.[0]
-  const connectionNotice = condition ? <section className={`connection-notice is-${condition.state}`} aria-live="polite" aria-label="Shared library connection status"><div><strong>{condition.state === 'checking' ? 'Checking library connection' : condition.state === 'recovered' ? 'Library connection recovered' : 'Library connection needs attention'}</strong><span>{condition.state === 'checking' ? 'Preparation remains safely paused while the configured connection is checked.' : condition.state === 'recovered' ? 'Preparation resumed from its retained checkpoint. Completed reviews remain available.' : `${String(condition.affected)} preparation ${condition.affected === 1 ? 'work is' : 'works are'} safely paused. Completed reviews remain available.`}</span></div><dl><div><dt>Ready</dt><dd>{String(data?.libraries.reduce((total, item) => total + item.ready, 0) ?? 0)}</dd></div><div><dt>Safely paused</dt><dd>{String(condition.state === 'recovered' ? 0 : condition.affected)}</dd></div></dl>{condition.state === 'paused' ? <button disabled={action.isPending} onClick={() => action.mutate(`${encodeURIComponent(condition.connection)}/check-connection`)}>Check connection again</button> : <button disabled>{condition.state === 'recovered' ? 'Recovered' : 'Checking connection…'}</button>}</section> : null
-  return <div className="preparation">{connectionNotice}<button ref={trigger} type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{data?.paused ? 'Preparation paused' : data?.actionable ? 'Preparation needs attention' : 'Preparing libraries'}</button>{open && data ? <section aria-label="Background activity"><h2>Background activity</h2>{data.libraries.map((item) => <article key={`${item.connection}:${item.library}`}><strong>{item.library}</strong><span>{item.state} · {item.checked}/{item.total}</span><button disabled={action.isPending || data.paused || item.state === 'queued' || item.state === 'discovering'} onClick={() => action.mutate(`${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/scan`)}>Scan now</button>{item.state === 'completed_with_failures' ? <button disabled={action.isPending || data.paused} onClick={() => action.mutate(`${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/retry`)}>Retry</button> : null}</article>)}<button disabled={action.isPending} onClick={() => action.mutate(data.paused ? 'resume' : 'pause')}>{data.paused ? 'Resume' : 'Pause'}</button><button onClick={close}>Close</button>{action.isError ? <p role="alert">Preparation control failed safely. Try again.</p> : null}</section> : null}</div>
+  return <div className="preparation-activity"><button ref={trigger} type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{data?.paused ? 'Preparation paused' : data?.actionable ? 'Preparation needs attention' : 'Preparing libraries'}</button>{open && data ? <section className="preparation-popover" aria-label="Background activity"><h2>Background activity</h2>{data.libraries.map((item) => <article key={`${item.connection}:${item.library}`}><strong>{item.library}</strong><span>{item.state} · {item.checked}/{item.total}</span><button disabled={action.isPending || data.paused || item.state === 'queued' || item.state === 'discovering'} onClick={() => action.mutate(`${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/scan`)}>Scan now</button>{item.state === 'completed_with_failures' ? <button disabled={action.isPending || data.paused} onClick={() => action.mutate(`${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/retry`)}>Retry</button> : null}</article>)}<button disabled={action.isPending} onClick={() => action.mutate(data.paused ? 'resume' : 'pause')}>{data.paused ? 'Resume' : 'Pause'}</button><button onClick={close}>Close</button>{action.isError ? <p role="alert">Preparation control failed safely. Try again.</p> : null}</section> : null}</div>
 }
 
 const ThemeControl = () => {

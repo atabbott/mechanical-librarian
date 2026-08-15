@@ -1710,7 +1710,7 @@ describe('typed review routes', () => {
     ['paused', 'Library connection needs attention', 'Check connection again', false],
     ['checking', 'Checking library connection', 'Checking connection…', true],
     ['recovered', 'Library connection recovered', 'Recovered', true],
-  ] as const)('renders %s connection recovery in Library and Activity without replacing route state', async (state, title, action, disabled) => {
+  ] as const)('renders %s connection recovery through Library, full Detail, and Activity without replacing route state', async (state, title, action, disabled) => {
     const preparation: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [{ blocked: 1, checked: 2, connection: 'primary', library: 'Books', library_id: 'books', ready: 1, rescan_requested: false, scan_id: 'scan-1', state: 'processing', total: 3 }], connections: [{ connection: 'primary', code: 'unavailable', state, affected: state === 'recovered' ? 0 : 2, updated_at: 1 }] }
     const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => preparation) }
     const { router } = renderRoute('/library?lens=needs_attention&q=A%20Book', http)
@@ -1718,8 +1718,35 @@ describe('typed review routes', () => {
     expect(screen.getByText('Ready')).toBeVisible()
     expect(screen.getByRole('button', { name: action }).hasAttribute('disabled')).toBe(disabled)
     expect(screen.getByDisplayValue('A Book')).toBeVisible()
-    await router.navigate({ to: '/activity', search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 } })
+    await router.navigate({ to: '/review/$reviewCaseId', params: { reviewCaseId: 'case-1' }, search: { field: 'title', subview: 'review' } })
     expect((await screen.findAllByText(title)).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
+    expect(screen.getByRole('heading', { name: 'Current review case' })).toBeVisible()
+    await router.navigate({ to: '/activity', search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 } })
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    expect((await screen.findAllByText(title)).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
+    const activityTitle = state === 'paused' ? 'Library connection is paused' : title
+    expect(screen.getByRole('heading', { name: activityTitle })).toBeVisible()
+    expect(screen.getByText('Recovery needed').parentElement).toHaveTextContent(state === 'recovered' ? '0' : '2')
+    if (state !== 'recovered') {
+      expect(screen.queryByRole('heading', { name: 'No intervention needed' })).toBeNull()
+      expect(screen.queryByText('No action required')).toBeNull()
+    }
+  })
+
+  it.each([
+    ['tls', 'secure connection settings'],
+    ['authentication', 'sign-in settings'],
+    ['authorization', 'access permission'],
+    ['unavailable', 'connection is unavailable'],
+  ] as const)('uses safe owner-readable %s connection copy without raw connection values', async (code, expected) => {
+    const preparation: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [], connections: [{ connection: 'https://private.example/token', code, state: 'paused', affected: 1, updated_at: 1 }] }
+    const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => preparation) }
+    renderRoute('/library?lens=all', http)
+
+    const notice = await screen.findByLabelText('Shared library connection status')
+    expect(notice).toHaveTextContent(expected)
+    expect(notice).not.toHaveTextContent('private.example')
+    expect(notice).not.toHaveTextContent('token')
   })
 
   it('announces checking immediately and settles the retained route authoritatively', async () => {
@@ -1735,7 +1762,7 @@ describe('typed review routes', () => {
       getPreparation: vi.fn(async () => current),
       preparationAction: vi.fn(() => pending),
     }
-    renderRoute('/library?lens=needs_attention&q=A%20Book', http)
+    const { router } = renderRoute('/library?lens=needs_attention&q=A%20Book', http)
 
     const check = await screen.findByRole('button', { name: 'Check connection again' })
     await user.click(check)
@@ -1743,10 +1770,12 @@ describe('typed review routes', () => {
     expect(check).toHaveFocus()
     expect(screen.getByDisplayValue('A Book')).toBeVisible()
 
+    await router.navigate({ to: '/review/$reviewCaseId', params: { reviewCaseId: 'case-1' }, search: { field: 'title', subview: 'review' } })
+    expect(screen.getByRole('heading', { name: 'Current review case' })).toBeVisible()
     current = recovered
     settle?.(recovered)
     expect((await screen.findAllByText('Library connection recovered')).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
-    expect(screen.getByDisplayValue('A Book')).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Current review case' })).toBeVisible()
   })
 
   it('moves focus to the persistent main landmark when polling removes preparation activity', async () => {

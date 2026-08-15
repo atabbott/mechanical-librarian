@@ -7,7 +7,7 @@ import type { ActivityEventType, ActivitySearch, ActivityView } from '../api/htt
 import { activityOutcome } from '../activityState'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
-import { activityRoute, PreparationActivity, useReviewContext } from '../router'
+import { activityRoute, PreparationNotice, usePreparation, useReviewContext } from '../router'
 
 const records = (value: unknown): readonly Record<string, unknown>[] => Array.isArray(value) ? value.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null && !Array.isArray(item)) : []
 const text = (value: unknown, fallback = '') => typeof value === 'string' ? value : fallback
@@ -165,6 +165,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     staleTime: 4_000, retry: false, refetchInterval: 5_000,
   })
   const data = query.data
+  const preparation = usePreparation().data
+  const connection = preparation?.connections?.find((item) => item.state !== 'recovered') ?? preparation?.connections?.[0]
   const ledger = data.ledger
   const configured = records(data.configured_libraries)
   const enabled = records(data.enabled_libraries)
@@ -226,7 +228,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const writes = ['claimed', 'applying', 'reconciling'].reduce((total, state) => total + count(data.counts[state]), 0)
   const providerRecovery = data.provider_recovery ?? []
   const dormantRecovery = providerRecovery.filter((item) => item.state === 'dormant').reduce((total, item) => total + item.affected_count, 0)
-  const recoveryCount = suspensions.length + dormantRecovery
+  const connectionRecovery = connection?.state === 'recovered' ? 0 : connection?.affected ?? 0
+  const recoveryCount = suspensions.length + dormantRecovery + connectionRecovery
   const waiting = data.prepared.total + count(data.counts.planned) + count(data.counts.retryable)
   const waitingEvent = data.current_waiting
   const needsConsent = consentCandidates.length > 0 || (!enabled.length && configured.length > 0)
@@ -234,10 +237,10 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const hasAuthority = enabled.length > 0 || suspensions.length > 0 || needsConsent
 
   return <div className="cm-activity-route" onFocusCapture={() => { ++focusVersion.current }}>
-    <header className="cm-page-heading" tabIndex={-1} data-route-focus><div><h1>Activity and recovery</h1><p>See what needs attention now and inspect the durable record of reviews, policy changes, safeguards, and verified updates.</p></div><span className="cm-activity-calm">{recoveryCount ? 'Recovery available' : data.paused ? 'New work paused' : 'No action required'}</span></header>
-    <PreparationActivity route/>
+    <header className="cm-page-heading" tabIndex={-1} data-route-focus><div><h1>Activity and recovery</h1><p>See what needs attention now and inspect the durable record of reviews, policy changes, safeguards, and verified updates.</p></div><span className="cm-activity-calm">{connection?.state === 'checking' ? 'Connection checking' : connection?.state === 'paused' ? 'Connection paused' : connection?.state === 'recovered' ? 'Connection recovered' : recoveryCount ? 'Recovery available' : data.paused ? 'New work paused' : 'No action required'}</span></header>
+    <PreparationNotice/>
     <section className="cm-activity-status" aria-labelledby="activity-status-title">
-      <div className="cm-activity-status-copy"><h2 id="activity-status-title">{recoveryCount ? 'Recovery needs attention' : data.paused ? 'New work is paused' : 'No intervention needed'}</h2><p>{dormantRecovery ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.` : recoveryCount ? 'Affected work remains held until its current state can be reconciled safely.' : data.paused ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.' : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}</p></div>
+      <div className="cm-activity-status-copy"><h2 id="activity-status-title">{connection?.state === 'checking' ? 'Checking library connection' : connection?.state === 'paused' ? 'Library connection is paused' : connection?.state === 'recovered' ? 'Library connection recovered' : recoveryCount ? 'Recovery needs attention' : data.paused ? 'New work is paused' : 'No intervention needed'}</h2><p>{connection?.state === 'checking' ? 'Preparation remains safely paused while the authoritative connection check settles.' : connection?.state === 'paused' ? `${String(connection.affected)} preparation ${connection.affected === 1 ? 'work remains' : 'works remain'} safely paused for an owner connection check.` : connection?.state === 'recovered' ? 'Preparation is resuming from its retained checkpoint. No work needs recovery from this connection.' : dormantRecovery ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.` : recoveryCount ? 'Affected work remains held until its current state can be reconciled safely.' : data.paused ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.' : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}</p></div>
       <dl><div><dt>Writes in progress</dt><dd>{writes}</dd></div><div><dt>Waiting safely</dt><dd>{waiting}</dd></div><div><dt>Recovery needed</dt><dd>{recoveryCount}</dd></div></dl>
       {waitingEvent ? <div className="cm-activity-waiting"><span className="cm-activity-pulse" aria-hidden="true"/><div><strong>{waitingEvent.work_label} · {destinationLabel(waitingEvent.destination)} update</strong><span>{data.paused ? 'Resume new work when you are ready. No automatic check will start while new work is paused.' : 'Next exact-current check runs automatically. No action is required.'}</span></div></div> : null}
       {providerRecovery.length ? <section className="activity-recovery" aria-label="Provider recovery"><h3>Provider recovery</h3>{providerRecovery.map((item, index) => <p key={`${item.state}:${String(index)}`}><strong>{item.state === 'waiting' ? 'Waiting for a safe retry' : item.state === 'checking' ? 'Checking provider health' : item.state === 'dormant' ? 'Needs a configuration change' : item.state === 'fanout' ? 'Retrying affected work' : item.state === 'exhausted' ? 'No further retry scheduled' : 'Recovered'}</strong> · {item.affected_count} affected {item.state === 'fanout' ? (item.affected_count === 1 ? 'work' : 'works') : (item.affected_count === 1 ? 'scope' : 'scopes')}{item.next_eligible_at === null ? '' : ` · next eligible ${dateParts(item.next_eligible_at).time}`}</p>)}</section> : null}

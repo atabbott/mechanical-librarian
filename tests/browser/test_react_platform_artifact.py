@@ -187,13 +187,45 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertIsNotNone(response)
                 self.assertEqual(response.status, 200)
                 page.get_by_role("heading", name=heading).wait_for()
-                if path in {"/library?lens=all", "/activity"}:
+                if path in {
+                    "/library?lens=all",
+                    "/review/case-1?field=title&subview=review",
+                    "/activity",
+                }:
                     page.get_by_text(
                         "Library connection needs attention", exact=True
                     ).first.wait_for()
-                    expect(
-                        page.get_by_role("button", name="Check connection again").first
-                    ).to_be_visible()
+                    notice = page.get_by_label("Shared library connection status")
+                    check = notice.get_by_role("button", name="Check connection again")
+                    expect(check).to_be_visible()
+                    self.assertNotIn("primary", notice.inner_text())
+                    self.assertNotIn("http", notice.inner_text())
+                    for width, expected_columns in (
+                        (1440, 3),
+                        (1044, 2),
+                        (800, 1),
+                        (390, 1),
+                    ):
+                        page.set_viewport_size({"width": width, "height": 844})
+                        self.assertEqual(
+                            expected_columns,
+                            len(
+                                notice.evaluate(
+                                    "node => getComputedStyle(node).gridTemplateColumns.split(' ')"
+                                )
+                            ),
+                        )
+                        self.assertLessEqual(
+                            page.evaluate("() => document.documentElement.scrollWidth"),
+                            width,
+                        )
+                        self.assertTrue(
+                            check.evaluate(
+                                "node => { const box = node.getBoundingClientRect(); "
+                                "const top = document.elementFromPoint(box.x + box.width / 2, "
+                                "box.y + box.height / 2); return top === node || node.contains(top); }"
+                            )
+                        )
                 if path == "/attention":
                     page.get_by_text(
                         "This field needs your review.", exact=True
