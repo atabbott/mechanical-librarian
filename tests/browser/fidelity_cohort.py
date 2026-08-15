@@ -318,6 +318,7 @@ def _case(case_id: str) -> dict[str, object]:
             "schema_version": "review-case-v1",
             "review_case_id": case_id,
             "current": False,
+            "comparison_notices": [],
             "target": {
                 "connection": "primary",
                 "library": "Spoken stories",
