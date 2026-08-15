@@ -1,0 +1,32 @@
+# Time-boxed advisory acceptance register.
+#
+# The `dependency-audit` job in `.github/workflows/public-gate.yml` scans
+# `uv.lock` with OSV-Scanner and fails on every known advisory affecting the
+# locked Python closure. This file is the only mechanism that may hold such a
+# failure open, and it can only do so for one named advisory at a time, for a
+# stated reason, until a stated date. There is no repository-wide severity
+# floor, package exclusion, or audit-level loosening: `[[IgnoredVulns]]` is the
+# only table this register accepts, and
+# `tests/unit/test_security_scanning_contract.py` fails the gate if any other
+# table appears.
+#
+# Add an entry only when the advisory cannot currently be fixed -- no fixed
+# release exists, or the fix is blocked behind a dependency the project cannot
+# yet take. An advisory that can be fixed is fixed, not accepted.
+#
+# Each entry is exactly:
+#
+#   [[IgnoredVulns]]
+#   id = "GHSA-xxxx-xxxx-xxxx"   # advisory identifier as OSV reports it
+#   ignoreUntil = 2026-11-01     # bare TOML date; the acceptance expires here
+#   reason = "why this cannot be fixed now, and what unblocks it"
+#
+# The time box is enforced from both sides. OSV-Scanner stops filtering the
+# advisory once `ignoreUntil` has passed, so an expired acceptance fails the
+# audit again. `tests/unit/test_security_scanning_contract.py` independently
+# fails the required `fast-source` check when an entry is already expired, when
+# its window runs more than 90 days past the current date, or when it carries
+# no substantive reason -- so an acceptance cannot be written open-ended and
+# cannot rot unnoticed if the advisory itself is later withdrawn.
+#
+# There are no accepted advisories today.

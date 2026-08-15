@@ -43,6 +43,10 @@ The current controls are:
 - CI installs without npm lifecycle scripts, verifies lock currency, audits
   npm dependencies and licences, builds deterministically, and exercises the
   exact installed Python and protected browser artifacts;
+- a proposed update carrying a known advisory is visible before merge: the
+  public gate's `dependency-audit` job scans `uv.lock` against OSV on every
+  pull request and every push to `main`, under the scanning boundary recorded
+  in [security architecture](../architecture/security.md);
 - Renovate pull requests have no Actions secrets, production credentials, or
   deployment authority.
 
