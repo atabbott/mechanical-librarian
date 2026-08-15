@@ -12,6 +12,7 @@ from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
+    FieldEffectError,
     FieldEffectOperation,
     FieldEffectPlan,
     project_decision_value,
@@ -241,6 +242,9 @@ class GuardedFieldApplication:
         try:
             snapshot = self._authority.resolve(decision)
         except Exception as error:
+            # The seam declares no error type and any failure leaves the
+            # decision's authority unresolved, so no plan row is recorded and
+            # the cause is chained rather than discarded.
             raise GuardedApplicationError("decision_value") from error
         expected = (connection, library, work_id, destination, projected.review_case_id,
                     target_fingerprint, target_version)
@@ -263,6 +267,8 @@ class GuardedFieldApplication:
                 connection=connection, library=library, destination=destination
             )
         except Exception as error:
+            # Same undeclared seam: an unresolvable consent and a withdrawn one
+            # are both refusals to plan, and neither records a plan row.
             raise GuardedApplicationError("consent") from error
         if not self._consent.current(consent):
             raise GuardedApplicationError("consent")
@@ -306,6 +312,9 @@ class GuardedFieldApplication:
             try:
                 self._cover_recovery.capture(plan)
             except Exception:
+                # No restorable pre-image means no cover write may proceed, and
+                # the refusal is durable: the plan is staled with this failure
+                # before returning, so nothing reaches the target unrecorded.
                 return self._stale(operation, "cover_recovery")
         # Refresh every guard at the last feasible point before the repository's
         # atomic pause/state claim. Target behavior is adapter-specific.
@@ -325,15 +334,39 @@ class GuardedFieldApplication:
         except GuardedApplicationError:
             raise
         except Exception as error:
-            if plan.destination == "cover":
-                try:
-                    current = self._repository.get_field_effect(plan.plan_id)
-                    if current.state in {"stale", "superseded", "abandoned"}:
-                        self._cover_recovery.remove(plan.plan_id)
-                except Exception:
-                    pass
-            raise GuardedApplicationError("claim_conflict") from error
+            # The repository names exactly why the claim failed and only its own
+            # ``claim_conflict`` is contention. Carry every other code through
+            # unchanged so a pause, revocation, suspension, or storage fault is
+            # never reported to callers or history as a lost race.
+            self._discard_cover_capture(plan)
+            raise GuardedApplicationError(
+                error.code if isinstance(error, FieldEffectError) else "claim_failed"
+            ) from error
         return self._execute_claimed(operation)
+
+    def _discard_cover_capture(self, plan: FieldEffectPlan) -> None:
+        """Drop a captured cover whose plan already reached a terminal state.
+
+        Runs while a claim failure is being handled, so a fault raised here
+        chains onto that failure instead of replacing or hiding it.
+        """
+        if plan.destination != "cover":
+            return
+        try:
+            current = self._repository.get_field_effect(plan.plan_id)
+            if current.state in {"stale", "superseded", "abandoned"}:
+                self._cover_recovery.remove(plan.plan_id)
+        except FieldEffectError as error:
+            # A vanished row is the one benign outcome: there is no terminal
+            # state left to observe and no obligation this path can discharge.
+            if error.code == "not_found":
+                return
+            raise GuardedApplicationError("cover_recovery") from error
+        except Exception as error:
+            # Neither seam declares an error type and ``apply`` owes its callers
+            # a guarded error, so convert instead of letting a raw filesystem or
+            # adapter fault escape; the cleanup fault still wins the code.
+            raise GuardedApplicationError("cover_recovery") from error
 
     def _execute_claimed(self, operation: FieldEffectOperation) -> FieldEffectOperation:
         plan = operation.plan
@@ -344,6 +377,10 @@ class GuardedFieldApplication:
             with self._timing.measure("apply", "target"):
                 result = self._target.apply(plan)
         except Exception as error:
+            # Target errors are adapter-shaped and the seam declares none, so
+            # breadth is the contract. Every one persists a typed suspension
+            # when it carries one and lands the operation on ``retryable`` with
+            # a recorded failure; none is discarded.
             self._persist_target_suspension(plan, error)
             return self._repository.transition_field_effect(
                 plan.plan_id, "applying", "retryable", self._clock(), "target_failure"
@@ -380,6 +417,9 @@ class GuardedFieldApplication:
             with self._timing.measure("reconciliation", "recovery"):
                 observed = self._target.read(operation.plan)
         except Exception as error:
+            # Same undeclared target seam as ``_execute_claimed``: the failure
+            # is recorded on the operation as ``target_failure`` and the action
+            # is completed, so the reconciliation obligation is never stranded.
             self._persist_target_suspension(operation.plan, error)
             return self._repository.complete_field_effect_reconciliation(
                 plan_id, "retryable", "target_failure", self._clock()
@@ -440,6 +480,8 @@ class GuardedFieldApplication:
             with self._timing.measure("verification", "target"):
                 observed = self._target.read(operation.plan)
         except Exception as error:
+            # The same undeclared target seam, and breadth is required here:
+            # any readback failure whatsoever leaves the write outcome unknown.
             self._persist_target_suspension(operation.plan, error)
             # The write may already have succeeded. Persist a targeted read;
             # never infer failure and blindly write the desired value again.
@@ -502,6 +544,9 @@ class GuardedFieldApplication:
         try:
             observed = self._target.read(plan)
         except Exception as error:
+            # Breadth only reaches the typed suspension record: every error that
+            # is not a declared target unavailability is re-raised unchanged, so
+            # this handler classifies nothing it has not recognised.
             self._persist_target_suspension(plan, error)
             if isinstance(error, TargetServiceUnavailable):
                 return self._stale(operation, "capability")
@@ -534,6 +579,10 @@ class GuardedFieldApplication:
         try:
             self._cover_recovery.remove(operation.plan.plan_id)
         except Exception:
+            # Any removal fault keeps the obligation ``pending`` with an
+            # incremented attempt, so restart recovery retries it. This is the
+            # durable cleanup lane; unlike the claim path it has somewhere to
+            # record the failure and nothing to mask.
             self._repository.fail_field_effect_cleanup(
                 operation.plan.plan_id, self._clock()
             )
@@ -580,6 +629,9 @@ class GuardedFieldApplication:
         """Bounded restart entrypoint for the two closed recovery obligations."""
         action_count = cleanup_count = 0
         failures: list[Exception] = []
+        # Both obligations are attempted even when the first fails. Breadth here
+        # collects rather than swallows: every failure is re-raised below, alone
+        # or as a group, so neither lane can hide the other's fault.
         try:
             action_count = self.run_pending_actions(limit=limit)
         except Exception as error:

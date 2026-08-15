@@ -1251,6 +1251,104 @@ class FieldEffectTests(unittest.TestCase):
         self.assertEqual(self.service.status(consent.plan.plan_id).state, "superseded")
         self.assertEqual(self.target.read(consent.plan).value, consent.plan.pre_value)
 
+    def test_claim_failures_report_the_repository_code_they_actually_hit(self) -> None:
+        conflict = self.plan(suffix="1")
+        self.claim_hook.callback = lambda plan: self.repository.revoke_field_effect_authority(
+            plan.authority.decision_id, self.clock()
+        )
+        with self.assertRaises(GuardedApplicationError) as raised:
+            self.service.apply(conflict.plan.plan_id)
+        self.assertEqual(raised.exception.code, "claim_conflict")
+        self.assertEqual(self.service.status(conflict.plan.plan_id).state, "superseded")
+
+        paused = self.plan(destination="subtitle", suffix="2")
+        self.claim_hook.callback = lambda _: self.repository.set_field_effect_paused(
+            True, self.clock()
+        )
+        with self.assertRaises(GuardedApplicationError) as raised:
+            self.service.apply(paused.plan.plan_id)
+        self.assertEqual(raised.exception.code, "paused")
+        self.repository.set_field_effect_paused(False, self.clock())
+
+        capability = self.plan(destination="publisher", suffix="3")
+        self.claim_hook.callback = lambda _: self.repository.suspend_field_effect_capability(
+            scope="destination", connection="primary", destination="publisher",
+            reason="field_unavailable", changed_at=self.clock(),
+        )
+        with self.assertRaises(GuardedApplicationError) as raised:
+            self.service.apply(capability.plan.plan_id)
+        self.assertEqual(raised.exception.code, "capability")
+
+        storage = self.plan(destination="description", suffix="4")
+        with patch.object(type(self.repository), "_record_field_effect_event",
+                          side_effect=sqlite3.OperationalError("disk failure")):
+            with self.assertRaises(GuardedApplicationError) as raised:
+                self.service.apply(storage.plan.plan_id)
+        self.assertEqual(raised.exception.code, "persistence")
+        self.assertEqual(self.service.status(storage.plan.plan_id).state, "planned")
+        self.assertEqual(self.target.read(storage.plan).value, storage.plan.pre_value)
+
+    def test_cover_cleanup_faults_do_not_masquerade_as_claim_contention(self) -> None:
+        cover = self.plan("cover", None, "cover_" + "1" * 64, "b")
+        self.claim_hook.callback = lambda plan: self.repository.revoke_field_effect_authority(
+            plan.authority.decision_id, self.clock()
+        )
+        self.recovery.fail_remove_next = True
+        with self.assertRaises(GuardedApplicationError) as raised:
+            self.service.apply(cover.plan.plan_id)
+        self.assertEqual(raised.exception.code, "cover_recovery")
+        cause = raised.exception.__cause__
+        assert cause is not None
+        self.assertIsInstance(cause, OSError)
+        self.assertEqual(getattr(cause.__context__, "code", None), "claim_conflict")
+        self.assertEqual(self.service.status(cover.plan.plan_id).state, "superseded")
+        self.assertTrue(self.recovery.exists(cover.plan.plan_id))
+        self.assertTrue(self.repository.field_effect_cleanup_pending(cover.plan.plan_id))
+
+    def test_cover_cleanup_separates_a_vanished_row_from_a_storage_fault(self) -> None:
+        repository = self.repository
+
+        class CleanupFaultRepository:
+            fault = ""
+            reads = 0
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(repository, name)
+
+            def get_field_effect(self, plan_id: str) -> FieldEffectOperation:
+                self.reads += 1
+                if self.fault and self.reads > 1:
+                    raise FieldEffectError(self.fault)
+                return repository.get_field_effect(plan_id)
+
+        def revoke(plan: FieldEffectPlan) -> None:
+            repository.revoke_field_effect_authority(
+                plan.authority.decision_id, self.clock()
+            )
+
+        faulting = CleanupFaultRepository()
+        self.service._repository = faulting
+
+        vanished = self.plan("cover", None, "cover_" + "2" * 64, "c")
+        faulting.fault, faulting.reads = "not_found", 0
+        self.claim_hook.callback = revoke
+        with self.assertRaises(GuardedApplicationError) as raised:
+            self.service.apply(vanished.plan.plan_id)
+        self.assertEqual(raised.exception.code, "claim_conflict")
+        self.assertTrue(self.recovery.exists(vanished.plan.plan_id))
+
+        storage = self.plan("cover", None, "cover_" + "3" * 64, "d")
+        faulting.fault, faulting.reads = "persistence", 0
+        self.claim_hook.callback = revoke
+        with self.assertRaises(GuardedApplicationError) as raised:
+            self.service.apply(storage.plan.plan_id)
+        self.assertEqual(raised.exception.code, "cover_recovery")
+        cause = raised.exception.__cause__
+        assert cause is not None
+        self.assertEqual(getattr(cause, "code", None), "persistence")
+        self.assertEqual(getattr(cause.__context__, "code", None), "claim_conflict")
+        self.assertTrue(self.recovery.exists(storage.plan.plan_id))
+
     def test_semantic_consent_drift_wins_the_atomic_claim_race(self) -> None:
         operation = self.plan(suffix="e")
         repository_type = type(self.repository)
@@ -1259,7 +1357,7 @@ class FieldEffectTests(unittest.TestCase):
             "field_effect_consent_envelope_identity",
             return_value="f" * 64,
         ):
-            with self.assertRaisesRegex(Exception, "claim_conflict"):
+            with self.assertRaisesRegex(Exception, "consent"):
                 self.service.apply(operation.plan.plan_id)
         self.assertEqual(self.service.status(operation.plan.plan_id).state, "planned")
         self.assertEqual(
@@ -1315,7 +1413,7 @@ class FieldEffectTests(unittest.TestCase):
         self.claim_hook.callback = lambda _: self.repository.publish(
             newer, lambda: True
         )
-        with self.assertRaisesRegex(Exception, "claim_conflict"):
+        with self.assertRaisesRegex(Exception, "authority"):
             self.service.apply(operation.plan.plan_id)
         self.assertEqual(self.service.status(operation.plan.plan_id).state, "planned")
         self.assertEqual(self.target.read(operation.plan).value, "Old title")
