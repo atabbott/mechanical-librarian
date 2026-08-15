@@ -81,7 +81,7 @@ class AudiobookshelfItemReader:
                 if response.status_code == 403:
                     raise TargetConnectionError("authorization")
                 if response.status_code != 200:
-                    raise MetadataReportError("target service is unavailable")
+                    raise TargetConnectionError("unavailable")
                 content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
                 if content_type != "application/json":
                     raise MetadataReportError("target response is invalid")

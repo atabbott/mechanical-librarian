@@ -5249,12 +5249,16 @@ class AudiobookshelfItemTests(unittest.TestCase):
 
         with self.assertRaises(TargetNotFoundError):
             reader(404).read("item-1")
-        for status in (401, 403):
+        for status in (401, 403, 503):
             with self.subTest(status=status), self.assertRaises(
                 TargetConnectionError
             ) as raised:
                 reader(status).read("item-1")
             self.assertNotIsInstance(raised.exception, TargetNotFoundError)
+            self.assertEqual(
+                raised.exception.code,
+                {401: "authentication", 403: "authorization", 503: "unavailable"}[status],
+            )
 
     def test_raw_cover_accepts_matching_supported_image_signatures(self) -> None:
         client_type = httpx.Client
