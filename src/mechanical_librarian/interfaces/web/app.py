@@ -268,6 +268,7 @@ class _TargetIdentity(_ClosedModel):
 
 
 class _CaseDetailResponse(_ClosedModel):
+    comparison_notices: list[str]
     current: bool
     fields: list[_ReviewField]
     review_case_id: str

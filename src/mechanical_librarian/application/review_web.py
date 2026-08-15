@@ -385,6 +385,7 @@ class InspectCurrentReviewCase:
             fields.append(field)
         fields.sort(key=lambda value: not value["needs_attention"])
         return {
+            "comparison_notices": _provider_comparison_notices(report),
             "current": True,
             "fields": fields,
             "review_case_id": case.review_case_id,

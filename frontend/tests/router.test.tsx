@@ -33,6 +33,7 @@ const detail: CaseDetailView = {
   title: 'A Book',
   authors: [],
   subtitle: 'Books · local',
+  comparisonNotices: [],
   fields: [{
     classification: 'needs_attention',
     classificationReason: 'This field needs your review.',
@@ -274,6 +275,24 @@ describe('typed review routes', () => {
     expect(outcomes).toHaveTextContent('Authentication at Provider')
     expect(outcomes).toHaveTextContent('hardcover-main · Work · Authentication · 1 bounded provider request')
     expect(screen.queryByRole('button', { name: 'Preparation unavailable' })).toBeNull()
+  })
+
+  it('shows bounded provider absence once at the selected-work comparison boundary', async () => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        comparisonNotices: [
+          'Provider limitation: Open Library — Provider returned no matching metadata.',
+        ],
+      })),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    const condition = await screen.findByRole('complementary', { name: 'Provider comparison condition' })
+    expect(condition).toHaveTextContent('Open Library')
+    expect(condition).toHaveTextContent('Provider returned no matching metadata.')
+    expect(within(condition).getAllByText(/Provider limitation/u)).toHaveLength(1)
   })
 
   it('keeps Variant M field, automatic, evidence, and apply context in the responsive Library workspace', async () => {

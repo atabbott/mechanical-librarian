@@ -2131,6 +2131,18 @@ class ReviewWebTests(unittest.TestCase):
                 "Provider limitation: Provider (name unavailable) — Provider returned a bounded terminal status.",
             ],
         )
+        affected_case = ReviewCase.create(evaluate_report(report), report)
+        projected = InspectCurrentReviewCase(
+            _Repository(affected_case, report)
+        ).run(affected_case.review_case_id)
+        self.assertEqual(
+            _provider_comparison_notices(report),
+            projected["comparison_notices"],
+        )
+        unaffected = InspectCurrentReviewCase(self.repository).run(
+            self.case.review_case_id
+        )
+        self.assertEqual([], unaffected["comparison_notices"])
         self.assertEqual("Google Books", _provider_label("google_books"))
         self.assertEqual("Provider (name unavailable)", _provider_label(None))
         for spoofed_name in (

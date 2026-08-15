@@ -924,6 +924,13 @@
       "_CaseDetailResponse": {
         "additionalProperties": false,
         "properties": {
+          "comparison_notices": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Comparison Notices",
+            "type": "array"
+          },
           "current": {
             "title": "Current",
             "type": "boolean"
@@ -948,6 +955,7 @@
           }
         },
         "required": [
+          "comparison_notices",
           "current",
           "fields",
           "review_case_id",
