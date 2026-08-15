@@ -319,7 +319,7 @@ class InspectCurrentReviewCase:
                 }
             choice_contexts = _choice_contexts(
                 alternatives, result, report, target_fields[destination],
-                automatic_decision,
+                automatic_decision, _evidence_by_reference(report),
             )
             classification = classify_review_field(
                 attention_candidate=_needs_attention(
@@ -804,6 +804,7 @@ def _choice_contexts(
     report: MetadataReport,
     target: dict[str, object],
     automatic_decision: dict[str, object] | None = None,
+    evidence: dict[str, dict[str, str | None]] | None = None,
 ) -> list[dict[str, object]]:
     """Project retained proposal lineage into owner-readable choice context."""
     selected = result.get("selected_alternative_id")
@@ -812,12 +813,13 @@ def _choice_contexts(
         target.get("value")
     )
     preserves = [item for item in alternatives if item.get("assessment") == "preserves_target"]
+    evidence = _evidence_by_reference(report) if evidence is None else evidence
     current_rows = [
         _choice_evidence(row)
         for item in preserves
         for reference in item.get("evidence_references", [])
-        if type(reference) is str and reference in _evidence_by_reference(report)
-        for row in [_evidence_by_reference(report)[reference]]
+        if type(reference) is str and reference in evidence
+        for row in [evidence[reference]]
     ]
     current_recommended = automatic_decision is not None and automatic_decision.get("outcome") in {"keep_current", "preserves_target"}
     contexts: list[dict[str, object]] = [{
@@ -839,7 +841,6 @@ def _choice_contexts(
                                   if current_recommended else "No deterministic recommendation is retained for the current value."),
         "selection": "current",
     }]
-    evidence = _evidence_by_reference(report)
     for alternative in alternatives:
         references = alternative["evidence_references"]
         assert type(references) is list
@@ -850,7 +851,8 @@ def _choice_contexts(
         ]
         alternative_id = alternative["alternative_id"]
         assert type(alternative_id) is str
-        recommended = alternative_id == selected_id
+        automatic_candidate = automatic_decision.get("candidate_id") if automatic_decision is not None and automatic_decision.get("outcome") == "candidate" else None
+        recommended = alternative_id == automatic_candidate
         contexts.append({
             "alternative_id": alternative_id,
             "evidence": rows,

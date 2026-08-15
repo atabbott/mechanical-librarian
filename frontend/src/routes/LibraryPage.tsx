@@ -75,7 +75,7 @@ function MetadataChoice({ context, current, expanded, label, onChoose, recording
   const evidenceId = `choice-evidence-${current ? 'current' : context?.alternativeId ?? 'alternative'}`
   const evidenceLabel = `Evidence for ${label}: ${value}`
   return <article className={`metadata-choice${current ? ' is-current' : ''}${selected ? ' is-selected' : ''}${expanded ? ' is-evidence-open' : ''}`}>
-    <button type="button" className="value-choice choice-select" aria-label={`Choose ${current ? 'current' : 'proposed'} value: ${value}`} aria-pressed={selected} onClick={onChoose}>
+    <button type="button" className="value-choice choice-select" aria-label={`Choose ${current ? 'current' : 'proposed'} value: ${value}`} aria-pressed={selected} disabled={recording} onClick={onChoose}>
       <small>{label}{context?.recommendation === 'recommended' ? ' · Recommended' : ''}</small>
       <strong>{value}</strong>
       <span>{context?.rationale ?? 'Retained for this owner comparison.'}</span>
