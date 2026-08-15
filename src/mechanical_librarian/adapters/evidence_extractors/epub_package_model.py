@@ -575,5 +575,6 @@ __all__ = [
     "EpubPackageUsage",
     "EpubPackageWarning",
     "EpubObservationApplicability",
+    "epub_file_lineage",
     "epub_resource_identity",
 ]

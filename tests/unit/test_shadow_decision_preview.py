@@ -200,7 +200,7 @@ class ShadowDecisionPreviewTests(unittest.TestCase):
 
             writable = open_repository(path)
             try:
-                writable._shadow_packet = _invalid  # type: ignore[method-assign]
+                writable._shadow_packet = _invalid  # type: ignore[method-assign]  # reason: the point of this test is to drive the handler, not the packet reader
                 with self.assertRaises(MetadataReportError) as writable_failure:
                     writable.preview_shadow_packet(case_id)
             finally:
@@ -211,7 +211,7 @@ class ShadowDecisionPreviewTests(unittest.TestCase):
 
             preview = open_shadow_preview_repository(path)
             try:
-                preview._reader._shadow_packet = _invalid  # type: ignore[method-assign]
+                preview._reader._shadow_packet = _invalid  # type: ignore[method-assign]  # reason: the point of this test is to drive the handler, not the packet reader
                 with self.assertRaises(MetadataReportError) as preview_failure:
                     preview.preview_shadow_packet(case_id)
                 self.assertFalse(preview._connection.in_transaction)

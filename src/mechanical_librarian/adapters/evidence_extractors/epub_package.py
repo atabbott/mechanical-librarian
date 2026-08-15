@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from typing import cast
 from xml.parsers import expat
 
-from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (  # type: ignore[attr-defined]  # reason: `epub_file_lineage` really is re-exported here (that module imports it from `domain.epub_inspection` and uses it); it is only missing from that module's `__all__`, which this typing unit may not edit.
+from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     MAX_DECLARATIONS,
     EpubInspectionOutcome,
     EpubObservationApplicability,
