@@ -326,6 +326,97 @@ def _human_title_decision(repository, case_id: str, occurred_at: int) -> HumanDe
 
 
 class ShadowOutcomePersistenceTests(unittest.TestCase):
+    def _qualified_cover_report(self, root: Path) -> tuple[MetadataReport, object]:
+        payloads = (_cover_preview(1), _cover_preview(2))
+        sources = (
+            _cover_source(1, payloads[0], incumbent=True),
+            _cover_source(2, payloads[1], embedded=True),
+        )
+        base = _cover_report(sources)
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", base.target.fields),
+            file=base.file,
+            local_claims=base.local_claims,
+            local_reasons=base.local_reasons,
+            providers=base.providers,
+            cover_sources=base.cover_sources,
+        )
+        artifacts = CoverArtifactStore(root / "artifacts")
+        for index, (source, payload) in enumerate(zip(sources, payloads, strict=True), 1):
+            assert source.artifact is not None
+            artifacts.stage(source.artifact, f"original-{index}".encode(), payload)
+        return report, evaluate_report(report)
+
+    def _run_qualified_cover_pipeline(
+        self, repository, root: Path, report: MetadataReport, proposal, supervisor
+    ) -> ReviewPreparationPipeline:
+        database = root / "reports.sqlite"
+
+        def extract(bound, action, claim_next):
+            bound.publish(
+                report, lambda: True,
+                after_publication=lambda current, published: current.complete_review_extraction_publication(
+                    action, published.report_id, 10, 0, None, claim_next, None,
+                ),
+            )
+            return report.report_id, True
+
+        def project(bound, action):
+            outcome = bound.persist_shadow_outcome(
+                action.review_case_id or "", 10, staged_action=action,
+            )
+            return "stale" if outcome == "stale" else "complete"
+
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(
+                database, authority=repository.authority
+            ),
+            libraries=(("primary", "ebooks", "lib-1", "f" * 64),),
+            discover=lambda *_: (1, report.file.content_digest, (
+                CatalogueEntry("primary", "ebooks", "lib-1", "item-1", 1,
+                               "Synthetic cover", (), True, False,
+                               "singular-supported", report.file.identity,
+                               "/item-1.epub", "epub", "books"),
+            )),
+            extract=extract,
+            providers=lambda *_: (),
+            propose=lambda bound, _: (
+                bound.publish_proposal(proposal), proposal.proposal_set_id
+            )[1],
+            admit=lambda bound, _: (
+                lambda value: (value["status"], value.get("review_case_id"))
+            )(json.loads(bound.admit_review_case(proposal))),
+            project=project,
+            before_projection=supervisor._pipeline._before_projection,
+            after_advance=supervisor._pipeline._after_advance,
+            clock=lambda: 10,
+        )
+        pipeline.request("primary", "ebooks")
+        return pipeline
+
+    def _assert_no_cover_effect_authority(self, repository) -> None:
+        self.assertEqual(
+            (0,), repository._connection.execute(
+                "SELECT count(*) FROM field_effects"
+            ).fetchone(),
+        )
+
+    def _assert_manual_cover_surface(
+        self, repository, case_id: str, considerations, reviewer_status: str
+    ) -> None:
+        detail = InspectCurrentReviewCase(repository, considerations).run(case_id)
+        cover = next(
+            field for field in detail["fields"] if field["destination"] == "cover"
+        )
+        consideration = cover["cover_consideration"]
+        self.assertIsNotNone(consideration)
+        assert consideration is not None
+        self.assertEqual(reviewer_status, consideration["reviewer_status"])
+        self.assertTrue(any(candidate["selectable"] for candidate in consideration["candidates"]))
+        self.assertTrue(cover["editable"])
+        self.assertTrue(cover["needs_attention"])
+        self.assertIsNone(cover["human_decision"])
+
     def test_activity_projects_cover_reviewer_terminal_state_without_private_payloads(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             repository = open_repository(Path(temporary) / "reports.sqlite")
@@ -1089,6 +1180,233 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 self.assertEqual(1, len(calls))
                 self.assertEqual(0, repository._connection.execute("SELECT count(*) FROM field_effects").fetchone()[0])
                 supervisor.stop()
+            repository.close()
+
+    def test_composed_projection_without_reviewer_persists_unavailable_before_f22(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            report, proposal = self._qualified_cover_report(root)
+            recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
+            supervisor = composition.create_review_pipeline(
+                _pipeline_configuration(), database, root / "catalogue.sqlite",
+                root / "artifacts", database_authority=repository.authority,
+                provider_recovery=recovery,
+            )
+            with patch.object(composition, "run_cover_packet_reviewer") as dispatch:
+                pipeline = self._run_qualified_cover_pipeline(
+                    repository, root, report, proposal, supervisor
+                )
+                self.assertEqual(
+                    [True, True, True, True, True, False],
+                    [pipeline.run_next(1) for _ in range(6)],
+                )
+            case_id = repository._connection.execute(
+                "SELECT review_case_id FROM current_review_packages"
+            ).fetchone()[0]
+            document = repository.current_cover_consideration_document(case_id)
+            self.assertIsNotNone(document)
+            self.assertEqual("unavailable", json.loads(document)["reviewer_status"])
+            dispatch.assert_not_called()
+            considerations = composition._compose_cover_considerations(
+                repository, root / "artifacts", _pipeline_configuration().review
+            )
+            self._assert_manual_cover_surface(
+                repository, case_id, considerations, "unavailable"
+            )
+            self.assertEqual((1,), repository._connection.execute(
+                "SELECT count(*) FROM provider_recovery_outbox"
+            ).fetchone())
+            self._assert_no_cover_effect_authority(repository)
+            supervisor.stop()
+            repository.close()
+
+    def test_composed_projection_contains_reviewer_failures_before_f22(self) -> None:
+        failures = {
+            "refusal": lambda *_: '{"status":"refused"}',
+            "malformed": lambda *_: "not-json",
+            "exception": lambda *_: (_ for _ in ()).throw(RuntimeError("contained")),
+        }
+        for name, reviewer in failures.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                database = root / "reports.sqlite"
+                repository = open_repository(database)
+                report, proposal = self._qualified_cover_report(root)
+                recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
+                calls: list[object] = []
+
+                def dispatch(*args):
+                    calls.append(args)
+                    return reviewer(*args)
+
+                with patch.object(composition, "read_contained_reviewer_profile", return_value=b"profile"), patch.object(composition, "run_cover_packet_reviewer", side_effect=dispatch):
+                    supervisor = composition.create_review_pipeline(
+                        _pipeline_configuration(cover_reviewer_profile_file="/run/profile"),
+                        database, root / "catalogue.sqlite", root / "artifacts",
+                        database_authority=repository.authority, provider_recovery=recovery,
+                    )
+                    pipeline = self._run_qualified_cover_pipeline(
+                        repository, root, report, proposal, supervisor
+                    )
+                    self.assertEqual(
+                        [True, True, True, True, True, False],
+                        [pipeline.run_next(1) for _ in range(6)],
+                    )
+                case_id = repository._connection.execute(
+                    "SELECT review_case_id FROM current_review_packages"
+                ).fetchone()[0]
+                document = repository.current_cover_consideration_document(case_id)
+                self.assertIsNotNone(document)
+                self.assertEqual("failed", json.loads(document)["reviewer_status"])
+                self.assertEqual(1, len(calls))
+                with patch.object(
+                    composition, "read_contained_reviewer_profile",
+                    return_value=b"profile",
+                ):
+                    considerations = composition._compose_cover_considerations(
+                        repository, root / "artifacts", _pipeline_configuration(
+                            cover_reviewer_profile_file="/run/profile"
+                        ).review,
+                    )
+                self._assert_manual_cover_surface(
+                    repository, case_id, considerations, "failed"
+                )
+                self.assertEqual((1,), repository._connection.execute(
+                    "SELECT count(*) FROM provider_recovery_outbox"
+                ).fetchone())
+                self._assert_no_cover_effect_authority(repository)
+                supervisor.stop()
+                repository.close()
+
+    def test_composed_projection_stale_after_observation_does_not_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            report, proposal = self._qualified_cover_report(root)
+            recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
+
+            def drift(*_args):
+                repository._connection.execute(
+                    "UPDATE metadata_policy_state SET generation=generation+1 WHERE singleton=1"
+                )
+                repository._connection.commit()
+                return _cover_observer_result(*_args)
+
+            with patch.object(composition, "read_contained_reviewer_profile", return_value=b"profile"), patch.object(composition, "run_cover_packet_reviewer", side_effect=drift):
+                supervisor = composition.create_review_pipeline(
+                    _pipeline_configuration(cover_reviewer_profile_file="/run/profile"),
+                    database, root / "catalogue.sqlite", root / "artifacts",
+                    database_authority=repository.authority, provider_recovery=recovery,
+                )
+                pipeline = self._run_qualified_cover_pipeline(
+                    repository, root, report, proposal, supervisor
+                )
+                self.assertEqual([True, True, True, True], [pipeline.run_next(1) for _ in range(4)])
+                self.assertTrue(pipeline.run_next(1))
+            self.assertEqual(
+                ("queued", "stale"), repository._connection.execute(
+                    "SELECT state,failure_code FROM review_preparation_work "
+                    "WHERE stage='projection'"
+                ).fetchone(),
+            )
+            for table in (
+                "cover_considerations", "current_cover_considerations",
+                "current_review_packages", "provider_recovery_outbox",
+            ):
+                self.assertEqual((0,), repository._connection.execute(
+                    f"SELECT count(*) FROM {table}"
+                ).fetchone())
+            self._assert_no_cover_effect_authority(repository)
+            supervisor.stop()
+            repository.close()
+
+    def test_composed_projection_cover_persistence_failure_does_not_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            report, proposal = self._qualified_cover_report(root)
+            recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
+            supervisor = composition.create_review_pipeline(
+                _pipeline_configuration(), database, root / "catalogue.sqlite",
+                root / "artifacts", database_authority=repository.authority,
+                provider_recovery=recovery,
+            )
+            pipeline = self._run_qualified_cover_pipeline(
+                repository, root, report, proposal, supervisor
+            )
+            self.assertEqual([True, True, True, True], [pipeline.run_next(1) for _ in range(4)])
+            with patch.object(
+                type(repository), "record_cover_consideration",
+                side_effect=MetadataReportError("persistence"),
+            ):
+                self.assertTrue(pipeline.run_next(1))
+            self.assertEqual(
+                ("failed", "failed", None), repository._connection.execute(
+                    "SELECT state,failure_code,failure_root FROM review_preparation_work "
+                    "WHERE stage='projection'"
+                ).fetchone(),
+            )
+            for table in (
+                "cover_considerations", "current_cover_considerations",
+                "current_review_packages", "provider_recovery_outbox",
+            ):
+                self.assertEqual((0,), repository._connection.execute(
+                    f"SELECT count(*) FROM {table}"
+                ).fetchone())
+            self._assert_no_cover_effect_authority(repository)
+            supervisor.stop()
+            repository.close()
+
+    def test_composed_cover_replay_reuses_exact_binding_and_profile_change_supersedes_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            report, proposal = self._qualified_cover_report(root)
+            recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
+            calls: list[object] = []
+
+            def reviewer(*args):
+                calls.append(args)
+                return _cover_observer_result(*args)
+
+            with patch.object(composition, "read_contained_reviewer_profile", side_effect=(b"profile-1", b"profile-1", b"profile-2")), patch.object(composition, "run_cover_packet_reviewer", side_effect=reviewer):
+                supervisor = composition.create_review_pipeline(
+                    _pipeline_configuration(cover_reviewer_profile_file="/run/profile-1"),
+                    database, root / "catalogue.sqlite", root / "artifacts",
+                    database_authority=repository.authority, provider_recovery=recovery,
+                )
+                pipeline = self._run_qualified_cover_pipeline(
+                    repository, root, report, proposal, supervisor
+                )
+                self.assertEqual([True, True, True, True, True, False], [pipeline.run_next(1) for _ in range(6)])
+                case_id = repository._connection.execute(
+                    "SELECT review_case_id FROM current_review_packages"
+                ).fetchone()[0]
+                first = repository.current_cover_consideration_document(case_id)
+                cover_proposal_id = json.loads(first)["proposal_id"]
+                replay = composition._compose_cover_considerations(
+                    repository, root / "artifacts", _pipeline_configuration(
+                        cover_reviewer_profile_file="/run/profile-1"
+                    ).review,
+                ).ensure(case_id, report.to_json(), {"proposal_id": cover_proposal_id})
+                successor = composition._compose_cover_considerations(
+                    repository, root / "artifacts", _pipeline_configuration(
+                        cover_reviewer_profile_file="/run/profile-2"
+                    ).review,
+                ).ensure(case_id, report.to_json(), {"proposal_id": cover_proposal_id})
+            self.assertEqual(2, len(calls))
+            self.assertEqual(json.loads(first)["consideration_id"], replay["consideration_id"])
+            self.assertEqual(json.loads(first)["consideration_id"], successor["supersedes_id"])
+            self.assertEqual((2,), repository._connection.execute(
+                "SELECT count(*) FROM cover_considerations"
+            ).fetchone())
+            self._assert_no_cover_effect_authority(repository)
+            supervisor.stop()
             repository.close()
 
     def test_composed_projection_without_cover_skips_advice_and_completes_f22(self) -> None:
