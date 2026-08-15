@@ -84,11 +84,16 @@ ordering (`I`). `E501` (line length) is deliberately not enforced: the backend
 has never been width-formatted, so enforcing it would mean a whole-tree
 reformat rather than a lint fix. Backend formatting is separate future work.
 
-mypy runs in strict mode over `src/`. `tests/` and `scripts/` are checked too,
-but without the strict annotation requirements, because their value is proving
-behaviour rather than publishing a typed interface. Every relaxation is an
-explicit `[[tool.mypy.overrides]]` block in `pyproject.toml` with a stated
-reason; do not add a silent one.
+mypy runs in strict mode over `src/`, which is what ships with `py.typed`.
+`tests/` and `scripts/` are checked too, but without strict's annotation
+requirements and without `arg-type`, `attr-defined`, or `index`: a suite proves
+behaviour with deliberately narrow fakes and indexes the JSON documents the
+code under test returns, so those three classes measure fixtures rather than
+defects. Every relaxation is an explicit `[[tool.mypy.overrides]]` block in
+`pyproject.toml` with its reason beside it; do not add a silent one.
+
+The analysed platform is pinned to `linux` so the commands above reproduce the
+ubuntu gate byte for byte from any development host.
 
 Suppress a finding only where the code is right and the tool is wrong, and
 always inline, named, and justified:
@@ -97,6 +102,12 @@ always inline, named, and justified:
 value = mapping[key]  # noqa: B023 - the closure is consumed in this iteration
 result = handler()  # type: ignore[arg-type]  # reason: <why this is sound>
 ```
+
+mypy honours `# type: ignore` only as the first trailing comment on a line, so
+when a line needs both, put the type suppression first; ruff finds its `noqa`
+anywhere in the trailing comments. `warn_unused_ignores` is on, so a
+suppression that stops suppressing anything fails the gate and must be deleted
+rather than left behind.
 
 Four sources are byte-frozen by the F20 rich-metadata qualification manifest
 and appear in `[tool.ruff.lint.per-file-ignores]` and a mypy override, because
