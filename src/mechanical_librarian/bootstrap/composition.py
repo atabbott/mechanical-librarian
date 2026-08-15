@@ -10,6 +10,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import uvicorn
+import httpx
 
 from mechanical_librarian.bootstrap.contained_reviewer import run_cover_packet_reviewer
 
@@ -78,7 +79,7 @@ from mechanical_librarian.adapters.providers.remote_cover import (
 )
 from mechanical_librarian.application.batch import BatchError, BatchSelection, batch_fingerprint, catalogue_fingerprint as batch_catalogue_fingerprint, manifest as batch_manifest, parse_manifest, select
 from mechanical_librarian.application.batch_run import ForegroundBatchRun
-from mechanical_librarian.application.catalogue import CatalogueError, RefreshCurrentCatalogue
+from mechanical_librarian.application.catalogue import CatalogueError, RefreshCurrentCatalogue, TargetConnectionError
 from mechanical_librarian.application.configuration import (
     ConfigurationError,
     MediaMountConfiguration,
@@ -1304,6 +1305,8 @@ def create_review_pipeline(
                     batch_catalogue_fingerprint(configuration)
                 )
                 return snapshot.generation, snapshot.fingerprint, snapshot.entries
+            except TargetConnectionError:
+                raise
             except CatalogueError as error:
                 raise ReviewPipelineError("transient") from error
             finally:
@@ -1471,6 +1474,47 @@ def create_review_pipeline(
             return
         drain_provider_recovery_outbox(pipeline_repository)
 
+    def check_connection(connection: str) -> None:
+        """Check the configured read authority without weakening TLS."""
+        configured = clients.get(connection)
+        if configured is None:
+            raise ReviewPipelineError("library")
+        try:
+            with target_client(
+                configured.endpoint, configured.secret_file,
+                configuration.limits.timeout_seconds,
+            ) as client:
+                with client.stream(
+                    "GET", "/api/libraries",
+                    headers={"Accept": "application/json", "Accept-Encoding": "identity"},
+                ) as response:
+                    if response.status_code == 401:
+                        raise TargetConnectionError("authentication")
+                    if response.status_code == 403:
+                        raise TargetConnectionError("authorization")
+                    if response.status_code != 200 or (
+                        response.headers.get("content-type", "").split(";", 1)[0]
+                        .strip().lower() != "application/json"
+                    ):
+                        raise TargetConnectionError("unavailable")
+                    chunks: list[bytes] = []
+                    size = 0
+                    for chunk in response.iter_bytes():
+                        size += len(chunk)
+                        if size > configuration.limits.target_response_bytes:
+                            raise TargetConnectionError("unavailable")
+                        chunks.append(chunk)
+            value = json.loads(b"".join(chunks).decode("utf-8"))
+            if not isinstance(value, (dict, list)):
+                raise TargetConnectionError("unavailable")
+        except TargetConnectionError:
+            raise
+        except httpx.TransportError as error:
+            code = "tls" if error.__cause__ is not None and "SSL" in type(error.__cause__).__name__.upper() else "unavailable"
+            raise TargetConnectionError(code) from None
+        except Exception:
+            raise TargetConnectionError("unavailable") from None
+
     pipeline = ReviewPreparationPipeline(
         repository_factory=repository_factory,
         libraries=tuple(
@@ -1503,6 +1547,7 @@ def create_review_pipeline(
         project=project,
         before_projection=prepare_cover,
         after_advance=after_advance,
+        check_connection=check_connection,
         timing=timing,
     )
     pipeline_holder["pipeline"] = pipeline

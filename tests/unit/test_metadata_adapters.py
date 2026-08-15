@@ -589,6 +589,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                     ("review_cases",),
                     ("review_login_failures",),
                     ("review_preparation_absences",),
+                    ("review_preparation_connection_conditions",),
                     ("review_preparation_control",),
                     ("review_preparation_scans",),
                     ("review_preparation_work",),

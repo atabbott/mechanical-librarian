@@ -522,6 +522,12 @@ class _Preparation:
         self.status_calls += 1
         return ((self.progress("primary", "fiction"),), self.is_paused)
 
+    def connection_conditions(self):
+        return ()
+
+    def check_connection(self, connection: str) -> bool:
+        return connection == "primary"
+
     def paused(self) -> bool:
         return self.is_paused
 
@@ -1024,6 +1030,17 @@ class ReviewWebTests(unittest.TestCase):
                 "total": 5,
             },
         )
+        check_missing_csrf = self.client.post(
+            "/api/v1/review-preparation/primary/check-connection",
+            headers=self.origin,
+        )
+        self.assertEqual(check_missing_csrf.status_code, 422)
+        checked = self.client.post(
+            "/api/v1/review-preparation/primary/check-connection",
+            headers={**self.origin, "x-csrf-token": session["csrf_token"]},
+        )
+        self.assertEqual(checked.status_code, 200)
+        self.assertEqual(checked.json()["connections"], [])
         missing_csrf = self.client.post(
             "/api/v1/review-preparation/primary/fiction/scan",
             headers=self.origin,
@@ -1808,6 +1825,7 @@ class ReviewWebTests(unittest.TestCase):
                 "paused": False,
                 "active": False,
                 "actionable": False,
+                "connections": [],
             },
         )
         page = self.client.get(f"/review/{self.case.review_case_id}")
@@ -2101,6 +2119,7 @@ class ReviewWebTests(unittest.TestCase):
                     "post",
                     "/api/v1/review-preparation/{connection}/{library_name}/retry",
                 ),
+                ("post", "/api/v1/review-preparation/{connection}/check-connection"),
                 ("post", "/api/v1/review-preparation/pause"),
                 ("post", "/api/v1/review-preparation/resume"),
                 ("post", "/api/v1/session/logout"),
@@ -2183,6 +2202,10 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(
             response_statuses[("post", "/api/v1/review-preparation/{connection}/{library_name}/retry")],
             {"202", "401", "403", "404", "409", "422", "503"},
+        )
+        self.assertEqual(
+            response_statuses[("post", "/api/v1/review-preparation/{connection}/check-connection")],
+            {"200", "401", "403", "404", "409", "422", "503"},
         )
         headers = {
             value["name"]: value

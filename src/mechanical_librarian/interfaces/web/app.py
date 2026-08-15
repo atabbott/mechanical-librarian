@@ -539,8 +539,17 @@ class _PreparationProgress(_ClosedModel):
     rescan_requested: bool
 
 
+class _PreparationConnection(_ClosedModel):
+    connection: str
+    code: Literal["tls", "authentication", "authorization", "unavailable"]
+    state: Literal["paused", "checking", "recovered"]
+    affected: int = Field(ge=0)
+    updated_at: int = Field(ge=0)
+
+
 class _PreparationResponse(_ClosedModel):
     libraries: list[_PreparationProgress]
+    connections: list[_PreparationConnection] = Field(default_factory=list)
     paused: bool = False
     active: bool = False
     actionable: bool = False
@@ -1876,6 +1885,28 @@ def _register_browse_and_preparation_routes(
         x_csrf_token: str = Header(),
     ) -> _PreparationResponse:
         return preparation_control(False, ml_session, x_csrf_token)
+
+    @app.post(
+        "/api/v1/review-preparation/{connection}/check-connection",
+        response_model=_PreparationResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 403, 404, 422, 503)},
+    )
+    def check_review_preparation_connection(
+        connection: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PreparationResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        if not 1 <= len(connection) <= 64:
+            raise HTTPException(404, detail={"code": "connection"})
+        try:
+            return _PreparationResponse.model_validate(
+                application.check_review_preparation_connection(connection).to_data()
+            )
+        except RuntimeError as error:
+            raise _preparation_http_error(error) from None
+        except Exception:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
 
     @app.post(
         "/api/v1/review-preparation/{connection}/{library_name}/retry",

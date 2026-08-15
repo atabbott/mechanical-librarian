@@ -169,6 +169,7 @@ class PreparationView:
     paused: bool
     active: bool
     actionable: bool
+    connections: tuple[dict[str, object], ...] = ()
     schema_version: str = "review-preparation-v1"
 
     def to_data(self) -> dict[str, object]:
@@ -177,6 +178,7 @@ class PreparationView:
             "paused": self.paused,
             "active": self.active,
             "actionable": self.actionable,
+            "connections": [dict(item) for item in self.connections],
             "schema_version": self.schema_version,
         }
 
@@ -634,6 +636,7 @@ class ReviewApplication:
         if self._preparation is None:
             return PreparationView((), False, False, False)
         progress_values, paused = self.serialized(self._preparation.status)
+        conditions = self.serialized(self._preparation.connection_conditions)
         if len(progress_values) != len(self._preparation.libraries):
             raise ReviewApplicationError("persistence")
         libraries = tuple(
@@ -653,11 +656,18 @@ class ReviewApplication:
                 self._preparation.libraries, progress_values, strict=True
             )
         )
+        connections = tuple(
+            {"connection": condition.connection, "code": condition.code,
+             "state": condition.state, "affected": condition.affected,
+             "updated_at": condition.updated_at}
+            for condition in conditions
+        )
         return PreparationView(
             libraries,
             paused,
             any(item["state"] in {"queued", "discovering", "processing"} for item in libraries),
             any(item["state"] == "completed_with_failures" for item in libraries),
+            connections,
         )
 
     def request_review_scan(
@@ -675,6 +685,12 @@ class ReviewApplication:
 
     def resume_review_preparation(self) -> PreparationView:
         return self._set_preparation_paused(False)
+
+    def check_review_preparation_connection(self, connection: str) -> PreparationView:
+        if self._preparation is None:
+            raise ReviewApplicationError("unavailable")
+        self.serialized(lambda: self._preparation.check_connection(connection))
+        return self.preparation()
 
     def _preparation_request(
         self, action: Literal["request", "retry"], connection: str, library: str

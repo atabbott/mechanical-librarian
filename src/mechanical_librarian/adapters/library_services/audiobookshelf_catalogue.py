@@ -10,7 +10,11 @@ from urllib.parse import quote
 
 import httpx
 
-from mechanical_librarian.application.catalogue import CatalogueEntry, CatalogueError
+from mechanical_librarian.application.catalogue import (
+    CatalogueEntry,
+    CatalogueError,
+    TargetConnectionError,
+)
 from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
     MediaMountConfiguration,
@@ -67,14 +71,23 @@ class AudiobookshelfCatalogueReader:
                 return tuple(_entry(connection, library, mount, summary, _get(client, f"/api/items/{quote(str(summary.get('id')), safe='')}", self._maximum_bytes, self._timeout_seconds, {"expanded": "1"})) for summary in summaries)
         except CatalogueError:
             raise
+        except httpx.TransportError as error:
+            # httpx keeps certificate verification enabled in the configured
+            # target client.  Classifying the outcome must not weaken it.
+            code = "tls" if isinstance(error, httpx.ConnectError) and error.__cause__ is not None and "SSL" in type(error.__cause__).__name__.upper() else "unavailable"
+            raise TargetConnectionError(code) from None
         except (httpx.HTTPError, OSError, UnicodeError, ValueError, TypeError) as error:
-            raise CatalogueError("catalogue service unavailable") from error
+            raise TargetConnectionError("unavailable") from None
 
 
 def _get(client: httpx.Client, path: str, maximum: int, timeout: int, params: dict[str, str] | None = None) -> dict[str, Any]:
     with client.stream("GET", path, params=params, headers={"Accept": "application/json", "Accept-Encoding": "identity"}, timeout=timeout) as response:
+        if response.status_code == 401:
+            raise TargetConnectionError("authentication")
+        if response.status_code == 403:
+            raise TargetConnectionError("authorization")
         if response.status_code != 200 or response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
-            raise CatalogueError("catalogue service unavailable")
+            raise TargetConnectionError("unavailable")
         chunks: list[bytes] = []
         size = 0
         for chunk in response.iter_bytes():

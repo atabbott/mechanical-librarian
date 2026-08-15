@@ -56,7 +56,11 @@ transaction. A third crashed attempt becomes a bounded failed work rather than
 an invalid fourth claim. Operational rows contain only bounded identifiers, stage, state,
 counts, timestamps, and fixed failure codes; the authenticated progress response
 contains no metadata values, paths, credentials, provider payloads, or raw
-errors. A complete target enumeration stages absence candidates, but only a
+errors. Target TLS, authentication, authorization, and unavailable observations
+are connection-scoped durable conditions with only a closed code, state, epoch,
+and affected-work count. Owner recovery is CSRF-bound and probes the configured
+TLS client with bounded JSON only; it never reflects endpoint or transport
+detail. A complete target enumeration stages absence candidates, but only a
 fully successful scan may tombstone an absent review lineage or retire a
 present lineage that is no longer eligible. Catalogue discovery and shared
 provider pacers serialize their mutation of global generation and pacing state

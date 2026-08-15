@@ -10,6 +10,7 @@ import {
   derivePolicyDraftDisplay,
   SessionExpiredError,
   mapLibrary,
+  mapPreparation,
 } from '../src/api/http'
 
 const token = 'a'.repeat(32)
@@ -265,11 +266,23 @@ describe('ReviewApiClient', () => {
   it('accepts scan progress acknowledgements independently from preparation controls', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ scan_id: 'scan-1', connection: 'primary', library: 'Books', library_id: 'books', state: 'queued', checked: 0, total: 2, ready: 0, blocked: 0, rescan_requested: false }))
-      .mockResolvedValueOnce(Response.json({ schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [] }))
+      .mockResolvedValueOnce(Response.json({ schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [], connections: [] }))
     const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
 
     await expect(client.preparationAction('primary/Books/scan')).resolves.toMatchObject({ scan_id: 'scan-1', state: 'queued' })
     await expect(client.preparationAction('pause')).resolves.toMatchObject({ schema_version: 'review-preparation-v1', paused: false })
+  })
+
+  it('maps only closed target-connection preparation conditions', () => {
+    const base = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [] }
+    for (const state of ['paused', 'checking', 'recovered']) {
+      expect(mapPreparation({ ...base, connections: [{ connection: 'primary', code: 'unavailable', state, affected: state === 'recovered' ? 0 : 2, updated_at: 1 }] }).connections?.[0]?.state).toBe(state)
+    }
+    for (const invalid of [
+      base,
+      { ...base, connections: [{ connection: 'primary', code: 'unknown', state: 'paused', affected: 1, updated_at: 1 }] },
+      { ...base, connections: [{ connection: 'primary', code: 'tls', state: 'paused', affected: 1 }] },
+    ]) expect(() => mapPreparation(invalid)).toThrow(ApiError)
   })
 
   it('preserves structured server error codes and rejects malformed DTOs', async () => {
