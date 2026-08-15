@@ -141,6 +141,22 @@ class ShadowReviewPacketTests(unittest.TestCase):
         with self.assertRaises(ShadowReviewValueError):
             ShadowReviewPacket.from_json(canonical_json(forged), report)
 
+    def test_correlation_identity_lists_reject_non_string_members(self) -> None:
+        report = _proposal_report(fields=_proposal_fields(language=TargetField(TargetDestination.LANGUAGE, TargetFieldState.MISSING)), providers=(_provider('alpha', 'alpha-edition', (_claim('alpha', 'alpha-edition', ClaimKind.LANGUAGE, 'en', scope=ClaimScope.EDITION),)), _provider('beta', 'beta-edition', (_claim('beta', 'beta-edition', ClaimKind.LANGUAGE, 'eng', scope=ClaimScope.EDITION),))))
+        proposal = evaluate_report(report)
+        packet = ShadowReviewPacket.create(ReviewCase.create(proposal, report), proposal, report)
+
+        def rebuild(document: dict[str, object]) -> ShadowReviewPacket:
+            return ShadowReviewPacket(document['review_case_id'], tuple(document['proposals']), tuple(document['citations']), tuple(document['correlations']), document['schema_version'], document['bibliographic_relationship_schema_version'], tuple(document['bibliographic_combinations']))
+        self.assertEqual(packet, rebuild(json.loads(packet.to_json())))
+        for key in ('candidate_ids', 'proposal_ids'):
+            identities = json.loads(packet.to_json())['correlations'][0][key]
+            for invalid in (list(range(len(identities))), [*identities, 0]):
+                document = json.loads(packet.to_json())
+                document['correlations'][0][key] = invalid
+                with self.subTest(key=key, invalid=invalid), self.assertRaises(ShadowReviewValueError):
+                    rebuild(document)
+
     def test_complete_authors_summarize_same_representation_role_exclusions(self) -> None:
         claims = (_claim('catalogue', 'edition-1', ClaimKind.CREATOR, 'Ada Author', scope=ClaimScope.WORK, role='author'), _claim('catalogue', 'edition-1', ClaimKind.CREATOR, 'Bea Author', scope=ClaimScope.WORK, role='author', order=1), _claim('catalogue', 'edition-1', ClaimKind.CONTRIBUTOR, 'Nia Narrator', scope=ClaimScope.EDITION, role='narrator', order=2), _claim('catalogue', 'edition-1', ClaimKind.CONTRIBUTOR, 'Ed Editor', scope=ClaimScope.WORK, role='editor', order=3))
         report = _proposal_report(title=None, fields=_proposal_fields(None, authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING)), providers=(_provider('catalogue', 'edition-1', claims),))
