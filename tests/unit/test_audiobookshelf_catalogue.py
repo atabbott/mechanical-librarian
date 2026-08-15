@@ -83,7 +83,8 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
                 _get(client, "/api/libraries", 65_536, 1)
 
     def test_missing_items_and_one_element_plural_remain_unusable(self) -> None:
-        detail = _item(); detail["isMissing"] = True
+        detail = _item()
+        detail["isMissing"] = True
         detail["media"] = {"metadata": {"title": "Title", "authors": []}, "ebookFiles": [{"ebookFormat": "epub"}]}
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/api/libraries":

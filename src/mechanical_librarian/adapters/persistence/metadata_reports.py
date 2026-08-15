@@ -1162,7 +1162,8 @@ class SQLiteMetadataReportRepository:
             return True
         except (sqlite3.Error, FieldEffectError, TypeError, ValueError) as error:
             self._connection.rollback()
-            if isinstance(error, FieldEffectError): raise
+            if isinstance(error, FieldEffectError):
+                raise
             raise FieldEffectError("authority_binding") from error
 
     def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool:
@@ -5417,9 +5418,11 @@ class SQLiteMetadataReportRepository:
             ReviewAdmissionIncompatibleError,
             ReviewAdmissionStaleError,
         ):
-            self._connection.rollback(); raise
+            self._connection.rollback()
+            raise
         except (sqlite3.Error, ProposalValueError, ReportValueError, ReviewCaseValueError) as error:
-            self._connection.rollback(); raise MetadataReportError("review admission failed") from error
+            self._connection.rollback()
+            raise MetadataReportError("review admission failed") from error
 
     def review_case_exists(self, review_case_id: str) -> bool:
         try:

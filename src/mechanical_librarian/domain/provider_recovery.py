@@ -17,11 +17,24 @@ class ProviderRecoveryError(ValueError):
 class ProviderRecoveryJob:
     """The immutable exact-current input for one scoped retry member."""
 
-    connection: str; adapter: str; scope: str; generation: int; member_id: str
-    target_connection: str; library: str; item: str; file_identity: str
-    source_report_id: str; package_proposal_id: str | None; package_report_id: str
-    package_case_id: str | None; package_checkpoint: int | None; package_outcome: str; lane_ids: str
-    state: str = "queued"; attempt: int = 0
+    connection: str
+    adapter: str
+    scope: str
+    generation: int
+    member_id: str
+    target_connection: str
+    library: str
+    item: str
+    file_identity: str
+    source_report_id: str
+    package_proposal_id: str | None
+    package_report_id: str
+    package_case_id: str | None
+    package_checkpoint: int | None
+    package_outcome: str
+    lane_ids: str
+    state: str = "queued"
+    attempt: int = 0
 
     def __post_init__(self) -> None:
         strings = (self.connection, self.adapter, self.scope, self.member_id, self.target_connection, self.library, self.item, self.file_identity, self.source_report_id, self.package_report_id, self.package_outcome, self.lane_ids)

@@ -547,7 +547,8 @@ class ProviderRecoveryTests(unittest.TestCase):
                 except Exception as error:
                     failures.append(error)
             worker = threading.Thread(target=observe)
-            worker.start(); worker.join()
+            worker.start()
+            worker.join()
             self.assertEqual([], failures)
             store.reconcile_generation(generation=2, now=1)
             self.assertIsNone(store.claim_one(generation=2, now=1, token="owner"))
@@ -826,7 +827,9 @@ class ProviderRecoveryTests(unittest.TestCase):
             dormant = ProviderRecovery.failed(connection="primary", adapter="hardcover", scope="books", generation=1, failure="authentication", now=0)
             waiting = ProviderRecovery.failed(connection="other", adapter="hardcover", scope="books", generation=1, failure="transient", now=0, retry_after=1)
             checking = ProviderRecovery.failed(connection="aaa", adapter="hardcover", scope="books", generation=1, failure="transient", now=0, retry_after=1)
-            store.record(dormant, occurred_at=0); store.record(waiting, occurred_at=0); store.record(checking, occurred_at=0)
+            store.record(dormant, occurred_at=0)
+            store.record(waiting, occurred_at=0)
+            store.record(checking, occurred_at=0)
             self.assertIsNotNone(store.claim_one(generation=1, now=1, token="owner"))
             self.assertEqual(3, store.reconcile_generation(generation=2, now=9))
             rows = {item.connection: item for item in store.snapshot(limit=3)}

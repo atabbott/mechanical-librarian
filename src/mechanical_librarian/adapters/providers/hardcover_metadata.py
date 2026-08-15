@@ -935,7 +935,8 @@ def _parse_candidates(
         book_taxonomy_issue = taxonomy_unavailable
         book_taxonomy_oversized = taxonomy_oversized
         if type(raw_taggings) is not list:
-            book_taxonomy_issue = True; rejected.reject()
+            book_taxonomy_issue = True
+            rejected.reject()
         elif len(raw_taggings) > MAX_TAGS:
             book_taxonomy_oversized = True
             rejected.reject()
@@ -947,7 +948,8 @@ def _parse_candidates(
                     tag_id = _identifier(tagging["tag_id"])
                     tag = indexed_tags[tag_id]
                 except (KeyError, TypeError, ValueError):
-                    book_taxonomy_issue = True; rejected.reject()
+                    book_taxonomy_issue = True
+                    rejected.reject()
                     continue
                 taggings.append({"id": tagging["id"], "tag": tag})
         book = {
@@ -1197,16 +1199,19 @@ def _cover_url(value: object, rejected: _OptionalRejections | None = None) -> tu
     try:
         image = _closed_or_none(value, {"url"})
     except (TypeError, ValueError):
-        if rejected: rejected.reject()
+        if rejected:
+            rejected.reject()
         return None, CoverSourceState.UNSAFE_REMOTE
     if image is None:
         return None, None
     url = image["url"]
     if type(url) is not str or not url:
-        if rejected: rejected.reject()
+        if rejected:
+            rejected.reject()
         return None, CoverSourceState.UNSAFE_REMOTE
     if len(url) > 2048:
-        if rejected: rejected.reject()
+        if rejected:
+            rejected.reject()
         return None, CoverSourceState.OVERSIZED
     try:
         parts = urlsplit(url)
@@ -1237,7 +1242,8 @@ def _work_cover_context(book: dict[str, Any], rejected: _OptionalRejections | No
         value = _text(book["release_date"], MAX_SCALAR_CHARACTERS)
         normalize_date_value(value)
     except ValueError:
-        if rejected: rejected.reject()
+        if rejected:
+            rejected.reject()
         return ()
     return (CoverContext(CoverContextField.PUBLICATION_DATE, value),)
 
@@ -1249,7 +1255,8 @@ def _edition_cover_context(row: dict[str, Any], rejected: _OptionalRejections | 
             try:
                 values.add(CoverContext(CoverContextField.ISBN, _text(row[key], MAX_SCALAR_CHARACTERS)))
             except ValueError:
-                if rejected: rejected.reject()
+                if rejected:
+                    rejected.reject()
                 pass
     language = _optional_mapping(row["language"], rejected)
     if language is not None:
@@ -1263,7 +1270,8 @@ def _edition_cover_context(row: dict[str, Any], rejected: _OptionalRejections | 
     try:
         publisher = _text(_optional_member(row["publisher"], "name"), MAX_SCALAR_CHARACTERS)
     except ValueError:
-        if rejected: rejected.reject()
+        if rejected:
+            rejected.reject()
         publisher = None
     if publisher is not None:
         values.add(CoverContext(CoverContextField.PUBLISHER, publisher))
@@ -1273,7 +1281,8 @@ def _edition_cover_context(row: dict[str, Any], rejected: _OptionalRejections | 
             normalize_date_value(value)
             values.add(CoverContext(CoverContextField.PUBLICATION_DATE, value))
         except ValueError:
-            if rejected: rejected.reject()
+            if rejected:
+                rejected.reject()
             pass
     return tuple(
         sorted(values, key=lambda value: (value.field.value, value.value))
@@ -1416,7 +1425,8 @@ def _work_claims(
         try:
             _identifier(tag["id"])
         except ValueError:
-            if rejected: rejected.reject()
+            if rejected:
+                rejected.reject()
             malformed_taxonomy = True
             continue
         category = _optional_closed(
@@ -1430,7 +1440,8 @@ def _work_claims(
             name = _text(tag["tag"], MAX_SCALAR_CHARACTERS)
             category_name = _text(category["category"], MAX_SCALAR_CHARACTERS)
         except ValueError:
-            if rejected: rejected.reject()
+            if rejected:
+                rejected.reject()
             malformed_taxonomy = True
             continue
         taxonomy_identity = " ".join(
@@ -1623,7 +1634,8 @@ def _contributions(
             try:
                 role = validate_role_projection(raw_role).casefold()
             except EvidenceValueError:
-                if rejected: rejected.reject()
+                if rejected:
+                    rejected.reject()
                 claims.append(_state_claim(provider, identity, ClaimKind.CONTRIBUTOR, FieldState.MALFORMED, scope, local, offset + len(claims)))
                 continue
         kind = ClaimKind.CREATOR if role in {None, "author"} else ClaimKind.CONTRIBUTOR
@@ -1635,7 +1647,8 @@ def _contributions(
             author_id = _identifier(author["id"])
         except ValueError:
             author_id = None
-            if rejected: rejected.reject()
+            if rejected:
+                rejected.reject()
         claim = _claim(
             provider,
             identity,
@@ -1672,7 +1685,8 @@ def _contributions(
 
 def _field_local_author(value: object, rejected: _OptionalRejections | None = None) -> dict[str, Any] | None:
     if type(value) is not dict or set(value) != {"id", "name"}:
-        if rejected: rejected.reject()
+        if rejected:
+            rejected.reject()
         return None
     return value
 
@@ -1713,7 +1727,8 @@ def _field(kind: ClaimKind, value: object, rejected: _OptionalRejections | None 
             text = _position(text)
         return FieldState.VALID, text
     except (ValueError, EvidenceValueError):
-        if rejected: rejected.reject()
+        if rejected:
+            rejected.reject()
         return (FieldState.OVERSIZED if type(value) is str and len(value) > maximum else FieldState.MALFORMED), None
 
 
@@ -1729,7 +1744,8 @@ def _optional_bounded_list(
 ) -> tuple[list[dict[str, Any]], bool, bool]:
     """Retain valid optional members only after a whole-field cap check."""
     if type(value) is not list:
-        if rejected: rejected.reject()
+        if rejected:
+            rejected.reject()
         return [], False, True
     if len(value) > maximum:
         # Cardinality is authoritative: do not inspect or retain a prefix.
@@ -1742,7 +1758,8 @@ def _optional_bounded_list(
         try:
             values.append(_closed(item, keys))
         except ValueError:
-            if rejected: rejected.reject()
+            if rejected:
+                rejected.reject()
             invalid = True
     return values, False, invalid
 
@@ -1784,7 +1801,8 @@ def _optional_closed(value: object, keys: set[str], rejected: _OptionalRejection
     try:
         return _closed_or_none(value, keys)
     except ValueError:
-        if rejected: rejected.reject()
+        if rejected:
+            rejected.reject()
         return None
 
 
@@ -1792,7 +1810,8 @@ def _optional_mapping(value: object, rejected: _OptionalRejections | None = None
     """An optional parent is not an anchor; validate its children locally."""
     if type(value) is dict:
         return value
-    if value is not None and rejected: rejected.reject()
+    if value is not None and rejected:
+        rejected.reject()
     return None
 
 

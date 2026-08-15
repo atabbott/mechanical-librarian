@@ -65,22 +65,36 @@ class _Inspector:
 
 class _Repository:
     def __init__(self, report):
-        self.values = {report.report_id: report.to_json()}; self.current_id = report.report_id; self.package = (None, report.report_id, None, None, "report_only")
+        self.values = {report.report_id: report.to_json()}
+        self.current_id = report.report_id
+        self.package = (None, report.report_id, None, None, "report_only")
+
     def get(self, report_id): return self.values[report_id]
     def current_optional(self, *_args): return self.values[self.current_id]
     def current_review_package(self, *_args): return self.package
     def current_review_package_report(self, *_args): return self.package[1]
     def publish(self, report, currentness, expected_current=None, after_publication=None, *, expected_package=None):
-        if expected_current != self.current_id or expected_package != self.package or not currentness(): raise ProviderRetrySuccessorError("stale")
-        self.values[report.report_id] = report.to_json(); self.current_id = report.report_id
-        if after_publication is not None: after_publication(self, report)
+        if expected_current != self.current_id or expected_package != self.package or not currentness():
+            raise ProviderRetrySuccessorError("stale")
+        self.values[report.report_id] = report.to_json()
+        self.current_id = report.report_id
+        if after_publication is not None:
+            after_publication(self, report)
         return report.to_json()
     def close(self): pass
 
 
 class _Provider:
-    def __init__(self, observation, attempt_records=()): self.observation = observation; self.plans = []; self.deadlines = []; self.attempt_records = attempt_records
-    def observe(self, plan, *, deadline=None): self.plans.append(plan); self.deadlines.append(deadline); return self.observation
+    def __init__(self, observation, attempt_records=()):
+        self.observation = observation
+        self.plans = []
+        self.deadlines = []
+        self.attempt_records = attempt_records
+
+    def observe(self, plan, *, deadline=None):
+        self.plans.append(plan)
+        self.deadlines.append(deadline)
+        return self.observation
 
 
 class ProviderRetrySuccessorTests(unittest.TestCase):

@@ -193,7 +193,8 @@ class CatalogueRepositoryTests(unittest.TestCase):
             path = Path(directory) / "catalogue.sqlite"
             first = open_catalogue(path, create=True)
             first.close()
-            ready = Event(); release = Event()
+            ready = Event()
+            release = Event()
             holder = Process(target=_hold_refresh_lock, args=(str(path), ready, release))
             holder.start()
             try:
@@ -202,18 +203,21 @@ class CatalogueRepositoryTests(unittest.TestCase):
                 with self.assertRaises(CatalogueBusyError):
                     RefreshCurrentCatalogue(_BlockingReader(Event(), Event()), second).refresh(_configuration())
             finally:
-                release.set(); holder.join(10)
+                release.set()
+                holder.join(10)
                 self.assertEqual(holder.exitcode, 0)
                 second.close()
 
     def test_existing_altered_schema_and_symlink_are_rejected_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "catalogue.sqlite"
-            repository = open_catalogue(path, create=True); repository.close()
+            repository = open_catalogue(path, create=True)
+            repository.close()
             before = path.read_bytes()
             connection = sqlite3.connect(path)
             connection.execute("DROP INDEX catalogue_one_current")
-            connection.commit(); connection.close()
+            connection.commit()
+            connection.close()
             altered = path.read_bytes()
             with self.assertRaises(Exception):
                 open_catalogue(path)
@@ -227,11 +231,13 @@ class CatalogueRepositoryTests(unittest.TestCase):
     def test_existing_extra_trigger_and_view_are_rejected_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "catalogue.sqlite"
-            repository = open_catalogue(path, create=True); repository.close()
+            repository = open_catalogue(path, create=True)
+            repository.close()
             connection = sqlite3.connect(path)
             connection.execute("CREATE VIEW unexpected_view AS SELECT 1")
             connection.execute("CREATE TRIGGER unexpected_trigger AFTER INSERT ON catalogue_schema BEGIN SELECT 1; END")
-            connection.commit(); connection.close()
+            connection.commit()
+            connection.close()
             before = path.read_bytes()
             with self.assertRaises(Exception):
                 open_catalogue(path)
@@ -241,7 +247,9 @@ class CatalogueRepositoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "catalogue.sqlite"
             repository = open_catalogue(path, create=True)
-            repository.acquire_refresh(); repository.publish(catalogue_fingerprint(_configuration()).digest, (_entry(),)); repository.close()
+            repository.acquire_refresh()
+            repository.publish(catalogue_fingerprint(_configuration()).digest, (_entry(),))
+            repository.close()
             with patch("mechanical_librarian.bootstrap.composition.load_configuration_file", return_value=_configuration()):
                 listed = json.loads(run_catalogue(Path("ignored"), path, "list", None, None, None, None))
                 got = json.loads(run_catalogue(Path("ignored"), path, "get", "primary", "books", "library-id", "item-1"))
@@ -254,9 +262,11 @@ class CatalogueRepositoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "catalogue.sqlite"
             repository = open_catalogue(path, create=True)
-            repository.acquire_refresh(); repository.publish("a" * 64, (_entry(),))
             repository.acquire_refresh()
-            replacement = Path(directory) / "replacement.sqlite"; replacement.write_bytes(b"replacement")
+            repository.publish("a" * 64, (_entry(),))
+            repository.acquire_refresh()
+            replacement = Path(directory) / "replacement.sqlite"
+            replacement.write_bytes(b"replacement")
             os.replace(replacement, path)
             with self.assertRaises(Exception):
                 repository.publish("a" * 64, (_entry("item-2"),))
@@ -269,8 +279,10 @@ class CatalogueRepositoryTests(unittest.TestCase):
             repository = open_catalogue(path, create=True)
             original = _entry(title="Prior title", author="Prior author", path="prior.epub")
             current = _entry("item-2", title="Current title", author="Current author", path="current.epub")
-            repository.acquire_refresh(); repository.publish("a" * 64, (original,))
-            repository.acquire_refresh(); repository.publish("a" * 64, (current,))
+            repository.acquire_refresh()
+            repository.publish("a" * 64, (original,))
+            repository.acquire_refresh()
+            repository.publish("a" * 64, (current,))
             self.assertEqual(repository._connection.execute("SELECT generation,current FROM catalogue_generations").fetchall(), [(2, 1)])
             self.assertEqual(repository._connection.execute("SELECT title,authors,service_path FROM catalogue_entries").fetchall(), [("Current title", '["Current author"]', "current.epub")])
             repository.acquire_refresh()

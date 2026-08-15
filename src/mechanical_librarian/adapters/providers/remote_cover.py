@@ -219,13 +219,17 @@ def _chunked_body(secured: ssl.SSLSocket, deadline: float | CoverDeadline | None
             if _framing_line(secured, buffer, deadline):
                 raise RemoteCoverError("remote cover response is invalid")
             return bytes(output)
-        if len(output) + size > MAX_BYTES: raise RemoteCoverError("remote cover is oversized")
+        if len(output) + size > MAX_BYTES:
+            raise RemoteCoverError("remote cover is oversized")
         while len(buffer) < size + 2:
             chunk = _receive(secured, min(65_536, size + 2 - len(buffer)), deadline)
-            if not chunk: raise RemoteCoverError("remote cover response is invalid")
+            if not chunk:
+                raise RemoteCoverError("remote cover response is invalid")
             buffer.extend(chunk)
-        if buffer[size:size + 2] != b"\r\n": raise RemoteCoverError("remote cover response is invalid")
-        output.extend(buffer[:size]); del buffer[:size + 2]
+        if buffer[size : size + 2] != b"\r\n":
+            raise RemoteCoverError("remote cover response is invalid")
+        output.extend(buffer[:size])
+        del buffer[: size + 2]
 
 
 def _redirect_target(current: str, location: str | None) -> str:

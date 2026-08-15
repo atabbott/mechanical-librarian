@@ -1693,11 +1693,16 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
     root_token: str | None = None
     base: str | None = None
     try:
-        library_dir = root / "library"; library_dir.mkdir(mode=0o700)
-        alpha_dir = library_dir / "alpha"; alpha_dir.mkdir(mode=0o700)
-        beta_dir = library_dir / "beta"; beta_dir.mkdir(mode=0o700)
-        config_dir = root / "config"; config_dir.mkdir(mode=0o700)
-        metadata_dir = root / "metadata"; metadata_dir.mkdir(mode=0o700)
+        library_dir = root / "library"
+        library_dir.mkdir(mode=0o700)
+        alpha_dir = library_dir / "alpha"
+        alpha_dir.mkdir(mode=0o700)
+        beta_dir = library_dir / "beta"
+        beta_dir.mkdir(mode=0o700)
+        config_dir = root / "config"
+        config_dir.mkdir(mode=0o700)
+        metadata_dir = root / "metadata"
+        metadata_dir.mkdir(mode=0o700)
         corpus_sources = _corpus_sources(corpus)
         operator_metadata: dict[str, str] = {}
         operator_authors: dict[str, str] = {}
@@ -1768,7 +1773,8 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
                 )
                 break
             time.sleep(1)
-        if not isinstance(item, str): raise RuntimeError("synthetic library did not scan")
+        if not isinstance(item, str):
+            raise RuntimeError("synthetic library did not scan")
         if not isinstance(item, str):
             raise QualificationError("synthetic_library_did_not_scan")
         if (not isinstance(items, list) or any(not isinstance(value, str) for value in items)):
@@ -1846,10 +1852,12 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         _request("PATCH", base, "/api/items/" + item + "/media", token=writer_key, payload={"tags": ["before"]})
         before_cover = _png(0, 0, 255)
         response = httpx.post(base + "/api/items/" + item + "/cover", headers={"Authorization": "Bearer " + writer_key}, files={"cover": ("before.png", before_cover, "image/png")}, timeout=20)
-        if response.status_code not in {200, 201}: raise RuntimeError("synthetic initial cover was refused")
+        if response.status_code not in {200, 201}:
+            raise RuntimeError("synthetic initial cover was refused")
         artifacts = CoverArtifactStore(root / "artifacts")
         desired_cover = _png(255, 0, 0)
-        artifact = CoverArtifact.create(desired_cover, b"preview", "image/png", 2, 2); artifacts.stage(artifact, desired_cover, b"preview")
+        artifact = CoverArtifact.create(desired_cover, b"preview", "image/png", 2, 2)
+        artifacts.stage(artifact, desired_cover, b"preview")
         writes: list[str] = []
         def client_factory() -> httpx.Client:
             client = target_client_token(base, writer_key, 20)
@@ -1973,7 +1981,8 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
                 _delete_key(base, root_token, key_id)
         if subprocess.run(("docker", "inspect", owner), capture_output=True, text=True).returncode == 0 and not _owned(owner, owner):
             raise RuntimeError("refusing cleanup of unowned Docker resource")
-        if _owned(owner, owner): _run("docker", "rm", "-f", owner)
+        if _owned(owner, owner):
+            _run("docker", "rm", "-f", owner)
         shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1999,4 +2008,5 @@ def main() -> None:
     print(json.dumps({"schema": "audiobookshelf-field-effect-v2", "installed_artifact": True, "latest_stable_version": latest, "operator_corpus": arguments.corpus is not None, "results": [qualify(value, arguments.corpus) for value in values]}, sort_keys=True))
 
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()

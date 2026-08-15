@@ -26,7 +26,8 @@ class MetadataPolicyTests(unittest.TestCase):
         destinations = {field: "ask" if field != "explicit" else "unsupported" for field in OPTION_CATALOGUE}
         for field, choices in OPTION_CATALOGUE.items():
             for choice in choices:
-                options = dict(DEFAULT_OPTIONS); options[field] = choice
+                options = dict(DEFAULT_OPTIONS)
+                options[field] = choice
                 profile = MetadataPolicyProfile.create("Draft", options, destinations)
                 resolved = resolve_policy(profile, "library")
                 self.assertEqual(dict(resolved.options)[field], choice)
@@ -85,7 +86,9 @@ class MetadataPolicyTests(unittest.TestCase):
         class Repository:
             def __init__(self) -> None: self.calls: list[str] = []
             def current_unapplied_count(self, library: str) -> int:
-                self.calls.append(library); return {"first": 2, "second": 0}[library]
+                self.calls.append(library)
+                return {"first": 2, "second": 0}[library]
+
         repository = Repository()
         options = dict(DEFAULT_OPTIONS)
         options["date_precision"] = "full_date"

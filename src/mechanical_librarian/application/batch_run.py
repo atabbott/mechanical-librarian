@@ -23,7 +23,13 @@ class ForegroundBatchRun:
     """Own the closed serial loop; composition supplies the concrete authority."""
 
     def __init__(self, *, snapshot: CatalogueSnapshot, selections: tuple[BatchSelection, ...], projection: Callable[[], str], expected_projection: str, current_entry: Callable[[int, str, tuple[str, str, str, str]], CatalogueEntry | None], report: Callable[[CatalogueEntry], tuple[str, tuple[ProviderStatus, ...]]], emit: Callable[[dict[str, object]], None]) -> None:
-        self._snapshot = snapshot; self._selections = selections; self._projection = projection; self._expected_projection = expected_projection; self._current_entry = current_entry; self._report = report; self._emit = emit
+        self._snapshot = snapshot
+        self._selections = selections
+        self._projection = projection
+        self._expected_projection = expected_projection
+        self._current_entry = current_entry
+        self._report = report
+        self._emit = emit
 
     def run(self) -> bool:
         completed = skipped = failed = 0
@@ -38,25 +44,38 @@ class ForegroundBatchRun:
                 self._emit({"item": selection.item, "outcome": "stopped"})
                 return self._finish(completed, skipped, failed, True)
             if entry is None or entry.file_identity != selection.file_identity or entry.classification != selection.classification or entry.eligible != selection.eligible:
-                skipped += 1; self._emit({"item": selection.item, "outcome": "stale"}); continue
+                skipped += 1
+                self._emit({"item": selection.item, "outcome": "stale"})
+                continue
             if not entry.eligible or entry.file_identity is None:
-                skipped += 1; self._emit({"item": selection.item, "outcome": "ineligible"}); continue
+                skipped += 1
+                self._emit({"item": selection.item, "outcome": "ineligible"})
+                continue
             try:
                 report = self._report(entry)
             except CurrentnessError:
-                skipped += 1; self._emit({"item": selection.item, "outcome": "stale"}); continue
+                skipped += 1
+                self._emit({"item": selection.item, "outcome": "stale"})
+                continue
             except CredentialError:
-                self._emit({"item": selection.item, "outcome": "stopped"}); return self._finish(completed, skipped, failed, True)
+                self._emit({"item": selection.item, "outcome": "stopped"})
+                return self._finish(completed, skipped, failed, True)
             except (UnsupportedMediaError, ItemInspectionError):
-                failed += 1; self._emit({"item": selection.item, "outcome": "item_failed"}); continue
+                failed += 1
+                self._emit({"item": selection.item, "outcome": "item_failed"})
+                continue
             except MetadataReportError:
-                self._emit({"item": selection.item, "outcome": "stopped"}); return self._finish(completed, skipped, failed, True)
+                self._emit({"item": selection.item, "outcome": "stopped"})
+                return self._finish(completed, skipped, failed, True)
             except Exception:
-                self._emit({"item": selection.item, "outcome": "stopped"}); return self._finish(completed, skipped, failed, True)
+                self._emit({"item": selection.item, "outcome": "stopped"})
+                return self._finish(completed, skipped, failed, True)
             report_id, statuses = report
-            completed += 1; self._emit({"item": selection.item, "outcome": "completed", "report": report_id})
+            completed += 1
+            self._emit({"item": selection.item, "outcome": "completed", "report": report_id})
             if any(status in {ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION, ProviderStatus.RATE_LIMITED, ProviderStatus.INCOMPLETE, ProviderStatus.UNAVAILABLE, ProviderStatus.MALFORMED, ProviderStatus.OVERSIZED} for status in statuses):
-                self._emit({"item": selection.item, "outcome": "stopped"}); return self._finish(completed, skipped, failed, True)
+                self._emit({"item": selection.item, "outcome": "stopped"})
+                return self._finish(completed, skipped, failed, True)
         return self._finish(completed, skipped, failed, False)
 
     def _finish(self, completed: int, skipped: int, failed: int, stopped: bool) -> bool:

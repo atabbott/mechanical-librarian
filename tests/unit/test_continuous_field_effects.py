@@ -982,11 +982,13 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         shared["release"].clear()
         first = threading.Thread(target=service.apply, args=("plan-a2",))
         second = threading.Thread(target=service.apply, args=("plan-b1",))
-        first.start(); second.start()
+        first.start()
+        second.start()
         self.assertTrue(shared["started"].wait(1))
         self.assertEqual(shared["maximum"], 1)
         shared["release"].set()
-        first.join(); second.join()
+        first.join()
+        second.join()
         self.assertEqual(shared["maximum"], 1)
 
     def test_shutdown_waits_for_a_claimed_operation_within_configured_grace(self) -> None:

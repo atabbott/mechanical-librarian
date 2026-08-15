@@ -113,7 +113,8 @@ def manifest(
     canonical = canonical_json(body).encode("utf-8") + b"\n"
     value = {**body, "id": hashlib.sha256(canonical).hexdigest()}
     raw = canonical_json(value).encode("utf-8") + b"\n"
-    if len(raw) > MAX_MANIFEST_BYTES: raise BatchError("batch manifest is invalid")
+    if len(raw) > MAX_MANIFEST_BYTES:
+        raise BatchError("batch manifest is invalid")
     return raw
 
 
@@ -137,7 +138,8 @@ def parse_manifest(raw: bytes) -> dict[str, object]:
         if type(entry) is not dict or set(entry) != {"connection", "library", "library_id", "item", "file_identity", "classification", "eligible"} or not _entry_valid(entry):
             raise BatchError("batch manifest is invalid")
     identities = tuple((entry["connection"], entry["library"], entry["library_id"], entry["item"]) for entry in body["entries"])
-    if len(set(identities)) != len(identities): raise BatchError("batch manifest is invalid")
+    if len(set(identities)) != len(identities):
+        raise BatchError("batch manifest is invalid")
     return value
 
 
@@ -160,26 +162,36 @@ def _maxima(entries: int, adapters: tuple[str, ...]) -> dict[str, int]:
 
 
 def _depth(raw: bytes) -> None:
-    level = 0; quoted = False; escaped = False
+    level = 0
+    quoted = False
+    escaped = False
     for byte in raw:
         if quoted:
-            if escaped: escaped = False
-            elif byte == 92: escaped = True
-            elif byte == 34: quoted = False
-        elif byte == 34: quoted = True
+            if escaped:
+                escaped = False
+            elif byte == 92:
+                escaped = True
+            elif byte == 34:
+                quoted = False
+        elif byte == 34:
+            quoted = True
         elif byte in (91, 123):
             level += 1
-            if level > 100: raise ValueError
+            if level > 100:
+                raise ValueError
         elif byte in (93, 125):
             level -= 1
-            if level < 0: raise ValueError
-    if quoted or level != 0: raise ValueError
+            if level < 0:
+                raise ValueError
+    if quoted or level != 0:
+        raise ValueError
 
 
 def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
     value: dict[str, object] = {}
     for key, item in pairs:
-        if key in value: raise ValueError
+        if key in value:
+            raise ValueError
         value[key] = item
     return value
 
@@ -191,8 +203,11 @@ def _reject_constant(_: str) -> float:
 def _entry_valid(entry: dict[str, object]) -> bool:
     if not _name(entry["connection"]) or not _name(entry["library"]) or not _opaque(entry["library_id"], 128) or not _opaque(entry["item"], 512):
         return False
-    identity = entry["file_identity"]; classification = entry["classification"]; eligible = entry["eligible"]
-    if classification == "singular-supported": return type(eligible) is bool and _digest(identity)
+    identity = entry["file_identity"]
+    classification = entry["classification"]
+    eligible = entry["eligible"]
+    if classification == "singular-supported":
+        return type(eligible) is bool and _digest(identity)
     return classification in {"none", "needs-attention"} and eligible is False and identity is None
 
 

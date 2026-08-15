@@ -356,7 +356,8 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
     seen: set[str] = set()
     limits = EpubOpeningLimits(package=request.limits, selected_documents=4, expanded_bytes_per_resource=1_048_576, expanded_bytes_per_selection=4_194_304, text_characters_per_selection=262_144, nodes_per_resource=50_000, nodes_per_selection=50_000, facts=16)
     names = {epub_resource_identity(info.filename): info.filename for info in archive.infolist() if not info.is_dir()}
-    facts: list[EpubInspectionFact] = []; expanded = text = nodes = opens = 0
+    facts: list[EpubInspectionFact] = []
+    expanded = text = nodes = opens = 0
     for tail_slot, spine_item in enumerate(reversed(spine[-8:]), 1):
         opening._check(request)
         identity = spine_item.resource_identity
@@ -379,10 +380,13 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
         try:
             data = opening._read_member(archive, names[identity], limits.expanded_bytes_per_resource, request)
             expanded += len(data)
-            if expanded > limits.expanded_bytes_per_selection: raise opening._AggregateRejected(report.outcome.RESOURCE_LIMIT, tuple(facts))
+            if expanded > limits.expanded_bytes_per_selection:
+                raise opening._AggregateRejected(report.outcome.RESOURCE_LIMIT, tuple(facts))
             projection = opening._parse(data, declaration.media_type, limits, request)
-            text += projection.work_text_characters; nodes += projection.work_nodes
-            if text > limits.text_characters_per_selection or nodes > limits.nodes_per_selection: raise opening._AggregateRejected(report.outcome.RESOURCE_LIMIT, tuple(facts))
+            text += projection.work_text_characters
+            nodes += projection.work_nodes
+            if text > limits.text_characters_per_selection or nodes > limits.nodes_per_selection:
+                raise opening._AggregateRejected(report.outcome.RESOURCE_LIMIT, tuple(facts))
         except opening._AggregateRejected:
             raise
         except opening._ResourceRejected:
@@ -416,7 +420,8 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             ),
             None,
         )
-        if marker is None: continue
+        if marker is None:
+            continue
         provenance = EpubRearProvenance(identity, spine_item.spine_position or tail_slot, tail_slot, marker.group(0).lower(), marker.group(0))
         resource_isbns = 0
         eligible_ordinals: set[int] = set()
@@ -450,12 +455,14 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
                 continue
             is_ancestor = element.ordinal in parents
             value = " ".join(element.exact_text.split())
-            if not value or len(value) > 280: continue
+            if not value or len(value) > 280:
+                continue
             try:
                 value = validate_projection_text(value, "rear-spine cue", 280)
             except EvidenceValueError:
                 continue
-            field = canonical = None; role = None
+            field = canonical = None
+            role = None
             byline = _BYLINE.match(value)
             bibliographic_label = opening._is_bibliographic_indicia_label(value)
             bibliographic_indicia = opening._bibliographic_indicia(
@@ -474,7 +481,8 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
             credits = () if is_ancestor else opening._indicia_credits(value)
             dates = () if is_ancestor else opening._indicia_dates(value)
             admitted_cue = admitted_cue or bool(credits) or bool(dates)
-            if is_ancestor and not admitted_cue: continue
+            if is_ancestor and not admitted_cue:
+                continue
             if (
                 element.semantics & {"title", "fulltitle"}
                 and not bibliographic_label
@@ -483,13 +491,14 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
                     EpubInspectionField.TITLE,
                     normalize_title(value),
                 )
-            elif element.semantics & {"contributor"} and not any(
-                credit[0] is opening.OpeningField.CONTRIBUTOR
-                for credit in credits
-            ): field, canonical = EpubInspectionField.CONTRIBUTOR, value
-            elif byline is not None and len(byline.group(1)) <= 280: field, canonical, role = EpubInspectionField.CREATOR, byline.group(1), "author"
-            elif element.semantics & {"creator"}: field, canonical, role = EpubInspectionField.CREATOR, value, "author"
-            if field is not None: facts.append(EpubInspectionFact(field, report.source_fingerprint, value, canonical, value, "not_applicable", "not_applicable", "not_applicable", "opening_matter", rear_provenance=provenance, role=role))
+            elif element.semantics & {"contributor"} and not any(credit[0] is opening.OpeningField.CONTRIBUTOR for credit in credits):
+                field, canonical = EpubInspectionField.CONTRIBUTOR, value
+            elif byline is not None and len(byline.group(1)) <= 280:
+                field, canonical, role = EpubInspectionField.CREATOR, byline.group(1), "author"
+            elif element.semantics & {"creator"}:
+                field, canonical, role = EpubInspectionField.CREATOR, value, "author"
+            if field is not None:
+                facts.append(EpubInspectionFact(field, report.source_fingerprint, value, canonical, value, "not_applicable", "not_applicable", "not_applicable", "opening_matter", rear_provenance=provenance, role=role))
             for indicia in bibliographic_indicia:
                 labelled = indicia.context_span is not None
                 if labelled:
@@ -609,11 +618,14 @@ def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningRe
                 )
             owner_spans = opening._non_isbn_identifier_spans(value)
             for match in () if is_ancestor else opening._ISBN.finditer(value):
-                if resource_isbns >= 4: break
+                if resource_isbns >= 4:
+                    break
                 if opening._isbn_owned_by_non_isbn_identifier(match, owner_spans):
                     continue
                 isbn = opening._normal(match.group(0), opening.OpeningField.IDENTIFIER)
                 if len(isbn) in {10, 13} and opening._isbn_valid(isbn):
-                    facts.append(EpubInspectionFact(EpubInspectionField.ISBN, report.source_fingerprint, match.group(0), isbn, value, f"valid_isbn_{len(isbn)}", "unknown", "unlabelled", "opening_matter", rear_provenance=provenance)); resource_isbns += 1
-            if len(facts) > 16: raise opening._AggregateRejected(report.outcome.RESOURCE_LIMIT, tuple(facts[:16]))
+                    facts.append(EpubInspectionFact(EpubInspectionField.ISBN, report.source_fingerprint, match.group(0), isbn, value, f"valid_isbn_{len(isbn)}", "unknown", "unlabelled", "opening_matter", rear_provenance=provenance))
+                    resource_isbns += 1
+            if len(facts) > 16:
+                raise opening._AggregateRejected(report.outcome.RESOURCE_LIMIT, tuple(facts[:16]))
     return tuple(facts)

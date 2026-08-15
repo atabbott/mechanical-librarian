@@ -164,7 +164,9 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
     metadata_file = None
     has_audio = type(media.get("audioFiles")) is list
     if ebook is None and (plural is None or plural == []):
-        classification = "none"; file_identity = service_path = format_value = mount_name = None; has_ebook = False
+        classification = "none"
+        file_identity = service_path = format_value = mount_name = None
+        has_ebook = False
     elif type(ebook) is dict and plural is None:
         has_ebook = True
         metadata_file = ebook.get("metadata")
@@ -175,10 +177,12 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
                 item=detail,
             )
         except ValueError:
-            classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None
+            classification = "needs-attention"
+            file_identity = service_path = format_value = mount_name = None
         else:
             if location.format != "epub":
-                classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None
+                classification = "needs-attention"
+                file_identity = service_path = format_value = mount_name = None
             else:
                 classification = "singular-supported"
                 file_identity = location.identity
@@ -186,7 +190,9 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
                 format_value = location.format
                 mount_name = None if mount is None else mount.name
     else:
-        classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None; has_ebook = True
+        classification = "needs-attention"
+        file_identity = service_path = format_value = mount_name = None
+        has_ebook = True
     reviewed_fields = {
         name: {"present": name in metadata, "value": metadata.get(name)}
         for name in (

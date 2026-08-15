@@ -282,11 +282,13 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             repository = open_repository(Path(directory) / "reports.sqlite")
             first = _report()
             repository.publish(first, lambda: True)
-            first_set = self._actionable(first); repository.publish_proposal(first_set)
+            first_set = self._actionable(first)
+            repository.publish_proposal(first_set)
             first_case = json.loads(repository.admit_review_case(first_set))["review_case_id"]
             successor = _report("Changed", "c", "d")
             repository.publish(successor, lambda: True)
-            successor_set = self._actionable(successor); repository.publish_proposal(successor_set)
+            successor_set = self._actionable(successor)
+            repository.publish_proposal(successor_set)
             successor_case = json.loads(repository.admit_review_case(successor_set))["review_case_id"]
             self.assertFalse(json.loads(repository.get_review_case(first_case))["current"])
             self.assertTrue(json.loads(repository.get_review_case(successor_case))["current"])
@@ -296,7 +298,9 @@ class ReviewCasePersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
             first = _report()
-            repository.publish(first, lambda: True); proposal = self._actionable(first); repository.publish_proposal(proposal)
+            repository.publish(first, lambda: True)
+            proposal = self._actionable(first)
+            repository.publish_proposal(proposal)
             case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
             newer = _report("New", "c", "d")
             repository.publish(newer, lambda: True)
@@ -307,10 +311,14 @@ class ReviewCasePersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
             first = _report()
-            repository.publish(first, lambda: True); first_set = self._actionable(first); repository.publish_proposal(first_set)
+            repository.publish(first, lambda: True)
+            first_set = self._actionable(first)
+            repository.publish_proposal(first_set)
             case_id = json.loads(repository.admit_review_case(first_set))["review_case_id"]
             successor = _report("Changed", "c", "d", actionable=False)
-            repository.publish(successor, lambda: True); successor_set = evaluate_report(successor); repository.publish_proposal(successor_set)
+            repository.publish(successor, lambda: True)
+            successor_set = evaluate_report(successor)
+            repository.publish_proposal(successor_set)
             self.assertEqual("retired", json.loads(repository.admit_review_case(successor_set))["status"])
             self.assertFalse(json.loads(repository.get_review_case(case_id))["current"])
             self.assertEqual((1,), repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone())
@@ -320,10 +328,13 @@ class ReviewCasePersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
             first = _report()
-            repository.publish(first, lambda: True); stale = self._actionable(first); repository.publish_proposal(stale)
+            repository.publish(first, lambda: True)
+            stale = self._actionable(first)
+            repository.publish_proposal(stale)
             current = _report("Changed", "c", "d")
             repository.publish(current, lambda: True)
-            with self.assertRaises(Exception): repository.admit_review_case(stale)
+            with self.assertRaises(Exception):
+                repository.admit_review_case(stale)
             self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone())
             self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM review_case_transitions").fetchone())
             repository.close()
@@ -488,7 +499,10 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             database = Path(directory) / "reports.sqlite"
             repository = open_repository(database)
             report = _report()
-            repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal); repository.close()
+            repository.publish(report, lambda: True)
+            proposal = self._actionable(report)
+            repository.publish_proposal(proposal)
+            repository.close()
             barrier, results = threading.Barrier(2), []
             def admit() -> None:
                 if sys.platform.startswith("linux"):
@@ -499,9 +513,12 @@ class ReviewCasePersistenceTests(unittest.TestCase):
                     barrier.wait()
                 try:
                     results.append(json.loads(local.admit_review_case(proposal)))
-                finally: local.close()
+                finally:
+                    local.close()
+
             threads = [threading.Thread(target=admit) for _ in range(2)]
-            [thread.start() for thread in threads]; [thread.join() for thread in threads]
+            [thread.start() for thread in threads]
+            [thread.join() for thread in threads]
             self.assertEqual(2, len(results))
             self.assertEqual(1, len({value["review_case_id"] for value in results}))
 
@@ -509,9 +526,12 @@ class ReviewCasePersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
             report = _report()
-            repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
+            repository.publish(report, lambda: True)
+            proposal = self._actionable(report)
+            repository.publish_proposal(proposal)
             repository._connection.execute("CREATE TRIGGER injected_review_transition_failure BEFORE INSERT ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'injected'); END")
-            with self.assertRaises(Exception): repository.admit_review_case(proposal)
+            with self.assertRaises(Exception):
+                repository.admit_review_case(proposal)
             self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone())
             self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM current_review_case_lineages").fetchone())
             self.assertEqual((0,), repository._connection.execute("SELECT COUNT(*) FROM review_case_transitions").fetchone())
@@ -522,56 +542,72 @@ class ReviewCasePersistenceTests(unittest.TestCase):
     def test_exact_current_schema_restarts_and_prior_schema_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "reports.sqlite"
-            repository = open_repository(database); repository.close()
-            reopened = open_repository(database, create=False); reopened.close()
+            repository = open_repository(database)
+            repository.close()
+            reopened = open_repository(database, create=False)
+            reopened.close()
             old = Path(directory) / "old.sqlite"
             old.write_bytes(database.read_bytes())
             import sqlite3
             connection = sqlite3.connect(old)
-            connection.execute("DROP TABLE review_case_transitions"); connection.commit(); connection.close()
+            connection.execute("DROP TABLE review_case_transitions")
+            connection.commit()
+            connection.close()
             before = old.read_bytes()
-            with self.assertRaises(Exception): open_repository(old, create=False)
+            with self.assertRaises(Exception):
+                open_repository(old, create=False)
             self.assertEqual(before, old.read_bytes())
 
     def test_corrupt_case_is_redacted_and_unrelated_history_survives(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
             report = _report()
-            repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
+            repository.publish(report, lambda: True)
+            proposal = self._actionable(report)
+            repository.publish_proposal(proposal)
             case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
             self.assertEqual(proposal.to_json(), repository.get_proposal(proposal.proposal_set_id))
             repository._connection.execute("DROP TRIGGER review_cases_no_update")
             repository._connection.execute("UPDATE review_cases SET document='{}' WHERE review_case_id=?", (case_id,))
-            with self.assertRaises(Exception): repository.get_review_case(case_id)
+            with self.assertRaises(Exception):
+                repository.get_review_case(case_id)
             self.assertEqual(proposal.to_json(), repository.get_proposal(proposal.proposal_set_id))
             repository.close()
 
     def test_exact_current_backup_restore_reopens(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "reports.sqlite"
-            repository = open_repository(database); repository.close()
-            backup = Path(directory) / "backup.sqlite"; backup.write_bytes(database.read_bytes())
-            restored = open_repository(backup, create=False); restored.close()
+            repository = open_repository(database)
+            repository.close()
+            backup = Path(directory) / "backup.sqlite"
+            backup.write_bytes(database.read_bytes())
+            restored = open_repository(backup, create=False)
+            restored.close()
 
     def test_malformed_current_pointer_is_not_projected_as_historical(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
             report = _report()
-            repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
+            repository.publish(report, lambda: True)
+            proposal = self._actionable(report)
+            repository.publish_proposal(proposal)
             case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
             repository._connection.execute("PRAGMA foreign_keys=OFF")
             repository._connection.execute("UPDATE current_review_case_lineages SET review_case_id='bad' WHERE item_id='item-1'")
             repository._connection.execute("PRAGMA foreign_keys=ON")
-            with self.assertRaises(Exception): repository.get_review_case(case_id)
+            with self.assertRaises(Exception):
+                repository.get_review_case(case_id)
             repository.close()
 
     def test_read_only_database_is_rejected_without_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "reports.sqlite"
-            repository = open_repository(database); repository.close()
+            repository = open_repository(database)
+            repository.close()
             os.chmod(database, 0o400)
             try:
-                with self.assertRaises(Exception): open_repository(database, create=False)
+                with self.assertRaises(Exception):
+                    open_repository(database, create=False)
             finally:
                 os.chmod(database, 0o600)
 
@@ -582,16 +618,25 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             database = Path(directory) / "reports.sqlite"
             repository = open_repository(database)
             report = _report()
-            repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
+            repository.publish(report, lambda: True)
+            proposal = self._actionable(report)
+            repository.publish_proposal(proposal)
             repository._connection.execute("BEGIN IMMEDIATE")
             result = []
             def admit() -> None:
                 local = open_repository(database, create=False)
-                try: result.append(json.loads(local.admit_review_case(proposal))["status"])
-                finally: local.close()
-            thread = threading.Thread(target=admit); thread.start()
-            import time; time.sleep(0.05)
-            repository._connection.commit(); thread.join()
+                try:
+                    result.append(json.loads(local.admit_review_case(proposal))["status"])
+                finally:
+                    local.close()
+
+            thread = threading.Thread(target=admit)
+            thread.start()
+            import time
+
+            time.sleep(0.05)
+            repository._connection.commit()
+            thread.join()
             self.assertEqual(["admitted"], result)
             repository.close()
 
@@ -599,9 +644,12 @@ class ReviewCasePersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
             report = _report()
-            repository.publish(report, lambda: True); proposal = self._actionable(report); repository.publish_proposal(proposal)
+            repository.publish(report, lambda: True)
+            proposal = self._actionable(report)
+            repository.publish_proposal(proposal)
             repository._connection.execute("CREATE TRIGGER injected_full BEFORE INSERT ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END")
-            with self.assertRaises(Exception): repository.admit_review_case(proposal)
+            with self.assertRaises(Exception):
+                repository.admit_review_case(proposal)
             for table in ("review_cases", "review_case_transitions", "current_review_case_lineages"):
                 self.assertEqual((0,), repository._connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone())
             repository.close()
