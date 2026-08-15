@@ -99,6 +99,26 @@ describe('ReviewApiClient', () => {
       .toEqual(['Hardcover', 'Open Library'])
   })
 
+  it('rejects case-detail fields that omit the objects the view dereferences', () => {
+    const field = (overrides: Record<string, unknown> = {}) => ({
+      classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, navigation_role: 'attention', preservation_only: false,
+      destination: 'title', deterministic_disposition: 'review', effect_capability: 'manual',
+      needs_attention: true, manual_hold: false, current: { value: 'A Book' },
+      proposed_values: [], choice_contexts: [{ alternative_id: null, evidence: [], limitations: [], rationale: 'The local library has no retained value for this field.', recommendation: 'no_recommendation', recommendation_reason: 'No deterministic recommendation is retained for the current value.', selection: 'current' }], proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',
+      human_decision: null, automatic_decision: null, notices: [], provenance: [],
+      corroboration_sources: [], ...overrides,
+    })
+    const response = (fields: readonly unknown[]) => ({
+      schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true, comparison_notices: [],
+      target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
+      fields,
+    })
+
+    expect(mapCaseDetail(response([field()])).fields[0]?.currentValue).toBe('A Book')
+    for (const invalid of [null, 'field', field({ current: undefined }), field({ current: 'A Book' }), field({ proposed_values: undefined }), field({ proposed_values: {} })])
+      expect(() => mapCaseDetail(response([invalid]))).toThrow(new ApiError(502, 'invalid_case_detail_field'))
+  })
+
   it('maps exact library DTOs into presentation-safe view models', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
       Response.json({

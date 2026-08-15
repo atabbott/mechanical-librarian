@@ -42,6 +42,33 @@ infrastructure -> application/domain contracts
 
 Run the static architecture-boundary test whenever imports or packages move.
 
+## Code economy
+
+- Express field validation through the shared validation vocabulary rather
+  than expanding the same checks longhand for every field. The backend
+  vocabulary is `mechanical_librarian.domain.validation`; the browser's field
+  validators live beside their mapping functions in `frontend/src/api/http.ts`.
+  Extend a vocabulary when a check is genuinely new; do not reintroduce a
+  hand-written copy of one it already names.
+- A new abstraction requires a current consumer in the same change and must be
+  lighter than the copies it replaces. A helper with no caller, or one that
+  costs more lines than the longhand it consolidates, is not an improvement:
+  delete it and keep the longhand.
+- A refactoring pull request reports its net line-count delta per changed
+  module, and reports lines removed by consolidation separately from lines
+  added by new validation. A site that gains a check it never had is expected
+  to grow, and that growth is a success. Never weaken, skip, or narrow a check
+  to reach a line count.
+- Exact-type checks are deliberate subclass rejection, not an accident of
+  style. `type(value) is int` rejects `bool`, and `type(value) is str` rejects
+  a `str` subclass, because a persisted document must carry the exact canonical
+  type rather than something that merely behaves like it. Use `isinstance`
+  only where accepting a subclass is the intended contract, and say so where
+  you do.
+- Consolidation must preserve exactly which inputs are rejected, with which
+  error identity and message. Where it cannot, leave that site longhand and
+  record why. Rejection behavior is the invariant; how it is written is not.
+
 ## Change requirements
 
 Ready pull requests normally require a supported closing reference to an open
