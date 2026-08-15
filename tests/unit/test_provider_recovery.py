@@ -261,14 +261,19 @@ class ProviderRecoveryTests(unittest.TestCase):
                 retry=lambda *_: self.fail("exhausted member must not dispatch"),
                 classify_failure=lambda _: ("transient", None),
             )
-            self.assertEqual("idle", runner.run_one(now=1, token="owner").state)
+            self.assertEqual("exhausted", runner.run_one(now=1, token="owner").state)
             self.assertEqual(
-                [("queued", 5)],
+                [("failed", 5)],
                 store._connection.execute(
                     "SELECT state,attempt FROM provider_recovery_jobs"
                 ).fetchall(),
             )
-            self.assertEqual("checking", store.snapshot()[0].state)
+            self.assertEqual("exhausted", store.snapshot()[0].state)
+            self.assertEqual("idle", runner.run_one(now=302, token="later").state)
+            self.assertEqual(
+                ["waiting", "checking", "exhausted"],
+                [row[0] for row in store._connection.execute("SELECT state FROM provider_recovery_events ORDER BY sequence")],
+            )
             store.close()
 
     def test_credential_failure_is_dormant_not_requeued(self) -> None:

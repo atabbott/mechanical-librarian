@@ -214,6 +214,7 @@ class SQLiteProviderRecoveryStore:
 
     def complete_missing_jobs(
         self, *, token: str, recovery: ProviderRecovery, now: int,
+        blocked_targets: frozenset[str] = frozenset(),
     ) -> ProviderRecovery | None:
         """Fail closed when due health has no exact persisted member."""
         if (type(token) is not str or not 1 <= len(token) <= 128
@@ -234,12 +235,21 @@ class SQLiteProviderRecoveryStore:
                     or current[4] <= now
                 ):
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
-                if self._connection.execute(
-                    "SELECT 1 FROM provider_recovery_jobs WHERE connection=? AND adapter=? AND scope=? AND generation=? LIMIT 1",
-                    (recovery.connection, recovery.adapter, recovery.scope, recovery.generation),
-                ).fetchone() is not None:
-                    self._connection.execute("COMMIT")
-                    return None
+                excluded, parameters = _blocked_targets(blocked_targets)
+                members = self._connection.execute(
+                    "SELECT state,attempt FROM provider_recovery_jobs WHERE connection=? AND adapter=? AND scope=? AND generation=?" + excluded,
+                    (recovery.connection, recovery.adapter, recovery.scope, recovery.generation, *parameters),
+                ).fetchall()
+                if members:
+                    if any(state != "queued" or attempt < 5 for state, attempt in members):
+                        self._connection.execute("COMMIT")
+                        return None
+                    changed = self._connection.execute(
+                        "UPDATE provider_recovery_jobs SET state='failed',claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? AND scope=? AND generation=? AND state='queued' AND attempt>=5" + excluded,
+                        (recovery.connection, recovery.adapter, recovery.scope, recovery.generation, *parameters),
+                    ).rowcount
+                    if changed != len(members):
+                        raise ProviderRecoveryStoreError("provider recovery members changed")
                 successor = ProviderRecovery(
                     recovery.connection, recovery.adapter, recovery.scope,
                     recovery.generation, "exhausted", recovery.attempt, None,
