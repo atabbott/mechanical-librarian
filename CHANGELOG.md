@@ -7,6 +7,17 @@
 
 ## Unreleased
 
+- Drive the Activity search debounce deterministically in the router test that
+  covers draft and control focus across interleaved route completion. The test
+  previously entered the query with real timers and settled the initial route
+  load with a single zero-delay tick, so under load the keystrokes raced the
+  post-load draft resynchronisation and the search value assertion failed in
+  roughly a quarter of full-suite runs. It now waits for route-ready focus to
+  complete before interacting and advances fake timers across the 150 ms
+  debounce, matching the idiom already used by neighbouring Activity tests.
+  Every assertion the test made is still made, and no product behaviour
+  changed. (#661)
+
 - Gate the Python backend on ruff and strict mypy in the public gate, with the
   configuration and the exact tool pins committed alongside the code they
   check, so `py.typed` and the `Typing :: Typed` classifier now describe a
