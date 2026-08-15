@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol
 
+from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ReportValueError,
@@ -81,6 +82,8 @@ class CreateProposalSet:
                 raise ProposalSetError("proposal publication readback failed")
             return persisted
         except ProposalSetError:
+            raise
+        except TargetConnectionError:
             raise
         except (ReportValueError, ProposalValueError) as error:
             raise ProposalSetError("proposal input is invalid") from error

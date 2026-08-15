@@ -187,6 +187,13 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertIsNotNone(response)
                 self.assertEqual(response.status, 200)
                 page.get_by_role("heading", name=heading).wait_for()
+                if path in {"/library?lens=all", "/activity"}:
+                    page.get_by_text(
+                        "Library connection needs attention", exact=True
+                    ).first.wait_for()
+                    expect(
+                        page.get_by_role("button", name="Check connection again").first
+                    ).to_be_visible()
                 if path == "/attention":
                     page.get_by_text(
                         "This field needs your review.", exact=True

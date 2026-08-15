@@ -746,6 +746,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 {"blocked": 0, "checked": 12, "connection": "primary", "library": "Household ebooks", "library_id": "library-1", "ready": 5, "rescan_requested": False, "scan_id": "scan-1", "state": "ready", "total": 12},
                 {"blocked": 2, "checked": 8, "connection": "primary", "library": "Spoken stories", "library_id": "library-2", "ready": 2, "rescan_requested": False, "scan_id": "scan-2", "state": "scanning", "total": 16},
             ],
+            "connections": [{"connection": "primary", "code": "unavailable", "state": "paused", "affected": 2, "updated_at": 1}],
         }
     if path == "/api/v1/library":
         return _library(query)

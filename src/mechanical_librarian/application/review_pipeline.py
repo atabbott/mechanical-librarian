@@ -589,6 +589,8 @@ class ReviewPreparationPipeline:
             # The action remains at its first uncommitted target-dependent
             # checkpoint.  This is deliberately distinct from provider and
             # item-currentness failures.
+            if output_transaction:
+                repository.rollback_review_pipeline_output()
             repository.defer_for_target_connection(action, error.code, self._clock())
         except CredentialError as error:
             if output_transaction:
