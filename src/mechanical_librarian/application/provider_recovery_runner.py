@@ -32,7 +32,7 @@ class ProviderRecoveryStore(Protocol):
     def resume_fanout(self, *, generation: int, now: int, token: str, blocked_targets: frozenset[str]) -> ProviderRecovery | None: ...
     def fanout_pending(self, *, recovery: ProviderRecovery) -> bool: ...
     def complete_success(self, *, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
-    def complete_missing_jobs(self, *, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
+    def complete_missing_jobs(self, *, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery | None: ...
     def complete(self, *, token: str, recovery: ProviderRecovery, now: int, failure: str, retry_after: int | None) -> ProviderRecovery: ...
 
 
@@ -92,16 +92,16 @@ class ScopedProviderRecoveryRunner:
             canary = None
         else:
             assert claimed is not None
-            canary = self._store.claim_job(recovery=claimed, token=token, now=current, blocked_targets=self._blocked_targets())
+            canary = self._store.claim_job(recovery=claimed, token=token, now=current, blocked_targets=blocked)
         if fanout_state is not None:
             pass
         elif canary is None:
             # Due health without an exact member is incomplete durable state,
             # never evidence that the provider recovered.
-            self._store.complete_missing_jobs(
+            missing = self._store.complete_missing_jobs(
                 token=token, recovery=claimed, now=self._current(current),
             )
-            return RecoveryRun("exhausted")
+            return RecoveryRun("exhausted" if missing is not None else "idle")
         if fanout_state is None:
             assert claimed is not None
             while canary is not None:
@@ -129,7 +129,7 @@ class ScopedProviderRecoveryRunner:
                             job=canary, token=token, now=current,
                         )
                         canary = self._store.claim_job(
-                            recovery=claimed, token=token, now=current, blocked_targets=self._blocked_targets(),
+                            recovery=claimed, token=token, now=current, blocked_targets=blocked,
                         )
                         continue
                     if failure not in {"transient", "rate_limited", "authentication", "authorization", "configuration"}:
@@ -157,7 +157,7 @@ class ScopedProviderRecoveryRunner:
         while not self._cancelled():
             current = self._current(current)
             member = self._store.claim_job(
-                recovery=fanout_state, token=token, now=current, blocked_targets=self._blocked_targets(),
+                recovery=fanout_state, token=token, now=current, blocked_targets=blocked,
             )
             if member is None:
                 break
