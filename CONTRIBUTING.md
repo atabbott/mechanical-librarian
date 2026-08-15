@@ -64,6 +64,46 @@ Do not install project tools globally or add unrecorded dependencies. Update
 `pyproject.toml` and regenerate `uv.lock` together when the dependency graph
 changes.
 
+## Python linting and typing
+
+The backend is linted by ruff and type-checked by mypy in strict mode. Both are
+exact-pinned in the `dev` dependency group and configured entirely in
+`pyproject.toml`; there is no separate tool configuration file. From a clean
+checkout, these are the exact commands the `fast-source` gate job runs, and
+both must pass before a pull request is ready:
+
+```text
+uv run ruff check src tests scripts
+uv run mypy src tests scripts
+```
+
+`uv run ruff check --fix src tests scripts` applies the automatic fixes.
+
+ruff selects pyflakes (`F`), pycodestyle (`E`, `W`), bugbear (`B`), and import
+ordering (`I`). `E501` (line length) is deliberately not enforced: the backend
+has never been width-formatted, so enforcing it would mean a whole-tree
+reformat rather than a lint fix. Backend formatting is separate future work.
+
+mypy runs in strict mode over `src/`. `tests/` and `scripts/` are checked too,
+but without the strict annotation requirements, because their value is proving
+behaviour rather than publishing a typed interface. Every relaxation is an
+explicit `[[tool.mypy.overrides]]` block in `pyproject.toml` with a stated
+reason; do not add a silent one.
+
+Suppress a finding only where the code is right and the tool is wrong, and
+always inline, named, and justified:
+
+```text
+value = mapping[key]  # noqa: B023 - the closure is consumed in this iteration
+result = handler()  # type: ignore[arg-type]  # reason: <why this is sound>
+```
+
+Four sources are byte-frozen by the F20 rich-metadata qualification manifest
+and appear in `[tool.ruff.lint.per-file-ignores]` and a mypy override, because
+an inline suppression would itself change the bytes that
+`docs/reference/f20-rich-metadata-qualification-candidate-v1.json` pins. Do not
+edit those files to satisfy a linter; changing them requires re-qualification.
+
 ## Frontend bootstrap
 
 The authenticated-browser source under `frontend/` uses Node 24.19.0 and npm
