@@ -81,6 +81,22 @@ ignore = [
   "E501",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Four sources are byte-frozen by the F20 rich-metadata qualification
+# manifest, `docs/reference/f20-rich-metadata-qualification-candidate-v1.json`.
+# Its `frozen_contract` entries pin their sha256, and
+# `tests/unit/test_rich_metadata_qualification_manifest.py` fails if any byte
+# moves. An inline `# noqa` is itself a byte, so these findings cannot be
+# suppressed at the site; the alternative -- rewriting the pinned digests --
+# would weaken an existing gate to make a new one pass, which #652 forbids.
+# Each entry lists only the codes present today, so a new finding of any other
+# code in these files still fails the gate. Re-qualifying these sources is
+# separate, owned work; when it happens these entries go away with it.
+"src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py" = ["I001"]
+"src/mechanical_librarian/domain/automatic_decision.py" = ["E731"]
+"src/mechanical_librarian/domain/metadata_policy.py" = ["I001"]
+"src/mechanical_librarian/domain/rich_metadata_preview.py" = ["F841", "I001"]
+
 [tool.ruff.lint.flake8-bugbear]
 # B008 exists because a mutable default is constructed once and then shared.
 # These two are `@dataclass(frozen=True, slots=True)` value objects with no
