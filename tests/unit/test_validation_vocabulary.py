@@ -8,8 +8,6 @@ from mechanical_librarian.domain.validation import (
     closed_document,
     exact_type,
     literal,
-    matching_text,
-    non_empty_text,
     non_negative_integer,
     text,
 )
@@ -78,32 +76,6 @@ class BoundedIntegerTests(unittest.TestCase):
     def test_non_negative_integer_starts_at_zero(self) -> None:
         self.assertTrue(non_negative_integer(0))
         self.assertFalse(non_negative_integer(-1))
-
-
-class TextCheckTests(unittest.TestCase):
-    def test_non_empty_text_rejects_the_empty_string(self) -> None:
-        self.assertTrue(non_empty_text("a"))
-        self.assertFalse(non_empty_text(""))
-
-    def test_non_empty_text_rejects_a_non_empty_subclass_instance(self) -> None:
-        self.assertFalse(non_empty_text(_Text("a")))
-
-    def test_non_empty_text_rejects_other_truthy_values(self) -> None:
-        for value in (1, True, ["a"], {"a": 1}, None):
-            self.assertFalse(non_empty_text(value))
-
-    def test_matching_text_anchors_the_whole_value(self) -> None:
-        check = matching_text(r"human_decision_[0-9a-f]{4}")
-        self.assertTrue(check("human_decision_0a1b"))
-        self.assertFalse(check("human_decision_0a1bc"))
-        self.assertFalse(check(" human_decision_0a1b"))
-        self.assertFalse(check("human_decision_0A1B"))
-
-    def test_matching_text_rejects_non_text_without_raising(self) -> None:
-        check = matching_text(r"[a-z]+")
-        self.assertFalse(check(None))
-        self.assertFalse(check(b"abc"))
-        self.assertFalse(check(_Text("abc")))
 
 
 class ClosedSetTests(unittest.TestCase):
@@ -221,10 +193,12 @@ class ClosedDocumentTests(unittest.TestCase):
 
     def test_nested_documents_close_their_own_field_set(self) -> None:
         check = closed_document(pending_return=closed_document(
-            requested_at=non_negative_integer, scan_id=non_empty_text))
+            requested_at=non_negative_integer, scan_id=text))
         self.assertTrue(check({"pending_return": {"requested_at": 0, "scan_id": "s"}}))
-        self.assertFalse(check({"pending_return": {"requested_at": 0, "scan_id": ""}}))
+        self.assertFalse(check({"pending_return": {"requested_at": -1, "scan_id": "s"}}))
+        self.assertFalse(check({"pending_return": {"requested_at": 0, "scan_id": 1}}))
         self.assertFalse(check({"pending_return": {"requested_at": 0}}))
+        self.assertFalse(check({"pending_return": {"requested_at": 0, "scan_id": "s", "x": 1}}))
         self.assertFalse(check({"pending_return": None}))
 
 

@@ -109,8 +109,6 @@ from mechanical_librarian.domain.validation import (
     bounded_integer,
     closed_document,
     literal,
-    matching_text,
-    non_empty_text,
     non_negative_integer,
     text,
 )
@@ -9651,11 +9649,11 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             consents[consent_id] = (consent, bool(current), updated_at)
 
         pending_return = closed_document(requested_at=non_negative_integer,
-                                        scan_id=non_empty_text)
+                                        scan_id=lambda value: type(value) is str and value != "")
         manual_hold = closed_document(
             "destination", "pending_return", "review_case_id",
             schema_version=literal("field-effect-manual-hold-v2"), active=boolean,
-            decision_id=matching_text(r"human_decision_[0-9a-f]{64}"),
+            decision_id=lambda value: type(value) is str and re.fullmatch(r"human_decision_[0-9a-f]{64}", value) is not None,
             updated_at=non_negative_integer)
         for review_case_id, destination, active, updated_at, document in connection.execute(
             "SELECT review_case_id,destination,active,updated_at,document "

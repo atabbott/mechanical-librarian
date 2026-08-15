@@ -26,7 +26,6 @@ This module imports nothing from the project, so any layer may depend on it.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable
 
 FieldCheck = Callable[[object], bool]
@@ -64,21 +63,6 @@ def bounded_integer(minimum: int, maximum: int | None = None) -> FieldCheck:
 
 
 non_negative_integer = bounded_integer(0)
-
-
-def non_empty_text(value: object) -> bool:
-    """Accept only an exact, non-empty ``str``."""
-    return type(value) is str and value != ""
-
-
-def matching_text(pattern: str) -> FieldCheck:
-    """Accept only an exact ``str`` that the whole pattern matches."""
-    compiled = re.compile(pattern)
-
-    def check(value: object) -> bool:
-        return type(value) is str and compiled.fullmatch(value) is not None
-
-    return check
 
 
 def closed_document(*unconstrained: str, **schema: FieldCheck) -> FieldCheck:
