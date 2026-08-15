@@ -6,7 +6,7 @@ import hashlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Protocol
+from typing import Protocol, cast
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.configuration import (
@@ -334,12 +334,20 @@ def metadata_discovery_plan(
         and type(authors.value) is tuple
         and bool(authors.value)
         and all(type(value) is str for value in authors.value)
-        and len({normalize_title(value).casefold() for value in authors.value})
+        and len({
+            normalize_title(cast("str", value)).casefold()
+            for value in authors.value
+        })
         == len(authors.value)
     )
     if complete_work:
-        normalized_title = normalize_title(title.value)
-        normalized_authors = tuple(normalize_title(value) for value in authors.value)
+        # ``complete_work`` is exactly the conjunction that proved the title is
+        # a ``str`` and the authors are a non-empty tuple of ``str``.
+        normalized_title = normalize_title(cast("str", title.value))
+        normalized_authors = tuple(
+            normalize_title(value)
+            for value in cast("tuple[str, ...]", authors.value)
+        )
         title_references = tuple(
             sorted(
                 claim.reference
@@ -737,7 +745,8 @@ def metadata_lookup(
         or any(type(value) is not str for value in authors.value)
         or len(
             {
-                normalize_title(value).casefold()
+                # Reached only once every author entry is a ``str``.
+                normalize_title(cast("str", value)).casefold()
                 for value in authors.value
             }
         )
@@ -748,7 +757,9 @@ def metadata_lookup(
         ProviderQueryKind.WORK,
         local_claims,
         normalize_title(title.value),
-        tuple(normalize_title(value) for value in authors.value),
+        tuple(
+            normalize_title(cast("str", value)) for value in authors.value
+        ),
     )
 
 
@@ -1028,7 +1039,11 @@ def _complete_work_creators(
         )
     ):
         return None
-    return tuple(normalize_title(claim.value).casefold() for claim in creators)
+    # The guard above returned for any creator whose value is None.
+    return tuple(
+        normalize_title(cast("str", claim.value)).casefold()
+        for claim in creators
+    )
 
 
 def _mixed_work_creator_roles(candidate: ProviderCandidate) -> bool:
@@ -1445,6 +1460,7 @@ __all__ = [
     "ReportRepository", "TargetFile", "TargetNotFoundError", "TargetReader", "TargetSnapshot",
     "UnsupportedMediaError",
     "merge_provider_cover_descriptor", "merge_provider_cover_descriptors",
+    "merge_provider_diagnostics",
     "metadata_discovery_plan",
     "metadata_lookup", "provider_isbn_applicability", "provider_observation",
     "qualify_provider_observation", "require_report_current",

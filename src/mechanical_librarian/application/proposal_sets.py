@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Protocol
+from typing import Protocol, cast
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.domain.metadata_policy import (
@@ -64,12 +64,20 @@ class CreateProposalSet:
             if report.report_id != report_id:
                 raise ProposalSetError("proposal report identity disagrees")
             policy = self._resolve_policy_profile(report)
+            # ``type(policy) is str`` is an exact-type test over the declared
+            # ``ResolvedMetadataPolicy | str`` union, so each arm is already
+            # proven; mypy simply does not narrow inside a conditional
+            # expression.
             proposal_set = evaluate_report(
                 report,
-                policy if type(policy) is str else policy.resolved_id,
+                policy
+                if type(policy) is str
+                else cast("ResolvedMetadataPolicy", policy).resolved_id,
                 None
                 if type(policy) is str
-                else human_review_destinations(policy),
+                else human_review_destinations(
+                    cast("ResolvedMetadataPolicy", policy)
+                ),
             )
             if self._require_current(report) is not True:
                 raise ProposalSetError("proposal report is stale")

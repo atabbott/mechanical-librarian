@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
 )
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
+
+if TYPE_CHECKING:
+    # ``application.batch`` imports ``CatalogueEntry`` from this module, so the
+    # snapshot contract is referenced for typing only to keep imports acyclic.
+    from mechanical_librarian.application.batch import CatalogueSnapshot
 
 
 class CatalogueError(RuntimeError):
@@ -99,7 +104,7 @@ class CatalogueRepository(Protocol):
     def publish(self, fingerprint: str, entries: tuple[CatalogueEntry, ...]) -> int: ...
     def abort_refresh(self) -> None: ...
     def inspect(self, fingerprint: str) -> tuple[CatalogueEntry, ...]: ...
-    def snapshot(self, fingerprint: str): ...
+    def snapshot(self, fingerprint: str) -> CatalogueSnapshot: ...
     def current_entry(self, generation: int, fingerprint: str, key: tuple[str, str, str, str]) -> CatalogueEntry | None: ...
     def latest_entry(self, fingerprint: str, key: tuple[str, str, str, str]) -> CatalogueEntry | None: ...
     def close(self) -> None: ...

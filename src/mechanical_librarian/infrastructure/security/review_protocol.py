@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from uvicorn.protocols.http import h11_impl
 
@@ -14,11 +15,13 @@ REVIEW_TLS_CIPHERS = "ECDHE+AESGCM:ECDHE+CHACHA20"
 class BoundedReviewH11Protocol(h11_impl.H11Protocol):
     """Close excess connections and incomplete request headers."""
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._review_header_timeout: asyncio.TimerHandle | None = None
 
-    def connection_made(self, transport: asyncio.Transport) -> None:
+    def connection_made(  # type: ignore[override]  # reason: narrows to asyncio.Transport exactly as uvicorn's own H11Protocol.connection_made does; uvicorn only ever serves TCP transports here.
+        self, transport: asyncio.Transport
+    ) -> None:
         super().connection_made(transport)
         if len(self.connections) > MAX_REVIEW_CONNECTIONS:
             transport.close()
@@ -28,14 +31,19 @@ class BoundedReviewH11Protocol(h11_impl.H11Protocol):
     def data_received(self, data: bytes) -> None:
         self._set_review_header_timeout()
         super().data_received(data)
-        if self.conn.their_state is not h11_impl.h11.IDLE:
+        # Suppression reason: h11_impl imports the h11 module without
+        # re-exporting it, so mypy's no-implicit-reexport rejects the attribute
+        # even though it exists at runtime. h11 is not a declared direct
+        # dependency of this project, so it is deliberately not imported here.
+        if self.conn.their_state is not h11_impl.h11.IDLE:  # type: ignore[attr-defined]
             self._unset_review_header_timeout()
 
     def on_response_complete(self) -> None:
         super().on_response_complete()
         if (
             not self.transport.is_closing()
-            and self.conn.their_state is h11_impl.h11.IDLE
+            # Suppression reason: as above, h11_impl.h11 exists at runtime.
+            and self.conn.their_state is h11_impl.h11.IDLE  # type: ignore[attr-defined]
         ):
             self._set_review_header_timeout()
 

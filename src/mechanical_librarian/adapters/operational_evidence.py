@@ -8,7 +8,7 @@ import re
 import stat
 import threading
 from pathlib import Path
-from typing import Callable
+from typing import Callable, cast
 
 from mechanical_librarian.adapters.private_recovery import require_private_directory
 from mechanical_librarian.application.operations import (
@@ -125,7 +125,9 @@ class SupportBundle:
             if not name or len(name) > 64 or _PRIVATE_KEY.search(name):
                 raise OperationsError("support_configuration")
             sections[name] = _redact(producer(), depth=0)
-        payload = {"schema_version": "support-bundle-v1", "sections": sections}
+        payload: dict[str, object] = {
+            "schema_version": "support-bundle-v1", "sections": sections,
+        }
         encoded = canonical_support(payload)
         return {"bytes": len(encoded), "excluded": [
             "auth", "covers", "databases", "environment", "excerpts",
@@ -136,7 +138,8 @@ class SupportBundle:
         # Re-run every producer and redaction at export; the preview is never
         # treated as trusted or reused.
         preview = self.preview()
-        return canonical_support(preview["payload"])
+        # preview() always stores a dict[str, object] under "payload".
+        return canonical_support(cast("dict[str, object]", preview["payload"]))
 
 
 def _redact(value: object, *, depth: int) -> object:

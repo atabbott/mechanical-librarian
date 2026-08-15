@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from pathlib import Path
+from typing import cast
 
 from mechanical_librarian.domain.provider_recovery import (
     MAX_TIMESTAMP,
@@ -26,6 +27,17 @@ _NO_UPDATE = "CREATE TRIGGER provider_recovery_events_no_update BEFORE UPDATE ON
 _NO_DELETE = "CREATE TRIGGER provider_recovery_events_no_delete BEFORE DELETE ON provider_recovery_events BEGIN SELECT RAISE(ABORT, 'append only'); END"
 _RECOVERY_NAMES = frozenset(("provider_recovery_health", "provider_recovery_members", "provider_recovery_jobs", "provider_recovery_events", "provider_recovery_events_no_delete", "provider_recovery_events_no_update", "sqlite_autoindex_provider_recovery_health_1", "sqlite_autoindex_provider_recovery_members_1", "sqlite_autoindex_provider_recovery_jobs_1"))
 _CREATE = (_MEMBERS, _HEALTH, _JOBS, _EVENTS, _NO_UPDATE, _NO_DELETE)
+
+# The column shapes the schema above guarantees for the leading identity
+# columns selected out of ``provider_recovery_health`` and the full immutable
+# prefix selected out of ``provider_recovery_jobs``.  ``sqlite3`` hands these
+# back as ``Any``; naming the shape lets the dataclass constructors below be
+# checked positionally.
+_HealthIdentity = tuple[str, str, str, int]
+_JobColumns = tuple[
+    str, str, str, int, str, str, str, str, str, str,
+    str | None, str, str | None, int | None, str, str,
+]
 
 
 def _blocked_targets(targets: frozenset[str]) -> tuple[str, tuple[str, ...]]:
@@ -451,7 +463,7 @@ class SQLiteProviderRecoveryStore:
                     return None
                 self._connection.execute("COMMIT")
                 self._claim_snapshots[(*row[:4], token)] = (row[4:], None, None)
-                return ProviderRecovery(*row[:4], "checking", row[5], None)
+                return ProviderRecovery(*cast(_HealthIdentity, row[:4]), "checking", row[5], None)
             except Exception:
                 self._connection.execute("ROLLBACK")
                 raise
@@ -580,7 +592,7 @@ class SQLiteProviderRecoveryStore:
                 health_snapshot = health if prior is None else prior[0]
                 event_sequence = None if prior is None else prior[2]
                 self._claim_snapshots[key] = (health_snapshot, (row[16], row[17], row[18], row[19]), event_sequence)
-                return ProviderRecoveryJob(*row[:16], "running", row[17] + 1)
+                return ProviderRecoveryJob(*cast(_JobColumns, row[:16]), "running", row[17] + 1)
         except ProviderRecoveryStoreError:
             if self._connection.in_transaction:
                 self._connection.execute("ROLLBACK")
@@ -718,7 +730,7 @@ class SQLiteProviderRecoveryStore:
                     "UPDATE provider_recovery_jobs SET state=?,attempt=?,claim_token=?,claim_expires_at=? WHERE connection=? AND adapter=? "
                     "AND scope=? AND generation=? AND member_id=? AND state='running' "
                     "AND claim_token=? AND claim_expires_at>?",
-                    (*job_snapshot, job.connection, job.adapter, job.scope, job.generation, job.member_id,
+                    (*cast("tuple[object, ...]", job_snapshot), job.connection, job.adapter, job.scope, job.generation, job.member_id,
                      token, now),
                 ).rowcount
                 if changed != 1:

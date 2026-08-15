@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from mechanical_librarian.domain.automatic_decision import (
     QUALIFIED_POLICY_OPTIONS,
@@ -37,11 +37,25 @@ class MetadataPolicyApplicationError(RuntimeError):
     """A fixed, value-free draft policy failure."""
 
 
+class AutomaticSafetyRepository(Protocol):
+    """The narrow durable seam the owner-only safety controls depend upon."""
+
+    def automatic_safety_state(self) -> AutomaticSafetyState: ...
+
+    def set_automatic_safety_state(
+        self, state: AutomaticSafetyState, updated_at: int
+    ) -> None: ...
+
+
 class AutomaticSafetyControls:
     """Owner-only durable pause/suspension controls; recovery is explicit."""
 
     def __init__(self, repository: object) -> None:
-        self._repository = repository
+        # The public parameter stays structural: every call below is wrapped in
+        # a try/except that converts a missing or failing member into
+        # ``MetadataPolicyApplicationError``, so the cast documents the seam
+        # this class requires without narrowing what callers may pass.
+        self._repository = cast("AutomaticSafetyRepository", repository)
 
     def state(self) -> AutomaticSafetyState:
         try:

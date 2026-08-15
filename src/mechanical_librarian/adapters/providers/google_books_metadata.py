@@ -1075,7 +1075,7 @@ def _error_status(status_code: int, payload: bytes) -> ProviderStatus:
         value = _decode(payload)
         reasons = {
             item.get("reason")
-            for item in value.get("error", {}).get("errors", [])
+            for item in value.get("error", {}).get("errors", [])  # type: ignore[attr-defined]  # reason: the decoded payload is deliberately duck-typed here; a non-mapping body raises AttributeError, which this try block already catches.
             if type(item) is dict
         }
     except (AttributeError, TypeError, ValueError, UnicodeError, RecursionError):

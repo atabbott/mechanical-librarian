@@ -10,7 +10,7 @@ import unicodedata
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any, Self
+from typing import Any, Self, TypedDict, cast
 
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -301,8 +301,13 @@ class TargetField:
 
     def to_data(self) -> dict[str, object]:
         value: object = self.value
+        # `__post_init__` rejects a SERIES field whose value is anything but a
+        # non-empty tuple of TargetSeries.
         if self.destination is TargetDestination.SERIES and self.value is not None:
-            value = [item.to_data() for item in self.value]
+            value = [
+                item.to_data()
+                for item in cast("tuple[TargetSeries, ...]", self.value)
+            ]
         elif type(self.value) is tuple:
             value = list(self.value)
         return {
@@ -357,7 +362,7 @@ class FieldResult:
         if type(self.sources) is not tuple or any(type(value) is not FieldSourceResult for value in self.sources) or (self.sources and tuple(value.source for value in self.sources) != tuple(FieldSource)):
             raise ReportValueError("field result sources are invalid")
 
-    def to_data(self) -> dict[str, str]:
+    def to_data(self) -> dict[str, object]:
         return {"kind": self.kind.value, "state": self.state.value, "sources": [value.to_data() for value in self.sources]}
 
 
@@ -2029,10 +2034,12 @@ def _target_backed_work_lookup(
         and type(authors.value) is tuple
         and bool(authors.value)
         and all(type(value) is str for value in authors.value)
+        # The guard above establishes that this AUTHORS field holds strings
+        # rather than TargetSeries values.
         and len(
             {
                 normalize_title(value).casefold()
-                for value in authors.value
+                for value in cast("tuple[str, ...]", authors.value)
             }
         )
         == len(authors.value)
@@ -2122,7 +2129,11 @@ class MetadataReport:
                 or tuple(
                     normalize_title(author.value or "").casefold()
                     for author in witness.authors
-                ) != tuple(normalize_title(author).casefold() for author in authors)
+                # An AUTHORS target field only ever holds a tuple of strings.
+                ) != tuple(
+                    normalize_title(author).casefold()
+                    for author in cast("tuple[str, ...]", authors)
+                )
                 or _has_title_variant_marker(witness.title, None)
             ):
                 raise ReportValueError("edition overflow witness does not match target")
@@ -2181,6 +2192,7 @@ class MetadataReport:
             for link in evidence.links
         ):
             raise ReportValueError("provider evidence comparison references are invalid")
+        expected: ProviderCandidate | str
         for provider in self.providers:
             for candidate in provider.candidates:
                 expected = finalize_candidate_comparisons(
@@ -2251,7 +2263,7 @@ class MetadataReport:
         return canonical_json(self.to_data())
 
     @classmethod
-    def from_json(cls, serialized: str) -> Self:
+    def from_json(cls, serialized: str) -> MetadataReport:
         if type(serialized) is not str or not serialized or len(serialized.encode("utf-8")) > MAX_REPORT_BYTES:
             raise ReportValueError("report document is invalid")
         try:
@@ -2304,6 +2316,14 @@ def derive_field_results(local_claims: tuple[LocalClaim, ...]) -> tuple[FieldRes
     )
 
 
+class _ProviderIdentityFields(TypedDict):
+    """The provider attribution keys `IdentifierEvidence` accepts by keyword."""
+
+    provider: str
+    candidate_identity: str
+    work_identity: str
+
+
 def derive_identifier_evidence(
     local_claims: tuple[LocalClaim, ...],
     providers: tuple[ProviderObservation, ...],
@@ -2332,6 +2352,8 @@ def derive_identifier_evidence(
 
     family_sources: dict[str, set[str]] = {}
     family_local_claims: dict[str, list[LocalClaim]] = {}
+    claim: LocalClaim | ProviderClaim
+    related: tuple[str, ...] | list[str]
     for claim in local_isbns:
         family = local_families.get(claim.reference)
         if family is None:
@@ -2475,7 +2497,7 @@ def derive_identifier_evidence(
 
     for provider, candidate, claim in provider_isbns:
         family = provider_families.get(claim.reference)
-        identity = {
+        identity: _ProviderIdentityFields = {
             "provider": provider,
             "candidate_identity": candidate.identity,
             "work_identity": candidate.work_identity,
@@ -2837,7 +2859,9 @@ def comparison_links(provider: ProviderClaim, local: tuple[LocalClaim, ...]) -> 
             outcome = Comparison.DISAGREEMENT
             method = ComparisonMethod.NONE
         links.append(ComparisonLink(claim.reference, outcome, method))
-    return tuple(sorted(links, key=lambda link: link.local_reference))
+    # Every link here was built from a local claim reference, so no link in this
+    # list carries the unbound `local_reference is None` form.
+    return tuple(sorted(links, key=lambda link: cast("str", link.local_reference)))
 
 
 _TYPOGRAPHIC_TRANSLATION = str.maketrans(
@@ -3209,7 +3233,9 @@ def _creator_comparison_links(
         else:
             outcome = Comparison.DISAGREEMENT
         links.append(ComparisonLink(claim.reference, outcome, method))
-    return tuple(sorted(links, key=lambda link: link.local_reference))
+    # Every link here was built from a local claim reference, so no link in this
+    # list carries the unbound `local_reference is None` form.
+    return tuple(sorted(links, key=lambda link: cast("str", link.local_reference)))
 
 
 def _bound_creator_sequence_match(

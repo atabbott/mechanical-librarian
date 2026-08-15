@@ -8,6 +8,7 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
 
 import uvicorn
 
@@ -229,10 +230,106 @@ from mechanical_librarian.interfaces.web import (
     load_owner_password_verifier,
 )
 
+if TYPE_CHECKING:
+    from mechanical_librarian.adapters.persistence.catalogue import (
+        SQLiteCatalogueRepository,
+    )
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        SQLiteMetadataReportRepository,
+    )
+    from mechanical_librarian.application.catalogue import CatalogueEntry
+    from mechanical_librarian.application.configuration import (
+        ApplicationConfiguration,
+        ReviewWebConfiguration,
+    )
+    from mechanical_librarian.application.continuous_field_effects import (
+        ContinuousFieldEffectRepository,
+    )
+    from mechanical_librarian.application.field_effects import CapabilityObserver
+    from mechanical_librarian.application.metadata_report import (
+        MetadataProvider,
+        ReportRepository,
+    )
+    from mechanical_librarian.application.operations import StageTimer
+    from mechanical_librarian.application.provider_recovery_runner import RecoveryRun
+    from mechanical_librarian.application.review_application import SerializedGate
+    from mechanical_librarian.application.review_pipeline import (
+        ReviewPipelineRepository,
+    )
+    from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
+    from mechanical_librarian.domain.provider_recovery import ProviderRecovery
+
+
+class _PublicationReceiptRepository(Protocol):
+    """The publication-receipt capability the concrete report repository adds.
+
+    ``ReportRepository`` deliberately stays narrow, but the repository the
+    composition root's own factory produces always carries these bound writes,
+    and both are only ever reached through that factory.
+    """
+
+    def complete_review_extraction_publication(
+        self,
+        action: PipelineAction,
+        report_id: str,
+        completed_at: int,
+        recovery_delay_seconds: int = 0,
+        provider_failure_code: str | None = None,
+        claim_next: bool = False,
+        provider_failure_root: str | None = None,
+    ) -> None: ...
+
+    def stage_provider_retry_successor(
+        self, source_report_id: str, report: MetadataReport, staged_at: int
+    ) -> str: ...
+
+
+class _ManifestEntry(TypedDict):
+    """One ``batch-manifest-v5`` entry, exactly as ``parse_manifest`` validates it."""
+
+    connection: str
+    library: str
+    library_id: str
+    item: str
+    file_identity: str | None
+    classification: str
+    eligible: bool
+
+
+class _Manifest(TypedDict):
+    """The closed ``batch-manifest-v5`` document ``parse_manifest`` returns.
+
+    ``parse_manifest`` rejects every document whose key set, value types, entry
+    shape, and derived call maxima do not match this exactly, so reading it back
+    at this shape restates a checked invariant.
+    """
+
+    schema: str
+    id: str
+    catalogue_generation: int
+    catalogue_fingerprint: str
+    batch_config_fingerprint: str
+    entries: list[_ManifestEntry]
+    providers: list[str]
+    provider_adapters: list[str]
+    call_maxima: dict[str, int]
+
+
+class _RearProvenanceFields(TypedDict):
+    """The exact keyword shape ``EpubRearProvenance.to_data`` emits."""
+
+    citation: str
+    marker: str
+    resource_identity: str
+    spine_ordinal: int
+    tail_slot: int
+
 
 def compose_audiobookshelf_field_effect_target(
-    configuration, artifact_store_path: Path, connection_name: str, library_name: str,
-    *, credentials: dict[str, str] | None = None, artifact_identity=None,
+    configuration: ApplicationConfiguration, artifact_store_path: Path,
+    connection_name: str, library_name: str,
+    *, credentials: dict[str, str] | None = None,
+    artifact_identity: tuple[int, int] | None = None,
 ) -> AudiobookshelfFieldEffectTarget:
     """Compose one field-local ABS target from an already validated snapshot.
 
@@ -266,7 +363,7 @@ def compose_audiobookshelf_field_effect_target(
 
 
 def compose_audiobookshelf_field_effect_capabilities(
-    configuration, connection_name: str, library_name: str,
+    configuration: ApplicationConfiguration, connection_name: str, library_name: str,
     *, credentials: dict[str, str] | None = None,
 ) -> AudiobookshelfFieldEffectCapabilities:
     connection, library, _mount, _providers = configuration.select(connection_name, library_name)
@@ -278,7 +375,9 @@ def compose_audiobookshelf_field_effect_capabilities(
 
 
 def compose_continuous_guarded_application(
-    configuration, repository, database_path: Path, artifact_store_path: Path,
+    configuration: ApplicationConfiguration,
+    repository: SQLiteMetadataReportRepository,
+    database_path: Path, artifact_store_path: Path,
     preparation: ReviewPreparationSupervisor, private_root: Path | None = None,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
 ) -> ContinuousGuardedApplication:
@@ -299,7 +398,7 @@ def compose_continuous_guarded_application(
         )
         for key in configured
     }
-    capabilities = {
+    capabilities: dict[tuple[str, str], CapabilityObserver] = {
         key: compose_audiobookshelf_field_effect_capabilities(
             configuration, *key
         )
@@ -337,21 +436,29 @@ def compose_continuous_guarded_application(
     if provider_recovery is None:
         raise ConfigurationError("provider recovery store is unavailable")
     return ContinuousGuardedApplication(
-        repository,
+        # The concrete repository implements every member of this contract; the
+        # protocol declares several of them with ``*values``/``**values``
+        # placeholders that no exact implementation can structurally satisfy.
+        cast("ContinuousFieldEffectRepository", repository),
         applications,
         capabilities,
         authority,
         configured,
         lambda: int(time.time()),
         preparation.request,
-        graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
+        # Callers reject an absent review configuration before composing.
+        graceful_shutdown_seconds=cast(
+            "ReviewWebConfiguration", configuration.review
+        ).graceful_shutdown_seconds,
         scan_progress=preparation.progress,
         provider_recovery_snapshot=provider_recovery.activity_snapshot,
     )
 
 
 def compose_field_effect_activity_projection(
-    configuration, repository, provider_recovery: SQLiteProviderRecoveryStore | None = None,
+    configuration: ApplicationConfiguration,
+    repository: SQLiteMetadataReportRepository,
+    provider_recovery: SQLiteProviderRecoveryStore | None = None,
 ) -> ContinuousGuardedApplication:
     """Compose the shared Activity projection without write-capable adapters."""
     configured = tuple(
@@ -361,14 +468,19 @@ def compose_field_effect_activity_projection(
     if not configured:
         raise ConfigurationError("guarded application has no configured library")
     return ContinuousGuardedApplication(
-        repository,
+        # See ``compose_continuous_guarded_application`` for why this contract
+        # cannot be satisfied structurally.
+        cast("ContinuousFieldEffectRepository", repository),
         {},
         {},
         PersistedFieldEffectAuthority(repository),
         configured,
         lambda: int(time.time()),
         lambda _connection, _library: None,
-        graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
+        # Callers reject an absent review configuration before composing.
+        graceful_shutdown_seconds=cast(
+            "ReviewWebConfiguration", configuration.review
+        ).graceful_shutdown_seconds,
         activity_only=True,
         provider_recovery_snapshot=(
             provider_recovery.activity_snapshot
@@ -419,7 +531,9 @@ class _IsolatedEpubInspector:
                     ),
                     state=FieldState(fact.state),
                     role=fact.role,
-                    rear_provenance=None if fact.rear_provenance is None else RearClaimProvenance(**fact.rear_provenance.to_data()),
+                    # ``EpubRearProvenance.to_data`` emits exactly this dataclass'
+                    # keyword shape, and ``__post_init__`` revalidates every value.
+                    rear_provenance=None if fact.rear_provenance is None else RearClaimProvenance(**cast("_RearProvenanceFields", fact.rear_provenance.to_data())),
                     occurrence=occurrence,
                     date_event=fact.date_event,
                     date_precision=fact.date_precision,
@@ -781,7 +895,7 @@ def _record_provider_recovery_observations(
 
 def _provider_recovery_jobs(
     report: MetadataReport, *, package: tuple[str | None, str, str | None, int | None, str],
-    configuration, scope: str,
+    configuration: ApplicationConfiguration, scope: str,
 ) -> tuple[ProviderRecoveryJob, ...]:
     """Create bounded retry work only from a published terminal package."""
     adapters = {provider.name: provider.adapter for provider in configuration.providers}
@@ -811,17 +925,19 @@ def _provider_recovery_jobs(
 class _NonClosingRepository:
     """Let one composed service borrow a pipeline-owned repository connection."""
 
-    def __init__(self, repository) -> None:
+    def __init__(self, repository: SQLiteMetadataReportRepository) -> None:
         self._repository = repository
 
-    def __getattr__(self, name: str):
+    # A delegating proxy resolves every other member dynamically, so ``Any`` is
+    # the only description of what borrowing a member actually yields.
+    def __getattr__(self, name: str) -> Any:
         return getattr(self._repository, name)
 
     def close(self) -> None:
         return None
 
 
-def run_metadata_report_loaded(configuration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity=None, artifact_identity=None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True, repository_authority: object | None = None, pipeline_repository=None, review_claim_next: bool = False, timing=None) -> str:
+def run_metadata_report_loaded(configuration: ApplicationConfiguration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity: tuple[int, int] | None = None, artifact_identity: tuple[int, int] | None = None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True, repository_authority: object | None = None, pipeline_repository: SQLiteMetadataReportRepository | None = None, review_claim_next: bool = False, timing: StageTimer | None = None) -> str:
     """Compose one report solely from an already validated configuration snapshot."""
     connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
     if mount is None:
@@ -847,7 +963,10 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
         hardcover_pacer = HardcoverPacer()
     bindings: list[ProviderBinding] = []
     for provider in provider_configs:
-        def factory(value=provider):
+        def factory(
+            value: ProviderConnectionConfiguration = provider,
+        ) -> MetadataProvider:
+            instance: MetadataProvider
             if value.adapter == "google_books":
                 api_key = (
                     None
@@ -891,8 +1010,8 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
                 provider.name, provider.enabled, factory, provider.adapter
             )
         )
-    def repository_factory():
-        repository = (
+    def repository_factory() -> ReportRepository:
+        repository: _NonClosingRepository | SQLiteMetadataReportRepository = (
             _NonClosingRepository(pipeline_repository)
             if pipeline_repository is not None
             else open_repository(
@@ -904,7 +1023,11 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
         try:
             if recover_artifacts:
                 artifacts.recover_unreferenced(repository.artifact_is_referenced)
-            return repository
+            # The adapter implements every ``ReportRepository`` member; only its
+            # ``publish`` hook parameter is declared as ``object`` where the
+            # protocol names itself, which is a variance mismatch in the seam
+            # rather than a missing capability.
+            return cast("ReportRepository", repository)
         except Exception:
             repository.close()
             raise
@@ -923,7 +1046,9 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
         publication_receipt=(
             None
             if review_action is None
-            else lambda repository, report: repository.complete_review_extraction_publication(
+            else lambda repository, report: cast(
+                "_PublicationReceiptRepository", repository
+            ).complete_review_extraction_publication(
                 review_action,
                 report.report_id,
                 int(time.time()),
@@ -938,7 +1063,11 @@ def run_metadata_report_loaded(configuration, database_path: Path, artifact_stor
     )
     return service.run(item, file_index, expected_file_identity)
 
-def _require_report_current_loaded(configuration, artifacts, report) -> bool:
+def _require_report_current_loaded(
+    configuration: ApplicationConfiguration,
+    artifacts: CoverArtifactStore,
+    report: MetadataReport,
+) -> bool:
     connection, library, mount, _ = configuration.select(
         report.target.connection, report.target.library
     )
@@ -971,15 +1100,15 @@ def _require_report_current_loaded(configuration, artifacts, report) -> bool:
 
 
 def create_proposal_set_loaded(
-    configuration,
+    configuration: ApplicationConfiguration,
     database_path: Path,
     artifact_store_path: Path,
     report_id: str,
     repository_authority: object | None = None,
-    pipeline_repository=None,
+    pipeline_repository: SQLiteMetadataReportRepository | None = None,
 ) -> str:
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
-    repository = (
+    repository: _NonClosingRepository | SQLiteMetadataReportRepository = (
         _NonClosingRepository(pipeline_repository)
         if pipeline_repository is not None
         else open_repository(
@@ -987,7 +1116,7 @@ def create_proposal_set_loaded(
         )
     )
 
-    def current(report) -> bool:
+    def current(report: MetadataReport) -> bool:
         try:
             return _require_report_current_loaded(
                 configuration, artifacts, report
@@ -1008,15 +1137,15 @@ def create_proposal_set_loaded(
 
 
 def admit_review_case_loaded(
-    configuration,
+    configuration: ApplicationConfiguration,
     database_path: Path,
     artifact_store_path: Path,
     proposal_set_id: str,
     repository_authority: object | None = None,
-    pipeline_repository=None,
+    pipeline_repository: SQLiteMetadataReportRepository | None = None,
 ) -> str:
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
-    repository = (
+    repository: _NonClosingRepository | SQLiteMetadataReportRepository = (
         _NonClosingRepository(pipeline_repository)
         if pipeline_repository is not None
         else open_repository(
@@ -1024,7 +1153,7 @@ def admit_review_case_loaded(
         )
     )
 
-    def current(proposal) -> bool:
+    def current(proposal: ProposalSet) -> bool:
         try:
             report = MetadataReport.from_json(repository.get(proposal.report_id))
         except Exception as error:
@@ -1044,7 +1173,11 @@ def admit_review_case_loaded(
         repository.close()
 
 
-def _current_resolved_policy(configuration, repository, library: str):
+def _current_resolved_policy(
+    configuration: ApplicationConfiguration,
+    repository: _NonClosingRepository | SQLiteMetadataReportRepository,
+    library: str,
+) -> ResolvedMetadataPolicy:
     persisted = repository.current_resolved_metadata_policy(library)
     profile = MetadataPolicyProfile.from_data(
         json.loads(repository.active_metadata_policy())
@@ -1100,12 +1233,12 @@ def _classify_provider_recovery_failure(error: Exception) -> tuple[str, int | No
 
 
 def create_review_pipeline(
-    configuration,
+    configuration: ApplicationConfiguration,
     database_path: Path,
     catalogue_path: Path,
     artifact_store_path: Path,
     database_authority: object | None = None,
-    timing=None,
+    timing: StageTimer | None = None,
     private_root: Path | None = None,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
 ) -> ReviewPreparationSupervisor:
@@ -1161,12 +1294,15 @@ def create_review_pipeline(
     discovery_lock = threading.Lock()
     if provider_recovery is None:
         raise ConfigurationError("provider recovery store is unavailable")
-    def repository_factory():
+    def repository_factory() -> SQLiteMetadataReportRepository:
         return open_repository(
             database_path, create=False, authority=database_authority
         )
 
-    def retry_resolver(connection_name: str, library_name: str, name: str, adapter: str, generation: int):
+    def retry_resolver(
+        connection_name: str, library_name: str, name: str, adapter: str,
+        generation: int,
+    ) -> ConfiguredProviderRetry | None:
         if generation != configuration.provider_recovery_generation:
             return None
         try:
@@ -1179,7 +1315,9 @@ def create_review_pipeline(
         if not provider.enabled:
             raise ProviderRetryDisabled("provider retry is disabled")
 
-        def factory(value=provider):
+        def factory(
+            value: ProviderConnectionConfiguration = provider,
+        ) -> MetadataProvider:
             if value.adapter == "google_books":
                 api_key = None if value.secret_file is None else read_secret(value.secret_file)
                 return GoogleBooksMetadataProvider(value.name, google_books_client(configuration.limits.timeout_seconds), configuration.limits.provider_response_bytes, configuration.limits.timeout_seconds, api_key=api_key)
@@ -1194,7 +1332,8 @@ def create_review_pipeline(
     pipeline_holder: dict[str, ReviewPreparationPipeline] = {}
 
     def retry_member(
-        recovery_state, job: ProviderRecoveryJob, heartbeat: Callable[[], None]
+        recovery_state: ProviderRecovery, job: ProviderRecoveryJob,
+        heartbeat: Callable[[], None],
     ) -> None:
         staged_report_id: str | None = None
         repository = repository_factory()
@@ -1250,10 +1389,20 @@ def create_review_pipeline(
         try:
             serialized = GenerateProviderRetrySuccessor(
                 target=target, inspector=_IsolatedEpubInspector(artifacts),
-                repository_factory=repository_factory, provider_resolver=retry_resolver,
+                repository_factory=cast(
+                    "Callable[[], ReportRepository]", repository_factory
+                ),
+                provider_resolver=retry_resolver,
                 mount=mount, limits=configuration.limits,
-                after_publication=lambda bound, report: bound.stage_provider_retry_successor(
-                    job.source_report_id, report, int(time.time())
+                # The staged work id is deliberately discarded here; the seam
+                # types the hook as returning nothing.
+                after_publication=cast(
+                    "Callable[[ReportRepository, MetadataReport], None]",
+                    lambda bound, report: cast(
+                        "_PublicationReceiptRepository", bound
+                    ).stage_provider_retry_successor(
+                        job.source_report_id, report, int(time.time())
+                    ),
                 ),
                 heartbeat=heartbeat,
             ).run(
@@ -1307,7 +1456,9 @@ def create_review_pipeline(
         ),
     )
 
-    def drain_provider_recovery_outbox(repository=None) -> None:
+    def drain_provider_recovery_outbox(
+        repository: SQLiteMetadataReportRepository | None = None,
+    ) -> None:
         """Deliver exact package cutovers idempotently into recovery state."""
         owns_repository = repository is None
         if repository is None:
@@ -1315,11 +1466,16 @@ def create_review_pipeline(
         try:
             while rows := repository.pending_provider_recovery_outbox(limit=100):
                 for row in rows:
+                    # The outbox query projects exactly this column order and
+                    # nullability; see ``pending_provider_recovery_outbox``.
                     (
                         outbox_id, target_connection, library_name, item_id,
                         proposal_id, report_id, case_id, checkpoint, outcome,
                         created_at,
-                    ) = row
+                    ) = cast(
+                        "tuple[str, str, str, str, str | None, str, str | None, int | None, str, int]",
+                        row,
+                    )
                     package = (proposal_id, report_id, case_id, checkpoint, outcome)
                     current = repository.current_review_package(
                         target_connection, library_name, item_id,
@@ -1345,14 +1501,16 @@ def create_review_pipeline(
             if owns_repository:
                 repository.close()
 
-    def recover_provider(now: int):
+    def recover_provider(now: int) -> RecoveryRun:
         try:
             drain_provider_recovery_outbox()
             return recovery_runner.run_one(now=now)
         except ProviderRecoveryStoreError as error:
             raise ReviewPipelineError("recovery") from error
 
-    def discover(connection: str, library: str):
+    def discover(
+        connection: str, library: str
+    ) -> tuple[int, str, tuple[CatalogueEntry, ...]]:
         with discovery_lock:
             repository = open_catalogue(catalogue_path, create=True)
             try:
@@ -1369,8 +1527,13 @@ def create_review_pipeline(
             finally:
                 repository.close()
 
+    # The pipeline hands every stage callback back exactly the repository
+    # ``repository_factory`` above created, so each callback narrows the seam's
+    # ``ReviewPipelineRepository`` to that concrete adapter where it needs a
+    # capability the seam does not name.
     def extract(
-        pipeline_repository, action: PipelineAction, claim_next: bool
+        pipeline_repository: ReviewPipelineRepository, action: PipelineAction,
+        claim_next: bool,
     ) -> tuple[str, bool]:
         catalogue = open_catalogue(catalogue_path, create=False)
         try:
@@ -1410,7 +1573,7 @@ def create_review_pipeline(
                 review_action=action,
                 recover_artifacts=False,
                 repository_authority=database_authority,
-                pipeline_repository=pipeline_repository,
+                pipeline_repository=cast("SQLiteMetadataReportRepository", pipeline_repository),
                 review_claim_next=claim_next,
                 timing=timing,
             )
@@ -1437,8 +1600,10 @@ def create_review_pipeline(
         value = MetadataReport.from_json(serialized)
         return value.report_id, True
 
-    def providers(pipeline_repository, report_id: str):
-        value = MetadataReport.from_json(pipeline_repository.get(report_id))
+    def providers(
+        pipeline_repository: ReviewPipelineRepository, report_id: str
+    ) -> tuple[ProviderStatus, ...]:
+        value = MetadataReport.from_json(cast("SQLiteMetadataReportRepository", pipeline_repository).get(report_id))
         _record_provider_recovery_observations(
             provider_recovery, value,
             adapters={provider.name: provider.adapter for provider in configuration.providers},
@@ -1447,7 +1612,9 @@ def create_review_pipeline(
         )
         return _provider_statuses(value)
 
-    def propose(pipeline_repository, report_id: str) -> str:
+    def propose(
+        pipeline_repository: ReviewPipelineRepository, report_id: str
+    ) -> str:
         try:
             serialized = create_proposal_set_loaded(
                 configuration,
@@ -1455,37 +1622,46 @@ def create_review_pipeline(
                 artifact_store_path,
                 report_id,
                 database_authority,
-                pipeline_repository,
+                cast("SQLiteMetadataReportRepository", pipeline_repository),
             )
         except ProposalCurrentnessError as error:
             raise ReviewPipelineError("stale") from error
         return ProposalSet.from_json(serialized).proposal_set_id
 
-    def admit(pipeline_repository, proposal_set_id: str) -> tuple[str, str | None]:
+    def admit(
+        pipeline_repository: ReviewPipelineRepository, proposal_set_id: str
+    ) -> tuple[str, str | None]:
         serialized = admit_review_case_loaded(
             configuration,
             database_path,
             artifact_store_path,
             proposal_set_id,
             database_authority,
-            pipeline_repository,
+            cast("SQLiteMetadataReportRepository", pipeline_repository),
         )
         result = ReviewAdmissionResult.from_json(serialized)
         if result.status == "stale":
             raise ReviewPipelineError("stale")
         return result.status, result.review_case_id
 
-    def project(pipeline_repository, action: PipelineAction | str) -> bool:
+    def project(
+        pipeline_repository: ReviewPipelineRepository,
+        action: PipelineAction | str,
+    ) -> str:
         try:
             if type(action) is str:
                 outcome = pipeline_repository.persist_shadow_outcome(
                     action, int(time.time())
                 )
                 return "stale" if outcome == "stale" else "complete"
-            if action.review_case_id is None:
+            # The branch above already returned for an exact ``str``; mypy keeps
+            # ``str`` in the union here only because a ``str`` subclass would
+            # fail that exact test, which this seam never supplies.
+            staged = cast("PipelineAction", action)
+            if staged.review_case_id is None:
                 raise ReviewPipelineError("state")
             outcome = pipeline_repository.persist_shadow_outcome(
-                action.review_case_id, int(time.time()), staged_action=action
+                staged.review_case_id, int(time.time()), staged_action=staged
             )
             if outcome == "stale":
                 return "stale"
@@ -1493,17 +1669,24 @@ def create_review_pipeline(
         except Exception as error:
             raise ReviewPipelineError("projection") from error
 
-    def prepare_cover(pipeline_repository, action: PipelineAction) -> None:
+    def prepare_cover(
+        pipeline_repository: ReviewPipelineRepository, action: PipelineAction
+    ) -> None:
         if action.review_case_id is None:
             return
         try:
-            def snapshot() -> object | None:
-                return pipeline_repository.read_staged_cover_preparation(action)
+            def snapshot() -> tuple[str, str, bool] | None:
+                return cast(
+                    "SQLiteMetadataReportRepository", pipeline_repository
+                ).read_staged_cover_preparation(action)
 
             if snapshot() is None:
                 return
             considerations = _compose_cover_considerations(
-                pipeline_repository, artifact_store_path, configuration.review
+                cast("SQLiteMetadataReportRepository", pipeline_repository),
+                artifact_store_path,
+                # Callers reject an absent review configuration before composing.
+                cast("ReviewWebConfiguration", configuration.review),
             )
             prepare_cover_consideration(
                 None,
@@ -1511,7 +1694,14 @@ def create_review_pipeline(
                 action.review_case_id,
                 serialized=lambda call: call(),
                 snapshot=snapshot,
-                finalize=pipeline_repository.atomic_cover_preparation,
+                # The adapter's gate is not written generically, so it cannot
+                # structurally satisfy the return-type-preserving protocol.
+                finalize=cast(
+                    "SerializedGate",
+                    cast(
+                        "SQLiteMetadataReportRepository", pipeline_repository
+                    ).atomic_cover_preparation,
+                ),
             )
         except ReviewAdmissionStaleError as error:
             raise ReviewPipelineError("stale") from error
@@ -1521,7 +1711,8 @@ def create_review_pipeline(
             raise ReviewPipelineError("persistence") from error
 
     def after_advance(
-        pipeline_repository, action: PipelineAction, output_id: str | None
+        pipeline_repository: ReviewPipelineRepository, action: PipelineAction,
+        output_id: str | None,
     ) -> None:
         """Drain the durable cutover outbox after every final advancement."""
         if not (
@@ -1529,7 +1720,9 @@ def create_review_pipeline(
             or (action.stage == "admission" and output_id is None)
         ) or action.report_id is None:
             return
-        drain_provider_recovery_outbox(pipeline_repository)
+        drain_provider_recovery_outbox(
+            cast("SQLiteMetadataReportRepository", pipeline_repository)
+        )
 
     def check_connection(connection: str) -> None:
         if connection not in clients:
@@ -1582,11 +1775,15 @@ def create_review_pipeline(
     provider_recovery.reconcile_generation(
         generation=configuration.provider_recovery_generation, now=int(time.time())
     )
+    # This composition root reads the review configuration unconditionally, so
+    # an absent one is already a configuration failure before this point.
+    review_configuration = cast("ReviewWebConfiguration", configuration.review)
     return ReviewPreparationSupervisor(
         pipeline,
-        polling_interval_seconds=configuration.review.library_polling_interval_seconds,
-        graceful_shutdown_seconds=configuration.review.graceful_shutdown_seconds,
-        recovery_wake=recover_provider,
+        polling_interval_seconds=review_configuration.library_polling_interval_seconds,
+        graceful_shutdown_seconds=review_configuration.graceful_shutdown_seconds,
+        # The supervisor discards the run summary this returns.
+        recovery_wake=cast("Callable[[int], None]", recover_provider),
         recovery_drain=recovery_cancel.set,
         recovery_resume=recovery_cancel.clear,
         on_stop=provider_recovery.close,
@@ -1735,18 +1932,18 @@ def preview_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, 
         provider_adapters,
     )
     create_batch_manifest(manifest_path, raw)
-    value = parse_manifest(raw)
+    value = cast("_Manifest", parse_manifest(raw))
     return json.dumps({"id": value["id"], "entries": len(selections), **value["call_maxima"]}, separators=(",", ":"))
 
 
 def inspect_batch(manifest_path: Path) -> str:
-    value = parse_manifest(read_batch_manifest(manifest_path))
+    value = cast("_Manifest", parse_manifest(read_batch_manifest(manifest_path)))
     return json.dumps({"id": value["id"], "entries": len(value["entries"]), **value["call_maxima"]}, separators=(",", ":"))
 
 
-def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, manifest_id: str, database_path: Path, artifact_store_path: Path, emit) -> bool:
+def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, manifest_id: str, database_path: Path, artifact_store_path: Path, emit: Callable[[dict[str, object]], None]) -> bool:
     """Run the immutable foreground list serially; no resume or hidden state."""
-    value = parse_manifest(read_batch_manifest(manifest_path))
+    value = cast("_Manifest", parse_manifest(read_batch_manifest(manifest_path)))
     if value["id"] != manifest_id:
         raise BatchError("batch manifest is unavailable")
     configuration = load_configuration_file(config_path)
@@ -1762,6 +1959,7 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
     if actual_adapters != tuple(value["provider_adapters"]):
         raise BatchError("batch configuration changed")
     _require_open_library_batch_envelope(configuration, selections)
+    repository: SQLiteCatalogueRepository | SQLiteMetadataReportRepository
     repository = open_catalogue(catalogue_path, create=False)
     try:
         snapshot = repository.snapshot(batch_catalogue_fingerprint(configuration))
@@ -1785,13 +1983,15 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
     hardcover_pacer = (
         HardcoverPacer() if "hardcover" in actual_adapters else None
     )
-    def current_entry(generation: int, fingerprint: str, key: tuple[str, str, str, str]):
+    def current_entry(
+        generation: int, fingerprint: str, key: tuple[str, str, str, str]
+    ) -> CatalogueEntry | None:
         repository = open_catalogue(catalogue_path, create=False)
         try:
             return repository.current_entry(generation, fingerprint, key)
         finally:
             repository.close()
-    def report(entry):
+    def report(entry: CatalogueEntry) -> tuple[str, tuple[ProviderStatus, ...]]:
         serialized = run_metadata_report_loaded(
             configuration,
             database_path,
@@ -1813,12 +2013,12 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
     return ForegroundBatchRun(snapshot=snapshot, selections=selections, projection=lambda: batch_fingerprint(configuration, selections), expected_projection=value["batch_config_fingerprint"], current_entry=current_entry, report=report, emit=emit).run()
 
 
-def _batch_provider_names(configuration, selections: tuple[BatchSelection, ...]) -> tuple[str, ...]:
+def _batch_provider_names(configuration: ApplicationConfiguration, selections: tuple[BatchSelection, ...]) -> tuple[str, ...]:
     return tuple(sorted({name for selection in selections for library in configuration.libraries if library.name == selection.library and library.connection == selection.connection for name in library.provider_connections if next(provider for provider in configuration.providers if provider.name == name).enabled}))
 
 
 def _batch_provider_adapters(
-    configuration,
+    configuration: ApplicationConfiguration,
     selections: tuple[BatchSelection, ...],
     providers: tuple[str, ...] | None = None,
 ) -> tuple[str, ...]:
@@ -1832,7 +2032,7 @@ def _batch_provider_adapters(
 
 
 def _require_open_library_batch_envelope(
-    configuration,
+    configuration: ApplicationConfiguration,
     selections: tuple[BatchSelection, ...],
     *,
     all_eligible: bool = False,
@@ -1852,7 +2052,7 @@ def _require_open_library_batch_envelope(
         raise BatchError("Open Library batch selection is invalid")
 
 
-def _load_batch_credentials(configuration, selected_connections: set[str], selected_provider_names: set[str]) -> dict[str, str]:
+def _load_batch_credentials(configuration: ApplicationConfiguration, selected_connections: set[str], selected_provider_names: set[str]) -> dict[str, str]:
     values = {"target:" + item.name: read_secret(item.secret_file) for item in configuration.connections if item.name in selected_connections}
     values.update({"provider:" + item.name: read_secret(item.secret_file) for item in configuration.providers if item.name in selected_provider_names and item.secret_file is not None})
     return values
@@ -1970,7 +2170,8 @@ def run_review_server(
 
 
 def _compose_cover_considerations(
-    repository, artifact_store_path: Path, review
+    repository: SQLiteMetadataReportRepository, artifact_store_path: Path,
+    review: ReviewWebConfiguration,
 ) -> CoverConsiderationService:
     artifacts: CoverArtifactStore | None = None
 
@@ -2049,7 +2250,9 @@ def run_cover_review(
             return application.prepare_cover_consideration(review_case_id)
         detail = application.case_detail(review_case_id).to_data()
         field = next(
-            value for value in detail["fields"]
+            # ``CaseDetailView.to_data`` always projects "fields" from its own
+            # ``tuple[dict[str, object], ...]`` attribute.
+            value for value in cast("list[dict[str, object]]", detail["fields"])
             if value["destination"] == "cover"
         )
         consideration = field["cover_consideration"]
@@ -2059,7 +2262,7 @@ def run_cover_review(
             "select": "accept",
             "no-action": "reject",
         }[action]
-        selected_value = (
+        selected_value: dict[str, object] | None = (
             None
             if action != "select"
             else {"kind": "cover", "value": artifact_id}
@@ -2141,13 +2344,22 @@ def run_policy_preview(
     configuration = load_configuration_file(config_path)
     repository = open_shadow_preview_repository(database_path)
     try:
+        # LATENT DEFECT (typing-only unit: not repaired here).
+        # ``SQLiteShadowPreviewRepository`` implements only the read-only policy
+        # preview surface. It really does lack every session, review-case,
+        # decision, library, browser-state, and policy-mutation member these
+        # parameters name, so these are not variance mismatches: any composed
+        # operation other than ``preview_policy``/``policy.rich_qualification``
+        # below would raise ``AttributeError`` at runtime. Composition only
+        # reaches those two here, and ``operational_timings`` is omitted so the
+        # ``state_owner.operational_snapshot`` closure is never built.
         application = compose_review_application(
-            state_owner=repository,
-            session_store=repository,
-            case_store=repository,
-            decision_store=repository,
-            library_store=repository,
-            policy_store=repository,
+            state_owner=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks BrowserStateOwner
+            session_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks ReviewSessionStore
+            case_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks CurrentReviewCaseStore
+            decision_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks HumanDecisionStore
+            library_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks ReviewLibraryStore
+            policy_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks most of PolicyImpactRepository
             verify_password=lambda _: False,
             clock=lambda: int(time.time()),
             session_lifetime_seconds=1,

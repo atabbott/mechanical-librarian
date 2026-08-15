@@ -18,7 +18,7 @@ from mechanical_librarian.application.batch import (
 )
 
 
-def _binding(path: Path):
+def _binding(path: Path) -> tuple[_LinuxDirectoryChain | None, int]:
     if not path.is_absolute() or path.name in {"", ".", ".."}:
         raise BatchError("batch manifest is unavailable")
     chain = _LinuxDirectoryChain.open(path.parent) if sys.platform.startswith("linux") else None

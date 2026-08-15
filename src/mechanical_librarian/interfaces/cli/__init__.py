@@ -9,7 +9,7 @@ import stat
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TextIO
+from typing import NoReturn, TextIO
 
 from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
@@ -25,7 +25,7 @@ _MAX_PROFILE_BYTES = 16_384
 
 
 class _Parser(argparse.ArgumentParser):
-    def error(self, message: str) -> None:
+    def error(self, message: str) -> NoReturn:
         raise ValueError("invalid invocation")
 
 

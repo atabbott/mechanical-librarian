@@ -12,7 +12,7 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -383,7 +383,7 @@ class OpenLibraryMetadataProvider:
                 query_kind=lookup.kind,
             )
         if lookup.kind is ProviderQueryKind.ISBN:
-            family: str | None = next(iter(families))
+            family = next(iter(families))
             references = tuple(
                 sorted(
                     claim.reference
@@ -426,7 +426,9 @@ class OpenLibraryMetadataProvider:
                         },
                         deadline=deadline,
                     )
-                    admitted = tuple(
+                    admitted: tuple[
+                        tuple[str, str, tuple[tuple[str, str | None], ...]], ...
+                    ] = tuple(
                         (edition, work, ())
                         for edition, work in _admitted_candidates(
                             search, family or ""
@@ -950,6 +952,11 @@ def _candidate(
     work_authors: tuple[tuple[str, str | None], ...] = (),
     search_work: dict[str, Any] | None = None,
 ) -> tuple[ProviderCandidate, _CoverId, _CoverId]:
+    # `kind` names both a claim kind (while claims are added) and a provider
+    # evidence kind (while evidence is added); `author` names both a display
+    # name and a raw author object.
+    kind: ClaimKind | ProviderEvidenceKind
+    author: str | dict[str, Any]
     if _key(edition.get("key"), _EDITION_KEY) != edition_key:
         raise ValueError("edition identity is malformed")
     if _key(work.get("key"), _WORK_KEY) != work_key:
@@ -1220,7 +1227,7 @@ def _candidate(
     for field, kind, scope in (("description", ProviderEvidenceKind.EDITION_DESCRIPTION, ClaimScope.EDITION),):
         if field in edition and edition[field] is not None:
             try:
-                evidence.append(ProviderEvidence(kind, _description(edition[field]), scope))
+                evidence.append(ProviderEvidence(kind, _description(edition[field]), scope))  # type: ignore[arg-type]  # reason: `_description` unwraps an untrusted provider member, so its value stays `object`; `ProviderEvidence` validates it and this `try` already absorbs ValueError/EvidenceValueError for a non-string payload.
             except (ValueError, EvidenceValueError):
                 pass
     for field, kind in (
@@ -2165,7 +2172,9 @@ def _parser_optional_rejections(
         for item in value:
             if type(item) is not expected:
                 count += 1
-            elif field == "covers" and not 0 < item <= 2_147_483_647:
+            # For "covers" the expected member type is `int`, and the branch
+            # above has already counted every item that is not that type.
+            elif field == "covers" and not 0 < cast(int, item) <= 2_147_483_647:
                 count += 1
             elif expected is str:
                 try:

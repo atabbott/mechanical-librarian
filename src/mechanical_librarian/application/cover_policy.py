@@ -7,6 +7,7 @@ import json
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import cast
 
 from .cover_identity import (
     CLASSIFIER_REFERENCE,
@@ -137,9 +138,11 @@ def adjudicate_cover_policy(
         references,
         profile_payload,
     )
+    # ``_identity_rows`` rejects the document unless "candidates" is a list of
+    # exactly-shaped mappings, one per admitted packet candidate.
     identity_by_reference = {
         value["candidate_reference"]: value["outcome"]
-        for value in identity["candidates"]
+        for value in cast("list[dict[str, object]]", identity["candidates"])
     }
     reasons: set[str] = set()
     eligible = []
@@ -164,8 +167,12 @@ def adjudicate_cover_policy(
             tuple(sorted(reasons)),
         )
 
+    # ``_observation_rows`` applies the same admission to "observations".
     by_reference = {
-        value["candidate_reference"]: value for value in observations["observations"]
+        value["candidate_reference"]: value
+        for value in cast(
+            "list[dict[str, object]]", observations["observations"]
+        )
     }
     ambiguous = False
     acceptable: list[str] = []
@@ -250,7 +257,7 @@ def adjudicate_cover_policy(
 def _identity_rows(
     document: str,
     packet_reference: object,
-    candidates: list[object],
+    candidates: list[dict[str, object]],
     references: tuple[str, ...],
 ) -> dict[str, object]:
     value = _load_object(document, "cover identity")
@@ -293,7 +300,12 @@ def _identity_rows(
             or type(row["evidence_references"]) is not list
             or type(row["reasons"]) is not list
             or row["preview_reference"]
-            != _preview_reference(packet_reference, expected[row["candidate_reference"]])
+            != _preview_reference(
+                # ``bind_cover_packet`` already admitted the packet, so its
+                # ``packet_reference`` is the validated reference string.
+                cast("str", packet_reference),
+                expected[row["candidate_reference"]],
+            )
             or any(_REFERENCE.fullmatch(str(item)) is None for item in row["evidence_references"])
             or any(type(item) is not str for item in row["reasons"])
         ):
@@ -309,7 +321,7 @@ def _identity_rows(
 def _observation_rows(
     document: str,
     packet_reference: object,
-    candidates: list[object],
+    candidates: list[dict[str, object]],
     references: tuple[str, ...],
     profile_payload: bytes | None,
 ) -> dict[str, object]:

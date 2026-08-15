@@ -13,6 +13,7 @@ import time
 import zipfile
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from typing import cast
 
 from mechanical_librarian.adapters.evidence_extractors import (
     epub_opening as opening_parser,
@@ -122,7 +123,12 @@ def _limits(value: object) -> EpubPackageLimits:
     item = _closed_object(value, {"profile", *EpubPackageLimits.HARD_CAPS})
     if item["profile"] != "epub-package-limits-v1":
         raise ValueError("invalid child context")
-    return EpubPackageLimits(**{name: item[name] for name in EpubPackageLimits.HARD_CAPS})
+    return EpubPackageLimits(
+        **cast(
+            "dict[str, int]",
+            {name: item[name] for name in EpubPackageLimits.HARD_CAPS},
+        )
+    )
 
 
 def _opening_limits(value: object) -> EpubOpeningLimits:
@@ -134,13 +140,20 @@ def _opening_limits(value: object) -> EpubOpeningLimits:
         raise ValueError("invalid child context")
     return EpubOpeningLimits(
         package=_limits(item["package"]),
-        **{name: item[name] for name in EpubOpeningLimits.HARD_CAPS},
+        **cast(
+            "dict[str, int]",
+            {name: item[name] for name in EpubOpeningLimits.HARD_CAPS},
+        ),
     )
 
 
 def _fingerprint(value: object) -> Fingerprint:
     item = _closed_object(value, {"algorithm", "digest", "schema"})
-    return Fingerprint(item["algorithm"], SchemaVersion(item["schema"]), item["digest"])
+    return Fingerprint(
+        cast(str, item["algorithm"]),
+        SchemaVersion(cast(str, item["schema"])),
+        cast(str, item["digest"]),
+    )
 
 
 def _parent_watch(descriptor: int, done: threading.Event) -> None:
@@ -239,7 +252,7 @@ def _inspect_bundle(
     request: EpubPackageRequest,
     package_request: EpubPackageRequest,
     limits: EpubOpeningLimits,
-) -> tuple[object, EpubOpeningReport, tuple[EpubInspectionFact, ...]]:
+) -> tuple[EpubPackageReport | None, EpubOpeningReport, tuple[EpubInspectionFact, ...]]:
     try:
         rejected = EpubPackageExtractor().preflight(package_request)
         if rejected is not None:
@@ -253,9 +266,13 @@ def _inspect_bundle(
             opening_report = EpubOpeningExtractor().extract(request, limits, package_report, archive)
             try:
                 rear_facts = _adapter_rear_facts(request, package_report, opening_report, archive)
+            # ``rejected`` is rebound by this handler, but mypy keeps the ``None``
+            # narrowing left behind by the outer preflight result, so each use
+            # restates the handler's own exception type through a no-op cast.
             except opening_parser._AggregateRejected as rejected:
                 if (
-                    rejected.outcome is not EpubInspectionOutcome.RESOURCE_LIMIT
+                    cast("opening_parser._AggregateRejected", rejected).outcome
+                    is not EpubInspectionOutcome.RESOURCE_LIMIT
                     or not opening_report.outcome.succeeded
                 ):
                     raise
@@ -270,7 +287,9 @@ def _inspect_bundle(
                     ),
                     tuple(
                         fact
-                        for fact in rejected.partial_facts
+                        for fact in cast(
+                            "opening_parser._AggregateRejected", rejected
+                        ).partial_facts
                         if type(fact) is EpubInspectionFact
                     ),
                 )
@@ -307,12 +326,12 @@ def _inspect_bundle(
         )
 
 
-def _package_facts(report, source: Fingerprint) -> tuple[EpubInspectionFact, ...]:
+def _package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubInspectionFact, ...]:
     return _adapter_package_facts(report, source)
 
 
 def _inspection(
-    package_report, opening_report: EpubOpeningReport,
+    package_report: EpubPackageReport, opening_report: EpubOpeningReport,
     rear_facts: tuple[EpubInspectionFact, ...] = (),
 ) -> EpubInspection:
     opening = EpubInspection.from_opening_report(opening_report)

@@ -9,7 +9,7 @@ import secrets
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
@@ -21,6 +21,7 @@ from mechanical_librarian.domain.human_decision import (
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
+    ProviderLaneObservation,
     TargetDestination,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -253,6 +254,9 @@ class InspectCurrentReviewCase:
                 raise ReviewWebError("unavailable")
             decisions: dict[str, HumanDecision] = {}
             automatic: dict[str, dict[str, object]] = {}
+            # Declared once: the parse loop below binds a decision, while the
+            # per-field projection later looks one up and may find none.
+            decision: HumanDecision | None
             for document in snapshot.decision_documents:
                 value = json.loads(document)
                 if type(value) is not dict:
@@ -277,7 +281,9 @@ class InspectCurrentReviewCase:
             raise ReviewWebError("unavailable") from error
         target_fields = {
             value["destination"]: value
-            for value in report.target.to_data()["fields"]  # type: ignore[index]
+            for value in cast(
+                "list[dict[str, object]]", report.target.to_data()["fields"]
+            )
         }
         current_cover_consideration = (
             None
@@ -295,7 +301,7 @@ class InspectCurrentReviewCase:
         for proposal in case.proposals:
             result = proposal["result"]
             assert type(result) is dict
-            destination = proposal["destination"]
+            destination = cast(str, proposal["destination"])
             alternatives = result["alternatives"]
             assert type(alternatives) is list
             references = sorted(
@@ -489,7 +495,7 @@ class InspectCurrentReviewCase:
             cover_history.append(item)
         items = sorted(
             (*snapshot.history, *cover_history),
-            key=lambda item: int(item.get("occurred_at", 0)),
+            key=lambda item: int(cast(int, item.get("occurred_at", 0))),
             reverse=True,
         )[:limit]
         return {
@@ -822,7 +828,7 @@ def _choice_contexts(
     current_rows = [
         _choice_evidence(row)
         for item in preserves
-        for reference in item.get("evidence_references", [])
+        for reference in cast("list[object]", item.get("evidence_references", []))
         if type(reference) is str and reference in evidence
         for row in [evidence[reference]]
     ]
@@ -896,16 +902,16 @@ def _current_value_present(value: object) -> bool:
 
 
 def _choice_rationale(alternative: dict[str, object], supported: bool) -> str:
-    assessment = {
+    assessment = cast("dict[object, str]", {
         "fills_empty": "fills an empty local value",
         "preserves_target": "preserves the local value",
         "replaces_target": "replaces the local value",
-    }.get(alternative.get("assessment"), "retains a proposal value")
-    scope = {
+    }).get(alternative.get("assessment"), "retains a proposal value")
+    scope = cast("dict[object, str]", {
         "cover": "cover-specific",
         "edition": "edition-specific",
         "work": "work-level",
-    }.get(alternative.get("scope"), "retained")
+    }).get(alternative.get("scope"), "retained")
     evidence = "with retained supporting evidence" if supported else "from the retained proposal"
     return f"This alternative {assessment} using {scope} evidence {evidence}."
 
@@ -939,17 +945,17 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
         return "A retained observation supports this choice."
     if type(fact) is not dict:
         return "A retained observation supports this choice."
-    kind = {
+    kind = cast("dict[object, str]", {
         "authors": "Contributors",
         "description": "Description",
         "isbn": "ISBN",
         "publication_date": "Publication date",
         "series": "Series membership",
         "title": "Title",
-    }.get(fact.get("kind"), "Metadata")
+    }).get(fact.get("kind"), "Metadata")
     value = fact.get("value", fact.get("observed"))
     if type(value) in {str, int, float}:
-        return f"{kind}: {_choice_text(value)}"
+        return f"{kind}: {_choice_text(cast('str | int | float', value))}"
     return f"{kind} observation retained."
 
 
@@ -1001,7 +1007,7 @@ def _evidence_by_reference(
     assert type(local) is dict
     for fact in local["claims"]:
         add("local", fact)
-    for provider in data["providers"]:
+    for provider in cast("list[object]", data["providers"]):
         assert type(provider) is dict
         provider_name = provider["provider"]
         assert type(provider_name) is str
@@ -1038,7 +1044,7 @@ def _evidence_by_reference(
                     provider=provider_name,
                     candidate=candidate_identity,
                 )
-    for fact in data["identifier_evidence"]:
+    for fact in cast("list[object]", data["identifier_evidence"]):
         assert type(fact) is dict
         add(
             "identifier",
@@ -1054,7 +1060,7 @@ def _evidence_by_reference(
                 else None
             ),
         )
-    for fact in data["covers"]:
+    for fact in cast("list[object]", data["covers"]):
         assert type(fact) is dict
         provenance = fact.get("provenance")
         add(
@@ -1185,7 +1191,7 @@ def _report_authors(report: MetadataReport) -> list[str]:
         (field.value for field in report.target.fields if field.destination is TargetDestination.AUTHORS),
         (),
     )
-    return list(value) if type(value) is tuple and all(type(author) is str for author in value) else []
+    return list(cast("tuple[str, ...]", value)) if type(value) is tuple and all(type(author) is str for author in value) else []
 
 
 def _provider_outcomes(report: MetadataReport) -> list[dict[str, object]]:
@@ -1198,17 +1204,21 @@ def _provider_outcomes(report: MetadataReport) -> list[dict[str, object]]:
             status = lane.status.value
             if status in successful:
                 continue
-            kind = (lane.kind if provider.lanes else provider.query_kind).value
+            kind = (
+                cast(ProviderLaneObservation, lane).kind
+                if provider.lanes
+                else provider.query_kind
+            ).value
             outcomes.append({"provider_requests": provider.request_accounting.logical_requests, "lane_kind": kind, "provider": _provider_label(provider.authority), "reason": "Provider returned no matching metadata." if status == "no_match" else "Provider returned a bounded terminal status.", "status": status})
     return outcomes
 
 
 def _provider_label(authority: str | None) -> str:
-    return {
+    return cast("dict[str | None, str]", {
         "google_books": "Google Books",
         "hardcover": "Hardcover",
         "open_library": "Open Library",
-    }.get(authority, "Provider (name unavailable)")
+    }).get(authority, "Provider (name unavailable)")
 
 
 def _provider_comparison_notices(report: MetadataReport) -> list[str]:
@@ -1277,7 +1287,7 @@ def _library_item(
                 automatic_outcome=(
                     "abstention"
                     if value["destination"] in shadow_abstention_destinations
-                    else automatic_outcomes.get(value["destination"])
+                    else automatic_outcomes.get(cast(str, value["destination"]))
                 ),
                 has_human_decision=value["destination"] in decisions,
                 suspended=value["destination"] in suspended_destinations,
@@ -1372,7 +1382,7 @@ def _attention_item(
         "provenance": sorted(
             {
                 reference
-                for alternative in result["alternatives"]  # type: ignore[union-attr]
+                for alternative in result["alternatives"]
                 for reference in alternative["evidence_references"]
             }
         ),

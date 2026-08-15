@@ -6,12 +6,14 @@ import hashlib
 import re
 import zipfile
 from datetime import date, datetime
+from typing import cast
 
 from mechanical_librarian.adapters.evidence_extractors import epub_opening as opening
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     EpubPackageDeclarationKind,
     EpubPackageField,
     EpubPackageReport,
+    EpubPackageRequest,
     epub_resource_identity,
 )
 from mechanical_librarian.domain.epub_inspection import (
@@ -188,7 +190,10 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
             explicit_isbn = _ISBN_LABEL.match(observation.raw_value) is not None or scheme_key in {"isbn", "isbn-10", "isbn-13"}
             if scheme_key is not None and scheme_key not in {"isbn", "isbn-10", "isbn-13"}:
                 continue
-            declared_length = {"isbn-10": 10, "isbn-13": 13}.get(scheme_key)
+            # A ``None`` scheme key is a legitimate lookup miss here.
+            declared_length = cast(
+                "dict[str | None, int]", {"isbn-10": 10, "isbn-13": 13}
+            ).get(scheme_key)
             normalized_isbn = "" if canonical is None else "".join(
                 character
                 for character in canonical.upper()
@@ -215,7 +220,8 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
                     observed,
                     canonical,
                     observed,
-                    f"valid_isbn_{len(canonical)}" if valid else "invalid",
+                    # ``valid`` is only true when ``canonical`` is a string.
+                    f"valid_isbn_{len(cast(str, canonical))}" if valid else "invalid",
                     "ebook" if primary else "unknown",
                     "ebook" if primary else "unlabelled",
                     "package_metadata",
@@ -227,7 +233,7 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
         if canonical is not None and field in {EpubInspectionField.TITLE, EpubInspectionField.SUBTITLE}:
             canonical = normalize_title(observed)
         state = forced_state or ("untyped" if field is EpubInspectionField.SUBJECT else "malformed" if canonical is None else "inapplicable" if observation.applicability.value == "inapplicable" else "valid")
-        declared_roles = roles.get(observation.citation.source_ordinal, ())
+        declared_roles = roles.get(observation.citation.source_ordinal, ())  # type: ignore[assignment]  # reason: this rebinds the earlier per-observation role list to the frozen role tuple built above; both are only iterated from here on.
         bibliographic_roles = tuple(
             role
             for role in declared_roles
@@ -342,7 +348,7 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
     return tuple(facts)
 
 
-def rear_facts(request, report: EpubPackageReport, opening_report: EpubOpeningReport, archive: zipfile.ZipFile) -> tuple[EpubInspectionFact, ...]:
+def rear_facts(request: EpubPackageRequest, report: EpubPackageReport, opening_report: EpubOpeningReport, archive: zipfile.ZipFile) -> tuple[EpubInspectionFact, ...]:
     if not report.succeeded or report.source_fingerprint is None:
         return ()
     manifests = {d.resource_identity: d for d in report.declarations if d.kind is EpubPackageDeclarationKind.MANIFEST_ITEM and d.resource_identity}

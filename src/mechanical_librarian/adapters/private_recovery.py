@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import stat
+from collections.abc import Callable
 from pathlib import Path
 
 from mechanical_librarian.domain.field_effect import FieldEffectPlan
@@ -29,7 +30,8 @@ def require_private_directory(root: Path, error: str) -> None:
 
 
 class PrivateCoverRecoveryStore:
-    def __init__(self, root: Path, reader, maximum_bytes: int = 8 * 1024 * 1024,
+    def __init__(self, root: Path, reader: Callable[[FieldEffectPlan], bytes | None],
+                 maximum_bytes: int = 8 * 1024 * 1024,
                  maximum_entries: int = 128) -> None:
         if not 1 <= maximum_bytes <= 32 * 1024 * 1024 or not 1 <= maximum_entries <= 512:
             raise ValueError("cover recovery configuration")

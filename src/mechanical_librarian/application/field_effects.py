@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import threading
 from dataclasses import dataclass
-from typing import Callable, Literal, Protocol
+from typing import Callable, Literal, Protocol, cast
 
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
@@ -554,13 +554,15 @@ class GuardedFieldApplication:
             )
             if action is None:
                 break
+            # A claimed action row always carries the persisted TEXT
+            # ``action_id``/``plan_id`` identifiers the repository wrote.
             if action["kind"] == "targeted_read":
-                self._reconcile_action(action["plan_id"])
+                self._reconcile_action(cast("str", action["plan_id"]))
             else:
-                operation = self.status(action["plan_id"])
+                operation = self.status(cast("str", action["plan_id"]))
                 self._reevaluation.emit(operation.plan)
                 self._repository.complete_forward_reevaluation(
-                    action["action_id"], self._clock()
+                    cast("str", action["action_id"]), self._clock()
                 )
             completed += 1
         return completed

@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from typing import IO, cast
 
 from mechanical_librarian.domain.epub_inspection import (
     EpubInspection,
@@ -179,6 +180,7 @@ def _run_epub_opening_protocol(
         os.set_blocking(process.stderr.fileno(), False)
         stdout = bytearray()
         stderr = bytearray()
+        stream: IO[bytes] | None
         selector.register(process.stdout, selectors.EVENT_READ, (stdout, _STDOUT_LIMIT))
         selector.register(process.stderr, selectors.EVENT_READ, (stderr, _STDERR_LIMIT))
         deadline = time.monotonic() + limits.wall_seconds
@@ -192,7 +194,7 @@ def _run_epub_opening_protocol(
                 _stop(process)
                 return failure(EpubInspectionOutcome.TIMEOUT)
             for key, _ in selector.select(min(remaining, 0.1)):
-                stream = key.fileobj
+                stream = cast("IO[bytes]", key.fileobj)
                 buffer, maximum = key.data
                 try:
                     value = os.read(stream.fileno(), min(16_384, maximum + 1 - len(buffer)))

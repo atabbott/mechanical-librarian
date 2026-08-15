@@ -9,7 +9,18 @@ import ssl
 import threading
 import time
 from dataclasses import dataclass
-from urllib.parse import urljoin, urlsplit
+from typing import cast
+from urllib.parse import SplitResult, urljoin, urlsplit
+
+# One ``socket.getaddrinfo`` row: (family, kind, protocol, canonical name,
+# socket address).  Only the address element is read here.
+_AddressInfo = tuple[
+    socket.AddressFamily,
+    socket.SocketKind,
+    int,
+    str,
+    tuple[str, int] | tuple[str, int, int, int],
+]
 
 MAX_BYTES = 8 * 1024 * 1024
 _MAX_HEADER_BYTES = 65_536
@@ -71,7 +82,7 @@ def _pinned_address(url: str, deadline: float | CoverDeadline | None = None) -> 
     return host, selected, _parts(url).path or "/"
 
 
-def _resolve(host: str, deadline: float | CoverDeadline | None) -> list[tuple[object, ...]]:
+def _resolve(host: str, deadline: float | CoverDeadline | None) -> list[_AddressInfo]:
     result: list[object] = []
     def resolve() -> None:
         try:
@@ -93,7 +104,7 @@ def _validate_url(url: str) -> None:
         raise RemoteCoverError("unsafe remote cover")
 
 
-def _parts(url: str):
+def _parts(url: str) -> SplitResult:
     try:
         parts = urlsplit(url)
         _ = parts.hostname, parts.port
@@ -105,7 +116,9 @@ def _parts(url: str):
 def _remaining(deadline: float | CoverDeadline | None) -> float:
     if type(deadline) is CoverDeadline:
         return deadline.remaining_phase()
-    value = 5.0 if deadline is None else min(5.0, deadline - time.monotonic())
+    # The ``CoverDeadline`` form already returned above, so the remaining
+    # non-``None`` form is the plain float deadline.
+    value = 5.0 if deadline is None else min(5.0, cast(float, deadline) - time.monotonic())
     if value <= 0:
         raise RemoteCoverTimeout("aggregate deadline elapsed")
     return value
@@ -154,6 +167,7 @@ def _response_body(
     headers: dict[str, str],
     deadline: float | CoverDeadline | None,
 ) -> bytes:
+    body: bytes | bytearray
     transfer = headers.get("transfer-encoding")
     length_text = headers.get("content-length")
     if transfer is not None:
@@ -246,7 +260,7 @@ def _redirect_target(current: str, location: str | None) -> str:
     return target
 
 
-def _admitted_media_type(headers: object) -> str:
+def _admitted_media_type(headers: dict[str, str]) -> str:
     get = headers.get
     encoding = get("content-encoding")
     if encoding is not None and encoding.lower() != "identity":

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import uuid4
 
 from mechanical_librarian.domain.provider_recovery import (
@@ -102,7 +102,10 @@ class ScopedProviderRecoveryRunner:
             # Due health without an exact member is incomplete durable state,
             # never evidence that the provider recovered.
             missing = self._store.complete_missing_jobs(
-                token=token, recovery=claimed, now=self._current(current), blocked_targets=blocked,
+                # This branch is only reachable while ``fanout_state`` is None,
+                # which is exactly where ``claimed`` was already asserted above.
+                token=token, recovery=cast("ProviderRecovery", claimed),
+                now=self._current(current), blocked_targets=blocked,
             )
             return RecoveryRun("exhausted" if missing is not None else "idle")
         if fanout_state is None:

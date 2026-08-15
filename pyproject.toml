@@ -111,7 +111,57 @@ known-first-party = ["mechanical_librarian"]
 
 [tool.mypy]
 python_version = "3.13"
+# Pin the analysed platform. The product ships as one Linux container and the
+# gate runs on ubuntu, but contributors develop on other hosts. Without this,
+# `sys.platform` branches and platform-gated typeshed symbols (os.memfd_create,
+# fcntl) make the same source report different errors on macOS than in CI, so
+# the documented local commands would not reproduce the gate.
+platform = "linux"
+# `scripts/` is not a package, so without these two settings mypy maps
+# `scripts/x.py` to the module `x` when named directly and to `scripts.x` when
+# reached through a test import, and refuses to check the tree. Rooting module
+# names at `src/` first and then at the repository keeps `src`, `tests`, and
+# `scripts` on one consistent naming scheme.
+mypy_path = "src"
+explicit_package_bases = true
 strict = true
 # Report suppressions that no longer suppress anything so the gate cannot rot.
 warn_unused_ignores = true
 warn_unused_configs = true
+
+# The three overrides below cover sources that are byte-frozen by the F20
+# rich-metadata qualification manifest,
+# `docs/reference/f20-rich-metadata-qualification-candidate-v1.json`. Its
+# `frozen_contract` entries pin their sha256 and
+# `tests/unit/test_rich_metadata_qualification_manifest.py` fails if any byte
+# moves, so neither an annotation nor an inline `# type: ignore` can be added
+# at the site. Rewriting the pinned digests instead would weaken an existing
+# gate to make this one pass, which #652 forbids. Each override names only the
+# error codes those files produce today, so strict mode still applies to every
+# other code in them and a new class of finding still fails the gate.
+# `src/mechanical_librarian/domain/metadata_policy.py` is frozen too but needs
+# no override: it is already clean under strict mode. These overrides retire
+# with the next re-qualification of those sources.
+
+[[tool.mypy.overrides]]
+module = "mechanical_librarian.domain.rich_metadata_preview"
+# reason: byte-frozen by the F20 qualification manifest; see the note above.
+disable_error_code = [
+  "arg-type",
+  "assignment",
+  "attr-defined",
+  "index",
+  "misc",
+  "operator",
+  "union-attr",
+]
+
+[[tool.mypy.overrides]]
+module = "mechanical_librarian.domain.automatic_decision"
+# reason: byte-frozen by the F20 qualification manifest; see the note above.
+disable_error_code = ["arg-type", "no-untyped-call"]
+
+[[tool.mypy.overrides]]
+module = "mechanical_librarian.adapters.library_services.audiobookshelf_field_effect"
+# reason: byte-frozen by the F20 qualification manifest; see the note above.
+disable_error_code = ["attr-defined"]

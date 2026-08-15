@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from typing import TypedDict, cast
 
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.shadow_review_actions import (
@@ -99,6 +100,50 @@ class ShadowDecisionError(ValueError):
     """The packet, catalogue, or decision document violates the closed contract."""
 
 
+class _CandidateSummary(TypedDict):
+    """A packet candidate's decision summary, as validated on packet entry."""
+
+    bibliographic_compatibility_ids: list[str]
+    creator_roles: dict[str, object]
+    evidence_scope: str
+    publication: dict[str, object] | None
+    selected_manifestation_binding: str
+    support: dict[str, int]
+
+
+class _ProposalSummary(TypedDict):
+    """A packet proposal's decision summary, as validated on packet entry."""
+
+    evidence_sufficiency: str
+    target_only_preservation: int
+
+
+class _DecisionFields(TypedDict):
+    """The `ShadowDecision` fields other than its derived identity."""
+
+    action_id: str
+    proposal_id: str
+    destination: str
+    recommendation: str
+    candidate_id: str | None
+    citation_ids: tuple[str, ...]
+    combination_ids: tuple[str, ...]
+    reason_code: str
+
+
+class _DecisionSetFields(TypedDict):
+    """The `ShadowDecisionSet` core fields other than its decisions."""
+
+    catalogue_sha256: str
+    compiler_policy_version: str
+    mode: str
+    packet_sha256: str
+    policy_sha256: str
+    policy_version: str
+    review_case_id: str
+    schema_version: str
+
+
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
@@ -134,7 +179,7 @@ class ShadowDecision:
     def create(cls, action: PolicyAction, reason_code: str) -> ShadowDecision:
         if type(action) is not PolicyAction or reason_code not in _REASON_CODES:
             raise ShadowDecisionError("shadow decision action is invalid")
-        data = {
+        data: dict[str, object] = {
             "action_id": action.action_id,
             "candidate_id": action.candidate_id,
             "citation_ids": list(action.citation_ids),
@@ -144,7 +189,9 @@ class ShadowDecision:
             "reason_code": reason_code,
             "recommendation": action.recommendation,
         }
-        return cls(_decision_identity(data), **{
+        # The mapping below restates the dataclass fields key by key, so it is
+        # exactly a _DecisionFields; the cast lets mypy check the ** unpack.
+        return cls(_decision_identity(data), **cast("_DecisionFields", {
             "action_id": action.action_id,
             "proposal_id": action.proposal_id,
             "destination": action.destination,
@@ -153,7 +200,7 @@ class ShadowDecision:
             "citation_ids": action.citation_ids,
             "combination_ids": action.combination_ids,
             "reason_code": reason_code,
-        })
+        }))
 
     def __post_init__(self) -> None:
         data = self._identity_data()
@@ -219,7 +266,7 @@ class ShadowDecisionSet:
     ) -> ShadowDecisionSet:
         if type(packet) is not ShadowReviewPacket or type(catalogue) is not PolicyActionCatalogue:
             raise ShadowDecisionError("shadow decision source is invalid")
-        core = {
+        core: dict[str, object] = {
             "catalogue_sha256": _sha256(catalogue.to_json()),
             "compiler_policy_version": catalogue.policy_version,
             "decisions": [value.to_data() for value in decisions],
@@ -230,9 +277,12 @@ class ShadowDecisionSet:
             "review_case_id": packet.review_case_id,
             "schema_version": DECISION_SET_SCHEMA,
         }
-        return cls(_set_identity(core), decisions=decisions, **{
-            key: value for key, value in core.items() if key != "decisions"
-        })
+        # Dropping "decisions" from "core" leaves exactly the str-valued
+        # _DecisionSetFields; the cast lets mypy check the ** unpack.
+        return cls(_set_identity(core), decisions=decisions, **cast(
+            "_DecisionSetFields",
+            {key: value for key, value in core.items() if key != "decisions"},
+        ))
 
     def __post_init__(self) -> None:
         core = self._identity_data()
@@ -365,7 +415,9 @@ def _candidate_for_action(
 ) -> dict[str, object] | None:
     matches = [
         value
-        for value in proposal["candidates"]
+        # ShadowReviewPacket.__post_init__ has already proved every proposal's
+        # "candidates" is a list of candidate dicts.
+        for value in cast("list[dict[str, object]]", proposal["candidates"])
         if value.get("candidate_id") == action.candidate_id
     ]
     return matches[0] if len(matches) == 1 else None
@@ -377,7 +429,10 @@ def _candidate_is_eligible(
     candidate: dict[str, object],
     action: PolicyAction,
 ) -> bool:
-    summary = candidate["decision_summary"]
+    # validate_candidate_decision_summary and validate_proposal_decision_summary
+    # ran over every packet summary in ShadowReviewPacket.__post_init__, so
+    # these shapes (and the int-valued support counts) are already proved.
+    summary = cast("_CandidateSummary", candidate["decision_summary"])
     support = summary["support"]
     destination = proposal["destination"]
     known_citations = {value["citation_id"] for value in packet.citations}
@@ -392,7 +447,10 @@ def _candidate_is_eligible(
     if (
         (
             not source_evidence_report_only
-            and proposal["decision_summary"]["target_only_preservation"] != 0
+            and cast("_ProposalSummary", proposal["decision_summary"])[
+                "target_only_preservation"
+            ]
+            != 0
         )
         or support["target_only_preservation"] != 0
         or support["local_evidence"] != 1
@@ -445,15 +503,23 @@ def _eligible_actions(
     catalogue: PolicyActionCatalogue,
     proposal: dict[str, object],
 ) -> tuple[PolicyAction, ...]:
-    sufficiency = proposal["decision_summary"]["evidence_sufficiency"]
+    # Packet entry validated the proposal summary and the candidate list.
+    sufficiency = cast("_ProposalSummary", proposal["decision_summary"])[
+        "evidence_sufficiency"
+    ]
     actions: list[PolicyAction] = []
+    # Declared once because the two mutually exclusive branches below bind
+    # "candidate" from a packet candidate list and from a lookup that may miss.
+    candidate: dict[str, object] | None
     if sufficiency == "keep_current":
         keep = catalogue.action_for(
             proposal["proposal_id"], "recommend_keep_current", None
         )
         preservation = []
         if keep is not None:
-            for candidate in proposal["candidates"]:
+            for candidate in cast(
+                "list[dict[str, object]]", proposal["candidates"]
+            ):
                 candidate_action = catalogue.action_for(
                     proposal["proposal_id"],
                     "recommend_candidate",
@@ -488,7 +554,8 @@ def _eligible_actions(
 
 
 def _base_reason(proposal: dict[str, object], eligible: tuple[PolicyAction, ...]) -> str:
-    summary = proposal["decision_summary"]
+    # Packet entry validated both summary shapes and the candidate list.
+    summary = cast("_ProposalSummary", proposal["decision_summary"])
     source_evidence_report_only = (
         proposal["destination"] in _REPORT_ONLY_SOURCE_DESTINATIONS
     )
@@ -497,14 +564,17 @@ def _base_reason(proposal: dict[str, object], eligible: tuple[PolicyAction, ...]
     if not source_evidence_report_only and summary["target_only_preservation"] != 0:
         return "target_only_preservation"
     if not eligible:
-        candidates = proposal["candidates"]
+        candidates = cast("list[dict[str, object]]", proposal["candidates"])
         if candidates and any(
-            value["decision_summary"]["support"]["local_evidence"] != 1
+            cast("_CandidateSummary", value["decision_summary"])["support"][
+                "local_evidence"
+            ]
+            != 1
             or (
                 not source_evidence_report_only
-                and value["decision_summary"]["support"][
-                    "independent_provider_correlations"
-                ]
+                and cast("_CandidateSummary", value["decision_summary"])[
+                    "support"
+                ]["independent_provider_correlations"]
                 < 1
             )
             for value in candidates
@@ -528,28 +598,35 @@ def _combination_selections(
     if not packet.bibliographic_combinations:
         return {}, set()
     proposals_by_destination: dict[str, list[dict[str, object]]] = {}
+    # Packet entry proved every proposal carries a str "proposal_id" and a
+    # known str "destination", and every combination a list of selection dicts
+    # whose "destination" is one of the bibliographic destinations.
     for proposal in packet.proposals:
-        proposals_by_destination.setdefault(proposal["destination"], []).append(
-            proposal
-        )
+        proposals_by_destination.setdefault(
+            cast("str", proposal["destination"]), []
+        ).append(proposal)
     qualifying: list[dict[str, PolicyAction]] = []
     for combination in packet.bibliographic_combinations:
         combination_id = combination["combination_id"]
-        selections = combination["selections"]
+        selections = cast(
+            "list[dict[str, object]]", combination["selections"]
+        )
         if (
             tuple(value["destination"] for value in selections)
             != _COMBINATION_DESTINATIONS
         ):
             continue
         selected_title: PolicyAction | None = None
-        for selection in combination["selections"]:
-            destination = selection["destination"]
+        for selection in cast(
+            "list[dict[str, object]]", combination["selections"]
+        ):
+            destination = cast("str", selection["destination"])
             proposals = proposals_by_destination.get(destination, [])
             if len(proposals) != 1:
                 break
             proposal = proposals[0]
             available = (
-                eligible_by_proposal[proposal["proposal_id"]]
+                eligible_by_proposal[cast("str", proposal["proposal_id"])]
                 if destination == _COMBINATION_SELECTED_DESTINATION
                 else tuple(
                     action
@@ -602,13 +679,15 @@ def decide_shadow_packet(packet: ShadowReviewPacket) -> ShadowDecisionSet:
     except PolicyActionCompilationError as error:
         raise ShadowDecisionError("shadow action catalogue is invalid") from error
     eligible_by_proposal: dict[str, tuple[PolicyAction, ...]] = {}
+    # Packet entry proved every proposal carries a str "proposal_id" and a
+    # known str "destination", and every combination a list of selection dicts.
     for proposal in packet.proposals:
         if proposal["destination"] in _SUPPORTED_DESTINATIONS:
-            eligible_by_proposal[proposal["proposal_id"]] = _eligible_actions(
-                packet, catalogue, proposal
+            eligible_by_proposal[cast("str", proposal["proposal_id"])] = (
+                _eligible_actions(packet, catalogue, proposal)
             )
         else:
-            eligible_by_proposal[proposal["proposal_id"]] = ()
+            eligible_by_proposal[cast("str", proposal["proposal_id"])] = ()
     combination_result = _combination_selections(
         packet, catalogue, eligible_by_proposal
     )
@@ -619,13 +698,15 @@ def decide_shadow_packet(packet: ShadowReviewPacket) -> ShadowDecisionSet:
         combination_actions, constrained_destinations = combination_result
     elif packet.bibliographic_combinations:
         constrained_destinations = {
-            selection["destination"]
+            cast("str", selection["destination"])
             for combination in packet.bibliographic_combinations
-            for selection in combination["selections"]
+            for selection in cast(
+                "list[dict[str, object]]", combination["selections"]
+            )
         }
     decisions: list[ShadowDecision] = []
     for proposal in packet.proposals:
-        proposal_id = proposal["proposal_id"]
+        proposal_id = cast("str", proposal["proposal_id"])
         destination = proposal["destination"]
         eligible = eligible_by_proposal[proposal_id]
         if destination not in _SUPPORTED_DESTINATIONS:

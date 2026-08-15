@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, ClassVar, Mapping, Self
+from typing import Any, ClassVar, Mapping
 from xml.parsers import expat
 
 from .epub_inspection import (
@@ -653,7 +653,7 @@ class EpubOpeningReport:
         return json.dumps(self.to_data(), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
     @classmethod
-    def from_json(cls, serialized: str) -> Self:
+    def from_json(cls, serialized: str) -> EpubOpeningReport:
         if type(serialized) is not str or len(serialized.encode("utf-8")) > MAX_PUBLIC_REPORT_BYTES:
             raise EvidenceValueError("EPUB opening report JSON is invalid")
         try:

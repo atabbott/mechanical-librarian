@@ -216,7 +216,7 @@ def transient_transport_failure(error: BaseException) -> str | None:
         return "transport_connect_timeout"
     if type(error) is httpx.ReadTimeout:
         return "transport_read_timeout"
-    typed = {
+    typed: dict[type[BaseException], str] = {
         httpx.ConnectError: "transport_connect_error",
         httpx.ReadError: "transport_read_error",
         httpx.WriteError: "transport_write_error",
@@ -243,7 +243,7 @@ def bounded_retry_after(value: str | None, *, now: float) -> float | None:
     if normalized.isascii() and normalized.isdigit():
         if len(normalized) > 2:
             return None
-        seconds = int(normalized)
+        seconds: float = int(normalized)
         return float(seconds) if seconds <= 60 else None
     try:
         parsed = datetime.strptime(

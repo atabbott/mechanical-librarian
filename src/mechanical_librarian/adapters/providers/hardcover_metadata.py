@@ -10,7 +10,7 @@ import time
 import unicodedata
 from dataclasses import replace
 from decimal import Decimal, InvalidOperation
-from typing import Any, Callable
+from typing import Any, Callable, cast
 from urllib.parse import urlsplit
 
 import httpx
@@ -348,7 +348,7 @@ class HardcoverMetadataProvider:
                     query_kind=lookup.kind,
                 )
             references = tuple(sorted(claim.reference for claim in usable))
-            body = {
+            body: dict[str, object] = {
                 "operationName": "MetadataEvidenceByIsbn",
                 "query": _ISBN_QUERY,
                 "variables": {
@@ -1354,6 +1354,9 @@ def _work_claims(
     rejected: _OptionalRejections | None = None,
     identity_bindings: list[ProviderIdentityBinding] | None = None,
 ) -> list[ProviderClaim]:
+    # `series` names the bounded series list and then, inside the loop over
+    # that list, the closed per-item series object.
+    series: list[dict[str, Any]] | dict[str, Any] | None
     claims = [_claim(provider, identity, ClaimKind.TITLE, book["title"], ClaimScope.WORK, "not_applicable", None, local, offset, rejected), _claim(provider, identity, ClaimKind.DESCRIPTION, book["description"], ClaimScope.WORK, "not_applicable", None, local, offset + 1, rejected)]
     claims.extend(
         _contributions(
@@ -1708,7 +1711,8 @@ def _field(kind: ClaimKind, value: object, rejected: _OptionalRejections | None 
     maximum = MAX_DESCRIPTION_CHARACTERS if kind is ClaimKind.DESCRIPTION else MAX_SCALAR_CHARACTERS
     try:
         if kind is ClaimKind.SERIES_SEQUENCE and type(value) in {Decimal, int} and type(value) is not bool:
-            return FieldState.VALID, _position(value)
+            # The guard above admits only exact `Decimal` and `int` values.
+            return FieldState.VALID, _position(cast("Decimal | int", value))
         text = validate_projection_text(value, "provider claim value", maximum)
         if kind is ClaimKind.ISBN:
             text = _isbn(text, len(text.replace("-", "").replace(" ", "")))
@@ -1899,7 +1903,9 @@ def _position(value: int | str | Decimal) -> str:
         raise ValueError("provider position invalid")
     source = decimal.as_tuple()
     digits_tuple = source.digits
-    exponent = source.exponent
+    # `DecimalTuple.exponent` is only the "n"/"N"/"F" sentinel for NaN and
+    # infinity, which the `is_finite` guard above has already rejected.
+    exponent = cast(int, source.exponent)
     while len(digits_tuple) > 1 and exponent < 0 and digits_tuple[-1] == 0:
         digits_tuple = digits_tuple[:-1]
         exponent += 1

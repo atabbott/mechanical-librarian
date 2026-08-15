@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from typing import cast
 
 from mechanical_librarian.domain.metadata_policy import (
     OPTION_CATALOGUE,
@@ -402,8 +403,11 @@ class ShadowOutcomeSet:
             value.field: value
             for value in compile_rich_metadata_preview(policy, report, proposal).fields
         }
+        # `ReviewCase.proposals` builds every entry itself, so "proposal_id" is
+        # always the `"review_proposal_" + sha256` string it composed.
         proposals = {
-            value["destination"]: value["proposal_id"] for value in case.proposals
+            value["destination"]: cast("str", value["proposal_id"])
+            for value in case.proposals
         }
         for category, destination in (
             ("series", "series"),

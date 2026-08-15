@@ -13,11 +13,12 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from html.parser import HTMLParser
+from typing import Literal, cast
 from urllib.parse import unquote
 from xml.etree import ElementTree
 from xml.parsers import expat
 
-from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
+from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (  # type: ignore[attr-defined]  # reason: `epub_file_lineage` really is re-exported here (that module imports it from `domain.epub_inspection` and uses it); it is only missing from that module's `__all__`, which this typing unit may not edit.
     EpubInspectionOutcome,
     EpubObservationApplicability,
     EpubPackageCapability,
@@ -48,6 +49,7 @@ from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
 )
+from mechanical_librarian.domain.identifiers import Fingerprint
 
 _CONTENT_MEDIA = {"application/xhtml+xml", "text/html"}
 _IMAGE_MEDIA = {"image/gif", "image/jpeg", "image/png", "image/svg+xml"}
@@ -654,6 +656,9 @@ def _contains_unquoted(data: bytes, expected: int) -> bool:
 def _preflight_declarations(data: bytes) -> None:
     """Reject real unsafe declarations without treating inert text as markup."""
 
+    # ``closing`` holds a regex match for comment terminators and a byte offset
+    # for the ``find``-based terminators.
+    closing: re.Match[bytes] | int | None
     lower = data.lower()
     index = 0
     raw_end: bytes | None = None
@@ -1216,6 +1221,7 @@ def _looks_wide_encoded(data: bytes) -> bool:
 
 
 def _recovery_codec(data: bytes) -> tuple[str, bool]:
+    declarations: tuple[str, ...] | list[str]
     if _looks_wide_encoded(data):
         raise _UnsupportedEncoding(
             "unsupported encoding", nodes=0, text_characters=0
@@ -1506,7 +1512,9 @@ def _raw_package_annotations(
             ):
                 fallback = node.attrib.get("fallback")
                 if fallback:
-                    manifest_fallbacks[declaration.identifier] = fallback
+                    # `accepted_manifest` only admits declarations with a
+                    # truthy `identifier`.
+                    manifest_fallbacks[cast(str, declaration.identifier)] = fallback
         if ordinal in accepted_spine:
             declaration = accepted_spine[ordinal]
             if (
@@ -1518,10 +1526,12 @@ def _raw_package_annotations(
                 and node.attrib.get("idref") == declaration.identifier
             ):
                 linear = node.attrib.get("linear")
+                # `accepted_spine` only admits declarations with a truthy
+                # `identifier`.
                 if linear is None or linear == "yes":
-                    spine.append((declaration.identifier, True))
+                    spine.append((cast(str, declaration.identifier), True))
                 elif linear == "no":
-                    spine.append((declaration.identifier, False))
+                    spine.append((cast(str, declaration.identifier), False))
                 else:
                     invalid_linear = True
         if ordinal in accepted_guides:
@@ -1654,6 +1664,9 @@ def _navigation_targets(projection: _Projection, nav_name: str, names: set[str],
 
 
 def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile, names_by_identity: dict[str, str], limits: EpubOpeningLimits, request: EpubPackageRequest) -> tuple[list[_Candidate], list[str], list[OpeningResourceResult], int, set[str], list[_RoleAssociation], list[_RoleAssociation], tuple[int, int, int, int, int, int]]:
+    # `declared` names both the two-element manifest projection and the
+    # three-element resolved spine declaration further down.
+    declared: tuple[str, tuple[str, ...]] | tuple[str, str, tuple[str, ...]] | None
     by_id, declared_spine, encrypted, package_identity = _manifest(package_report)
     declarations_by_identity: dict[str, set[tuple[str, tuple[str, ...]]]] = {}
     for identity, media, properties in by_id.values():
@@ -2337,7 +2350,7 @@ def _credit_name(value: str) -> str:
     return name.strip(" ,:")
 
 
-def _claim(field: OpeningField, value: str, applicability: EpubObservationApplicability, element: _Element, projection: _Projection, source, resource_identity: str, resource_digest: str, selection_path: tuple[str, ...], lineage: str, excerpt_characters: int, *, normalized: str | None = None, identifier_type: str | None = None, applicability_label: str | None = None, citation_context: tuple[_Element, int, int] | None = None, date_event: DateEvent | None = None, date_precision: DatePrecision | None = None, role: str | None = None) -> OpeningClaim | None:
+def _claim(field: OpeningField, value: str, applicability: EpubObservationApplicability, element: _Element, projection: _Projection, source: Fingerprint, resource_identity: str, resource_digest: str, selection_path: tuple[str, ...], lineage: str, excerpt_characters: int, *, normalized: str | None = None, identifier_type: str | None = None, applicability_label: str | None = None, citation_context: tuple[_Element, int, int] | None = None, date_event: DateEvent | None = None, date_precision: DatePrecision | None = None, role: str | None = None) -> OpeningClaim | None:
     original = _SPACE.sub(" ", value).strip()
     if not original:
         return None
@@ -2589,7 +2602,7 @@ def _recognition_context(
 
     def resolve(
         association: _RoleAssociation,
-    ) -> _Element | None | bool:
+    ) -> _Element | None | Literal[False]:
         if association.fragment is None:
             return None
         matches = fragments.get(association.fragment, [])
@@ -2726,7 +2739,8 @@ def _recognition_context(
     )
 
 
-def _recognize(projection: _Projection, source, resource_identity: str, resource_digest: str, context: _RecognitionContext, lineage: str, excerpt_characters: int) -> tuple[list[OpeningClaim], list[str], bool, bool]:
+def _recognize(projection: _Projection, source: Fingerprint, resource_identity: str, resource_digest: str, context: _RecognitionContext, lineage: str, excerpt_characters: int) -> tuple[list[OpeningClaim], list[str], bool, bool]:
+    applicability_label: str | None
     claims: list[OpeningClaim] = []
     warnings: list[str] = [*projection.warnings, *context.warnings]
     body_transition = context.body_ordinal is not None
@@ -3473,4 +3487,4 @@ class EpubOpeningExtractor:
                 raise
 
 
-__all__ = ["EpubOpeningExtractor"]
+__all__ = ["EpubOpeningExtractor", "OpeningField"]

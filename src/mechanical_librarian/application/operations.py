@@ -12,7 +12,7 @@ import json
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Iterator, Protocol
+from typing import Callable, Iterator, Protocol, Sequence, cast
 
 STAGES = (
     "extraction", "provider_search", "policy_evaluation", "human_wait",
@@ -213,10 +213,12 @@ class OperationalStatus:
 
 
 def aggregate_incidents(signals: object) -> tuple[Incident, ...]:
-    if type(signals) not in (list, tuple) or len(signals) > 1_000:
+    # ``len`` and the iteration below are only reached once the exact-type test
+    # has proven ``signals`` is a list or a tuple.
+    if type(signals) not in (list, tuple) or len(cast("Sequence[object]", signals)) > 1_000:
         raise OperationsError("invalid_status")
     aggregated: dict[tuple[object, ...], Incident] = {}
-    for signal in signals:
+    for signal in cast("Sequence[object]", signals):
         if type(signal) is not dict:
             raise OperationsError("invalid_status")
         kind = signal.get("kind")
@@ -245,7 +247,10 @@ def aggregate_incidents(signals: object) -> tuple[Incident, ...]:
             + ":"
             + hashlib.sha256(canonical_key).hexdigest()
         )
-        candidate = Incident(incident_id, kind, cause, scope, connection,
+        # ``Incident.__post_init__`` rejects any non-string kind, cause, or
+        # scope before the value escapes this call.
+        candidate = Incident(incident_id, cast("str", kind), cast("str", cause),
+                             cast("str", scope), connection,
                              library, category,
                              work_id if cause == "currentness_conflict" else None,
                              field, 1 if previous is None else previous.count + 1)

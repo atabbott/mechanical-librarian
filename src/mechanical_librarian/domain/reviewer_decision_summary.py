@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from typing import cast
 
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.metadata_report import (
@@ -225,11 +226,14 @@ def compatibility_by_candidate(
     result: dict[str, set[str]] = {}
     for combination in proposal_set.bibliographic_combinations:
         data = combination.to_data()
-        for selection in data["selections"]:
+        # BibliographicCombination.to_data always projects "selections" as a
+        # list of BibliographicSelection.to_data dicts and "combination_id" as
+        # a str; a candidate selection always carries a str alternative id.
+        for selection in cast("list[dict[str, object]]", data["selections"]):
             if selection["kind"] == "candidate":
-                result.setdefault(selection["alternative_id"], set()).add(
-                    data["combination_id"]
-                )
+                result.setdefault(
+                    cast("str", selection["alternative_id"]), set()
+                ).add(cast("str", data["combination_id"]))
     return {
         candidate_id: sorted(combination_ids)
         for candidate_id, combination_ids in result.items()
@@ -280,8 +284,10 @@ def _manifestation_binding(
         return "associated_work_only"
     if scope == "cover":
         return "not_applicable"
-    references = set(alternative["evidence_references"])
-    correlations = set(alternative["correlations"])
+    # ProposalAlternative.to_data always projects these two keys as lists of
+    # the alternative's str reference/correlation tuples.
+    references = set(cast("list[str]", alternative["evidence_references"]))
+    correlations = set(cast("list[str]", alternative["correlations"]))
     local_correlation, _ = _known_correlations(report)
     if local_correlation in correlations and any(
         claim.reference in references
@@ -333,11 +339,13 @@ def _creator_roles(
     destination: str,
     alternative: dict[str, object],
 ) -> tuple[dict[str, object], set[str]]:
-    empty = {"excluded": [], "included": []}
+    empty: dict[str, object] = {"excluded": [], "included": []}
     if destination != TargetDestination.AUTHORS.value:
         return empty, set()
-    references = set(alternative["evidence_references"])
-    correlations = set(alternative["correlations"])
+    # ProposalAlternative.to_data always projects these two keys as lists of
+    # the alternative's str reference/correlation tuples.
+    references = set(cast("list[str]", alternative["evidence_references"]))
+    correlations = set(cast("list[str]", alternative["correlations"]))
     included: dict[str, dict[str, object]] = {}
     excluded: dict[str, dict[str, object]] = {}
     local_correlation, _ = _known_correlations(report)
@@ -376,19 +384,19 @@ def _creator_roles(
             }.intersection(references)
             if not represented:
                 continue
-            for claim in candidate.claims:
-                fact = _creator_role_fact(claim)
+            for provider_claim in candidate.claims:
+                fact = _creator_role_fact(provider_claim)
                 if fact is None:
                     continue
-                if claim.reference in represented:
-                    included[claim.reference] = fact
+                if provider_claim.reference in represented:
+                    included[provider_claim.reference] = fact
                 elif (
-                    claim.state is FieldState.VALID
-                    and claim.kind
+                    provider_claim.state is FieldState.VALID
+                    and provider_claim.kind
                     in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}
-                    and claim.role != "author"
+                    and provider_claim.role != "author"
                 ):
-                    excluded[claim.reference] = fact
+                    excluded[provider_claim.reference] = fact
     included_facts = sorted(
         included.values(),
         key=lambda fact: (
@@ -440,7 +448,11 @@ def _paired_publication_consistency(
         return "unresolved"
     candidate_year = candidate_value["value"][:4]
     paired_years: set[str] = set()
-    for paired_alternative in paired["alternatives"]:
+    # ProposalResult.to_data always projects "alternatives" as a list of
+    # ProposalAlternative.to_data dicts.
+    for paired_alternative in cast(
+        "list[dict[str, object]]", paired["alternatives"]
+    ):
         if (
             paired_alternative["date_event"]
             != DateEvent.MANIFESTATION_PUBLICATION.value
@@ -469,7 +481,9 @@ def candidate_decision_summary(
 ) -> tuple[dict[str, object], set[str]]:
     """Project one candidate's bounded deterministic decision facts."""
     local_correlation, provider_correlations = _known_correlations(report)
-    correlations = set(alternative["correlations"])
+    # ProposalAlternative.to_data always projects "correlations" as a list of
+    # the alternative's str correlation tuple.
+    correlations = set(cast("list[str]", alternative["correlations"]))
     creator_roles, role_references = _creator_roles(
         report,
         destination,
@@ -497,7 +511,9 @@ def candidate_decision_summary(
         }
     return {
         "bibliographic_compatibility_ids": compatibility_ids.get(
-            alternative["alternative_id"], []
+            # ProposalAlternative.to_data always projects a str identity.
+            cast("str", alternative["alternative_id"]),
+            [],
         ),
         "creator_roles": creator_roles,
         "evidence_scope": alternative["scope"],
@@ -525,7 +541,11 @@ def proposal_decision_summary(
     outcome = result["outcome"]
     has_evidence_backed_preservation = any(
         alternative["assessment"] == "preserves_target"
-        for alternative in result["alternatives"]
+        # ProposalResult.to_data always projects "alternatives" as a list of
+        # ProposalAlternative.to_data dicts.
+        for alternative in cast(
+            "list[dict[str, object]]", result["alternatives"]
+        )
     )
     if manual_required:
         sufficiency = "manual"

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 import httpx
@@ -253,7 +253,8 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
             }
         ).encode("utf-8")
     ).hexdigest()
-    return CatalogueEntry(connection, library.name, library.library_id, item_id, detail["updatedAt"], title, names, has_ebook, has_audio, classification, file_identity, service_path, format_value, mount_name, source_fingerprint)
+    # `names` was rejected above unless every element is a 1..256 character str.
+    return CatalogueEntry(connection, library.name, library.library_id, item_id, detail["updatedAt"], title, cast("tuple[str, ...]", names), has_ebook, has_audio, classification, file_identity, service_path, format_value, mount_name, source_fingerprint)
 
 
 def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
