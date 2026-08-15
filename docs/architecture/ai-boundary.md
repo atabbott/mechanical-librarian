@@ -54,8 +54,11 @@ attempt, dispatch, result, inspection, reevaluation, retry, or advice lifecycle.
 
 ## Product boundary
 
-The installed cover consideration can invoke this adapter only with the exact
-report-bound packet and derived preview transports. Local code separately owns
+The installed cover consideration can invoke this adapter only after a
+configured profile proves its local qualification contract, and only with the
+exact report-bound packet and derived preview transports. An unready profile is
+not sent a packet or preview and leaves a value-free unavailable advisory state.
+Local code separately owns
 identity admission, deterministic policy, owner choice, persistence, and the
 existing guarded field effect. Missing or failed observation leaves the
 model-free manual path available. The runtime contains no F11 qualification
