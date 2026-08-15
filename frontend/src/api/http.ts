@@ -412,15 +412,18 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
   const choiceContexts = mapChoiceContexts(value.choice_contexts, proposedReferences.length)
   if (choiceContexts.slice(1).some((context, index) => context.alternativeId !== proposedReferences[index])) throw new ApiError(502, 'misaligned_cover_choice_contexts')
   const policy = value.policy === null ? null : record(value.policy) ? value.policy : (() => { throw new ApiError(502, 'invalid_cover_policy') })()
-  if (policy === null && candidates.length !== 0) throw new ApiError(502, 'invalid_cover_policy_candidates')
+  if ((policy === null) !== (candidates.length === 0)) throw new ApiError(502, 'invalid_cover_policy_candidates')
   const policyStatus = policy === null ? null : stringValue(policy.status, 'cover_policy_status')
   if (policyStatus !== null && !['recommended', 'abstained'].includes(policyStatus)) throw new ApiError(502, 'invalid_cover_policy_status')
   const recommendedReference = policy === null || policy.recommended_candidate_reference === null ? null : stringValue(policy.recommended_candidate_reference, 'cover_recommended_reference')
   const acceptable = policy === null ? [] : stringArray(policy.acceptable_candidate_references, 'cover_acceptable_references')
-  if (candidates.some((candidate) => candidate.selectable === (candidate.state === 'excluded')) || candidates.some((candidate) => candidate.state === 'recommended' && !(policyStatus === 'recommended' && candidate.reference === recommendedReference && acceptable.includes(candidate.reference))) || candidates.some((candidate) => candidate.state === 'acceptable' && !acceptable.includes(candidate.reference)) || candidates.some((candidate) => candidate.state === 'available' && acceptable.includes(candidate.reference))) throw new ApiError(502, 'contradictory_cover_candidate_state')
+  if ((policyStatus === 'recommended') !== (recommendedReference !== null) || (policyStatus === 'abstained' && acceptable.length !== 0) || new Set(acceptable).size !== acceptable.length) throw new ApiError(502, 'contradictory_cover_policy')
+  const byReference = new Map(candidates.map((candidate) => [candidate.reference, candidate]))
+  if (acceptable.some((reference) => byReference.get(reference)?.selectable !== true) || (recommendedReference !== null && (!acceptable.includes(recommendedReference) || byReference.get(recommendedReference)?.selectable !== true))) throw new ApiError(502, 'contradictory_cover_policy')
+  if (candidates.some((candidate) => candidate.state !== (!candidate.selectable ? 'excluded' : candidate.reference === recommendedReference ? 'recommended' : acceptable.includes(candidate.reference) ? 'acceptable' : 'available'))) throw new ApiError(502, 'contradictory_cover_candidate_state')
   const recommendedContexts = choiceContexts.filter((context) => context.recommendation === 'recommended')
   const currentReference = candidates.find((candidate) => candidate.incumbent)?.reference ?? null
-  const expectedReference = policyStatus === 'recommended' && recommendedReference !== null && acceptable.includes(recommendedReference) && candidates.some((candidate) => candidate.reference === recommendedReference && candidate.selectable) ? recommendedReference : null
+  const expectedReference = recommendedReference
   const expectedContext = expectedReference === null ? undefined : expectedReference === currentReference ? choiceContexts[0] : choiceContexts.slice(1).find((context) => context.alternativeId === expectedReference)
   if ((expectedContext === undefined && recommendedContexts.length !== 0) || (expectedContext !== undefined && (recommendedContexts.length !== 1 || recommendedContexts[0] !== expectedContext)) || candidates.some((candidate) => candidate.state === 'recommended' && candidate.reference !== expectedReference) || (expectedReference !== null && candidates.find((candidate) => candidate.reference === expectedReference)?.state !== 'recommended')) throw new ApiError(502, 'contradictory_cover_recommendation')
   return {
