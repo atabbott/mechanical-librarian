@@ -7303,6 +7303,10 @@ class SQLiteMetadataReportRepository:
             if owns_transaction and self._connection.in_transaction:
                 self._connection.rollback()
             raise MetadataReportError("cover consideration is unavailable") from error
+        except MetadataReportError:
+            if owns_transaction and self._connection.in_transaction:
+                self._connection.rollback()
+            raise
         return document
 
     def record_cover_consideration_outcome(

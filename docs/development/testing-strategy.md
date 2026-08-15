@@ -431,7 +431,7 @@ split labels in one ancestor, repeated equal complete/split siblings, multiple
 assembled labels, scanning/production/workflow label values, promotion cues
 inside labels, the exact 16-fact rear cap, front/rear NFC and whitespace
 normalization, `metadata-report-v26`
-canonical replay, clean database creation, and byte-unchanged rejection of v23
+canonical replay, clean database creation, and byte-unchanged rejection of v25
 state. Only aggregate expected, found, and false-positive counts are asserted
 or exported; fixture rows and source text remain private.
 

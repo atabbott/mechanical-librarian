@@ -542,6 +542,30 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             self.assertEqual((0, 0, 0, package_count), repository._connection.execute("SELECT (SELECT count(*) FROM cover_considerations), (SELECT count(*) FROM cover_consideration_events), (SELECT count(*) FROM current_cover_considerations), (SELECT count(*) FROM current_review_packages)").fetchone())
             repository.close()
 
+    def test_manual_cover_predecessor_drift_rolls_back_and_releases_the_writer_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports.sqlite"
+            repository = open_repository(path)
+            review_case_id = _case(repository)
+            report_id = json.loads(repository.get_review_case(review_case_id))["case"]["report_id"]
+
+            def document(suffix: str, supersedes_id: str | None) -> str:
+                return json.dumps({"consideration_id": "cover_consideration_" + suffix * 64, "replay_digest": suffix * 64, "report_id": report_id, "review_case_id": review_case_id, "schema_version": "cover-consideration-v1", "supersedes_id": supersedes_id}, separators=(",", ":"), sort_keys=True)
+
+            first = document("a", None)
+            repository.record_cover_consideration(first, review_case_id=review_case_id, report_id=report_id, replay_digest="a" * 64, supersedes_id=None, occurred_at=10)
+            with self.assertRaisesRegex(MetadataReportError, "cover consideration changed"):
+                repository.record_cover_consideration(document("b", None), review_case_id=review_case_id, report_id=report_id, replay_digest="b" * 64, supersedes_id=None, occurred_at=11)
+            self.assertFalse(repository._connection.in_transaction)
+            sibling = sqlite3.connect(path, timeout=0)
+            try:
+                sibling.execute("BEGIN IMMEDIATE")
+                sibling.execute("ROLLBACK")
+            finally:
+                sibling.close()
+            self.assertEqual((1, 1, 1), repository._connection.execute("SELECT (SELECT count(*) FROM cover_considerations), (SELECT count(*) FROM cover_consideration_events), (SELECT count(*) FROM current_cover_considerations)").fetchone())
+            repository.close()
+
     def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards(self) -> None:
         isbn10 = LocalClaim.create(
             kind=ClaimKind.ISBN, observed="0306406152", canonical="0306406152",
