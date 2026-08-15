@@ -11,9 +11,13 @@
   instead of expanding the same checks longhand for every field. A new
   dependency-free `mechanical_librarian.domain.validation` module names the
   house conventions — exact-type checks that reject subclasses, bounded
-  integers, anchored and non-empty text, closed enums, and closed-object field
-  sets — as total predicates that never raise, so a caller keeps its own error
-  identity, message, and short-circuit order. The persisted field-effect state
+  integers, anchored and non-empty text, pinned constants, and closed-object
+  field sets — as predicates that introduce no failure mode of their own, so a
+  caller keeps its own error identity, message, and short-circuit order. A
+  closed-object schema propagates whatever a caller's own field check
+  propagates, which is what lets a longhand `value not in FROZEN_SET` convert
+  to that set's own membership test without changing when it raises. The
+  persisted field-effect state
   validator now reads as eight declared document schemas rather than a
   sequential wall of per-field conditions. Nothing changes about what is
   accepted or rejected: the same inputs fail with the same errors, proven by

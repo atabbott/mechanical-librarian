@@ -110,7 +110,6 @@ from mechanical_librarian.domain.validation import (
     closed_document,
     literal,
     matching_text,
-    member_of,
     non_empty_text,
     non_negative_integer,
     text,
@@ -9696,7 +9695,7 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             "plan_id", "pre_value",
             schema_version=literal("field-effect-event-v1"), sequence=bounded_integer(1),
             attempt=bounded_integer(0, 3), occurred_at=non_negative_integer,
-            kind=text, state=text, failure=member_of(FIELD_EFFECT_FAILURES))
+            kind=text, state=text, failure=FIELD_EFFECT_FAILURES.__contains__)
         next_sequence: dict[str, int] = {}
         last_events: dict[str, dict[str, object]] = {}
         for event_id, plan_id, sequence, kind, occurred_at, document in connection.execute(

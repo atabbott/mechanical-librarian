@@ -9,7 +9,6 @@ from mechanical_librarian.domain.validation import (
     exact_type,
     literal,
     matching_text,
-    member_of,
     non_empty_text,
     non_negative_integer,
     text,
@@ -114,33 +113,44 @@ class ClosedSetTests(unittest.TestCase):
         self.assertFalse(check("field-effect-event-v2"))
         self.assertFalse(check(None))
 
-    def test_member_of_accepts_only_declared_members(self) -> None:
-        check = member_of(frozenset({None, "ambiguous", "consent"}))
-        self.assertTrue(check(None))
-        self.assertTrue(check("ambiguous"))
-        self.assertFalse(check("unknown"))
+    def test_literal_rejects_a_bool_that_equals_an_integer_constant(self) -> None:
+        # `True == 1` and `False == 0`, so equality alone would accept a bool
+        # where the schema pins an integer. The exact-type check closes that.
+        self.assertTrue(literal(1)(1))
+        self.assertFalse(literal(1)(True))
+        self.assertTrue(literal(0)(0))
+        self.assertFalse(literal(0)(False))
 
-    def test_member_of_propagates_a_set_containers_hashing_requirement(self) -> None:
+    def test_literal_rejects_an_integer_that_equals_a_bool_constant(self) -> None:
+        self.assertTrue(literal(True)(True))
+        self.assertFalse(literal(True)(1))
+        self.assertTrue(literal(False)(False))
+        self.assertFalse(literal(False)(0))
+
+    def test_literal_rejects_a_float_that_equals_an_integer_constant(self) -> None:
+        self.assertFalse(literal(1)(1.0))
+
+    def test_a_frozenset_membership_check_raises_where_literal_answers(self) -> None:
         # Load-bearing, not incidental: converting a longhand
-        # `value not in FROZEN_SET` into member_of(FROZEN_SET) is only
-        # byte-compatible because both raise on an unhashable decoded value
-        # rather than quietly rejecting it. literal() is the contrast — it
-        # compares with == and answers False for the very same input.
-        check = member_of(frozenset({"ambiguous", "consent"}))
+        # `value not in FROZEN_SET` into that set's own __contains__ as a field
+        # check is only byte-compatible because both raise on an unhashable
+        # decoded value rather than quietly rejecting it. literal() is the
+        # contrast — it answers False for the very same input.
+        check = frozenset({"ambiguous", "consent"}).__contains__
+        self.assertTrue(check("consent"))
+        self.assertFalse(check("unknown"))
         unhashable: tuple[object, ...] = ([], {}, ["ambiguous"])
         for value in unhashable:
             with self.assertRaises(TypeError):
                 check(value)
         self.assertFalse(literal("ambiguous")([]))
 
-    def test_member_of_over_a_tuple_cannot_raise(self) -> None:
-        # The guarded alternative the member_of docstring points callers to.
-        self.assertFalse(member_of(("ambiguous", "consent"))([]))
-        self.assertTrue(member_of(("ambiguous", "consent"))("consent"))
-
     def test_closed_document_propagates_a_field_checks_failure(self) -> None:
-        check = closed_document(failure=member_of(frozenset({None, "consent"})))
+        # The shape the converted field-effect event schema uses for `failure`.
+        check = closed_document(failure=frozenset({None, "consent"}).__contains__)
         self.assertTrue(check({"failure": "consent"}))
+        self.assertTrue(check({"failure": None}))
+        self.assertFalse(check({"failure": "unknown"}))
         with self.assertRaises(TypeError):
             check({"failure": []})
 

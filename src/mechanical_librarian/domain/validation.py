@@ -6,14 +6,14 @@ error identity, message, and short-circuit order, so consolidating longhand
 into this vocabulary cannot change which inputs are rejected or how.
 
 "Introduces no failure mode of its own" is the guarantee, not "never raises",
-and the difference is deliberate. ``member_of`` delegates to its container's
-``in``, so against a set or frozenset an unhashable value raises ``TypeError``
-rather than returning ``False`` — exactly as the ``value not in allowed``
-longhand it replaces did, at the same point in the caller's sequence.
-Swallowing that would change behaviour rather than preserve it, which is why
-the guarantee is worded to permit it. ``closed_document`` likewise adds
-nothing of its own but propagates whatever its field checks propagate. Every
-other helper returns ``False`` for any input at all.
+and the difference is deliberate. Every helper defined here does return
+``False`` rather than raising, for any input at all. But ``closed_document``
+accepts caller-supplied field checks and propagates whatever they propagate,
+which is what lets a longhand ``value not in FROZEN_SET`` convert to passing
+that set's own ``__contains__`` as a field check: an unhashable decoded value
+still raises ``TypeError``, at the same point in the caller's sequence, rather
+than being quietly rejected. Swallowing that would change behaviour instead of
+preserving it, so the guarantee is worded to permit it.
 
 The checks compare ``type(value) is ...`` rather than calling ``isinstance``,
 so a subclass is rejected on purpose. ``bool`` is a subclass of ``int``, so a
@@ -27,7 +27,7 @@ This module imports nothing from the project, so any layer may depend on it.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Container
+from collections.abc import Callable
 
 FieldCheck = Callable[[object], bool]
 
@@ -42,21 +42,14 @@ text = exact_type(str)
 
 
 def literal(expected: object) -> FieldCheck:
-    """Accept only one frozen constant, such as a pinned schema version."""
-    return lambda value: value == expected
+    """Accept only one frozen constant, such as a pinned schema version.
 
-
-def member_of(allowed: Container[object]) -> FieldCheck:
-    """Accept only a member of one closed set, delegating to the container's ``in``.
-
-    This is the one helper that can raise, and callers must decide about it.
-    Against a set or frozenset an unhashable value — a decoded JSON list or
-    object — raises ``TypeError`` instead of returning ``False``, because that
-    is what ``value in allowed`` does and what the longhand this replaces did.
-    Guard the value's type first if the caller must not see a ``TypeError``, or
-    pass a tuple, whose ``in`` compares by equality and cannot raise.
+    The exact-type check is what keeps this consistent with the rest of the
+    vocabulary. Equality alone would accept ``True`` for a constant ``1`` and
+    ``False`` for a constant ``0``, because ``bool`` is an ``int`` subclass and
+    compares equal — the one hole the module exists to close.
     """
-    return lambda value: value in allowed
+    return lambda value: type(value) is type(expected) and value == expected
 
 
 def bounded_integer(minimum: int, maximum: int | None = None) -> FieldCheck:
@@ -100,7 +93,8 @@ def closed_document(*unconstrained: str, **schema: FieldCheck) -> FieldCheck:
     order, and the first failure stops the rest, which lets a converted call
     site keep the order its longhand used and so keep exactly which check
     rejects a given value first — including which one raises. This adds no
-    failure mode of its own but propagates whatever a field check propagates.
+    failure mode of its own, but a caller-supplied field check may have one,
+    and it is propagated rather than swallowed.
     """
     keys = set(unconstrained) | set(schema)
 
