@@ -719,7 +719,7 @@ def prepare_cover_consideration(
     *,
     serialized: Callable[[Callable[[], _Result]], _Result],
     retry: bool = False,
-    snapshot: Callable[[], tuple[str, str, bool]] | None = None,
+    snapshot: Callable[[], tuple[str, str, bool] | None] | None = None,
 ) -> dict[str, object]:
     """Prepare one exact-current advisory cover consideration.
 
@@ -739,7 +739,10 @@ def prepare_cover_consideration(
             cover = next(field for field in detail["fields"] if field["destination"] == "cover")
             report_document, proposal_id, has_human_decision = report.to_json(), str(cover["proposal_id"]), cover["human_decision"] is not None
         else:
-            report_document, proposal_id, has_human_decision = snapshot()
+            staged = snapshot()
+            if staged is None:
+                raise ReviewApplicationError("stale")
+            report_document, proposal_id, has_human_decision = staged
         current = cover_considerations.current(review_case_id)
         if retry and has_human_decision and current is not None:
             raise ReviewApplicationError("already_decided")
@@ -775,7 +778,10 @@ def prepare_cover_consideration(
                 cover = next(field for field in detail["fields"] if field["destination"] == "cover")
                 current_report_document, current_proposal_id, has_human_decision = current_report.to_json(), str(cover["proposal_id"]), cover["human_decision"] is not None
             else:
-                current_report_document, current_proposal_id, has_human_decision = snapshot()
+                staged = snapshot()
+                if staged is None:
+                    raise ReviewApplicationError("stale")
+                current_report_document, current_proposal_id, has_human_decision = staged
             if (
                 current_report_document != report_document
                 or current_proposal_id != proposal_id

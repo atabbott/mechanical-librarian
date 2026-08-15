@@ -1437,6 +1437,11 @@ def create_review_pipeline(
         if action.review_case_id is None:
             return
         try:
+            snapshot = lambda: pipeline_repository.read_staged_cover_preparation(
+                action
+            )
+            if snapshot() is None:
+                return
             considerations = _compose_cover_considerations(
                 pipeline_repository, artifact_store_path, configuration.review
             )
@@ -1445,9 +1450,7 @@ def create_review_pipeline(
                 considerations,
                 action.review_case_id,
                 serialized=lambda call: call(),
-                snapshot=lambda: pipeline_repository.read_staged_cover_preparation(
-                    action
-                ),
+                snapshot=snapshot,
             )
         except ReviewAdmissionStaleError as error:
             raise ReviewPipelineError("stale") from error

@@ -33,8 +33,12 @@ material.
 Qualified advisory-cover preparation proves the composed F22 path: one
 qualified observer dispatch occurs before projection and package cutover, and
 the immutable consideration is replayed without a second dispatch or
-field-effect authority. The existing cover-consideration unit and browser
-coverage continues to prove manual choices and advice-only failure handling.
+field-effect authority. An unavailable profile, reviewer refusal or failure,
+malformed reviewer output, persistence failure, and staged-currentness drift
+all stop safely before package cutover; a case without a cover proposal skips
+advice normally. Existing cover-consideration and browser coverage proves
+stale retirement, owner-only manual retry and history, and that advice never
+creates automatic cover authority.
 
 Policy-draft qualification additionally proves the authenticated private
 state/validate/create/read/preview schemas, CSRF and Origin/Host failure paths,

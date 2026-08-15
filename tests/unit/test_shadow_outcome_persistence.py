@@ -62,6 +62,7 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecisionError,
     AutomaticSafetyState,
 )
+from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
 from mechanical_librarian.application.review_web import BrowseReviewLibrary, InspectCurrentReviewCase
@@ -325,6 +326,77 @@ def _human_title_decision(repository, case_id: str, occurred_at: int) -> HumanDe
 
 
 class ShadowOutcomePersistenceTests(unittest.TestCase):
+    def test_activity_projects_cover_reviewer_terminal_state_without_private_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            review_case_id = _case(repository)
+            report_id = json.loads(repository.get_review_case(review_case_id))["case"]["report_id"]
+
+            def record(status: str, suffix: str, kind: str = "considered") -> None:
+                consideration_id = "cover_consideration_" + suffix * 64
+                consideration = json.dumps({
+                    "candidate": "private-candidate", "document": "private-document",
+                    "image": "private-image", "path": "/private/profile",
+                    "profile": "private-profile", "recommendation": "private-recommendation",
+                    "reviewer_status": status,
+                }, separators=(",", ":"), sort_keys=True)
+                repository._connection.execute(
+                    "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
+                    (consideration_id, review_case_id, report_id, suffix * 64,
+                     hashlib.sha256(consideration.encode()).hexdigest(), None, 10, consideration),
+                )
+                event = json.dumps({
+                    "consideration_id": consideration_id, "decision_id": None,
+                    "kind": kind, "occurred_at": 10, "review_case_id": review_case_id,
+                    "schema_version": "cover-consideration-event-v1",
+                }, separators=(",", ":"), sort_keys=True)
+                event_id = "cover_consideration_event_" + hashlib.sha256(event.encode()).hexdigest()
+                repository._connection.execute(
+                    "INSERT INTO cover_consideration_events(event_id,consideration_id,review_case_id,kind,decision_id,occurred_at,document) VALUES(?,?,?,?,?,?,?)",
+                    (event_id, consideration_id, review_case_id, kind, None, 10, event),
+                )
+
+            record("completed", "a")
+            record("unavailable", "b")
+            record("failed", "c")
+            record("failed", "d", "stale")
+            record("failed", "e", "superseded")
+            repository._connection.commit()
+            page = repository.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=0, page=1, page_size=25,
+            )
+            cover_events = [event for event in page["events"] if event["destination"] == "cover"]
+            self.assertEqual(
+                {"considered", "unavailable", "failed", "stale", "superseded"},
+                {event["state"] for event in cover_events},
+            )
+            self.assertEqual("review", next(event["event_type"] for event in cover_events if event["state"] == "failed"))
+            self.assertEqual("safety", next(event["event_type"] for event in cover_events if event["state"] == "stale"))
+            serialized = json.dumps(page)
+            for value in ("private-candidate", "private-document", "private-image", "/private/profile", "private-profile", "private-recommendation"):
+                self.assertNotIn(value, serialized)
+            repository.close()
+
+    def test_activity_fails_closed_for_malformed_cover_consideration_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            review_case_id = _case(repository)
+            report_id = json.loads(repository.get_review_case(review_case_id))["case"]["report_id"]
+            consideration_id = "cover_consideration_" + "f" * 64
+            repository._connection.execute(
+                "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
+                (consideration_id, review_case_id, report_id, "f" * 64, "0" * 64, None, 10, "{malformed"),
+            )
+            event = json.dumps({"consideration_id": consideration_id, "decision_id": None, "kind": "considered", "occurred_at": 10, "review_case_id": review_case_id, "schema_version": "cover-consideration-event-v1"}, separators=(",", ":"), sort_keys=True)
+            repository._connection.execute(
+                "INSERT INTO cover_consideration_events(event_id,consideration_id,review_case_id,kind,decision_id,occurred_at,document) VALUES(?,?,?,?,?,?,?)",
+                ("cover_consideration_event_" + hashlib.sha256(event.encode()).hexdigest(), consideration_id, review_case_id, "considered", None, 10, event),
+            )
+            repository._connection.commit()
+            with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
+                repository.field_effect_activity_page(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+            repository.close()
+
     def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards(self) -> None:
         isbn10 = LocalClaim.create(
             kind=ClaimKind.ISBN, observed="0306406152", canonical="0306406152",
@@ -1017,6 +1089,60 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 self.assertEqual(1, len(calls))
                 self.assertEqual(0, repository._connection.execute("SELECT count(*) FROM field_effects").fetchone()[0])
                 supervisor.stop()
+            repository.close()
+
+    def test_composed_projection_without_cover_skips_advice_and_completes_f22(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            report = _report("No cover proposal")
+            proposal = evaluate_report(report)
+            recovery = composition.SQLiteProviderRecoveryStore.open(
+                root / "provider-recovery.sqlite"
+            )
+            supervisor = composition.create_review_pipeline(
+                _pipeline_configuration(cover_reviewer_profile_file="/run/profile"),
+                database, root / "catalogue.sqlite", root / "artifacts",
+                database_authority=repository.authority, provider_recovery=recovery,
+            )
+
+            def extract(bound, action, claim_next):
+                bound.publish(
+                    report, lambda: True,
+                    after_publication=lambda current, published: current.complete_review_extraction_publication(
+                        action, published.report_id, 10, 0, None, claim_next, None,
+                    ),
+                )
+                return report.report_id, True
+
+            def project(bound, action):
+                self.assertIsNone(bound.current_cover_consideration_document(action.review_case_id or ""))
+                outcome = bound.persist_shadow_outcome(
+                    action.review_case_id or "", 10, staged_action=action,
+                )
+                return "stale" if outcome == "stale" else "complete"
+
+            pipeline = ReviewPreparationPipeline(
+                repository_factory=lambda: open_repository(database, authority=repository.authority),
+                libraries=(("primary", "ebooks", "lib-1", "f" * 64),),
+                discover=lambda *_: (1, report.file.content_digest, (
+                    CatalogueEntry("primary", "ebooks", "lib-1", "item-1", 1, "No cover proposal", (), True, False, "singular-supported", report.file.identity, "/item-1.epub", "epub", "books"),
+                )),
+                extract=extract, providers=lambda *_: (),
+                propose=lambda bound, _: (bound.publish_proposal(proposal), proposal.proposal_set_id)[1],
+                admit=lambda bound, _: (lambda value: (value["status"], value.get("review_case_id")))(json.loads(bound.admit_review_case(proposal))),
+                project=project, before_projection=supervisor._pipeline._before_projection,
+                after_advance=supervisor._pipeline._after_advance, clock=lambda: 10,
+            )
+            pipeline.request("primary", "ebooks")
+            self.assertEqual([True, True, True, True, True, False], [pipeline.run_next(1) for _ in range(6)])
+            self.assertEqual((1,), repository._connection.execute("SELECT count(*) FROM current_review_packages").fetchone())
+            self.assertEqual((1,), repository._connection.execute("SELECT count(*) FROM provider_recovery_outbox").fetchone())
+            self.assertEqual((0,), repository._connection.execute("SELECT count(*) FROM cover_considerations").fetchone())
+            self.assertEqual((0,), repository._connection.execute("SELECT count(*) FROM field_effects").fetchone())
+            self.assertFalse(pipeline.run_next(1))
+            supervisor.stop()
             repository.close()
 
     def test_review_posture_composed_stale_projection_restarts_instead_of_completing(self) -> None:

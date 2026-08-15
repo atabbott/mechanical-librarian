@@ -2150,12 +2150,14 @@ class SQLiteMetadataReportRepository:
               JOIN metadata_reports report ON report.report_id=no_change.report_id
             UNION ALL
             SELECT event.event_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, 'cover', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END,
-                   event.occurred_at, 'human', review.report_id, event.kind, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END,
+                   event.occurred_at, 'human', review.report_id,
+                   CASE WHEN event.kind='considered' THEN CASE json_extract(consideration.document, '$.reviewer_status') WHEN 'completed' THEN 'considered' WHEN 'unavailable' THEN 'unavailable' WHEN 'failed' THEN 'failed' END ELSE event.kind END, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END,
                    event.document,
                    CASE WHEN event.kind IN ('stale','superseded') THEN 'safety' ELSE 'review' END,
-                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'cover_safeguard', NULL, event.review_case_id, NULL, event.consideration_id,
-                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END
+                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'cover_safeguard', consideration.document, event.review_case_id, NULL, event.consideration_id,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) AND typeof(consideration.document)='text' AND length(CAST(consideration.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(consideration.document) THEN 1 ELSE 0 END
               FROM cover_consideration_events event
+              JOIN cover_considerations consideration ON consideration.consideration_id=event.consideration_id
               JOIN review_cases review ON review.review_case_id=event.review_case_id
               JOIN metadata_reports report ON report.report_id=review.report_id
             UNION ALL
@@ -2359,6 +2361,12 @@ class SQLiteMetadataReportRepository:
                         ):
                             raise FieldEffectError("persistence")
                     elif source_kind == "cover_safeguard":
+                        if source_document is None:
+                            raise FieldEffectError("persistence")
+                        consideration = json.loads(source_document)
+                        if type(consideration) is not dict:
+                            raise FieldEffectError("persistence")
+                        reviewer_status = consideration.get("reviewer_status")
                         event_keys = {
                             "consideration_id", "decision_id", "kind", "occurred_at",
                             "review_case_id", "schema_version",
@@ -2367,7 +2375,21 @@ class SQLiteMetadataReportRepository:
                             set(raw) != event_keys
                             or raw.get("schema_version") != "cover-consideration-event-v1"
                             or raw.get("consideration_id") != source_identity
-                            or raw.get("kind") != state
+                            or raw.get("kind") not in {
+                                "considered", "superseded", "selected",
+                                "kept_incumbent", "no_action", "stale",
+                            }
+                            or state != ({
+                                "completed": "considered",
+                                "unavailable": "unavailable",
+                                "failed": "failed",
+                            }.get(reviewer_status) if raw.get("kind") == "considered" else raw.get("kind"))
+                            or (
+                                raw.get("kind") == "considered"
+                                and reviewer_status not in {
+                                    "completed", "unavailable", "failed",
+                                }
+                            )
                             or raw.get("occurred_at") != occurred_at
                             or raw.get("review_case_id") != source_parent_id
                             or _canonical_json(raw) != document
@@ -5162,7 +5184,7 @@ class SQLiteMetadataReportRepository:
 
     def read_staged_cover_preparation(
         self, action: PipelineAction
-    ) -> tuple[str, str, bool]:
+    ) -> tuple[str, str, bool] | None:
         """Read only the claimed staged cover facts before F22 package cutover."""
         if action.review_case_id is None:
             raise MetadataReportError("review case is unavailable")
@@ -5181,9 +5203,12 @@ class SQLiteMetadataReportRepository:
             if case.review_case_id != action.review_case_id or case.report_id != report.report_id:
                 raise MetadataReportError("review case is unavailable")
             cover = next(
-                proposal for proposal in case.proposals
-                if proposal["destination"] == "cover"
+                (proposal for proposal in case.proposals
+                 if proposal["destination"] == "cover"),
+                None,
             )
+            if cover is None or cover["result"]["outcome"] == "ineligible":
+                return None
             return report.to_json(), str(cover["proposal_id"]), False
         except (sqlite3.Error, ReviewCaseValueError, ReportValueError, KeyError, TypeError) as error:
             raise MetadataReportError("review case is unavailable") from error
