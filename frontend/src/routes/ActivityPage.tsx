@@ -166,7 +166,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   })
   const data = query.data
   const preparation = usePreparation().data
-  const connection = preparation?.connections?.find((item) => item.state !== 'recovered') ?? preparation?.connections?.[0]
+  const connectionConditions = preparation?.connections ?? []
+  const connection = connectionConditions.find((item) => item.state !== 'recovered') ?? connectionConditions[0]
   const ledger = data.ledger
   const configured = records(data.configured_libraries)
   const enabled = records(data.enabled_libraries)
@@ -228,7 +229,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const writes = ['claimed', 'applying', 'reconciling'].reduce((total, state) => total + count(data.counts[state]), 0)
   const providerRecovery = data.provider_recovery ?? []
   const dormantRecovery = providerRecovery.filter((item) => item.state === 'dormant').reduce((total, item) => total + item.affected_count, 0)
-  const connectionRecovery = connection?.state === 'recovered' ? 0 : connection?.affected ?? 0
+  // One condition remains focused for the banner/action, but recovery totals
+  // must reflect every independently paused/checking connection.
+  const connectionRecovery = connectionConditions.reduce((total, item) => total + (item.state === 'recovered' ? 0 : item.affected), 0)
   const recoveryCount = suspensions.length + dormantRecovery + connectionRecovery
   const waiting = data.prepared.total + count(data.counts.planned) + count(data.counts.retryable)
   const waitingEvent = data.current_waiting

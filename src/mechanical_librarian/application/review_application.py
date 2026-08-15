@@ -689,7 +689,10 @@ class ReviewApplication:
     def check_review_preparation_connection(self, connection: str) -> PreparationView:
         if self._preparation is None:
             raise ReviewApplicationError("unavailable")
-        self.serialized(lambda: self._preparation.check_connection(connection))
+        # The preparation pipeline persists its short begin/finish CAS
+        # transitions itself.  The potentially slow target probe must not hold
+        # this application's global read/decision gate.
+        self._preparation.check_connection(connection)
         return self.preparation()
 
     def _preparation_request(

@@ -164,6 +164,7 @@ class ReviewPipelineRepository(Protocol):
     def discovery_requires_qualification(self, action: PipelineAction) -> bool: ...
     def qualify_review_discovery(self, action: PipelineAction, qualified_at: int) -> bool: ...
     def defer_for_target_connection(self, action: PipelineAction, code: str, updated_at: int) -> None: ...
+    def hold_target_connection(self, connection: str, code: str, updated_at: int) -> None: ...
     def begin_target_connection_check(self, connection: str, checked_at: int) -> TargetConnectionCondition | None: ...
     def finish_target_connection_check(self, connection: str, epoch: int, code: str | None, checked_at: int) -> bool: ...
 
@@ -386,22 +387,40 @@ class ReviewPreparationPipeline:
         A duplicate click while checking is intentionally a no-op.  A stale
         checker cannot clear a later failure because finish compares its epoch.
         """
+        # The durable begin/finish transitions are deliberately separate from
+        # the external probe.  Holding a SQLite connection (or the web
+        # application's serialization gate) across network I/O would make an
+        # owner check globally disruptive.
         repository = self._open_repository()
         try:
             condition = repository.begin_target_connection_check(connection, self._clock())
-            if condition is None:
-                return False
-            code: str | None = None
-            try:
-                self._check_connection(connection)
-            except TargetConnectionError as error:
-                code = error.code
-            except Exception:
-                # A probe that did not produce a closed successful observation
-                # must never strand this connection in checking.
-                code = "unavailable"
-            repository.finish_target_connection_check(connection, condition.epoch, code, self._clock())
-            return True
+        finally:
+            repository.close()
+        if condition is None:
+            return False
+        code: str | None = None
+        try:
+            self._check_connection(connection)
+        except TargetConnectionError as error:
+            code = error.code
+        except Exception:
+            # A probe that did not produce a closed successful observation
+            # must never strand this connection in checking.
+            code = "unavailable"
+        repository = self._open_repository()
+        try:
+            repository.finish_target_connection_check(
+                connection, condition.epoch, code, self._clock()
+            )
+        finally:
+            repository.close()
+        return True
+
+    def hold_connection(self, connection: str, code: str) -> None:
+        """Record a retry-successor target observation as a connection hold."""
+        repository = self._open_repository()
+        try:
+            repository.hold_target_connection(connection, code, self._clock())
         finally:
             repository.close()
 
@@ -809,6 +828,10 @@ class ReviewPreparationSupervisor:
         if changed:
             self._wake.set()
         return changed
+
+    def hold_connection(self, connection: str, code: str) -> None:
+        self._pipeline.hold_connection(connection, code)
+        self._wake.set()
 
     def recover_provider_once(self) -> None:
         """Use the same durable claim path for an explicit owner invocation."""

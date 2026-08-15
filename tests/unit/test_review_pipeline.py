@@ -378,6 +378,42 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         condition = pipeline.connection_conditions()[0]
         self.assertEqual((condition.code, condition.state), ("unavailable", "paused"))
 
+    def test_owner_probe_releases_its_repository_before_network_and_refreshes_affected(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+        action = repository.claim_review_pipeline_action(2)
+        assert action is not None
+        repository.defer_for_target_connection(action, "unavailable", 3)
+        repository.request_review_scan("primary", "history", "lib-2", _PRODUCER, 4)
+        self.assertEqual(repository.target_connection_conditions()[0].affected, 2)
+        repository.close()
+
+        opened: list[object] = []
+        def factory():
+            value = open_repository(self.path)
+            opened.append(value)
+            return value
+
+        def probe(_connection: str) -> None:
+            # Begin committed before the external observation: an unrelated
+            # repository read can proceed while this probe is deliberately slow.
+            observer = open_repository(self.path)
+            try:
+                self.assertEqual(observer.target_connection_conditions()[0].state, "checking")
+            finally:
+                observer.close()
+
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=factory,
+            libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+            discover=lambda *_: (_ for _ in ()).throw(AssertionError),
+            extract=lambda *_: (_ for _ in ()).throw(AssertionError),
+            providers=lambda *_: (), propose=lambda *_: "", admit=lambda *_: ("", None),
+            project=lambda *_: True, check_connection=probe, clock=lambda: 5,
+        )
+        self.assertTrue(pipeline.check_connection("primary"))
+        self.assertEqual(pipeline.connection_conditions()[0].state, "recovered")
+
     def test_status_reads_all_latest_library_progress_and_pause_in_one_snapshot(self) -> None:
         repository = open_repository(self.path)
         first = repository.request_review_scan(

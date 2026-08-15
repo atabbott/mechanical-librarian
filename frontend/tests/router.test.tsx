@@ -1733,6 +1733,18 @@ describe('typed review routes', () => {
     }
   })
 
+  it('sums simultaneous connection holds while keeping one focused recovery control', async () => {
+    const preparation: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [], connections: [
+      { connection: 'primary', code: 'unavailable', state: 'paused', affected: 2, updated_at: 1 },
+      { connection: 'secondary', code: 'authorization', state: 'checking', affected: 3, updated_at: 2 },
+    ] }
+    const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => preparation) }
+    renderRoute('/activity', http)
+
+    expect(await screen.findByRole('heading', { name: 'Library connection is paused' })).toBeVisible()
+    expect(screen.getByText('Recovery needed').parentElement).toHaveTextContent('5')
+  })
+
   it.each([
     ['tls', 'secure connection settings'],
     ['authentication', 'sign-in settings'],

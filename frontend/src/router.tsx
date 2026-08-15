@@ -91,6 +91,7 @@ export const PreparationNotice = () => {
       const encodedConnection = match[1]
       if (!encodedConnection) return
       const connection = decodeURIComponent(encodedConnection)
+      const previous = queryClient.getQueryData<PreparationView>(['review-preparation'])
       queryClient.setQueryData<PreparationView>(['review-preparation'], (current) => {
         if (!current || !current.connections) return current
         return {
@@ -102,6 +103,10 @@ export const PreparationNotice = () => {
           )),
         }
       })
+      return { previous }
+    },
+    onError: (_error, _path, context) => {
+      if (context?.previous) queryClient.setQueryData(['review-preparation'], context.previous)
     },
     onSettled: async () => {
       await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })

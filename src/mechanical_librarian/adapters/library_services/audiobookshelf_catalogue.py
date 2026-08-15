@@ -89,11 +89,25 @@ class AudiobookshelfCatalogueReader:
         except (httpx.HTTPError, OSError, UnicodeError, ValueError, TypeError) as error:
             raise TargetConnectionError("unavailable") from None
 
-    def probe_connection(self, connection: str) -> None:
+    def probe_connection(
+        self, connection: str, libraries: tuple[LibraryConfiguration, ...]
+    ) -> None:
         """Perform the bounded configured ABS trust/read authority probe."""
         try:
             with self._client_factory(connection) as client:
-                _get(client, "/api/libraries", self._maximum_bytes, self._timeout_seconds)
+                payload = _get(
+                    client, "/api/libraries", self._maximum_bytes,
+                    self._timeout_seconds,
+                )
+                available = {
+                    value.get("id")
+                    for value in payload.get("libraries", [])
+                    if type(value) is dict and value.get("mediaType") == "book"
+                }
+                if any(library.library_id not in available for library in libraries):
+                    # Deliberately retain only the closed owner-actionable
+                    # condition; configured IDs never cross this boundary.
+                    raise TargetConnectionError("unavailable")
         except TargetConnectionError:
             raise
         except Exception as error:

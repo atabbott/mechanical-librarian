@@ -1214,20 +1214,39 @@ def create_review_pipeline(
             maximum_bytes=configuration.limits.target_response_bytes,
             timeout_seconds=configuration.limits.timeout_seconds,
         )
-        serialized = GenerateProviderRetrySuccessor(
-            target=target, inspector=_IsolatedEpubInspector(artifacts),
-            repository_factory=repository_factory, provider_resolver=retry_resolver,
-            mount=mount, limits=configuration.limits,
-            after_publication=lambda bound, report: bound.stage_provider_retry_successor(
-                job.source_report_id, report, int(time.time())
-            ),
-            heartbeat=heartbeat,
-        ).run(
-            job.source_report_id, tuple(json.loads(job.lane_ids)),
-            provider_name=job.connection, adapter=job.adapter,
-            generation=job.generation,
-            generation_woken=recovery_state.attempt == 0,
-        )
+        try:
+            serialized = GenerateProviderRetrySuccessor(
+                target=target, inspector=_IsolatedEpubInspector(artifacts),
+                repository_factory=repository_factory, provider_resolver=retry_resolver,
+                mount=mount, limits=configuration.limits,
+                after_publication=lambda bound, report: bound.stage_provider_retry_successor(
+                    job.source_report_id, report, int(time.time())
+                ),
+                heartbeat=heartbeat,
+            ).run(
+                job.source_report_id, tuple(json.loads(job.lane_ids)),
+                provider_name=job.connection, adapter=job.adapter,
+                generation=job.generation,
+                generation_woken=recovery_state.attempt == 0,
+            )
+        except TargetConnectionError as error:
+            if pipeline is not None:
+                pipeline.hold_connection(job.target_connection, error.code)
+            # This is a target hold, not provider evidence: retain the
+            # completed provider observation and stop successor backoff.
+            raise CurrentnessError("target or media changed") from None
+        except CurrentnessError as error:
+            # Currentness deliberately hides target details at the report
+            # boundary, but retains the closed target condition as its cause.
+            # Recover that safe taxonomy here so this successor cannot be
+            # mistaken for a provider transient/backoff condition.
+            cause = error.__cause__
+            while cause is not None and not isinstance(cause, TargetConnectionError):
+                cause = cause.__cause__
+            if isinstance(cause, TargetConnectionError):
+                if pipeline is not None:
+                    pipeline.hold_connection(job.target_connection, cause.code)
+            raise
         successor = MetadataReport.from_json(serialized)
         if pipeline is None or not pipeline.run_recovery_successor(
             successor.report_id, heartbeat
@@ -1477,7 +1496,10 @@ def create_review_pipeline(
     def check_connection(connection: str) -> None:
         if connection not in clients:
             raise ReviewPipelineError("library")
-        reader.probe_connection(connection)
+        reader.probe_connection(
+            connection,
+            tuple(value for value in configuration.libraries if value.connection == connection),
+        )
 
     pipeline = ReviewPreparationPipeline(
         repository_factory=repository_factory,

@@ -3483,6 +3483,7 @@ class SQLiteMetadataReportRepository:
                             row[0],
                         ),
                     )
+                self._refresh_target_connection_affected(connection)
                 self._connection.commit()
                 progress = self.review_pipeline_progress(connection, library)
                 if progress is None:
@@ -3504,6 +3505,7 @@ class SQLiteMetadataReportRepository:
                     requested_at,
                 ),
             )
+            self._refresh_target_connection_affected(connection)
             self._connection.commit()
             return PipelineProgress(
                 scan_id, connection, library, "queued", 0, 0, 0, 0, False, requested_at
@@ -3655,6 +3657,14 @@ class SQLiteMetadataReportRepository:
                 "UPDATE review_preparation_connection_conditions "
                 "SET state='paused' WHERE state='checking'"
             )
+            configured_connections = tuple(sorted({connection for connection, *_ in producers}))
+            if configured_connections:
+                placeholders = ",".join("?" for _ in configured_connections)
+                self._connection.execute(
+                    "DELETE FROM review_preparation_connection_conditions "
+                    f"WHERE connection_name NOT IN ({placeholders})",
+                    configured_connections,
+                )
             for connection, library, library_id, producer_fingerprint in producers:
                 row = self._connection.execute(
                     "SELECT scan_id,state,library_id,producer_fingerprint "
@@ -3829,6 +3839,30 @@ class SQLiteMetadataReportRepository:
                 raise
             raise MetadataReportError("target connection condition is unavailable") from error
 
+    def hold_target_connection(self, connection: str, code: str, updated_at: int) -> None:
+        """Persist a connection-wide hold without changing a retry checkpoint."""
+        if code not in {"tls", "authentication", "authorization", "unavailable"}:
+            raise MetadataReportError("target connection condition is invalid")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            current = self._connection.execute(
+                "SELECT epoch,state FROM review_preparation_connection_conditions "
+                "WHERE connection_name=?", (connection,)
+            ).fetchone()
+            epoch = 1 if current is None else current[0] + (current[1] != "paused")
+            self._connection.execute(
+                "INSERT INTO review_preparation_connection_conditions("
+                "connection_name,code,state,epoch,affected,updated_at) VALUES(?,?,'paused',?,?,?) "
+                "ON CONFLICT(connection_name) DO UPDATE SET code=excluded.code,state='paused',"
+                "epoch=excluded.epoch,affected=excluded.affected,updated_at=excluded.updated_at",
+                (connection, code, epoch, self._target_connection_affected(connection), updated_at),
+            )
+            self._connection.commit()
+        except sqlite3.Error as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            raise MetadataReportError("target connection condition is unavailable") from error
+
     def _target_connection_affected(self, connection: str) -> int:
         return self._connection.execute(
                 "SELECT (SELECT count(*) FROM review_preparation_scans scan "
@@ -3839,6 +3873,14 @@ class SQLiteMetadataReportRepository:
                 "WHERE connection_name=? AND state IN ('queued','running'))",
                 (connection, connection),
             ).fetchone()[0]
+
+    def _refresh_target_connection_affected(self, connection: str) -> None:
+        """Keep an existing hold truthful as newly admitted work arrives."""
+        self._connection.execute(
+            "UPDATE review_preparation_connection_conditions SET affected=? "
+            "WHERE connection_name=? AND state IN ('paused','checking')",
+            (self._target_connection_affected(connection), connection),
+        )
 
     def begin_target_connection_check(
         self, connection: str, checked_at: int
