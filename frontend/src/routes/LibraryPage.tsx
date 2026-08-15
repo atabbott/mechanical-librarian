@@ -9,6 +9,7 @@ import { useRouteReadyFocus } from '../focus'
 import { detailQuery, libraryRoute, useReviewContext } from '../router'
 import { actionable, useReviewDecisionController } from '../reviewDecisionController'
 import { automaticChoiceSelected } from '../reviewAutomaticSelection'
+import { ownerChoiceCount } from '../reviewChoiceCounts'
 
 type ReviewField = CaseDetailView['fields'][number]
 type EvidenceItem = EvidenceView['items'][number]
@@ -81,14 +82,6 @@ const sameSelectedValue = (left: DecisionCommand['selectedValue'], right: Decisi
 const commandSelected = (command: DecisionCommand | null, destination: string, outcome: DecisionCommand['outcome'], selectedValue: DecisionCommand['selectedValue'] = null) => command?.destination === destination && command.outcome === outcome && sameSelectedValue(command.selectedValue, selectedValue)
 const recordedSelected = (field: ReviewField, outcome: DecisionCommand['outcome'], selectedValue: DecisionCommand['selectedValue'] = null) => field.automaticDecision !== null && automaticChoiceSelected(field.automaticDecision, outcome, selectedValue)
 const choiceSelected = (field: ReviewField, pending: DecisionCommand | null, outcome: DecisionCommand['outcome'], selectedValue: DecisionCommand['selectedValue'] = null) => commandSelected(pending, field.destination, outcome, selectedValue) || recordedSelected(field, outcome, selectedValue)
-const ownerChoiceCount = (field: ReviewField) => {
-  const consideration = field.coverConsideration
-  if (field.destination !== 'cover') return field.preservationOnly ? 2 : field.proposedValues.length + 2
-  if (!consideration) return 0
-  const candidates = consideration.candidates.filter((candidate) => candidate.selectable || candidate.incumbent)
-  const unavailableIncumbent = consideration.incumbent.state === 'unavailable' && !candidates.some((candidate) => candidate.incumbent)
-  return candidates.length + (unavailableIncumbent ? 1 : 0) + 1
-}
 
 function LibraryCoverChoices({ reviewCaseId, field, disabled, pending, phase, choose }: { reviewCaseId: string; field: ReviewField; disabled: boolean; pending: DecisionCommand | null; phase: 'recording' | 'confirmed' | 'failed' | null; choose: (outcome: DecisionCommand['outcome'], selectedValue?: DecisionCommand['selectedValue']) => void }) {
   const { http } = useReviewContext()
