@@ -546,8 +546,10 @@ class CoverConsiderationService:
             if value["policy_report_document"] is None
             else json.loads(value["policy_report_document"])
         )
+        candidates = [dict(item) for item in value["candidates"]]
         return {
-            "candidates": [dict(item) for item in value["candidates"]],
+            "candidates": candidates,
+            "choice_contexts": _cover_choice_contexts(value, candidates, policy),
             "consideration_id": value["consideration_id"],
             "current": current,
             "incumbent": dict(value["incumbent"]),
@@ -663,6 +665,40 @@ class CoverConsiderationService:
             item["consideration"] = self.project_historical(document)
             items.append(item)
         return tuple(items)
+
+def _cover_choice_contexts(value: dict[str, object], candidates: list[dict[str, object]], policy: dict[str, object] | None) -> list[dict[str, object]]:
+    """Expose exact retained cover binding provenance without identifiers."""
+    report = MetadataReport.from_json(str(value["report_document"]))
+    packet = json.loads(str(value["packet_document"])) if value["packet_document"] is not None else {"candidates": []}
+    bindings = {item["reference"]: item["source_bindings"] for item in packet["candidates"]}
+    sources = {cover_source_reference(report.report_id, source.source_id): source for source in report.cover_sources}
+    recommended = None if policy is None or policy.get("status") != "recommended" else policy.get("recommended_candidate_reference")
+    acceptable = set() if policy is None else set(policy.get("acceptable_candidate_references", []))
+    def evidence(reference: str, incumbent: bool) -> list[dict[str, str]]:
+        rows = []
+        for binding in bindings.get(reference, []):
+            source = sources.get(binding.get("reference"))
+            if source is None:
+                continue
+            label, role, observation = {
+                CoverSourceKind.ABS: ("Local library record", "local_presence", "Local library cover retained."),
+                CoverSourceKind.EPUB: ("Local EPUB package", "local_presence", "Local EPUB cover retained."),
+                CoverSourceKind.HARDCOVER: ("Hardcover", "external_corroboration", "Retained catalogue cover supports this choice."),
+                CoverSourceKind.OPEN_LIBRARY: ("Open Library", "external_corroboration", "Retained catalogue cover supports this choice."),
+            }.get(source.kind, ("Provider evidence", "external_corroboration", "Retained cover evidence supports this choice."))
+            rows.append({"source": label, "role": role, "observation": observation})
+        return rows or ([{"source": "Local library record", "role": "local_presence", "observation": "Current cover preview is unavailable; local presence is retained."}] if incumbent else [])
+    incumbent = next((item for item in candidates if item.get("incumbent") is True), None)
+    current_reference = None if incumbent is None else incumbent.get("reference")
+    current_recommended = current_reference == recommended and current_reference in acceptable and incumbent is not None and incumbent.get("selectable") is True
+    contexts = [{"alternative_id": None, "selection": "current", "evidence": evidence(str(current_reference), True) if type(current_reference) is str else evidence("", True), "limitations": (["Preview unavailable for this retained cover."] if value["incumbent"].get("state") == "unavailable" else []), "rationale": "Keep the cover currently held by the local library.", "recommendation": "recommended" if current_recommended else "no_recommendation", "recommendation_reason": "Authoritative cover policy recommends this retained cover." if current_recommended else "No recommendation retained."}]
+    for candidate in candidates:
+        reference = candidate.get("reference")
+        if candidate.get("incumbent") is True or candidate.get("selectable") is not True or type(reference) is not str:
+            continue
+        is_recommended = reference == recommended and reference in acceptable
+        contexts.append({"alternative_id": reference, "selection": "proposed", "evidence": evidence(reference, False), "limitations": [], "rationale": "This retained cover candidate is selectable for owner review.", "recommendation": "recommended" if is_recommended else "no_recommendation", "recommendation_reason": "Authoritative cover policy recommends this retained cover." if is_recommended else "No recommendation retained."})
+    return contexts
 
 
 __all__ = [

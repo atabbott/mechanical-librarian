@@ -203,6 +203,7 @@ class _CoverPolicyReport(_ClosedModel):
 
 class _CoverConsiderationResponse(_ClosedModel):
     candidates: list[_CoverCandidate]
+    choice_contexts: list["_ChoiceContext"] = Field(default_factory=list)
     consideration_id: str
     current: bool
     incumbent: _CoverIncumbent
