@@ -7,6 +7,14 @@
 
 ## Unreleased
 
+- Make a clean frontend checkout pass every documented source check without a
+  manual ritual. `npm run typecheck`, `npm run lint`, `npm test`, and
+  `npm run build` regenerate the gitignored DTOs first, so a fresh clone no
+  longer reports misleading type errors; `frontend/prototype/` scratch space is
+  excluded from lint; and `frontend/src` is Prettier-formatted with committed
+  configuration that `npm run lint` enforces, so diffs, blame, and stack traces
+  work at statement granularity. (#657)
+
 - Keep retained metadata provenance at each Library review choice: current
   local presence, named corroborating sources, rationale, deterministic
   recommendation status, and limitations can be inspected in place without
