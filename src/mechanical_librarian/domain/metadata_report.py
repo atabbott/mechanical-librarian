@@ -36,7 +36,7 @@ from mechanical_librarian.domain.epub_inspection import (
 )
 
 
-REPORT_SCHEMA = "metadata-report-v25"
+REPORT_SCHEMA = "metadata-report-v26"
 COMPARISON_VERSION = "closed-title-creator-publication-v4"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.

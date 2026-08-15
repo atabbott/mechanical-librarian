@@ -635,7 +635,7 @@ class FieldEffectTests(unittest.TestCase):
         self.repository._connection.commit()
         with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
             self.repository.field_effect_activity_page(
-                search=None, event_type="review", occurred_after=0, page=1,
+                search=None, event_type="all", occurred_after=0, page=1,
                 page_size=25,
             )
         self.repository._connection.execute(
@@ -662,7 +662,7 @@ class FieldEffectTests(unittest.TestCase):
         )
         cover_document = json.dumps({
             "consideration_id": consideration_id, "decision_id": None,
-            "kind": "considered", "occurred_at": 11,
+            "kind": "automatic_prepared", "occurred_at": 11,
             "review_case_id": case.review_case_id,
             "schema_version": "cover-consideration-event-v1",
         }, separators=(",", ":"), sort_keys=True)
@@ -670,12 +670,12 @@ class FieldEffectTests(unittest.TestCase):
         self.repository._connection.execute(
             "INSERT INTO cover_consideration_events(event_id,consideration_id,review_case_id,kind,decision_id,occurred_at,document) VALUES(?,?,?,?,?,?,?)",
             (wrong_cover_event_id, consideration_id, case.review_case_id,
-             "considered", None, 11, cover_document),
+             "automatic_prepared", None, 11, cover_document),
         )
         self.repository._connection.commit()
         with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
             self.repository.field_effect_activity_page(
-                search=None, event_type="review", occurred_after=0, page=1,
+                search=None, event_type="all", occurred_after=0, page=1,
                 page_size=25,
             )
         self.repository._connection.execute("DROP TRIGGER cover_consideration_events_no_delete")

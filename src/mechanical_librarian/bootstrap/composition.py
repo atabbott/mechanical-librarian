@@ -1451,6 +1451,7 @@ def create_review_pipeline(
                 action.review_case_id,
                 serialized=lambda call: call(),
                 snapshot=snapshot,
+                finalize=pipeline_repository.atomic_cover_preparation,
             )
         except ReviewAdmissionStaleError as error:
             raise ReviewPipelineError("stale") from error

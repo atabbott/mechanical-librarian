@@ -63,7 +63,7 @@ class RichFidelityCohortTests(unittest.TestCase):
             if event["destination"] == "cover"
         }
         self.assertEqual(
-            {"considered", "unavailable", "failed", "stale", "superseded"},
+            {"automatic_prepared", "owner_retry_prepared", "stale", "superseded"},
             cover_states,
         )
 

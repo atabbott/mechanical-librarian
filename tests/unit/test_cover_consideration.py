@@ -35,7 +35,7 @@ class _Store:
         if previous is not None:
             self.events.append({"kind": "superseded", "occurred_at": values["occurred_at"]})
         self.current[review_case_id] = document
-        self.events.append({"kind": "considered", "occurred_at": values["occurred_at"]})
+        self.events.append({"kind": values.get("preparation_kind", "automatic_prepared"), "occurred_at": values["occurred_at"]})
         return document
 
     def record_cover_consideration_outcome(self, consideration_id, kind, occurred_at, decision_id=None):
@@ -127,7 +127,7 @@ class CoverConsiderationTests(unittest.TestCase):
             case_id, self.report.to_json(), self.proposal, retry=True
         )
         self.assertEqual(successor["supersedes_id"], first["consideration_id"])
-        self.assertEqual([event["kind"] for event in self.store.events], ["considered", "superseded", "considered"])
+        self.assertEqual([event["kind"] for event in self.store.events], ["automatic_prepared", "superseded", "owner_retry_prepared"])
 
     def test_incumbent_duplicate_remains_bound_to_abs_original(self) -> None:
         payload = _preview(7)

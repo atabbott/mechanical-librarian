@@ -720,6 +720,7 @@ def prepare_cover_consideration(
     serialized: Callable[[Callable[[], _Result]], _Result],
     retry: bool = False,
     snapshot: Callable[[], tuple[str, str, bool] | None] | None = None,
+    finalize: Callable[[Callable[[], _Result]], _Result] | None = None,
 ) -> dict[str, object]:
     """Prepare one exact-current advisory cover consideration.
 
@@ -803,7 +804,7 @@ def prepare_cover_consideration(
                 retry=retry, reviewer_evidence=evidence,
             )
 
-        return serialized(persist)
+        return (serialized if finalize is None else finalize)(persist)
     except CoverConsiderationError as error:
         raise ReviewApplicationError(error.code) from error
 

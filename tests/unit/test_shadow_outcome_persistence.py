@@ -423,7 +423,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             review_case_id = _case(repository)
             report_id = json.loads(repository.get_review_case(review_case_id))["case"]["report_id"]
 
-            def record(status: str, suffix: str, kind: str = "considered") -> None:
+            def record(status: str, suffix: str, kind: str = "automatic_prepared") -> None:
                 consideration_id = "cover_consideration_" + suffix * 64
                 consideration = json.dumps({
                     "candidate": "private-candidate", "document": "private-document",
@@ -447,9 +447,9 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                     (event_id, consideration_id, review_case_id, kind, None, 10, event),
                 )
 
-            record("completed", "a")
-            record("unavailable", "b")
-            record("failed", "c")
+            record("completed", "a", "automatic_prepared")
+            record("unavailable", "b", "automatic_prepared")
+            record("failed", "c", "owner_retry_prepared")
             record("failed", "d", "stale")
             record("failed", "e", "superseded")
             repository._connection.commit()
@@ -458,10 +458,12 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             )
             cover_events = [event for event in page["events"] if event["destination"] == "cover"]
             self.assertEqual(
-                {"considered", "unavailable", "failed", "stale", "superseded"},
+                {"automatic_prepared", "owner_retry_prepared", "stale", "superseded"},
                 {event["state"] for event in cover_events},
             )
-            self.assertEqual("review", next(event["event_type"] for event in cover_events if event["state"] == "failed"))
+            self.assertEqual("automatic_pipeline", next(event["origin"] for event in cover_events if event["state"] == "automatic_prepared"))
+            self.assertEqual("owner_retry", next(event["origin"] for event in cover_events if event["state"] == "owner_retry_prepared"))
+            self.assertEqual("review", next(event["event_type"] for event in cover_events if event["state"] == "owner_retry_prepared"))
             self.assertEqual("safety", next(event["event_type"] for event in cover_events if event["state"] == "stale"))
             serialized = json.dumps(page)
             for value in ("private-candidate", "private-document", "private-image", "/private/profile", "private-profile", "private-recommendation"):
@@ -478,14 +480,66 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
                 (consideration_id, review_case_id, report_id, "f" * 64, "0" * 64, None, 10, "{malformed"),
             )
-            event = json.dumps({"consideration_id": consideration_id, "decision_id": None, "kind": "considered", "occurred_at": 10, "review_case_id": review_case_id, "schema_version": "cover-consideration-event-v1"}, separators=(",", ":"), sort_keys=True)
+            event = json.dumps({"consideration_id": consideration_id, "decision_id": None, "kind": "automatic_prepared", "occurred_at": 10, "review_case_id": review_case_id, "schema_version": "cover-consideration-event-v1"}, separators=(",", ":"), sort_keys=True)
             repository._connection.execute(
                 "INSERT INTO cover_consideration_events(event_id,consideration_id,review_case_id,kind,decision_id,occurred_at,document) VALUES(?,?,?,?,?,?,?)",
-                ("cover_consideration_event_" + hashlib.sha256(event.encode()).hexdigest(), consideration_id, review_case_id, "considered", None, 10, event),
+                ("cover_consideration_event_" + hashlib.sha256(event.encode()).hexdigest(), consideration_id, review_case_id, "automatic_prepared", None, 10, event),
             )
             repository._connection.commit()
             with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
                 repository.field_effect_activity_page(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+            repository.close()
+
+    def test_activity_accepts_the_cover_document_cap_and_rejects_larger_or_malformed_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            review_case_id = _case(repository)
+            report_id = json.loads(repository.get_review_case(review_case_id))["case"]["report_id"]
+
+            def record(document: str, suffix: str) -> None:
+                consideration_id = "cover_consideration_" + suffix * 64
+                event = json.dumps({"consideration_id": consideration_id, "decision_id": None, "kind": "automatic_prepared", "occurred_at": 10, "review_case_id": review_case_id, "schema_version": "cover-consideration-event-v1"}, separators=(",", ":"), sort_keys=True)
+                repository._connection.execute("INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)", (consideration_id, review_case_id, report_id, suffix * 64, hashlib.sha256(document.encode()).hexdigest(), None, 10, document))
+                repository._connection.execute("INSERT INTO cover_consideration_events(event_id,consideration_id,review_case_id,kind,decision_id,occurred_at,document) VALUES(?,?,?,?,?,?,?)", ("cover_consideration_event_" + hashlib.sha256(event.encode()).hexdigest(), consideration_id, review_case_id, "automatic_prepared", None, 10, event))
+
+            for size, suffix in ((2_097_153, "a"), (12_582_912, "b")):
+                document = '{"padding":"' + "x" * (size - len('{"padding":"') - len('"}')) + '"}'
+                record(document, suffix)
+                repository._connection.commit()
+                page = repository.field_effect_activity_page(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+                self.assertEqual(1 if suffix == "a" else 2, len([item for item in page["events"] if item["destination"] == "cover"]))
+
+            repository._connection.execute("PRAGMA ignore_check_constraints=ON")
+            record('{"padding":"' + "private" + "x" * 12_582_912 + '"}', "c")
+            repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
+            repository._connection.commit()
+            with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
+                repository.field_effect_activity_page(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+            repository.close()
+
+    def test_atomic_cover_preparation_excludes_sibling_drift_and_rolls_back_every_pointer(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports.sqlite"
+            repository = open_repository(path)
+            review_case_id = _case(repository)
+            report_id = json.loads(repository.get_review_case(review_case_id))["case"]["report_id"]
+            consideration_id = "cover_consideration_" + "d" * 64
+            document = json.dumps({"consideration_id": consideration_id, "replay_digest": "e" * 64, "report_id": report_id, "review_case_id": review_case_id, "schema_version": "cover-consideration-v1", "supersedes_id": None}, separators=(",", ":"), sort_keys=True)
+            repository._connection.execute("CREATE TEMP TRIGGER abort_cover_event BEFORE INSERT ON cover_consideration_events BEGIN SELECT RAISE(ABORT,'synthetic'); END")
+            package_count = repository._connection.execute("SELECT count(*) FROM current_review_packages").fetchone()[0]
+
+            def finalize() -> object:
+                sibling = sqlite3.connect(path, timeout=0)
+                try:
+                    with self.assertRaises(sqlite3.OperationalError):
+                        sibling.execute("UPDATE current_review_case_lineages SET checkpoint=checkpoint")
+                finally:
+                    sibling.close()
+                return repository.record_cover_consideration(document, review_case_id=review_case_id, report_id=report_id, replay_digest="e" * 64, supersedes_id=None, occurred_at=10)
+
+            with self.assertRaisesRegex(MetadataReportError, "unavailable"):
+                repository.atomic_cover_preparation(finalize)
+            self.assertEqual((0, 0, 0, package_count), repository._connection.execute("SELECT (SELECT count(*) FROM cover_considerations), (SELECT count(*) FROM cover_consideration_events), (SELECT count(*) FROM current_cover_considerations), (SELECT count(*) FROM current_review_packages)").fetchone())
             repository.close()
 
     def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards(self) -> None:

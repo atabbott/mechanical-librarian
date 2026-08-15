@@ -629,9 +629,9 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         ),
         ("Resolved work with retained history", "Research shelf", "authors", "resolved", "human", None),
         ("Automatic-only edition", "Household ebooks", "series", "running", "automatic_policy", None),
-        ("Synthetic completed cover advice", "Household ebooks", "cover", "considered", "human", None),
-        ("Synthetic unavailable cover advice", "Spoken stories", "cover", "unavailable", "human", None),
-        ("Synthetic failed cover advice", "Research shelf", "cover", "failed", "human", None),
+        ("Synthetic completed cover advice", "Household ebooks", "cover", "automatic_prepared", "automatic_pipeline", None),
+        ("Synthetic unavailable cover advice", "Spoken stories", "cover", "owner_retry_prepared", "owner_retry", None),
+        ("Synthetic failed cover advice", "Research shelf", "cover", "owner_retry_prepared", "owner_retry", None),
         ("Synthetic stale cover advice", "Household ebooks", "cover", "stale", "human", "currentness"),
         ("Synthetic superseded cover advice", "Spoken stories", "cover", "superseded", "human", None),
     ]

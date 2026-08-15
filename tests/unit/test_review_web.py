@@ -2674,7 +2674,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             self.assertEqual([], writer_errors)
             after = reader.read_current_review_case(case_id, 50)
             self.assertEqual(document, after.cover_consideration_document)
-            self.assertEqual("considered", after.cover_history[0]["kind"])
+            self.assertEqual("automatic_prepared", after.cover_history[0]["kind"])
             reader.close()
 
     def test_cover_retry_stops_after_an_owner_outcome(self) -> None:
