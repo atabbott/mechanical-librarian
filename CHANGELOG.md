@@ -7,6 +7,30 @@
 
 ## Unreleased
 
+- Report known-vulnerable Python dependencies in CI, so the backend half of the
+  supply chain is audited on every change the way the frontend half already
+  was. A `dependency-audit` job in the public gate scans the complete `uv.lock`
+  closure — runtime dependencies and the development group together, because
+  CI installs both — with a digest-pinned OSV-Scanner on every pull request and
+  every push to `main`. Advisory data is fetched at run time, so the pinned
+  scanner still sees current advisories, and no package is added to the project
+  to run it. The only mechanism that may hold such a failure open is the
+  time-boxed advisory acceptance register, `osv-scanner.toml`: one named
+  advisory, one stated reason, one expiry date, and no severity floor, package
+  exclusion, or repository-wide loosening. The scanner stops filtering an
+  advisory once its date passes, and the required `fast-source` check
+  independently fails an entry that is already expired, runs more than 90 days
+  out, carries no substantive reason, or introduces any other configuration
+  table. The register is empty: the advisories the audit reports today are
+  tracked for repair, not accepted. The audit reports on every pull request but
+  is advisory rather than merge-blocking until a maintainer adds
+  `dependency-audit` to the default-branch ruleset. Static analysis of this
+  repository's own source and pull-request dependency review are deferred to
+  #674, which is blocked on a repository visibility or plan decision, and
+  nothing dormant was left behind for them.
+  `docs/architecture/security.md` records the boundary, including what stays
+  maintainer-manual. (#653)
+
 - Verify merged `main` and the shipped container in the public gate, and make a
   broad test failure diagnosable. The gate now also runs on push to `main`, so
   two individually green pull requests that break `main` together are caught

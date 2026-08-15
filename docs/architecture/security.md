@@ -850,3 +850,70 @@ databases, environment, media, cover bytes and recovery storage are outside the
 diagnostic trust boundary. The private recovery directory and files require the
 runtime UID with `0700`/`0600` modes and bounded count/size; failures stop only
 the affected cover effect and remain recoverable from durable state.
+
+## Automated scanning boundary
+
+One continuous integration check scans the repository itself rather than the
+product's behavior. It is a supply-chain control and is unrelated to the
+library scan the product performs over media.
+
+`dependency-audit`, a job of the public gate, scans `uv.lock` with OSV-Scanner
+on every pull request and every push to `main`, and fails on any known advisory
+affecting the locked closure. `uv.lock` is the complete resolved closure, so
+the runtime dependencies and the development group are audited together: CI
+installs both, and a compromised test-time dependency executes on the same
+machine as a compromised runtime one. The scanner is pinned by image digest
+rather than by tag or third-party action, and fetches advisory data from OSV at
+run time, so a fixed scanner still sees current advisories. The pin, the exact
+arguments, and the reason for that pinning choice are in
+`.github/workflows/public-gate.yml`; the same command reproduces the check on a
+maintainer's machine. The frontend half of the same supply chain is audited
+separately inside `fast-source` by `npm audit --audit-level=low`, with licence
+metadata enforced by `npm run licenses`.
+
+The only mechanism that may hold a `dependency-audit` failure open is the
+time-boxed advisory acceptance register, `osv-scanner.toml`. Each entry names
+one advisory, states why it cannot be fixed now, and carries an explicit expiry
+date; there is no severity floor, package exclusion, or repository-wide
+loosening, and an advisory that can be fixed is fixed rather than accepted. The
+time box is enforced from both sides. OSV-Scanner stops filtering an advisory
+once its date has passed, so an expired acceptance fails the audit again, and
+`tests/unit/test_security_scanning_contract.py` fails the required
+`fast-source` check when an entry is already expired, runs more than 90 days
+past the current date, carries no substantive reason, or introduces any table
+other than `IgnoredVulns`. An acceptance therefore cannot be open-ended and
+cannot rot unnoticed if the advisory is later withdrawn.
+
+No static analysis of this repository's own source runs anywhere, and no check
+compares a pull request's dependency graph with its base. Both were designed
+against the pinned CodeQL and dependency-review actions and then deferred to
+issue #674: each requires GitHub code scanning and the dependency review API,
+which a private repository cannot use without GitHub Code Security, and neither
+can report a truthful result until the repository is public or covered by that
+plan. Nothing dormant, commented, or conditionally skipped was left behind for
+them.
+
+Every workflow runs with `contents: read` at the workflow level, grants no
+write authority over the repository, pins every action to a commit with its
+version comment, and sets `persist-credentials: false` on every checkout.
+`tests/unit/test_security_scanning_contract.py` sweeps `.github/workflows` and
+fails the gate if a workflow added later breaks any of those.
+
+These remain maintainer-manual and are deliberately outside the scanning
+boundary:
+
+- Making the audit merge-blocking. The default-branch ruleset names the checks
+  it requires, and `dependency-audit` is not among them: it runs and reports on
+  every pull request and every push to `main`, but a red result is advisory
+  until a maintainer adds that check name to the ruleset.
+- Upgrading the pinned scanner image. Renovate observes manifests, lockfiles,
+  Dockerfiles, and action references, not an image named inside a workflow
+  command, so the digest is raised deliberately rather than automatically.
+- Triaging and fixing what the audit reports. An advisory is not remediated by
+  this boundary; each is tracked and fixed as its own work, and accepting one
+  through the register is the exception rather than the route.
+- Static analysis of this repository's source and pull-request dependency
+  review, until issue #674 lands.
+- Secret scanning beyond GitHub's own defaults, software bill of materials
+  publication, and container image scanning. None of the three is performed
+  here.

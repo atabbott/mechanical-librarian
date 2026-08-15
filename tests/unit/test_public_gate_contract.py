@@ -18,7 +18,7 @@ class PublicGateContractTests(unittest.TestCase):
 
     def test_every_exact_revision_reference_resolves_for_both_events(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
-        self.assertEqual(workflow.count(f"ref: {EXACT_SHA}"), 4)
+        self.assertEqual(workflow.count(f"ref: {EXACT_SHA}"), 5)
         self.assertIn(f'--source-sha "{EXACT_SHA}"', workflow)
         # An unguarded head reference is null on a push to `main`.
         self.assertNotIn("${{ github.event.pull_request.head.sha }}", workflow)
@@ -47,8 +47,9 @@ class PublicGateContractTests(unittest.TestCase):
     def test_every_job_is_bounded_on_the_pinned_runner(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("  container-image:\n", workflow)
-        self.assertEqual(workflow.count("runs-on: ubuntu-24.04"), 4)
-        self.assertEqual(workflow.count("timeout-minutes: 10"), 4)
+        self.assertIn("  dependency-audit:\n", workflow)
+        self.assertEqual(workflow.count("runs-on: ubuntu-24.04"), 5)
+        self.assertEqual(workflow.count("timeout-minutes: 10"), 5)
 
     def test_builds_the_shipped_container_from_the_exact_revision(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -56,9 +57,12 @@ class PublicGateContractTests(unittest.TestCase):
             "run: docker build --pull --tag mechanical-librarian:gate .",
             workflow,
         )
-        # The built image is never pushed, loaded, or run by the gate.
+        # The built image is never pushed, loaded, or run by the gate: its tag
+        # is written once and never referenced again. The `docker run` in the
+        # dependency audit runs a different, digest-pinned scanner image and
+        # never touches this one.
         self.assertNotIn("docker push", workflow)
-        self.assertNotIn("docker run", workflow)
+        self.assertEqual(workflow.count("mechanical-librarian:gate"), 1)
 
     def test_caches_the_pinned_chromium_payload_but_still_verifies_it(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -85,7 +89,7 @@ class PublicGateContractTests(unittest.TestCase):
             for line in workflow.splitlines()
             if line.strip().startswith("uses:")
         ]
-        self.assertEqual(len(uses), 15)
+        self.assertEqual(len(uses), 16)
         for reference in uses:
             with self.subTest(reference=reference):
                 _, _, revision = reference.partition("@")
