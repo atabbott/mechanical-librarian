@@ -83,7 +83,7 @@ const recordedSelected = (field: ReviewField, outcome: DecisionCommand['outcome'
 const choiceSelected = (field: ReviewField, pending: DecisionCommand | null, outcome: DecisionCommand['outcome'], selectedValue: DecisionCommand['selectedValue'] = null) => commandSelected(pending, field.destination, outcome, selectedValue) || recordedSelected(field, outcome, selectedValue)
 const ownerChoiceCount = (field: ReviewField) => {
   const consideration = field.coverConsideration
-  if (field.destination !== 'cover') return field.proposedValues.length + 1
+  if (field.destination !== 'cover') return field.preservationOnly ? 2 : field.proposedValues.length + 2
   if (!consideration) return 0
   const candidates = consideration.candidates.filter((candidate) => candidate.selectable || candidate.incumbent)
   const unavailableIncumbent = consideration.incumbent.state === 'unavailable' && !candidates.some((candidate) => candidate.incumbent)

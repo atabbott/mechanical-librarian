@@ -47,6 +47,7 @@ def classify_review_field(
     cause: ReviewFieldCause | None = None,
     current_value: object,
     proposed_values: tuple[object, ...],
+    automatic_override_available: bool = True,
 ) -> ReviewFieldClassification:
     """Classify a field consistently for queue, detail, and navigation use."""
     preservation_only = bool(proposed_values) and all(
@@ -62,6 +63,21 @@ def classify_review_field(
         return ReviewFieldClassification(
             "unsupported", _CAUSE_GUIDANCE[cause], False, False, False, "inspect", preservation_only,
         )
+    if automatic_outcome == "abstention":
+        return ReviewFieldClassification(
+            "manual_fallback", "Automatic handling abstained, so this field needs your review.",
+            True, True, False, "attention", preservation_only,
+        )
+    if automatic_outcome is not None:
+        return ReviewFieldClassification(
+            "automatic_recorded",
+            (
+                "Automatic handling recorded this field; you may inspect or override it."
+                if automatic_override_available
+                else "Automatic handling has advanced to external application and can no longer be overridden."
+            ),
+            False, automatic_override_available, True, "inspect", preservation_only,
+        )
     if cause == "automatic_safety_suspended":
         return ReviewFieldClassification(
             "needs_attention", _CAUSE_GUIDANCE[cause], True, True, False,
@@ -71,16 +87,6 @@ def classify_review_field(
         return ReviewFieldClassification(
             "unsupported", _CAUSE_GUIDANCE[cause or "automatic_safety_suspended"],
             False, False, False, "inspect", preservation_only,
-        )
-    if automatic_outcome == "abstention":
-        return ReviewFieldClassification(
-            "manual_fallback", "Automatic handling abstained, so this field needs your review.",
-            True, True, False, "attention", preservation_only,
-        )
-    if automatic_outcome is not None:
-        return ReviewFieldClassification(
-            "automatic_recorded", "Automatic handling recorded this field; you may inspect or override it.",
-            False, True, True, "inspect", preservation_only,
         )
     if attention_candidate:
         return ReviewFieldClassification(

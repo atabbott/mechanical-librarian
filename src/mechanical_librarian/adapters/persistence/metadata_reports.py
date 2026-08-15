@@ -5205,6 +5205,7 @@ class SQLiteMetadataReportRepository:
                 automatic_attention_destinations=self._automatic_attention_destinations(review_case_id),
                 automatic_safety_suspended_destinations=self._automatic_attention_destinations(review_case_id),
                 shadow_abstention_destinations=self._shadow_abstention_destinations(review_case_id),
+                automatic_override_blocked_destinations=self._automatic_override_blocked_destinations(review_case_id),
                 suspended_destinations=self._field_effect_capability_suspended_destinations(
                     review_case_id
                 ),
@@ -5238,7 +5239,7 @@ class SQLiteMetadataReportRepository:
             projected_rows = []
             for case_document, report_document in rows:
                 if case_document is None and '"schema_version":"review-terminal-work-v1"' in report_document:
-                    projected_rows.append((case_document, report_document, (), (), (), None))
+                    projected_rows.append((case_document, report_document, (), (), (), (), None))
                     continue
                 report = MetadataReport.from_json(report_document)
                 terminal = self._connection.execute(
@@ -5264,6 +5265,7 @@ class SQLiteMetadataReportRepository:
                     () if case_id is None else self.get_review_case_decisions(case_id),
                     () if case_id is None else self._automatic_attention_destinations(case_id),
                     () if case_id is None else self._field_effect_capability_suspended_destinations(case_id),
+                    () if case_id is None else self._shadow_abstention_destinations(case_id),
                     terminal_document,
                 ))
             projected = tuple(projected_rows)
@@ -5292,6 +5294,20 @@ class SQLiteMetadataReportRepository:
             "SELECT DISTINCT json_extract(outcome.value,'$.destination') FROM shadow_decision_outcomes shadow, "
             "json_each(shadow.document,'$.outcomes') outcome WHERE shadow.review_case_id=? "
             "AND json_extract(outcome.value,'$.disposition')='abstention' ORDER BY 1",
+            (review_case_id,),
+        ).fetchall()
+        if any(type(row[0]) is not str for row in rows):
+            raise MetadataReportError("review attention is unavailable")
+        return tuple(row[0] for row in rows)
+
+    def _automatic_override_blocked_destinations(
+        self, review_case_id: str,
+    ) -> tuple[str, ...]:
+        rows = self._connection.execute(
+            "SELECT DISTINCT automatic.destination FROM automatic_decisions automatic "
+            "JOIN field_effects effect ON effect.decision_id=automatic.decision_id "
+            "WHERE automatic.review_case_id=? AND effect.state IN "
+            "('claimed','applying','reconciling','verified') ORDER BY automatic.destination",
             (review_case_id,),
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):

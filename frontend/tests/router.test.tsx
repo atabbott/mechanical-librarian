@@ -975,7 +975,7 @@ describe('typed review routes', () => {
     }
     const { router } = renderRoute('/review/case-1?field=title&subview=review', http)
 
-    expect((await screen.findAllByLabelText('Reviewer facts')).at(0)).toHaveTextContent('Available choices3')
+    expect((await screen.findAllByLabelText('Reviewer facts')).at(0)).toHaveTextContent('Available choices4')
     await user.click(await screen.findByRole('button', { name: 'Choose proposed value 2: Another title' }))
 
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledWith('case-1', expect.objectContaining({ selectedValue: second })))
@@ -994,7 +994,7 @@ describe('typed review routes', () => {
     renderRoute('/review/case-1?field=title&subview=review', http)
 
     expect(await screen.findByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
-    expect(screen.getAllByLabelText('Reviewer facts').at(0)).toHaveTextContent('Available choices1')
+    expect(screen.getAllByLabelText('Reviewer facts').at(0)).toHaveTextContent('Available choices2')
     expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Choose current value: Old title' }))
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledWith('case-1', expect.objectContaining({
@@ -1253,7 +1253,7 @@ describe('typed review routes', () => {
     await user.click(screen.getByRole('button', { name: 'authors' }))
     expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Choose proposed value 1: New title' })).toBeVisible()
-    expect(screen.getAllByLabelText('Reviewer facts').at(1)).toHaveTextContent('Available choices2')
+    expect(screen.getAllByLabelText('Reviewer facts').at(1)).toHaveTextContent('Available choices3')
   })
 
   it('binds an ambiguous reconciliation lock after a pending background detail refresh', async () => {

@@ -48,6 +48,7 @@ class CurrentReviewCaseSnapshot:
     automatic_attention_destinations: tuple[str, ...] = ()
     automatic_safety_suspended_destinations: tuple[str, ...] = ()
     shadow_abstention_destinations: tuple[str, ...] = ()
+    automatic_override_blocked_destinations: tuple[str, ...] = ()
     suspended_destinations: tuple[str, ...] = ()
     suspension_causes: tuple[tuple[str, ReviewFieldCause], ...] = ()
     cover_consideration_document: str | None = None
@@ -63,6 +64,8 @@ class ReviewLibrarySnapshot:
             tuple[str, ...],
             tuple[str, ...],
             tuple[str, ...],
+            tuple[str, ...],
+            str | None,
         ],
         ...,
     ]
@@ -321,6 +324,9 @@ class InspectCurrentReviewCase:
                     ("abstention" if destination in snapshot.shadow_abstention_destinations
                      else None if automatic_decision is None
                      else str(automatic_decision["outcome"]))
+                ),
+                automatic_override_available=(
+                    destination not in snapshot.automatic_override_blocked_destinations
                 ),
                 has_human_decision=decision is not None,
                 suspended=destination in snapshot.suspended_destinations,
@@ -636,8 +642,9 @@ class BrowseReviewLibrary:
                 case_document, report_document, decision_documents = row[:3]
                 automatic_attention_destinations = row[3] if len(row) >= 4 else ()
                 suspended_destinations = row[4] if len(row) >= 5 else ()
-                terminal_document = row[5] if len(row) >= 6 else None
-                items.append(_library_item(case_document, report_document, decision_documents, automatic_attention_destinations, suspended_destinations, terminal_document))
+                shadow_abstention_destinations = row[5] if len(row) >= 6 else ()
+                terminal_document = row[6] if len(row) >= 7 else None
+                items.append(_library_item(case_document, report_document, decision_documents, automatic_attention_destinations, suspended_destinations, shadow_abstention_destinations, terminal_document))
         except Exception as error:
             raise ReviewWebError("unavailable") from error
         return {
@@ -1029,6 +1036,7 @@ def _library_item(
     decision_documents: tuple[str, ...],
     automatic_attention_destinations: tuple[str, ...] = (),
     suspended_destinations: tuple[str, ...] = (),
+    shadow_abstention_destinations: tuple[str, ...] = (),
     terminal_document: str | None = None,
 ) -> dict[str, object]:
     if case_document is None:
@@ -1077,9 +1085,18 @@ def _library_item(
                 attention_candidate=_needs_attention(
                     value, automatic_attention_destinations,
                 ),
-                automatic_outcome=automatic_outcomes.get(value["destination"]),
+                automatic_outcome=(
+                    "abstention"
+                    if value["destination"] in shadow_abstention_destinations
+                    else automatic_outcomes.get(value["destination"])
+                ),
                 has_human_decision=value["destination"] in decisions,
                 suspended=value["destination"] in suspended_destinations,
+                cause=(
+                    "automatic_safety_suspended"
+                    if value["destination"] in automatic_attention_destinations
+                    else None
+                ),
                 current_value=None,
                 proposed_values=(),
             ).needs_attention)
@@ -1139,7 +1156,9 @@ def _attention_item(
             _needs_attention(proposal)
             or cause == "automatic_safety_suspended"
         ),
-        automatic_outcome=automatic_outcome,
+        automatic_outcome=(
+            "abstention" if automatic_outcome == "abstention" else None
+        ),
         has_human_decision=False,
         suspended=False,
         cause=cause,

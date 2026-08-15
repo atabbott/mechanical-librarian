@@ -445,6 +445,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 0,
             )
             expect(page.locator(".workspace-detail .direct-choice-grid .value-choice")).to_have_count(4)
+            expect(page.locator(".workspace-detail .direct-choice button")).to_have_count(5)
             expect(page.locator(".library-works")).to_be_visible()
             expect(page.locator(".workspace-detail")).to_be_visible()
             # #598 keeps automatic, unsupported, and recorded siblings in the
@@ -856,6 +857,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 equal_title.locator(".direct-choice-grid").get_attribute("class"),
             )
             expect(equal_title.locator(".direct-choice-grid .value-choice")).to_have_count(1)
+            expect(equal_title.locator(".direct-choice button")).to_have_count(2)
             self.assertEqual(equal_title.locator(".proposed-value").count(), 0)
             self.assertIn("Current <script> title", equal_title.locator(".current-value").inner_text())
             page.goto(

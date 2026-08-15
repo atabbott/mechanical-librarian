@@ -58,6 +58,37 @@ class ReviewFieldClassificationTests(unittest.TestCase):
             )
             self.assertTrue(value.preservation_only)
 
+    def test_automatic_record_and_abstention_precede_later_safety_projection(self) -> None:
+        for automatic_outcome, state, attention in (
+            ("candidate", "automatic_recorded", False),
+            ("abstention", "manual_fallback", True),
+        ):
+            value = classify_review_field(
+                attention_candidate=True,
+                automatic_outcome=automatic_outcome,
+                has_human_decision=False,
+                suspended=False,
+                cause="automatic_safety_suspended",
+                current_value="Current",
+                proposed_values=("Candidate",),
+            )
+            self.assertEqual(state, value.state)
+            self.assertEqual(attention, value.needs_attention)
+
+    def test_advanced_automatic_effect_is_inspect_only(self) -> None:
+        value = classify_review_field(
+            attention_candidate=True,
+            automatic_outcome="candidate",
+            automatic_override_available=False,
+            has_human_decision=False,
+            suspended=False,
+            current_value="Current",
+            proposed_values=("Candidate",),
+        )
+        self.assertEqual("automatic_recorded", value.state)
+        self.assertFalse(value.editable)
+        self.assertIn("can no longer be overridden", value.reason)
+
     def test_attention_continues_after_two_contradictory_batches(self) -> None:
         class Repository:
             def __init__(self) -> None:
