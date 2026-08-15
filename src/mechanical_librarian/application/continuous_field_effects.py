@@ -840,7 +840,7 @@ class ContinuousGuardedApplication:
                 or progress.updated_at < release.requested_at
             ):
                 continue
-            cleared = self._repository.clear_field_effect_manual_hold(
+            self._repository.clear_field_effect_manual_hold(
                 review_case_id, destination, self._clock(), release.hold_token
             )
         self._manual_return_cursor = (

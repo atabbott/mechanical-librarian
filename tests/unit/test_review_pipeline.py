@@ -582,7 +582,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
     def test_thousand_work_three_library_backlog_is_bounded_and_fair(self) -> None:
         repository = open_repository(self.path)
         libraries = (("fiction", 334), ("history", 333), ("science", 333))
-        for offset, (library, count) in enumerate(libraries):
+        for offset, (library, _count) in enumerate(libraries):
             repository.request_review_scan(
                 "primary", library, f"lib-{offset}", _PRODUCER, 10 + offset
             )

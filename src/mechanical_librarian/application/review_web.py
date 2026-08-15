@@ -814,8 +814,6 @@ def _choice_contexts(
     evidence: dict[str, dict[str, str | None]] | None = None,
 ) -> list[dict[str, object]]:
     """Project retained proposal lineage into owner-readable choice context."""
-    selected = result.get("selected_alternative_id")
-    selected_id = selected if type(selected) is str else None
     local_value_present = target.get("state") == "value" and _current_value_present(
         target.get("value")
     )

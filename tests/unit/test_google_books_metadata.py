@@ -107,7 +107,7 @@ def _discovery_plan() -> MetadataDiscoveryPlan:
             matched_family=value,
             canonical_isbns=(value,),
         )
-        for index, (claim, value) in enumerate(zip(claims, values))
+        for index, (claim, value) in enumerate(zip(claims, values, strict=False))
     ]
     lanes.append(
         MetadataDiscoveryLane(

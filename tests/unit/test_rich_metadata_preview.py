@@ -127,7 +127,6 @@ class RichMetadataPreviewTests(unittest.TestCase):
     def test_binding_mismatch_fails_closed(self) -> None:
         report = _report()
         proposal = evaluate_report(report)
-        policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
         with self.assertRaises(RichMetadataPreviewError):
             compile_rich_metadata_preview(
                 resolve_policy(MetadataPolicyProfile.builtin(), "other"), report, proposal

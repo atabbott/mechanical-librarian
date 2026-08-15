@@ -297,11 +297,13 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         )
 
         nested = b'{"value":' + b"[" * 101 + b"0" + b"]" * 101 + b"}"
-        deep_client = lambda: httpx.Client(transport=httpx.MockTransport(
-            lambda request: httpx.Response(
-                200, headers={"content-type": "application/json"}, content=nested
-            )
-        ))
+        def deep_client() -> httpx.Client:
+            return httpx.Client(transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200, headers={"content-type": "application/json"}, content=nested
+                )
+            ))
+
         deep_capabilities = AudiobookshelfFieldEffectCapabilities(
             client_factory=deep_client,
             endpoint="https://abs.example.invalid", library_id="library-1",

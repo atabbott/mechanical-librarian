@@ -527,7 +527,7 @@ class HardcoverMetadataProvider:
                         delay=delay,
                         outcome="deadline_exhausted",
                     )
-                    raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+                    raise _ProviderFailure(ProviderStatus.UNAVAILABLE) from None
                 self._record_attempt(
                     started,
                     category=error.category,

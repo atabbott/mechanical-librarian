@@ -511,7 +511,7 @@ def _central_directory(request: EpubPackageRequest) -> tuple[_Entry, ...]:
         cursor += 46 + name_length + extra_length + comment_length
     if cursor != central_offset + central_size:
         raise _Rejected(EpubInspectionOutcome.MALFORMED)
-    for previous, current in zip(sorted(intervals), sorted(intervals)[1:]):
+    for previous, current in zip(sorted(intervals), sorted(intervals)[1:], strict=False):
         if previous[1] > current[0]:
             raise _Rejected(EpubInspectionOutcome.MALFORMED)
     if not any(entry.name == _MIMETYPE for entry in result):

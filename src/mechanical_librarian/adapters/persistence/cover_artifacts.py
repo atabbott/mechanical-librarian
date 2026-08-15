@@ -106,10 +106,10 @@ class CoverArtifactStore:
         directory = self._directory()
         try:
             descriptor = os.open(digest, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600, dir_fd=directory)
-        except FileExistsError:
+        except FileExistsError as error:
             os.close(directory)
             if self._read(digest, max(len(content), 1_048_576)) != content:
-                raise MetadataReportError("artifact content disagrees")
+                raise MetadataReportError("artifact content disagrees") from error
             return
         except OSError as error:
             os.close(directory)

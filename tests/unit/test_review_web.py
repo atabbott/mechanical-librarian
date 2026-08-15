@@ -1788,7 +1788,7 @@ class ReviewWebTests(unittest.TestCase):
         self.assertNotIn("set-cookie", failed.headers)
 
     def test_logout_maps_expired_and_malformed_sessions_to_unauthorized(self) -> None:
-        login = self._login()
+        self._login()
         self.now += 601
         expired = self.client.post(
             "/api/v1/session/logout",

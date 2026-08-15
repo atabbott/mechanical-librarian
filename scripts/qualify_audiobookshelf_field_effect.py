@@ -37,6 +37,12 @@ IMPORT_ROOT = Path(INSTALLED_ROOT).resolve() if INSTALLED_ROOT else ROOT / "src"
 if str(IMPORT_ROOT) not in sys.path:
     sys.path.insert(0, str(IMPORT_ROOT))
 
+# ruff: noqa: E402
+# Every import below deliberately follows the import-root selection above: this
+# qualification runs against either the installed artifact or the source tree,
+# and which one it imports is decided by the sys.path insertion. Moving these
+# imports to the top of the file would bind the wrong tree.
+
 import httpx
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient

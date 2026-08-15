@@ -59,11 +59,11 @@ from mechanical_librarian_workbench import (  # noqa: E402
     execute,
 )
 
-from mechanical_librarian.adapters.reviewers import (
-    contained_reviewer as reviewer_adapter,  # noqa: E402
+from mechanical_librarian.adapters.reviewers import (  # noqa: E402
+    contained_reviewer as reviewer_adapter,
 )
-from mechanical_librarian.application import (
-    cover_packets as packet_builder,  # noqa: E402
+from mechanical_librarian.application import (  # noqa: E402
+    cover_packets as packet_builder,
 )
 from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
     ContainedReviewRequest,
@@ -88,7 +88,7 @@ from mechanical_librarian.application.cover_observation import (  # noqa: E402
     _output_schema,
     observe_cover_packet,
 )
-from mechanical_librarian.application.cover_observation import (
+from mechanical_librarian.application.cover_observation import (  # noqa: E402
     SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
 )
 from mechanical_librarian.application.cover_packets import (  # noqa: E402
@@ -99,8 +99,8 @@ from mechanical_librarian.application.cover_policy import (  # noqa: E402
     CoverPolicy,
     adjudicate_cover_policy,
 )
-from mechanical_librarian.bootstrap import (
-    contained_reviewer as reviewer_binding,  # noqa: E402
+from mechanical_librarian.bootstrap import (  # noqa: E402
+    contained_reviewer as reviewer_binding,
 )
 
 
@@ -558,7 +558,6 @@ class CoverPacketTests(unittest.TestCase):
             for value in packet.images
         )
 
-        candidate = json.loads(packet.document)["candidates"][0]
         changed = json.loads(packet.document)
         changed["candidates"][0]["source_bindings"][0]["preview_sha256"] = (
             hashlib.sha256(second_payload).hexdigest()
@@ -723,7 +722,7 @@ class CoverPacketTests(unittest.TestCase):
     def test_cover_retry_is_hard_capped_and_rejects_other_failures(self) -> None:
         packet, images = _packet_case()
         schema = '{"additionalProperties":false,"properties":{"summary":{"type":"string"}},"required":["summary"],"type":"object"}'
-        for code, expected_instances, expected_sleep in (
+        for code, _expected_instances, _expected_sleep in (
             ("local_cli_abort", 2, 1),
             ("runtime", 1, 0),
             ("response_format", 1, 0),
@@ -748,7 +747,7 @@ class CoverPacketTests(unittest.TestCase):
                 with (
                     mock.patch.object(reviewer_binding, "load_contained_reviewer_profile_bytes", return_value=object()),
                     mock.patch.object(reviewer_binding, "ContainedReviewerAdapter", FailingReviewer),
-                    self.assertRaises(reviewer_adapter.ContainedReviewerProcessError) as caught,
+                    self.assertRaises(reviewer_adapter.ContainedReviewerProcessError),
                 ):
                     reviewer_binding.run_cover_packet_reviewer(
                         b"profile", b"Inspect.", packet.document.encode(), schema.encode(), images

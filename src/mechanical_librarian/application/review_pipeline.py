@@ -478,7 +478,7 @@ class ReviewPreparationPipeline:
             action = repository.claim_review_pipeline_work(work_id, self._clock())
             if action is None:
                 return repository.provider_retry_complete(report_id)
-            for index in range(4):
+            for _index in range(4):
                 if action is None:
                     return False
                 heartbeat()

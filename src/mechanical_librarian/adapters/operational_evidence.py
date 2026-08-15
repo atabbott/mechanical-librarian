@@ -48,7 +48,7 @@ class LocalTimingStore:
             try:
                 require_private_directory(self._path.parent, "timing_unavailable")
             except (OSError, ValueError) as error:
-                raise OperationsError("timing_unavailable")
+                raise OperationsError("timing_unavailable") from error
             try:
                 information = self._path.lstat()
             except FileNotFoundError:

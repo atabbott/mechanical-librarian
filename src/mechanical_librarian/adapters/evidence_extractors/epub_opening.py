@@ -3368,7 +3368,7 @@ class EpubOpeningExtractor:
                         nodes > limits.nodes_per_selection
                         or text_characters > limits.text_characters_per_selection
                     ):
-                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
+                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT) from error
                     code = "selected_resource_limit"
                     resources.append(
                         OpeningResourceResult(
@@ -3387,7 +3387,7 @@ class EpubOpeningExtractor:
                         nodes > limits.nodes_per_selection
                         or text_characters > limits.text_characters_per_selection
                     ):
-                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
+                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT) from error
                     code = "unsafe_construct"
                     resources.append(
                         OpeningResourceResult(
@@ -3406,7 +3406,7 @@ class EpubOpeningExtractor:
                         nodes > limits.nodes_per_selection
                         or text_characters > limits.text_characters_per_selection
                     ):
-                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
+                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT) from error
                     code = "unsupported_encoding"
                     resources.append(
                         OpeningResourceResult(
@@ -3425,7 +3425,7 @@ class EpubOpeningExtractor:
                         nodes > limits.nodes_per_selection
                         or text_characters > limits.text_characters_per_selection
                     ):
-                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
+                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT) from error
                     code = "malformed_selected_resource"
                     resources.append(
                         OpeningResourceResult(

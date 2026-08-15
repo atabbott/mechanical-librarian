@@ -2911,7 +2911,6 @@ class ProviderAdapterTests(unittest.TestCase):
         )
 
     def test_response_cap_and_candidate_probe_are_terminal(self) -> None:
-        payload = self._envelope([], [])
         capped = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, content=b"{}" * 20))), 1)
         self.assertEqual(capped.observe(_isbn_lookup((self._claim(),))).status, ProviderStatus.OVERSIZED)
         rows = [{"id": index, "book_id": index, "isbn_10": None, "isbn_13": None} for index in range(1, 7)]
@@ -5941,13 +5940,15 @@ class AudiobookshelfItemTests(unittest.TestCase):
         duplicate = b'{"id":"item-1","id":"item-1"}'
         oversized = b"x" * 1025
         for payload, maximum in ((duplicate, 65_536), (oversized, 1024)):
-            client_factory = lambda value=payload: httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda request, body=value: httpx.Response(
-                        200, headers={"content-type": "application/json"}, content=body
+            def client_factory(value: bytes = payload) -> httpx.Client:
+                return httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda request, body=value: httpx.Response(
+                            200, headers={"content-type": "application/json"}, content=body
+                        )
                     )
                 )
-            )
+
             reader = AudiobookshelfItemReader(
                 client_factory=client_factory,
                 endpoint="https://example.invalid",

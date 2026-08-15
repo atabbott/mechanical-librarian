@@ -437,7 +437,7 @@ def main() -> None:
             encoding="utf-8",
         )
     except (OSError, RecursionError, ValueError):
-        raise SystemExit("Recoverability evaluation failed safely.")
+        raise SystemExit("Recoverability evaluation failed safely.") from None
 
 
 if __name__ == "__main__":

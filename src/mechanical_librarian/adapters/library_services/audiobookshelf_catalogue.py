@@ -86,7 +86,7 @@ class AudiobookshelfCatalogueReader:
             # httpx keeps certificate verification enabled in the configured
             # target client.  Classifying the outcome must not weaken it.
             raise TargetConnectionError(target_connection_code(error)) from None
-        except (httpx.HTTPError, OSError, UnicodeError, ValueError, TypeError) as error:
+        except (httpx.HTTPError, OSError, UnicodeError, ValueError, TypeError):
             raise TargetConnectionError("unavailable") from None
 
     def probe_connection(

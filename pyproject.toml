@@ -81,6 +81,15 @@ ignore = [
   "E501",
 ]
 
+[tool.ruff.lint.flake8-bugbear]
+# B008 exists because a mutable default is constructed once and then shared.
+# These two are `@dataclass(frozen=True, slots=True)` value objects with no
+# mutable state, so a shared instance is exactly the intent.
+extend-immutable-calls = [
+  "mechanical_librarian.application.cover_policy.CoverPolicy",
+  "mechanical_librarian.domain.metadata_report.ProviderRequestAccounting",
+]
+
 [tool.ruff.lint.isort]
 known-first-party = ["mechanical_librarian"]
 

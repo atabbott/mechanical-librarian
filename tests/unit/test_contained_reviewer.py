@@ -23,11 +23,11 @@ from PIL import Image
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
 
-from mechanical_librarian.adapters.reviewers import (
-    contained_reviewer as adapter,  # noqa: E402
+from mechanical_librarian.adapters.reviewers import (  # noqa: E402
+    contained_reviewer as adapter,
 )
-from mechanical_librarian.application import (
-    contained_reviewer_contract as contract,  # noqa: E402
+from mechanical_librarian.application import (  # noqa: E402
+    contained_reviewer_contract as contract,
 )
 from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
     ContainedReviewerIdentity,
@@ -392,10 +392,6 @@ class ContainedReviewerTests(unittest.TestCase):
                         reviewer._run_auth([], artifact, artifact, 11)
 
     def test_fake_process_invocation_records_dispatch_before_output_and_cleans_job(self) -> None:
-        schema = json.dumps({"$schema": "https://json-schema.org/draft/2020-12/schema",
-                             "additionalProperties": False,
-                             "properties": {"summary": {"type": "string"}},
-                             "required": ["summary"], "type": "object"}, separators=(",", ":"), sort_keys=True)
         request = _cover_request()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -37,6 +37,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderClaim,
     ProviderEvidenceKind,
     ProviderIdentityBinding,
+    ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
     TargetDestination,

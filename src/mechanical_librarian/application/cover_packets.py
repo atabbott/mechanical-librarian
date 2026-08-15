@@ -6,15 +6,6 @@ import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from mechanical_librarian.domain.cover_evidence import (
-    PREVIEW_VARIANT,
-    CoverSource,
-    CoverSourceKind,
-    CoverSourceState,
-)
-from mechanical_librarian.domain.metadata_report import MetadataReport
-
-SCHEMA_VERSION = "cover-review-packet-v2"
 from mechanical_librarian.application.cover_packet_semantics import (
     MAX_COVER_PACKET_BYTES,
     MAX_COVER_PREVIEW_BYTES,
@@ -28,6 +19,15 @@ from mechanical_librarian.application.cover_packet_semantics import (
     normalize_provenance,
     validate_cover_preview,
 )
+from mechanical_librarian.domain.cover_evidence import (
+    PREVIEW_VARIANT,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+)
+from mechanical_librarian.domain.metadata_report import MetadataReport
+
+SCHEMA_VERSION = "cover-review-packet-v2"
 
 
 def cover_source_reference(report_id: str, source_id: str) -> str:
