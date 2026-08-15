@@ -64,6 +64,32 @@ Do not install project tools globally or add unrecorded dependencies. Update
 `pyproject.toml` and regenerate `uv.lock` together when the dependency graph
 changes.
 
+## Frontend bootstrap
+
+The authenticated-browser source under `frontend/` uses Node 24.19.0 and npm
+11.17.0. A clean checkout needs no manual generation step:
+
+```text
+cd frontend
+npm ci --ignore-scripts
+npm run typecheck
+npm run lint
+npm test
+npm run build
+```
+
+`typecheck`, `lint`, `test`, and `build` each run `npm run generate` first, so
+the gitignored DTOs in `src/generated/` are always current with
+`docs/reference/review-openapi-v1.json`. Run `npm run generate` directly only
+when you want the generated types without a check.
+
+`frontend/src` is formatted by Prettier using the committed
+`frontend/.prettierrc.json`. `npm run lint` fails on unformatted source and
+`npm run format` rewrites it. Keep formatting-only changes in their own commit
+so behaviour diffs stay reviewable. `src/styles.css` and the generated DTOs are
+excluded in `frontend/.prettierignore`; `frontend/prototype/` is scratch space
+excluded from lint.
+
 ## Pull requests
 
 During the initial application build, new product functionality is delivered as

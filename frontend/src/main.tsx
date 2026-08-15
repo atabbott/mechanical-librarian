@@ -16,7 +16,9 @@ const buildIdentity = document.body.dataset.buildIdentity
 document.body.removeAttribute('data-csrf-token')
 document.body.removeAttribute('data-build-identity')
 configureChunkRecovery(buildIdentity)
-const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+})
 const http = new ReviewApiClient({
   csrf: new PageCsrfTokenStore(pageToken),
   ...(buildIdentity ? { buildIdentity } : {}),

@@ -1,0 +1,4 @@
+# Generated DTOs are reproduced by `npm run generate` and never reviewed by hand.
+src/generated/
+# Stylesheet reorganisation is owned separately; formatting must not rewrite it.
+src/styles.css

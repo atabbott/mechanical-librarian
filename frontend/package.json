@@ -13,10 +13,15 @@
   },
   "scripts": {
     "generate": "node scripts/generate-dtos.mjs",
+    "format": "prettier --write src",
+    "pretypecheck": "npm run generate",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
+    "prelint": "npm run generate",
+    "lint": "prettier --check src && eslint .",
     "licenses": "node scripts/check-licenses.mjs",
+    "pretest": "npm run generate",
     "test": "vitest run",
+    "prebuild": "npm run generate",
     "build": "vite build && node scripts/write-asset-manifest.mjs"
   },
   "dependencies": {
@@ -41,6 +46,7 @@
     "globals": "17.9.0",
     "jsdom": "30.0.1",
     "openapi-typescript": "7.13.0",
+    "prettier": "3.9.6",
     "typescript": "5.9.3",
     "typescript-eslint": "8.66.0",
     "vite": "8.2.1",
