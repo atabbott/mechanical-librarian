@@ -639,6 +639,10 @@
             "title": "Authors",
             "type": "array"
           },
+          "classification_reason": {
+            "title": "Classification Reason",
+            "type": "string"
+          },
           "destination": {
             "title": "Destination",
             "type": "string"
@@ -688,6 +692,7 @@
         },
         "required": [
           "authors",
+          "classification_reason",
           "destination",
           "detail_url",
           "item",

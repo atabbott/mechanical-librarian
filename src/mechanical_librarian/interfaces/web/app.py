@@ -401,6 +401,7 @@ class _LibraryResponse(_ClosedModel):
 
 class _AttentionItem(_ClosedModel):
     authors: list[str]
+    classification_reason: str
     destination: str
     detail_url: str
     item: str

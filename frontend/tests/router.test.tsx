@@ -287,6 +287,7 @@ describe('typed review routes', () => {
       proposedValues: [],
       proposalId: 'proposal-series',
       targetFingerprint: 'fingerprint-series',
+      classificationReason: 'Automatic handling recorded this field; you may inspect or override it.',
       needsAttention: false,
       automaticDecision: {
         candidate_id: null,
@@ -320,7 +321,7 @@ describe('typed review routes', () => {
     expect(screen.getAllByText(/2 named sources/u).length).toBeGreaterThan(0)
     await user.click(screen.getByText('1 automatic or recorded field'))
     expect(screen.getByText('Resolved automatically · Atlas Cycle 2.5')).toBeVisible()
-    expect(screen.getByText('Series already agrees with the deterministic policy.')).toBeVisible()
+    expect(screen.getByText('Automatic handling recorded this field; you may inspect or override it.')).toBeVisible()
   })
 
   it('shows bound incumbent and manual alternatives and retries only failed advice', async () => {
@@ -901,8 +902,8 @@ describe('typed review routes', () => {
     const attention: AttentionView = {
       total: 2,
       items: [
-        { id: 'case-1', destination: 'title', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', notices: ['conflicting_evidence'], provenance: ['opaque-source-1'], workAttentionCount: 3 },
-        { id: 'case-1', destination: 'authors', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', notices: [], provenance: [], workAttentionCount: 3 },
+        { id: 'case-1', destination: 'title', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', classificationReason: 'Conflicting evidence', notices: ['conflicting_evidence'], provenance: ['opaque-source-1'], workAttentionCount: 3 },
+        { id: 'case-1', destination: 'authors', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', classificationReason: 'This field needs your review.', notices: [], provenance: [], workAttentionCount: 3 },
       ],
     }
     const http: ReviewHttp = { ...createHttp(), getAttention: vi.fn(async () => attention) }
@@ -2285,7 +2286,10 @@ describe('typed review routes', () => {
     }))
     renderRoute('/activity', { ...createHttp(), getActivity })
 
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const heading = await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const focusTarget = heading.closest<HTMLElement>('[data-route-focus]')
+    expect(focusTarget).not.toBeNull()
+    await waitFor(() => expect(focusTarget).toHaveFocus())
     const page = screen.getByRole('spinbutton', { name: 'Activity page number' })
     const callsBeforeEscape = getActivity.mock.calls.length
     await user.clear(page)

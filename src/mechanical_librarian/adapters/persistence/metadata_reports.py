@@ -5203,6 +5203,7 @@ class SQLiteMetadataReportRepository:
                     else self.get_review_case_history(review_case_id, history_limit)
                 ),
                 automatic_attention_destinations=self._automatic_attention_destinations(review_case_id),
+                automatic_safety_suspended_destinations=self._automatic_attention_destinations(review_case_id),
                 shadow_abstention_destinations=self._shadow_abstention_destinations(review_case_id),
                 suspended_destinations=self._field_effect_capability_suspended_destinations(
                     review_case_id
@@ -5520,7 +5521,7 @@ class SQLiteMetadataReportRepository:
 
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[tuple[str, str, str, int, str | None], ...]:
+    ) -> tuple[tuple[str, str, str, int, str | None, str | None], ...]:
         try:
             query, pattern = _review_search_pattern(search)
             rows = self._connection.execute(
@@ -5530,7 +5531,8 @@ class SQLiteMetadataReportRepository:
                 "WHERE " + _REVIEW_FIELD_ATTENTION_SQL + "),"
                 "(SELECT json_extract(outcome.value,'$.disposition') FROM shadow_decision_outcomes shadow, "
                 "json_each(shadow.document,'$.outcomes') outcome WHERE shadow.review_case_id=rc.review_case_id "
-                "AND json_extract(outcome.value,'$.destination')=json_extract(result.value,'$.destination') LIMIT 1) "
+                "AND json_extract(outcome.value,'$.destination')=json_extract(result.value,'$.destination') LIMIT 1),"
+                "(CASE WHEN " + _AUTOMATIC_SAFETY_ATTENTION_SQL + " THEN 'automatic_safety_suspended' ELSE NULL END) "
                 + _CURRENT_REVIEW_FROM_SQL
                 + ",json_each(rc.document,'$.results') result "
                 "WHERE "
@@ -5559,9 +5561,10 @@ class SQLiteMetadataReportRepository:
                     or type(row[3]) is not int
                     or row[3] < 1
                     or (row[4] is not None and type(row[4]) is not str)
+                    or (row[5] is not None and type(row[5]) is not str)
                 ):
                     raise MetadataReportError("review attention field is invalid")
-                values.append((case_document, report_document, row[2], row[3], row[4]))
+                values.append((case_document, report_document, row[2], row[3], row[4], row[5]))
             return tuple(values)
         except (
             sqlite3.Error,

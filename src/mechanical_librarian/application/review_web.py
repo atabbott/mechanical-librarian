@@ -46,6 +46,7 @@ class CurrentReviewCaseSnapshot:
     decision_documents: tuple[str, ...]
     history: tuple[dict[str, object], ...]
     automatic_attention_destinations: tuple[str, ...] = ()
+    automatic_safety_suspended_destinations: tuple[str, ...] = ()
     shadow_abstention_destinations: tuple[str, ...] = ()
     suspended_destinations: tuple[str, ...] = ()
     suspension_causes: tuple[tuple[str, ReviewFieldCause], ...] = ()
@@ -323,7 +324,11 @@ class InspectCurrentReviewCase:
                 ),
                 has_human_decision=decision is not None,
                 suspended=destination in snapshot.suspended_destinations,
-                cause=suspension_causes.get(destination),
+                cause=(
+                    "automatic_safety_suspended"
+                    if destination in snapshot.automatic_safety_suspended_destinations
+                    else suspension_causes.get(destination)
+                ),
                 current_value=target_fields[destination]["value"],
                 proposed_values=tuple(
                     alternative["value"] for alternative in alternatives
@@ -666,22 +671,26 @@ class BrowseReviewLibrary:
         offset = _decode_cursor(cursor, "attention", "needs_attention", normalized)
         try:
             # A row may become contradictory after the SQL snapshot's durable
-            # membership check.  Read at most two existing bounded repository
-            # pages to replace it, never turning one stale row into a 503.
+            # membership check. Read at most two existing bounded repository
+            # pages to replace it; the authoritative raw total proves whether
+            # that bounded scan reached terminal exhaustion.
             scan_offset = offset
             consumed = 0
-            omitted = 0
             items: list[dict[str, object]] = []
             has_more = False
             snapshot: ReviewAttentionSnapshot | None = None
+            raw_total: int | None = None
             for batch in range(2):
                 snapshot = self._repository.read_review_attention(
                     normalized, bounded_limit + 1, scan_offset
                 )
                 raw_rows = snapshot.rows
+                if raw_total is None:
+                    raw_total = snapshot.total
                 for row in raw_rows:
                     case_document, report_document, destination, work_attention_count = row[:4]
                     automatic_outcome = row[4] if len(row) > 4 else None
+                    cause = row[5] if len(row) > 5 else None
                     if len(items) >= bounded_limit:
                         has_more = True
                         break
@@ -691,13 +700,14 @@ class BrowseReviewLibrary:
                         report_document,
                         destination,
                         work_attention_count,
-                        *(() if automatic_outcome is None else (automatic_outcome,)),
+                        automatic_outcome=automatic_outcome,
+                        cause=cause,
                     )
                     if item is not None:
                         items.append(item)
-                    else:
-                        omitted += 1
-                if has_more or len(raw_rows) <= bounded_limit:
+                if has_more:
+                    break
+                if scan_offset + len(raw_rows) >= raw_total:
                     break
                 if batch == 1:
                     # The bounded race-defense scan cannot prove that a later
@@ -724,10 +734,7 @@ class BrowseReviewLibrary:
             ),
             "query": normalized,
             "schema_version": "review-attention-v1",
-            # SQL membership is field-local and snapshot-consistent.  A row can
-            # still race a durable decision after that snapshot; never report
-            # one of the rows we just omitted as visible attention.
-            "total": max(0, snapshot.total - omitted),
+            "total": raw_total,
         }
 
 def _digest(value: str) -> str:
@@ -1108,6 +1115,7 @@ def _attention_item(
     destination: str,
     work_attention_count: int,
     automatic_outcome: str | None = None,
+    cause: ReviewFieldCause | None = None,
 ) -> dict[str, object] | None:
     case, report = _case_and_report(case_document, report_document)
     proposal = next(
@@ -1118,14 +1126,21 @@ def _attention_item(
         ),
         None,
     )
-    if proposal is None or not classify_review_field(
-        attention_candidate=_needs_attention(proposal),
+    if proposal is None:
+        return None
+    classification = classify_review_field(
+        attention_candidate=(
+            _needs_attention(proposal)
+            or cause == "automatic_safety_suspended"
+        ),
         automatic_outcome=automatic_outcome,
         has_human_decision=False,
         suspended=False,
+        cause=cause,
         current_value=None,
         proposed_values=(),
-    ).needs_attention:
+    )
+    if not classification.needs_attention:
         # Query membership can race a durable automatic or human decision.  A
         # stale browse row is omitted; it is never an outage for other work.
         return None
@@ -1133,6 +1148,7 @@ def _attention_item(
     assert type(result) is dict
     return {
         "authors": _report_authors(report),
+        "classification_reason": classification.reason,
         "destination": destination,
         "detail_url": f"/review/{case.review_case_id}?field={destination}",
         "item": report.target.item,

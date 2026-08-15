@@ -19,7 +19,7 @@ export interface ProviderOutcomeView { providerRequests: number; laneKind: strin
 export interface PreparationFailureView { attempt: number; provider: string; reason: string; recovery: string; recoveryAttempt: number; stage: string; status: string }
 export interface LibraryWorkView { id: string; reviewCaseId?: string; title: string; authors: readonly string[]; library: string; mediaKind: string; attentionCount: number; attention: string; preparation: PreparationFailureView | null; preparationOutcomes: readonly ProviderOutcomeView[] }
 export interface LibraryView { lens: LibraryLens; query?: string; nextCursor?: string; counts: { attention: number; all: number; clear: number }; works: readonly LibraryWorkView[] }
-export interface AttentionItemView { id: string; destination: string; title: string; authors: readonly string[]; library: string; mediaKind: string; notices: readonly string[]; provenance: readonly string[]; workAttentionCount: number }
+export interface AttentionItemView { id: string; destination: string; title: string; authors: readonly string[]; library: string; mediaKind: string; classificationReason?: string; notices: readonly string[]; provenance: readonly string[]; workAttentionCount: number }
 export interface AttentionView { query?: string; nextCursor?: string; total: number; items: readonly AttentionItemView[] }
 export interface ReviewFieldView {
   classification: string
@@ -354,7 +354,7 @@ export const mapAttention = (value: unknown): AttentionView => {
   if (!record(value) || !Array.isArray(value.items)) throw new ApiError(502, 'invalid_attention_response')
   const dto = value as unknown as AttentionDto; stringValue(dto.schema_version, 'schema_version')
   const query = optionalString(dto.query, 'attention_query'); const nextCursor = optionalString(dto.next_cursor, 'attention_cursor')
-  return { ...(query ? { query } : {}), ...(nextCursor ? { nextCursor } : {}), total: integerValue(dto.total, 'attention_total'), items: dto.items.map((item) => ({ id: stringValue(item.review_case_id, 'review_case_id'), destination: stringValue(item.destination, 'destination'), title: stringValue(item.title, 'title'), authors: stringArray(item.authors, 'authors'), library: stringValue(item.library, 'library'), mediaKind: stringValue(item.media_kind, 'media_kind'), notices: stringArray(item.notices, 'notices'), provenance: stringArray(item.provenance, 'provenance'), workAttentionCount: integerValue(item.work_attention_count, 'work_attention_count') })) }
+  return { ...(query ? { query } : {}), ...(nextCursor ? { nextCursor } : {}), total: integerValue(dto.total, 'attention_total'), items: dto.items.map((item) => ({ id: stringValue(item.review_case_id, 'review_case_id'), destination: stringValue(item.destination, 'destination'), title: stringValue(item.title, 'title'), authors: stringArray(item.authors, 'authors'), library: stringValue(item.library, 'library'), mediaKind: stringValue(item.media_kind, 'media_kind'), classificationReason: stringValue(item.classification_reason, 'attention_classification_reason'), notices: stringArray(item.notices, 'notices'), provenance: stringArray(item.provenance, 'provenance'), workAttentionCount: integerValue(item.work_attention_count, 'work_attention_count') })) }
 }
 
 export const mapCaseDetail = (value: unknown): CaseDetailView => {

@@ -61,7 +61,7 @@ from mechanical_librarian.domain.automatic_decision import (
 )
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
-from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+from mechanical_librarian.application.review_web import BrowseReviewLibrary, InspectCurrentReviewCase
 from mechanical_librarian.application.review_pipeline import PipelineAction
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
@@ -1585,12 +1585,35 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 detail = InspectCurrentReviewCase(repository).run(case_id)
                 title = next(field for field in detail["fields"] if field["destination"] == "title")
                 self.assertTrue(title["needs_attention"])
+                self.assertEqual(
+                    "Automatic handling is suspended pending a safety recovery.",
+                    title["classification_reason"],
+                )
                 library = repository.read_review_library(None, 50, 0, True)
                 self.assertEqual(1, library.total)
                 self.assertEqual(1, library.attention_total)
                 attention = repository.read_review_attention(None, 50, 0)
                 self.assertGreaterEqual(attention.total, 1)
                 self.assertIn("title", tuple(row[2] for row in attention.rows))
+                self.assertEqual(
+                    "automatic_safety_suspended",
+                    next(row[5] for row in attention.rows if row[2] == "title"),
+                )
+                projected = BrowseReviewLibrary(repository).attention(
+                    search=None, limit=50, cursor=None,
+                )
+                self.assertEqual(attention.total, projected["total"])
+                self.assertIn(
+                    "title", [item["destination"] for item in projected["items"]],
+                )
+                self.assertEqual(
+                    "Automatic handling is suspended pending a safety recovery.",
+                    next(
+                        item["classification_reason"]
+                        for item in projected["items"]
+                        if item["destination"] == "title"
+                    ),
+                )
                 repository.close()
 
     def test_bootstrap_transition_acknowledgement_is_durable(self) -> None:

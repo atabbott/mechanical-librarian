@@ -9,9 +9,10 @@ describe('automaticChoiceSelected', () => {
     expect(automaticChoiceSelected({ outcome: 'candidate', selected_value: { kind: 'text', value: 'Title' } }, 'accept', { kind: 'text', value: 'Other' })).toBe(false)
   })
 
-  it('selects current only for keep-current and never for ignore', () => {
+  it('maps persisted ignore to the owner no-action choice', () => {
     expect(automaticChoiceSelected({ outcome: 'keep_current', selected_value: null }, 'keep_current')).toBe(true)
     expect(automaticChoiceSelected({ outcome: 'ignore', selected_value: null }, 'keep_current')).toBe(false)
     expect(automaticChoiceSelected({ outcome: 'ignore', selected_value: null }, 'accept', { kind: 'cover', value: 'cover-a' })).toBe(false)
+    expect(automaticChoiceSelected({ outcome: 'ignore', selected_value: null }, 'reject')).toBe(true)
   })
 })

@@ -104,7 +104,7 @@ class ReviewFieldClassificationTests(unittest.TestCase):
         browse = BrowseReviewLibrary(Repository())  # type: ignore[arg-type]
         with patch(
             "mechanical_librarian.application.review_web._attention_item",
-            side_effect=lambda case, report, destination, count: (
+            side_effect=lambda case, report, destination, count, **_kwargs: (
                 None if destination != "valid" else {"destination": destination}
             ),
         ):
@@ -112,7 +112,7 @@ class ReviewFieldClassificationTests(unittest.TestCase):
         self.assertEqual(page["items"], [{"destination": "valid"}])
         self.assertIsNone(page["next_cursor"])
 
-    def test_attention_last_valid_raw_row_has_no_cursor_and_no_stale_total(self) -> None:
+    def test_attention_last_valid_raw_row_has_no_cursor_and_stable_raw_total(self) -> None:
         rows = (("case", "report", "stale", 1), ("case", "report", "valid", 1))
 
         class Repository:
@@ -121,12 +121,52 @@ class ReviewFieldClassificationTests(unittest.TestCase):
 
         with patch(
             "mechanical_librarian.application.review_web._attention_item",
-            side_effect=lambda case, report, destination, count: None if destination == "stale" else {"destination": destination},
+            side_effect=lambda case, report, destination, count, **_kwargs: None if destination == "stale" else {"destination": destination},
         ):
             page = BrowseReviewLibrary(Repository()).attention(search=None, limit=1, cursor=None)  # type: ignore[arg-type]
         self.assertEqual(page["items"], [{"destination": "valid"}])
         self.assertIsNone(page["next_cursor"])
-        self.assertEqual(page["total"], 1)
+        self.assertEqual(page["total"], 2)
+
+    def test_attention_exact_boundary_all_contradictory_rows_proves_exhaustion(self) -> None:
+        rows = (("case", "report", "stale-1", 1), ("case", "report", "stale-2", 1))
+
+        class Repository:
+            def __init__(self) -> None:
+                self.offsets: list[int] = []
+
+            def read_review_attention(self, search, limit, offset):
+                self.offsets.append(offset)
+                return ReviewAttentionSnapshot(rows[offset:offset + limit], len(rows))
+
+        repository = Repository()
+        with patch("mechanical_librarian.application.review_web._attention_item", return_value=None):
+            page = BrowseReviewLibrary(repository).attention(search=None, limit=1, cursor=None)  # type: ignore[arg-type]
+        self.assertEqual([], page["items"])
+        self.assertIsNone(page["next_cursor"])
+        self.assertEqual(2, page["total"])
+        self.assertEqual([0], repository.offsets)
+
+    def test_attention_multi_page_backfill_keeps_raw_total_and_cursor_stable(self) -> None:
+        rows = (("case", "report", "invalid", 1), ("case", "report", "valid-1", 1), ("case", "report", "valid-2", 1))
+
+        class Repository:
+            def read_review_attention(self, search, limit, offset):
+                return ReviewAttentionSnapshot(rows[offset:offset + limit], len(rows))
+
+        def item(case, report, destination, count, **_kwargs):
+            return None if destination == "invalid" else {"destination": destination}
+
+        browse = BrowseReviewLibrary(Repository())  # type: ignore[arg-type]
+        with patch("mechanical_librarian.application.review_web._attention_item", side_effect=item):
+            first = browse.attention(search=None, limit=1, cursor=None)
+            second = browse.attention(search=None, limit=1, cursor=first["next_cursor"])
+        self.assertEqual([{"destination": "valid-1"}], first["items"])
+        self.assertIsNotNone(first["next_cursor"])
+        self.assertEqual(3, first["total"])
+        self.assertEqual([{"destination": "valid-2"}], second["items"])
+        self.assertIsNone(second["next_cursor"])
+        self.assertEqual(3, second["total"])
 
 
 if __name__ == "__main__":

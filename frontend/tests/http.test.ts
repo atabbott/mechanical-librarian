@@ -140,14 +140,14 @@ describe('ReviewApiClient', () => {
       items: [{
         review_case_id: 'case-1', destination: 'publication_date', title: 'A Book',
         authors: ['Ada Example'], library: 'Books', media_kind: 'ebook', item: 'internal-item-1',
-        detail_url: '/review/case-1?field=publication_date', notices: ['The available dates disagree.'],
+        detail_url: '/review/case-1?field=publication_date', classification_reason: 'The available dates disagree.', notices: ['The available dates disagree.'],
         provenance: ['Selected EPUB supports a complete date.'], work_attention_count: 2,
       }],
     })
 
     expect(view.items[0]).toEqual({
       id: 'case-1', destination: 'publication_date', title: 'A Book', authors: ['Ada Example'],
-      library: 'Books', mediaKind: 'ebook', notices: ['The available dates disagree.'],
+      library: 'Books', mediaKind: 'ebook', classificationReason: 'The available dates disagree.', notices: ['The available dates disagree.'],
       provenance: ['Selected EPUB supports a complete date.'], workAttentionCount: 2,
     })
     expect(JSON.stringify(view)).not.toContain('internal-item-1')

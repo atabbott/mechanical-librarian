@@ -779,6 +779,17 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                             "node => node.classList.contains('is-selected')"
                         )
                     )
+                    ignored_no_action = page.get_by_role(
+                        "button", name="Take no action", exact=True
+                    )
+                    expect(ignored_no_action).to_have_attribute(
+                        "aria-pressed", "true"
+                    )
+                    self.assertTrue(
+                        ignored_no_action.evaluate(
+                            "node => node.classList.contains('is-selected')"
+                        )
+                    )
                     page.goto(f"{origin}/review/{case_id}?field=cover&subview=review")
                     page.get_by_role("button", name="Prepare cover comparison").click()
                     page.get_by_role("heading", name="Available").first.wait_for()
@@ -798,6 +809,9 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                             "node => node.classList.contains('is-selected')"
                         )
                     )
+                    expect(
+                        page.get_by_role("button", name="Take no action", exact=True)
+                    ).to_have_attribute("aria-pressed", "false")
                     page.reload()
                     expect(page.get_by_role("button", name="Choose this cover")).to_have_attribute("aria-pressed", "true")
                     self.assertTrue(

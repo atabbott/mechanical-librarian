@@ -62,6 +62,11 @@ def classify_review_field(
         return ReviewFieldClassification(
             "unsupported", _CAUSE_GUIDANCE[cause], False, False, False, "inspect", preservation_only,
         )
+    if cause == "automatic_safety_suspended":
+        return ReviewFieldClassification(
+            "needs_attention", _CAUSE_GUIDANCE[cause], True, True, False,
+            "attention", preservation_only,
+        )
     if suspended:
         return ReviewFieldClassification(
             "unsupported", _CAUSE_GUIDANCE[cause or "automatic_safety_suspended"],
