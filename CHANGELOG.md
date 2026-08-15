@@ -7,6 +7,16 @@
 
 ## Unreleased
 
+- Report a malformed bibliographic combination as a packet error rather than a
+  `TypeError`. A combination whose `source_representations` mixed strings with
+  other types was compared against its sorted set before its members were
+  checked, so ordering the mixed list raised `TypeError` out of the packet
+  boundary instead of the packet's own "shadow-review packet is invalid" error.
+  The member check now runs first. Nothing changes about what is accepted: a
+  list of only non-string members was already rejected by the representation
+  identity pattern, and this was the wrong exception type rather than a hole.
+  (#669)
+
 - Fail closed on two malformed inputs the boundaries that own them were meant
   to reject. A shadow-review packet now proves that every member of a correlation's
   `candidate_ids` and `proposal_ids` is a string, the way the packet's other

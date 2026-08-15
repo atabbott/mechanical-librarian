@@ -144,14 +144,16 @@ def _validate_bibliographic_combinations(
             is None
             or type(combination["selections"]) is not list
             or type(combination["source_representations"]) is not list
-            or combination["source_representations"]
-            != sorted(set(combination["source_representations"]))
-            or not combination["source_representations"]
             or any(
                 type(value) is not str
                 or _REPRESENTATION_ID.fullmatch(value) is None
                 for value in combination["source_representations"]
             )
+            # The short-circuiting any(...) guard above proved the list holds
+            # only str, so this comparison orders strings against strings.
+            or combination["source_representations"]
+            != sorted(set(combination["source_representations"]))
+            or not combination["source_representations"]
         ):
             raise ShadowReviewValueError("shadow-review packet is invalid")
         selections = combination["selections"]

@@ -487,6 +487,23 @@ class BibliographicBundleTests(unittest.TestCase):
         self.assertTrue(candidate_actions)
         self.assertTrue(all((action.combination_ids == (combination['combination_id'],) for action in candidate_actions)))
 
+    def test_combination_representations_reject_mixed_members_as_packet_errors(self) -> None:
+        report = _bibliographic_report(current_title='Secret History: Mistborn', providers=(_source('catalogue', 'edition-1', titles=('Secret History',), series='Mistborn'),))
+        proposal = evaluate_report(report)
+        packet = ShadowReviewPacket.create(ReviewCase.create(proposal, report), proposal, report)
+
+        def rebuild(document: dict[str, object]) -> ShadowReviewPacket:
+            return ShadowReviewPacket(document['review_case_id'], tuple(document['proposals']), tuple(document['citations']), tuple(document['correlations']), document['schema_version'], document['bibliographic_relationship_schema_version'], tuple(document['bibliographic_combinations']))
+        self.assertEqual(packet, rebuild(json.loads(packet.to_json())))
+        representations = json.loads(packet.to_json())['bibliographic_combinations'][0]['source_representations']
+        # The identity pattern already rejected a list of only non-str members,
+        # so only a mixed list reached the sorted comparison and raised there.
+        for invalid in ([*representations, 0], list(range(len(representations)))):
+            document = json.loads(packet.to_json())
+            document['bibliographic_combinations'][0]['source_representations'] = invalid
+            with self.subTest(invalid=invalid), self.assertRaises(ShadowReviewValueError):
+                rebuild(document)
+
     def test_persistence_replay_and_currentness_include_combinations(self) -> None:
         report = _bibliographic_report(
             current_title="Secret History: Mistborn",
