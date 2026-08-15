@@ -13,15 +13,16 @@
   instead of merging silently; the concurrency group and every exact-revision
   reference resolve for both events, and a merged commit's verification is
   never cancelled. A fourth `container-image` job builds the shipped image with
-  `docker build` at the exact revision, so a Dockerfile or `compose.yaml`
-  regression fails the gate rather than a maintainer's manual ritual; the built
-  image is never run, loaded, or pushed, and running its lifecycle qualifier
-  stays maintainer-manual. The pinned Chromium payload is cached on the
-  Playwright version and saved only after `verify_playwright_browser.py`
-  accepts it, so an inexact payload is never persisted and every run still
-  verifies. `scripts/run_test_tier.py` now emits each failing test's traceback
-  on its narrative stream — bounded to the last 4 KiB per test and 256 KiB in
-  total — and no longer truncates the failed-identifier list at 32. Raw cohort
+  `docker build` at the exact revision, so a Dockerfile regression fails the
+  gate rather than a maintainer's manual ritual; the built image is never run,
+  loaded, or pushed, `compose.yaml` is not read by that build, and running the
+  image's lifecycle qualifier stays maintainer-manual. The pinned Chromium
+  payload is cached on the Playwright version and saved only after
+  `verify_playwright_browser.py` accepts it, so an inexact payload is never
+  persisted and every run still verifies. `scripts/run_test_tier.py` now emits
+  each failing test's traceback on its narrative stream — bounded to the last
+  4 KiB per test, and 256 KiB across the whole stream including its framing —
+  and no longer truncates the failed-identifier list at 32. Raw cohort
   output stays discarded, and the `test-tier-result-v1` and `test-tier-stall-v1`
   lines are unchanged on standard error. (#655)
 

@@ -20,9 +20,11 @@ from pathlib import Path
 _STALL_DIAGNOSTIC_SECONDS = 30
 _SAFE_TEST_ID = re.compile(r"[A-Za-z0-9_.]{1,512}")
 # Ceilings for the failure-diagnostic stream. A single traceback keeps its tail,
-# which holds the assertion and the innermost frame. The aggregate ceiling keeps
-# a broad failure readable in a hosted log and well inside the exact-artifact
-# qualifier's one-mebibyte per-stream capture bound.
+# which holds the assertion and the innermost frame. The aggregate ceiling bounds
+# every emitted byte, framing included, so a broad failure stays readable in a
+# hosted log and well inside the exact-artifact qualifier's one-mebibyte
+# per-stream capture bound -- being terminated at that bound would cost the
+# result schema line itself.
 _MAX_TEST_TRACEBACK_BYTES = 4_096
 _MAX_TRACEBACK_STREAM_BYTES = 262_144
 
@@ -205,24 +207,33 @@ def _report_failure_tracebacks(
     consumer of either schema sees narrative text on its stream. Raw cohort
     output remains discarded; only the formatted traceback of a failing test
     is reported.
+
+    Every emitted byte is charged against the aggregate ceiling, framing
+    included: many short failures carrying long test identifiers would
+    otherwise be bounded by nothing. Room for the closing omission notice is
+    reserved up front so truncation is always declared.
     """
-    remaining = _MAX_TRACEBACK_STREAM_BYTES
+    reserved = len(
+        f"==== {tier} tracebacks omitted: {len(tracebacks)} ====\n".encode()
+    )
+    remaining = _MAX_TRACEBACK_STREAM_BYTES - reserved
     omitted = 0
     for index, (identifier, detail) in enumerate(tracebacks):
         encoded = detail.encode("utf-8", "replace")
         elided = len(encoded) - _MAX_TEST_TRACEBACK_BYTES
         if elided > 0:
             encoded = encoded[-_MAX_TEST_TRACEBACK_BYTES:]
-        if len(encoded) > remaining:
+        body = encoded.decode("utf-8", "replace")
+        block = f"==== {tier} failure: {identifier} ====\n"
+        if elided > 0:
+            block += f"[elided {elided} leading bytes]\n"
+        block += body if body.endswith("\n") else f"{body}\n"
+        charged = len(block.encode("utf-8"))
+        if charged > remaining:
             omitted = len(tracebacks) - index
             break
-        remaining -= len(encoded)
-        sys.stdout.write(f"==== {tier} failure: {identifier} ====\n")
-        if elided > 0:
-            sys.stdout.write(f"[elided {elided} leading bytes]\n")
-        sys.stdout.write(encoded.decode("utf-8", "replace"))
-        if not encoded.endswith(b"\n"):
-            sys.stdout.write("\n")
+        remaining -= charged
+        sys.stdout.write(block)
     if omitted:
         sys.stdout.write(f"==== {tier} tracebacks omitted: {omitted} ====\n")
     sys.stdout.flush()

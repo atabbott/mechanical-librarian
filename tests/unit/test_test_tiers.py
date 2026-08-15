@@ -35,19 +35,27 @@ _FAILURE_SUMMARY_KEYS = {
 }
 
 
-def _synthetic_cohort(count: int, detail: str) -> unittest.TestSuite:
-    """Build a suite of `count` independently failing tests."""
+def _synthetic_cohort(
+    count: int,
+    detail: str,
+    identifier_padding: int = 0,
+) -> unittest.TestSuite:
+    """Build a suite of `count` independently failing tests.
+
+    `identifier_padding` lengthens each generated class name, so a cohort can
+    carry long test identifiers with short failure bodies.
+    """
 
     suite = unittest.TestSuite()
     for index in range(count):
-        name = f"test_synthetic_{index:03d}"
+        name = f"test_synthetic_{index:04d}"
 
         def _failure(case: unittest.TestCase, message: str = detail) -> None:
             print("suppressed-cohort-stdout")
             case.fail(message)
 
         cls = type(
-            f"SyntheticCohort{index:03d}",
+            f"SyntheticCohort{'N' * identifier_padding}{index:04d}",
             (unittest.TestCase,),
             {name: _failure},
         )
@@ -203,6 +211,25 @@ class TestTierTests(unittest.TestCase):
                     len(block.encode("utf-8")),
                     _MAX_TEST_TRACEBACK_BYTES + 512,
                 )
+
+    def test_framing_bytes_are_charged_to_the_aggregate_bound(self) -> None:
+        # Short bodies with long identifiers: the framing, not the traceback,
+        # dominates the stream, so an uncharged header escapes every ceiling.
+        summary, narrative = _run_failing_cohort(
+            _synthetic_cohort(800, "short", identifier_padding=400)
+        )
+        self.assertEqual(len(summary["failed_test_ids"]), 800)
+
+        emitted = len(narrative.encode("utf-8"))
+        self.assertLessEqual(emitted, _MAX_TRACEBACK_STREAM_BYTES)
+        # The reported cohort genuinely exceeds the ceiling when uncharged.
+        self.assertGreater(
+            sum(len(identifier) for identifier in summary["failed_test_ids"]),
+            _MAX_TRACEBACK_STREAM_BYTES,
+        )
+        # Truncation stays declared: the reserve always leaves room to say so.
+        self.assertIn("==== fast tracebacks omitted: ", narrative)
+        self.assertTrue(narrative.endswith(" ====\n"))
 
     def test_empty_cohort_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
