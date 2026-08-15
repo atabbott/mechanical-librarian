@@ -491,12 +491,17 @@ _CURRENT_LIBRARY_FROM_SQL = (
     "LEFT JOIN review_cases rc ON rc.review_case_id=ml.review_case_id"
 )
 _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL = (
-    "EXISTS (SELECT 1 FROM json_each(rc.document,'$.results') manual_result "
-    "WHERE json_extract(manual_result.value,'$.destination') "
-    "IN ('title','subtitle','series') "
-    "AND json_array_length(json_extract(manual_result.value,'$.reasons'))=1 "
-    "AND json_extract(manual_result.value,'$.reasons[0]')="
-    "'no_safe_bibliographic_combination')"
+    "json_extract(result.value,'$.destination') IN ('title','subtitle','series') "
+    "AND json_array_length(json_extract(result.value,'$.reasons'))=1 "
+    "AND json_extract(result.value,'$.reasons[0]')="
+    "'no_safe_bibliographic_combination'"
+)
+_SHADOW_ABSTENTION_SQL = (
+    "EXISTS (SELECT 1 FROM shadow_decision_outcomes shadow,"
+    "json_each(shadow.document,'$.outcomes') outcome WHERE "
+    "shadow.review_case_id=rc.review_case_id AND "
+    "json_extract(outcome.value,'$.destination')=json_extract(result.value,'$.destination') AND "
+    "json_extract(outcome.value,'$.disposition')='abstention')"
 )
 _AUTOMATIC_SAFETY_ATTENTION_SQL = (
     "EXISTS (SELECT 1 FROM shadow_decision_outcomes shadow,"
@@ -510,15 +515,15 @@ _AUTOMATIC_SAFETY_ATTENTION_SQL = (
 )
 _REVIEW_FIELD_ATTENTION_SQL = (
     "(json_extract(result.value,'$.outcome')='unresolved_choice' "
-    "OR (json_extract(result.value,'$.destination') "
-    "IN ('title','subtitle','series') AND "
-    + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
-    + ") OR " + _AUTOMATIC_SAFETY_ATTENTION_SQL + ") AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
+    "OR " + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
+    + " OR " + _AUTOMATIC_SAFETY_ATTENTION_SQL
+    + " OR " + _SHADOW_ABSTENTION_SQL + ") AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
     "AND decision.destination=json_extract(result.value,'$.destination')) "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
-    "AND decision.destination=json_extract(result.value,'$.destination')) "
+    "AND decision.destination=json_extract(result.value,'$.destination') "
+    ") "
     "AND NOT EXISTS (SELECT 1 FROM field_effect_suspensions suspension "
     "WHERE suspension.connection_name=c.connection_name AND ("
     "(suspension.scope='connection' AND suspension.destination='') OR "
@@ -5198,6 +5203,15 @@ class SQLiteMetadataReportRepository:
                     else self.get_review_case_history(review_case_id, history_limit)
                 ),
                 automatic_attention_destinations=self._automatic_attention_destinations(review_case_id),
+                automatic_safety_suspended_destinations=self._automatic_attention_destinations(review_case_id),
+                shadow_abstention_destinations=self._shadow_abstention_destinations(review_case_id),
+                automatic_override_blocked_destinations=self._automatic_override_blocked_destinations(review_case_id),
+                suspended_destinations=self._field_effect_capability_suspended_destinations(
+                    review_case_id
+                ),
+                suspension_causes=self._field_effect_capability_suspension_causes(
+                    review_case_id
+                ),
                 cover_consideration_document=(
                     self.current_cover_consideration_document(review_case_id)
                 ),
@@ -5225,7 +5239,7 @@ class SQLiteMetadataReportRepository:
             projected_rows = []
             for case_document, report_document in rows:
                 if case_document is None and '"schema_version":"review-terminal-work-v1"' in report_document:
-                    projected_rows.append((case_document, report_document, (), (), (), None))
+                    projected_rows.append((case_document, report_document, (), (), (), (), None))
                     continue
                 report = MetadataReport.from_json(report_document)
                 terminal = self._connection.execute(
@@ -5251,6 +5265,7 @@ class SQLiteMetadataReportRepository:
                     () if case_id is None else self.get_review_case_decisions(case_id),
                     () if case_id is None else self._automatic_attention_destinations(case_id),
                     () if case_id is None else self._field_effect_capability_suspended_destinations(case_id),
+                    () if case_id is None else self._shadow_abstention_destinations(case_id),
                     terminal_document,
                 ))
             projected = tuple(projected_rows)
@@ -5268,6 +5283,31 @@ class SQLiteMetadataReportRepository:
             "json_each(shadow.document,'$.outcomes') outcome, automatic_safety_state safety "
             "WHERE shadow.review_case_id=? AND json_extract(outcome.value,'$.policy_destination')='automatic' AND ("
             "safety.paused=1 OR safety.global_suspension IS NOT NULL OR EXISTS(SELECT 1 FROM json_each(safety.category_suspensions_document) category WHERE json_extract(category.value,'$[0]')=json_extract(outcome.value,'$.policy_category'))) ORDER BY 1",
+            (review_case_id,),
+        ).fetchall()
+        if any(type(row[0]) is not str for row in rows):
+            raise MetadataReportError("review attention is unavailable")
+        return tuple(row[0] for row in rows)
+
+    def _shadow_abstention_destinations(self, review_case_id: str) -> tuple[str, ...]:
+        rows = self._connection.execute(
+            "SELECT DISTINCT json_extract(outcome.value,'$.destination') FROM shadow_decision_outcomes shadow, "
+            "json_each(shadow.document,'$.outcomes') outcome WHERE shadow.review_case_id=? "
+            "AND json_extract(outcome.value,'$.disposition')='abstention' ORDER BY 1",
+            (review_case_id,),
+        ).fetchall()
+        if any(type(row[0]) is not str for row in rows):
+            raise MetadataReportError("review attention is unavailable")
+        return tuple(row[0] for row in rows)
+
+    def _automatic_override_blocked_destinations(
+        self, review_case_id: str,
+    ) -> tuple[str, ...]:
+        rows = self._connection.execute(
+            "SELECT DISTINCT automatic.destination FROM automatic_decisions automatic "
+            "JOIN field_effects effect ON effect.decision_id=automatic.decision_id "
+            "WHERE automatic.review_case_id=? AND effect.state IN "
+            "('claimed','applying','reconciling','verified') ORDER BY automatic.destination",
             (review_case_id,),
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):
@@ -5293,6 +5333,38 @@ class SQLiteMetadataReportRepository:
         if any(type(row[0]) is not str for row in rows):
             raise MetadataReportError("review attention is unavailable")
         return tuple(row[0] for row in rows)
+
+    def _field_effect_capability_suspension_causes(
+        self, review_case_id: str,
+    ) -> tuple[tuple[str, str], ...]:
+        rows = self._connection.execute(
+            "SELECT json_extract(result.value,'$.destination'),(SELECT "
+            "suspension.scope FROM field_effect_suspensions suspension "
+            "WHERE suspension.connection_name=c.connection_name AND (("
+            "suspension.scope='connection' AND suspension.destination='') OR "
+            "(suspension.scope='destination' AND suspension.destination="
+            "json_extract(result.value,'$.destination'))) ORDER BY CASE "
+            "suspension.scope WHEN 'connection' THEN 0 ELSE 1 END LIMIT 1) "
+            "FROM current_review_case_lineages c JOIN review_cases rc "
+            "ON rc.review_case_id=c.review_case_id,json_each(rc.document,'$.results') result "
+            "WHERE rc.review_case_id=? AND EXISTS(SELECT 1 FROM "
+            "field_effect_suspensions suspension WHERE "
+            "suspension.connection_name=c.connection_name AND (("
+            "suspension.scope='connection' AND suspension.destination='') OR "
+            "(suspension.scope='destination' AND suspension.destination="
+            "json_extract(result.value,'$.destination')))) ORDER BY 1",
+            (review_case_id,),
+        ).fetchall()
+        causes = {
+            "connection": "external_connection_failure",
+            "destination": "external_field_failure",
+        }
+        if any(
+            type(destination) is not str or scope not in causes
+            for destination, scope in rows
+        ):
+            raise MetadataReportError("review attention is unavailable")
+        return tuple((destination, causes[scope]) for destination, scope in rows)
 
     def read_review_attention(
         self, search: str | None, limit: int, offset: int
@@ -5465,14 +5537,18 @@ class SQLiteMetadataReportRepository:
 
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[tuple[str, str, str, int], ...]:
+    ) -> tuple[tuple[str, str, str, int, str | None, str | None], ...]:
         try:
             query, pattern = _review_search_pattern(search)
             rows = self._connection.execute(
                 "SELECT rc.document,mr.document,"
                 "json_extract(result.value,'$.destination'),"
                 "(SELECT count(*) FROM json_each(rc.document,'$.results') result "
-                "WHERE " + _REVIEW_FIELD_ATTENTION_SQL + ") "
+                "WHERE " + _REVIEW_FIELD_ATTENTION_SQL + "),"
+                "(SELECT json_extract(outcome.value,'$.disposition') FROM shadow_decision_outcomes shadow, "
+                "json_each(shadow.document,'$.outcomes') outcome WHERE shadow.review_case_id=rc.review_case_id "
+                "AND json_extract(outcome.value,'$.destination')=json_extract(result.value,'$.destination') LIMIT 1),"
+                "(CASE WHEN " + _AUTOMATIC_SAFETY_ATTENTION_SQL + " THEN 'automatic_safety_suspended' ELSE NULL END) "
                 + _CURRENT_REVIEW_FROM_SQL
                 + ",json_each(rc.document,'$.results') result "
                 "WHERE "
@@ -5500,9 +5576,11 @@ class SQLiteMetadataReportRepository:
                     type(row[2]) is not str
                     or type(row[3]) is not int
                     or row[3] < 1
+                    or (row[4] is not None and type(row[4]) is not str)
+                    or (row[5] is not None and type(row[5]) is not str)
                 ):
                     raise MetadataReportError("review attention field is invalid")
-                values.append((case_document, report_document, row[2], row[3]))
+                values.append((case_document, report_document, row[2], row[3], row[4], row[5]))
             return tuple(values)
         except (
             sqlite3.Error,

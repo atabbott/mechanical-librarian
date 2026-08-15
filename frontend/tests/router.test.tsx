@@ -34,10 +34,14 @@ const detail: CaseDetailView = {
   authors: [],
   subtitle: 'Books · local',
   fields: [{
+    classification: 'needs_attention',
+    classificationReason: 'This field needs your review.',
     destination: 'title',
+    editable: true,
     disposition: 'review',
     effectCapability: 'manual',
     needsAttention: true,
+    navigationRole: 'attention',
     manualHold: false,
     currentValue: 'Old title',
     currentRaw: 'Old title',
@@ -48,6 +52,7 @@ const detail: CaseDetailView = {
     automaticDecision: null,
     notices: [],
     provenance: [],
+    preservationOnly: false,
     corroborationSources: [],
   }],
 }
@@ -282,6 +287,7 @@ describe('typed review routes', () => {
       proposedValues: [],
       proposalId: 'proposal-series',
       targetFingerprint: 'fingerprint-series',
+      classificationReason: 'Automatic handling recorded this field; you may inspect or override it.',
       needsAttention: false,
       automaticDecision: {
         candidate_id: null,
@@ -315,7 +321,7 @@ describe('typed review routes', () => {
     expect(screen.getAllByText(/2 named sources/u).length).toBeGreaterThan(0)
     await user.click(screen.getByText('1 automatic or recorded field'))
     expect(screen.getByText('Resolved automatically · Atlas Cycle 2.5')).toBeVisible()
-    expect(screen.getByText('Series already agrees with the deterministic policy.')).toBeVisible()
+    expect(screen.getByText('Automatic handling recorded this field; you may inspect or override it.')).toBeVisible()
   })
 
   it('shows bound incumbent and manual alternatives and retries only failed advice', async () => {
@@ -698,7 +704,7 @@ describe('typed review routes', () => {
   it('recovers and paginates the contextual attention queue', async () => {
     const user = userEvent.setup()
     let calls = 0
-    const item = { id: 'case-1', destination: 'title', title: 'A Book', authors: [], library: 'Books', mediaKind: 'ebook', notices: [], provenance: [], workAttentionCount: 1 }
+    const item = { id: 'case-1', destination: 'title', title: 'A Book', authors: [], library: 'Books', mediaKind: 'ebook', classificationReason: 'Canonical library attention reason', notices: ['internal-library-notice'], provenance: [], workAttentionCount: 1 }
     const http: ReviewHttp = {
       ...createHttp(),
       getAttention: vi.fn(async (search: AttentionSearch) => {
@@ -714,6 +720,8 @@ describe('typed review routes', () => {
     const rail = screen.getByLabelText('Attention queue')
     await waitFor(() => expect(rail).toHaveFocus())
     expect(within(rail).getByText('A Book')).toBeVisible()
+    expect(within(rail).getByText(/Canonical library attention reason/u)).toBeVisible()
+    expect(within(rail).queryByText('internal-library-notice')).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Load more attention' }))
     expect(await screen.findByText('Second queued work')).toBeVisible()
     expect(http.getAttention).toHaveBeenLastCalledWith({ cursor: 'next' }, expect.any(AbortSignal))
@@ -896,8 +904,8 @@ describe('typed review routes', () => {
     const attention: AttentionView = {
       total: 2,
       items: [
-        { id: 'case-1', destination: 'title', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', notices: ['conflicting_evidence'], provenance: ['opaque-source-1'], workAttentionCount: 3 },
-        { id: 'case-1', destination: 'authors', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', notices: [], provenance: [], workAttentionCount: 3 },
+        { id: 'case-1', destination: 'title', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', classificationReason: 'Canonical standalone attention reason', notices: ['internal-standalone-notice'], provenance: ['opaque-source-1'], workAttentionCount: 3 },
+        { id: 'case-1', destination: 'authors', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', classificationReason: 'This field needs your review.', notices: [], provenance: [], workAttentionCount: 3 },
       ],
     }
     const http: ReviewHttp = { ...createHttp(), getAttention: vi.fn(async () => attention) }
@@ -905,7 +913,8 @@ describe('typed review routes', () => {
 
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
     expect(screen.getByText('3 fields')).toBeVisible()
-    expect(screen.getByText('Conflicting evidence')).toBeVisible()
+    expect(screen.getByText('Canonical standalone attention reason')).toBeVisible()
+    expect(screen.queryByText('internal-standalone-notice')).toBeNull()
     expect(screen.queryByText('opaque-source-1')).toBeNull()
     expect(screen.getByText(/1 evidence record available/u)).toBeVisible()
     expect(screen.getByText(/Inspect the current value and available authors choices/u)).toBeVisible()
@@ -966,7 +975,7 @@ describe('typed review routes', () => {
     }
     const { router } = renderRoute('/review/case-1?field=title&subview=review', http)
 
-    expect((await screen.findAllByLabelText('Reviewer facts')).at(0)).toHaveTextContent('Available choices3')
+    expect((await screen.findAllByLabelText('Reviewer facts')).at(0)).toHaveTextContent('Available choices4')
     await user.click(await screen.findByRole('button', { name: 'Choose proposed value 2: Another title' }))
 
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledWith('case-1', expect.objectContaining({ selectedValue: second })))
@@ -985,7 +994,7 @@ describe('typed review routes', () => {
     renderRoute('/review/case-1?field=title&subview=review', http)
 
     expect(await screen.findByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
-    expect(screen.getAllByLabelText('Reviewer facts').at(0)).toHaveTextContent('Available choices1')
+    expect(screen.getAllByLabelText('Reviewer facts').at(0)).toHaveTextContent('Available choices2')
     expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Choose current value: Old title' }))
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledWith('case-1', expect.objectContaining({
@@ -1067,7 +1076,7 @@ describe('typed review routes', () => {
     expect(screen.queryByRole('img')).toBeNull()
   })
 
-  it('never offers a false human choice for an automatically decided field', async () => {
+  it('keeps an automatically decided field inspectable and owner-editable', async () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('detail fixture requires a title field')
     const automatic: CaseDetailView = {
@@ -1092,9 +1101,8 @@ describe('typed review routes', () => {
     renderRoute('/review/case-1?field=title&subview=review', http)
 
     expect(await screen.findByText('Handled automatically: accept · policy origin.')).toBeVisible()
-    expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
-    expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
-    expect(http.recordDecision).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /Choose current value/ })).toBeVisible()
+    expect(screen.getByRole('button', { name: /Choose proposed value/ })).toBeVisible()
   })
 
   it('shows the exact accepted recorded value without interpreting hostile content', async () => {
@@ -1245,7 +1253,7 @@ describe('typed review routes', () => {
     await user.click(screen.getByRole('button', { name: 'authors' }))
     expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Choose proposed value 1: New title' })).toBeVisible()
-    expect(screen.getAllByLabelText('Reviewer facts').at(1)).toHaveTextContent('Available choices2')
+    expect(screen.getAllByLabelText('Reviewer facts').at(1)).toHaveTextContent('Available choices3')
   })
 
   it('binds an ambiguous reconciliation lock after a pending background detail refresh', async () => {
@@ -2235,6 +2243,45 @@ describe('typed review routes', () => {
     ))
   })
 
+  it('does not let an unmounted Activity focus callback target a fresh Activity route', async () => {
+    const frames = new Map<number, FrameRequestCallback>()
+    let nextFrame = 1
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      const frame = nextFrame++
+      frames.set(frame, callback)
+      return frame
+    })
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((frame) => { frames.delete(frame) })
+    try {
+      const getActivity = vi.fn(async (search: ActivitySearch) => activity({
+        ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 },
+      }))
+      const { router } = renderRoute('/activity', { ...createHttp(), getActivity })
+      await screen.findByRole('heading', { name: 'Activity and recovery' })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+      await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(2))
+      const outer = [...frames.entries()].at(-1)
+      expect(outer).toBeDefined()
+      await act(async () => { outer?.[1](0) })
+      const staleInner = [...frames.entries()].at(-1)
+      expect(staleInner).toBeDefined()
+
+      await act(async () => { await router.navigate({ to: '/library', search: { lens: 'all' } }) })
+      await screen.findByRole('heading', { name: 'Every work, with exceptions first' })
+      await act(async () => { await router.navigate({ to: '/activity', search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 } }) })
+      await screen.findByRole('heading', { name: 'Activity and recovery' })
+      const freshSearch = screen.getByRole('searchbox', { name: 'Search activity' })
+      freshSearch.focus()
+
+      await act(async () => { staleInner?.[1](0) })
+      expect(freshSearch).toHaveFocus()
+    } finally {
+      requestFrame.mockRestore()
+      cancelFrame.mockRestore()
+    }
+  })
+
   it('commits the next page edit once after an Escape cancellation', async () => {
     const user = userEvent.setup()
     const getActivity = vi.fn(async (search: ActivitySearch) => activity({
@@ -2242,7 +2289,10 @@ describe('typed review routes', () => {
     }))
     renderRoute('/activity', { ...createHttp(), getActivity })
 
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const heading = await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const focusTarget = heading.closest<HTMLElement>('[data-route-focus]')
+    expect(focusTarget).not.toBeNull()
+    await waitFor(() => expect(focusTarget).toHaveFocus())
     const page = screen.getByRole('spinbutton', { name: 'Activity page number' })
     const callsBeforeEscape = getActivity.mock.calls.length
     await user.clear(page)

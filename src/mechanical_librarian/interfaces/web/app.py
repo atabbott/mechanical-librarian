@@ -217,18 +217,23 @@ class _CoverConsiderationResponse(_ClosedModel):
 
 
 class _ReviewField(_ClosedModel):
+    classification: Literal["needs_attention", "manual_fallback", "automatic_recorded", "human_recorded", "unsupported"]
+    classification_reason: str
     current: _TargetField
     deterministic_disposition: str
     destination: str
+    editable: bool
     effect_capability: str
     human_decision: _DecisionProjection | None
     automatic_decision: _AutomaticDecisionProjection | None
     manual_hold: bool
     manual_required: bool
     needs_attention: bool
+    navigation_role: Literal["attention", "inspect"]
     notices: list[str]
     proposed_values: list[_ProposedValue]
     provenance: list[str]
+    preservation_only: bool
     corroboration_sources: list[str]
     proposal_id: str
     target_fingerprint: str
@@ -396,6 +401,7 @@ class _LibraryResponse(_ClosedModel):
 
 class _AttentionItem(_ClosedModel):
     authors: list[str]
+    classification_reason: str
     destination: str
     detail_url: str
     item: str

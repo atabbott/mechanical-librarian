@@ -55,6 +55,12 @@ the outcome.
 
 ## Reopened semantic-completeness correction
 
+Issue #598 extends the protected field strip: automatic, unsupported, and
+recorded fields stay directly inspectable in their stable primary positions.
+Only server-classified owner attention advances normally. Automatic abstention
+is an evidence-backed manual fallback; unavailable empty values expose an
+explanation rather than a false choice.
+
 The first #554 merge established the correct route and workspace architecture,
 but a direct semantic comparison found that the selected-work surface still
 compressed several protected Variant M signals. The reopened correction is one

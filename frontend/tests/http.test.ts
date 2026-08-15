@@ -26,6 +26,7 @@ describe('ReviewApiClient', () => {
       schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true,
       target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
       fields: [{
+        classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, navigation_role: 'attention', preservation_only: false,
         destination: 'series', deterministic_disposition: 'review', effect_capability: 'manual',
         needs_attention: true, manual_hold: false, current: { value: series },
         proposed_values: [], proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',
@@ -43,6 +44,7 @@ describe('ReviewApiClient', () => {
       schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true,
       target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
       fields: [{
+        classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, navigation_role: 'attention', preservation_only: false,
         destination: 'authors', deterministic_disposition: 'review', effect_capability: 'manual',
         needs_attention: true, manual_hold: false, current: { value: ['Ada Example'] },
         proposed_values: [], proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',
@@ -138,14 +140,14 @@ describe('ReviewApiClient', () => {
       items: [{
         review_case_id: 'case-1', destination: 'publication_date', title: 'A Book',
         authors: ['Ada Example'], library: 'Books', media_kind: 'ebook', item: 'internal-item-1',
-        detail_url: '/review/case-1?field=publication_date', notices: ['The available dates disagree.'],
+        detail_url: '/review/case-1?field=publication_date', classification_reason: 'The available dates disagree.', notices: ['The available dates disagree.'],
         provenance: ['Selected EPUB supports a complete date.'], work_attention_count: 2,
       }],
     })
 
     expect(view.items[0]).toEqual({
       id: 'case-1', destination: 'publication_date', title: 'A Book', authors: ['Ada Example'],
-      library: 'Books', mediaKind: 'ebook', notices: ['The available dates disagree.'],
+      library: 'Books', mediaKind: 'ebook', classificationReason: 'The available dates disagree.', notices: ['The available dates disagree.'],
       provenance: ['Selected EPUB supports a complete date.'], workAttentionCount: 2,
     })
     expect(JSON.stringify(view)).not.toContain('internal-item-1')

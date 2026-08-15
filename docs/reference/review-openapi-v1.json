@@ -639,6 +639,10 @@
             "title": "Authors",
             "type": "array"
           },
+          "classification_reason": {
+            "title": "Classification Reason",
+            "type": "string"
+          },
           "destination": {
             "title": "Destination",
             "type": "string"
@@ -688,6 +692,7 @@
         },
         "required": [
           "authors",
+          "classification_reason",
           "destination",
           "detail_url",
           "item",
@@ -3153,6 +3158,21 @@
               }
             ]
           },
+          "classification": {
+            "enum": [
+              "needs_attention",
+              "manual_fallback",
+              "automatic_recorded",
+              "human_recorded",
+              "unsupported"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "classification_reason": {
+            "title": "Classification Reason",
+            "type": "string"
+          },
           "corroboration_sources": {
             "items": {
               "type": "string"
@@ -3181,6 +3201,10 @@
             "title": "Deterministic Disposition",
             "type": "string"
           },
+          "editable": {
+            "title": "Editable",
+            "type": "boolean"
+          },
           "effect_capability": {
             "title": "Effect Capability",
             "type": "string"
@@ -3203,6 +3227,14 @@
             "title": "Manual Required",
             "type": "boolean"
           },
+          "navigation_role": {
+            "enum": [
+              "attention",
+              "inspect"
+            ],
+            "title": "Navigation Role",
+            "type": "string"
+          },
           "needs_attention": {
             "title": "Needs Attention",
             "type": "boolean"
@@ -3213,6 +3245,10 @@
             },
             "title": "Notices",
             "type": "array"
+          },
+          "preservation_only": {
+            "title": "Preservation Only",
+            "type": "boolean"
           },
           "proposal_id": {
             "title": "Proposal Id",
@@ -3245,18 +3281,23 @@
           }
         },
         "required": [
+          "classification",
+          "classification_reason",
           "current",
           "deterministic_disposition",
           "destination",
+          "editable",
           "effect_capability",
           "human_decision",
           "automatic_decision",
           "manual_hold",
           "manual_required",
           "needs_attention",
+          "navigation_role",
           "notices",
           "proposed_values",
           "provenance",
+          "preservation_only",
           "corroboration_sources",
           "proposal_id",
           "target_fingerprint",

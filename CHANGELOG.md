@@ -1,5 +1,10 @@
 # Changelog
 
+- Make Library, Attention, and review detail use one truthful field
+  classification: automatic abstentions return to owner review, automatic
+  outcomes remain inspectable and overrideable, and unavailable fields explain
+  their state without a fake empty-value choice. (#598)
+
 ## Unreleased
 
 - Preserve valid unlabelled Hardcover work creators as neutral,

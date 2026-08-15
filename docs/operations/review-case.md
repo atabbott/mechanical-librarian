@@ -43,6 +43,18 @@ Inspection returns the immutable case and derived currentness without writing
 it. Both operations validate the complete canonical typed result. Earlier
 schemas are rejected under the clean-state policy.
 
+## Field classification
+
+Library, Attention, and case detail project one closed field classification.
+`needs_attention` and `manual_fallback` are the only Attention membership and
+ordinary-next states. `automatic_recorded` remains inspectable and editable but
+does not count as owner work; an automatic `abstention` is instead a manual
+fallback. `human_recorded` is retained inspection, and `unsupported` explains
+the unavailable capability without inventing a selectable empty value. SQLite
+uses the same membership expression for the list and both counts; application
+projection supplies the owner-readable reason and never promotes an invalid
+row into an Attention failure.
+
 ## Authenticated exact-current inspection
 
 With an exact-current application database and explicit `review` configuration,
