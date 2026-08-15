@@ -4,7 +4,7 @@ import { Suspense, useEffect, useRef, useState } from 'react'
 
 import type { createMemoryHistory } from '@tanstack/react-router'
 import { BuildMismatchError } from './api/http'
-import type { ActivitySearch, AttentionSearch, AutomaticSafetyView, DetailSearch, LibrarySearch, LibraryWorkView, PolicySearch, PolicyStateView, ReviewHttp, ShadowPostureView } from './api/http'
+import type { ActivitySearch, AttentionSearch, AutomaticSafetyView, DetailSearch, LibrarySearch, LibraryWorkView, PolicySearch, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView } from './api/http'
 import { ChunkRecoveryError, recoverableLazy, reloadCurrentApplication } from './chunkRecovery'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
@@ -45,7 +45,35 @@ export const PreparationActivity = ({ route = false }: { route?: boolean }) => {
   const trigger = useRef<HTMLButtonElement>(null)
   const previousSnapshot = useRef<string | null>(null)
   const query = useQuery({ queryKey: ['review-preparation'], queryFn: ({ signal }) => http.getPreparation(signal), staleTime: 1_000, retry: false, refetchInterval: (result) => { const value = result.state.data; return value?.active || value?.actionable || value?.paused ? 1_500 : 15_000 } })
-  const action = useMutation({ mutationFn: (path: string) => http.preparationAction(path), retry: false, onSettled: async () => { await queryClient.invalidateQueries({ queryKey: ['review-preparation'] }); await Promise.all([queryClient.invalidateQueries({ queryKey: ['library'] }), queryClient.invalidateQueries({ queryKey: ['attention'] })]) } })
+  const action = useMutation({
+    mutationFn: (path: string) => http.preparationAction(path),
+    retry: false,
+    onMutate: (path) => {
+      const match = /^([^/]+)\/check-connection$/.exec(path)
+      if (!match) return
+      const encodedConnection = match[1]
+      if (!encodedConnection) return
+      const connection = decodeURIComponent(encodedConnection)
+      queryClient.setQueryData<PreparationView>(['review-preparation'], (current) => {
+        if (!current || !current.connections) return current
+        return {
+          ...current,
+          connections: current.connections.map((condition) => (
+            condition.connection === connection
+              ? { ...condition, state: 'checking' as const }
+              : condition
+          )),
+        }
+      })
+    },
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['library'] }),
+        queryClient.invalidateQueries({ queryKey: ['attention'] }),
+      ])
+    },
+  })
   const data = query.data
   const snapshot = data ? JSON.stringify(data) : null
   useEffect(() => {

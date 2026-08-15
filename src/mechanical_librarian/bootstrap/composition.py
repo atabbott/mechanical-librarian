@@ -1475,45 +1475,9 @@ def create_review_pipeline(
         drain_provider_recovery_outbox(pipeline_repository)
 
     def check_connection(connection: str) -> None:
-        """Check the configured read authority without weakening TLS."""
-        configured = clients.get(connection)
-        if configured is None:
+        if connection not in clients:
             raise ReviewPipelineError("library")
-        try:
-            with target_client(
-                configured.endpoint, configured.secret_file,
-                configuration.limits.timeout_seconds,
-            ) as client:
-                with client.stream(
-                    "GET", "/api/libraries",
-                    headers={"Accept": "application/json", "Accept-Encoding": "identity"},
-                ) as response:
-                    if response.status_code == 401:
-                        raise TargetConnectionError("authentication")
-                    if response.status_code == 403:
-                        raise TargetConnectionError("authorization")
-                    if response.status_code != 200 or (
-                        response.headers.get("content-type", "").split(";", 1)[0]
-                        .strip().lower() != "application/json"
-                    ):
-                        raise TargetConnectionError("unavailable")
-                    chunks: list[bytes] = []
-                    size = 0
-                    for chunk in response.iter_bytes():
-                        size += len(chunk)
-                        if size > configuration.limits.target_response_bytes:
-                            raise TargetConnectionError("unavailable")
-                        chunks.append(chunk)
-            value = json.loads(b"".join(chunks).decode("utf-8"))
-            if not isinstance(value, (dict, list)):
-                raise TargetConnectionError("unavailable")
-        except TargetConnectionError:
-            raise
-        except httpx.TransportError as error:
-            code = "tls" if error.__cause__ is not None and "SSL" in type(error.__cause__).__name__.upper() else "unavailable"
-            raise TargetConnectionError(code) from None
-        except Exception:
-            raise TargetConnectionError("unavailable") from None
+        reader.probe_connection(connection)
 
     pipeline = ReviewPreparationPipeline(
         repository_factory=repository_factory,

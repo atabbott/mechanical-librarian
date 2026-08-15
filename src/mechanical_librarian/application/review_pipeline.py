@@ -19,6 +19,7 @@ __all__ = [
     "ReviewPipelineRepository",
     "ReviewPreparationPipeline",
     "ReviewPreparationSupervisor",
+    "TargetConnectionCondition",
 ]
 
 
@@ -33,7 +34,11 @@ _STAGES = (
 
 
 def _unconfigured_connection_check(_connection: str) -> None:
-    raise ReviewPipelineError("connection")
+    # Direct pipeline construction remains a pure test/application seam. The
+    # composed product always supplies the adapter-owned probe.
+    return None
+
+
 class ReviewPipelineError(RuntimeError):
     """A fixed, value-free review-preparation failure."""
 
@@ -155,6 +160,9 @@ class ReviewPipelineRepository(Protocol):
     def set_review_pipeline_paused(self, paused: bool, updated_at: int) -> None: ...
 
     def target_connection_conditions(self) -> tuple[TargetConnectionCondition, ...]: ...
+    def guard_target_connection(self, action: PipelineAction, checked_at: int) -> bool: ...
+    def discovery_requires_qualification(self, action: PipelineAction) -> bool: ...
+    def qualify_review_discovery(self, action: PipelineAction, qualified_at: int) -> bool: ...
     def defer_for_target_connection(self, action: PipelineAction, code: str, updated_at: int) -> None: ...
     def begin_target_connection_check(self, connection: str, checked_at: int) -> TargetConnectionCondition | None: ...
     def finish_target_connection_check(self, connection: str, epoch: int, code: str | None, checked_at: int) -> bool: ...
@@ -496,8 +504,24 @@ class ReviewPreparationPipeline:
     ) -> PipelineAction | None:
         output_transaction = False
         try:
+            # A connection can become paused after this worker obtained its
+            # durable claim. Re-check before every target-dependent stage so
+            # the claim returns to its retained checkpoint without an item
+            # failure.
+            guard = getattr(repository, "guard_target_connection", None)
+            if guard is not None and not guard(action, self._clock()):
+                return None
             output_id: str | None = None
             if action.stage == "discovery":
+                requires_qualification = getattr(
+                    repository, "discovery_requires_qualification", None
+                )
+                if requires_qualification is not None and requires_qualification(action):
+                    self._check_connection(action.connection)
+                    if not repository.qualify_review_discovery(
+                        action, self._clock()
+                    ):
+                        return None
                 generation, fingerprint, entries = self._discover(
                     action.connection, action.library
                 )

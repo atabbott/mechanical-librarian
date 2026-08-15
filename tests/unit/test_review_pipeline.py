@@ -76,6 +76,45 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         repository.close()
         self.assertEqual(count, (0,))
 
+    def test_scan_qualification_survives_restart_and_resets_for_new_cycle(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 1
+        )
+        action = repository.claim_review_pipeline_action(2)
+        assert action is not None
+        self.assertTrue(repository.discovery_requires_qualification(action))
+        self.assertTrue(repository.qualify_review_discovery(action, 3))
+        repository.close()
+
+        repository = open_repository(self.path)
+        repository.recover_review_pipeline(
+            (("primary", "fiction", "lib-1", _PRODUCER),)
+        )
+        action = repository.claim_review_pipeline_action(4)
+        assert action is not None
+        self.assertFalse(repository.discovery_requires_qualification(action))
+        repository.defer_for_target_connection(action, "unavailable", 5)
+        condition = repository.begin_target_connection_check("primary", 6)
+        assert condition is not None
+        self.assertTrue(
+            repository.finish_target_connection_check(
+                "primary", condition.epoch, None, 7
+            )
+        )
+        action = repository.claim_review_pipeline_action(8)
+        assert action is not None
+        self.assertFalse(repository.discovery_requires_qualification(action))
+        repository.complete_review_discovery(action, 1, "a" * 64, (), 9)
+        self.assertIsNone(repository.claim_review_pipeline_action(10))
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 11
+        )
+        action = repository.claim_review_pipeline_action(12)
+        assert action is not None
+        self.assertTrue(repository.discovery_requires_qualification(action))
+        repository.close()
+
     def test_status_reads_all_latest_library_progress_and_pause_in_one_snapshot(self) -> None:
         repository = open_repository(self.path)
         first = repository.request_review_scan(

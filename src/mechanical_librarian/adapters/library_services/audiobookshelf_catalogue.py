@@ -79,6 +79,16 @@ class AudiobookshelfCatalogueReader:
         except (httpx.HTTPError, OSError, UnicodeError, ValueError, TypeError) as error:
             raise TargetConnectionError("unavailable") from None
 
+    def probe_connection(self, connection: str) -> None:
+        """Perform the bounded configured ABS trust/read authority probe."""
+        try:
+            with self._client_factory(connection) as client:
+                _get(client, "/api/libraries", self._maximum_bytes, self._timeout_seconds)
+        except TargetConnectionError:
+            raise
+        except Exception:
+            raise TargetConnectionError("unavailable") from None
+
 
 def _get(client: httpx.Client, path: str, maximum: int, timeout: int, params: dict[str, str] | None = None) -> dict[str, Any]:
     with client.stream("GET", path, params=params, headers={"Accept": "application/json", "Accept-Encoding": "identity"}, timeout=timeout) as response:

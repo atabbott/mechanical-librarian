@@ -263,7 +263,7 @@ _REVIEW_SCANS_SQL = (
     "producer_fingerprint TEXT NOT NULL CHECK(length(producer_fingerprint)=64 AND producer_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "state TEXT NOT NULL CHECK(state IN ('queued','discovering','processing','completed','completed_with_failures')), "
     "requested_at INTEGER NOT NULL CHECK(requested_at>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=requested_at), "
-    "catalogue_generation INTEGER CHECK(catalogue_generation IS NULL OR catalogue_generation>0), catalogue_fingerprint TEXT CHECK(catalogue_fingerprint IS NULL OR (length(catalogue_fingerprint)=64 AND catalogue_fingerprint NOT GLOB '*[^0-9a-f]*')), "
+    "catalogue_generation INTEGER CHECK(catalogue_generation IS NULL OR catalogue_generation>0), catalogue_fingerprint TEXT CHECK(catalogue_fingerprint IS NULL OR (length(catalogue_fingerprint)=64 AND catalogue_fingerprint NOT GLOB '*[^0-9a-f]*')), qualification_epoch INTEGER CHECK(qualification_epoch IS NULL OR qualification_epoch>=0), "
     "total INTEGER NOT NULL DEFAULT 0 CHECK(total>=0), refresh_count INTEGER NOT NULL DEFAULT 0 CHECK(refresh_count BETWEEN 0 AND 3), rescan_requested INTEGER NOT NULL DEFAULT 0 CHECK(rescan_requested IN (0,1)))"
 )
 _REVIEW_CONTROL_SQL = (
@@ -1719,7 +1719,7 @@ class SQLiteMetadataReportRepository:
                     "UPDATE review_preparation_scans SET state='queued',"
                     "requested_at=?,updated_at=MAX(?,?),"
                     "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
-                    "refresh_count=0,rescan_requested=0 WHERE scan_id=? "
+                    "qualification_epoch=NULL,refresh_count=0,rescan_requested=0 WHERE scan_id=? "
                     "AND state='completed_with_failures'",
                     (requested_at, requested_at, changed_at, scan_id),
                 ).rowcount
@@ -3473,7 +3473,7 @@ class SQLiteMetadataReportRepository:
                         "UPDATE review_preparation_scans SET state='queued',"
                         "library_id=?,producer_fingerprint=?,requested_at=?,updated_at=?,"
                         "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
-                        "refresh_count=0,"
+                        "qualification_epoch=NULL,refresh_count=0,"
                         "rescan_requested=0 WHERE scan_id=?",
                         (
                             library_id,
@@ -3670,7 +3670,7 @@ class SQLiteMetadataReportRepository:
                     self._connection.execute(
                         "UPDATE review_preparation_scans SET state='queued',"
                         "library_id=?,producer_fingerprint=?,catalogue_generation=NULL,"
-                        "catalogue_fingerprint=NULL,total=0,refresh_count=0,"
+                        "catalogue_fingerprint=NULL,qualification_epoch=NULL,total=0,refresh_count=0,"
                         "rescan_requested=0 "
                         "WHERE scan_id=?",
                         (library_id, producer_fingerprint, row[0]),
@@ -3700,6 +3700,90 @@ class SQLiteMetadataReportRepository:
         except (sqlite3.Error, TypeError, ValueError) as error:
             raise MetadataReportError("target connection condition is unavailable") from error
 
+    def guard_target_connection(self, action: PipelineAction, checked_at: int) -> bool:
+        """Return a claimed action to queue when its connection is held."""
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            condition = self._connection.execute(
+                "SELECT state FROM review_preparation_connection_conditions "
+                "WHERE connection_name=?", (action.connection,)
+            ).fetchone()
+            if condition is None or condition[0] not in {"paused", "checking"}:
+                self._connection.commit()
+                return True
+            if action.stage == "discovery":
+                updated = self._connection.execute(
+                    "UPDATE review_preparation_scans SET state='queued',updated_at=? "
+                    "WHERE scan_id=? AND state='discovering'",
+                    (checked_at, action.scan_id),
+                ).rowcount
+            else:
+                updated = self._connection.execute(
+                    "UPDATE review_preparation_work SET state='queued',attempt=0,updated_at=? "
+                    "WHERE work_id=? AND stage=? AND state='running' AND attempt=?",
+                    (checked_at, action.action_id, action.stage, action.attempt),
+                ).rowcount
+            if updated != 1:
+                raise MetadataReportError("review preparation state changed")
+            self._connection.commit()
+            return False
+        except (sqlite3.Error, MetadataReportError) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("target connection condition is unavailable") from error
+
+    def discovery_requires_qualification(self, action: PipelineAction) -> bool:
+        if action.stage != "discovery":
+            raise MetadataReportError("review preparation state changed")
+        try:
+            row = self._connection.execute(
+                "SELECT qualification_epoch FROM review_preparation_scans "
+                "WHERE scan_id=? AND state='discovering'", (action.scan_id,)
+            ).fetchone()
+            if row is None:
+                raise MetadataReportError("review preparation state changed")
+            return row[0] is None
+        except sqlite3.Error as error:
+            raise MetadataReportError("target connection condition is unavailable") from error
+
+    def qualify_review_discovery(self, action: PipelineAction, qualified_at: int) -> bool:
+        """Persist successful preflight authority before target enumeration."""
+        if action.stage != "discovery":
+            raise MetadataReportError("review preparation state changed")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            condition = self._connection.execute(
+                "SELECT state,epoch FROM review_preparation_connection_conditions "
+                "WHERE connection_name=?", (action.connection,)
+            ).fetchone()
+            if condition is not None and condition[0] in {"paused", "checking"}:
+                updated = self._connection.execute(
+                    "UPDATE review_preparation_scans SET state='queued',updated_at=? "
+                    "WHERE scan_id=? AND state='discovering'", (qualified_at, action.scan_id)
+                ).rowcount
+                if updated != 1:
+                    raise MetadataReportError("review preparation state changed")
+                self._connection.commit()
+                return False
+            epoch = 0 if condition is None else condition[1]
+            updated = self._connection.execute(
+                "UPDATE review_preparation_scans SET qualification_epoch=?,updated_at=? "
+                "WHERE scan_id=? AND state='discovering' AND qualification_epoch IS NULL",
+                (epoch, qualified_at, action.scan_id),
+            ).rowcount
+            if updated != 1:
+                raise MetadataReportError("review preparation state changed")
+            self._connection.commit()
+            return True
+        except (sqlite3.Error, MetadataReportError) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("target connection condition is unavailable") from error
+
     def defer_for_target_connection(
         self, action: PipelineAction, code: str, updated_at: int
     ) -> None:
@@ -3717,14 +3801,11 @@ class SQLiteMetadataReportRepository:
                 "connection_name,code,state,epoch,affected,updated_at) VALUES(?,?,'paused',?,?,?) "
                 "ON CONFLICT(connection_name) DO UPDATE SET code=excluded.code,state='paused',"
                 "epoch=excluded.epoch,affected=excluded.affected,updated_at=excluded.updated_at",
-                (action.connection, code, epoch, self._connection.execute(
-                    "SELECT count(*) FROM review_preparation_work WHERE connection_name=? "
-                    "AND state IN ('queued','running')", (action.connection,)
-                ).fetchone()[0], updated_at),
+                (action.connection, code, epoch, 0, updated_at),
             )
             if action.stage == "discovery":
                 updated = self._connection.execute(
-                    "UPDATE review_preparation_scans SET state='queued',updated_at=? "
+                    "UPDATE review_preparation_scans SET state='queued',qualification_epoch=NULL,updated_at=? "
                     "WHERE scan_id=? AND state='discovering'", (updated_at, action.scan_id)
                 ).rowcount
             else:
@@ -3735,6 +3816,19 @@ class SQLiteMetadataReportRepository:
                 ).rowcount
             if updated != 1:
                 raise MetadataReportError("review preparation state changed")
+            affected = self._connection.execute(
+                "SELECT (SELECT count(*) FROM review_preparation_scans scan "
+                "WHERE scan.connection_name=? AND scan.state IN ('queued','discovering','processing') "
+                "AND NOT EXISTS(SELECT 1 FROM review_preparation_work work "
+                "WHERE work.scan_id=scan.scan_id AND work.state IN ('queued','running')))+"
+                "(SELECT count(*) FROM review_preparation_work "
+                "WHERE connection_name=? AND state IN ('queued','running'))",
+                (action.connection, action.connection),
+            ).fetchone()[0]
+            self._connection.execute(
+                "UPDATE review_preparation_connection_conditions SET affected=? "
+                "WHERE connection_name=?", (affected, action.connection)
+            )
             self._connection.commit()
         except (sqlite3.Error, MetadataReportError) as error:
             if self._connection.in_transaction:
@@ -3787,6 +3881,13 @@ class SQLiteMetadataReportRepository:
                 "affected=?,updated_at=? WHERE connection_name=? AND state='checking' AND epoch=?",
                 ("recovered" if code is None else "paused", code, affected, checked_at, connection, epoch),
             ).rowcount
+            if updated == 1 and code is None:
+                self._connection.execute(
+                    "UPDATE review_preparation_scans SET qualification_epoch=?,updated_at=? "
+                    "WHERE connection_name=? AND state='queued' "
+                    "AND qualification_epoch IS NULL",
+                    (epoch, checked_at, connection),
+                )
             self._connection.commit()
             return updated == 1
         except sqlite3.Error as error:
@@ -3957,7 +4058,7 @@ class SQLiteMetadataReportRepository:
                     self._connection.execute(
                         "UPDATE review_preparation_scans SET state='queued',"
                         "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
-                        "refresh_count=0,rescan_requested=0,updated_at=? "
+                        "qualification_epoch=NULL,refresh_count=0,rescan_requested=0,updated_at=? "
                         "WHERE scan_id=?",
                         (claimed_at, scan_id),
                     )
@@ -3975,7 +4076,7 @@ class SQLiteMetadataReportRepository:
                     self._connection.execute(
                         "UPDATE review_preparation_scans SET state='queued',"
                         "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
-                        "rescan_requested=0,updated_at=? WHERE scan_id=?",
+                        "qualification_epoch=NULL,rescan_requested=0,updated_at=? WHERE scan_id=?",
                         (claimed_at, scan_id),
                     )
                 else:
