@@ -13,7 +13,10 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import uuid4
 
-from mechanical_librarian.domain.provider_recovery import ProviderRecovery, ProviderRecoveryJob
+from mechanical_librarian.domain.provider_recovery import (
+    ProviderRecovery,
+    ProviderRecoveryJob,
+)
 
 
 class ProviderRecoveryStore(Protocol):

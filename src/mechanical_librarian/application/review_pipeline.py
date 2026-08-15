@@ -7,7 +7,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from mechanical_librarian.application.catalogue import CatalogueEntry, TargetConnectionError
+from mechanical_librarian.application.catalogue import (
+    CatalogueEntry,
+    TargetConnectionError,
+)
 from mechanical_librarian.application.metadata_report import CredentialError
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.metadata_report import ProviderStatus

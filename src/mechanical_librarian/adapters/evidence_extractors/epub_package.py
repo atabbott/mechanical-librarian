@@ -21,33 +21,36 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from xml.parsers import expat
 
-from mechanical_librarian.domain.evidence_bounds import (
-    EvidenceValueError,
-    validate_code,
-    validate_projection_text,
-)
-from mechanical_librarian.domain.identifiers import CompatibilityVersion, ExtractorVersion, SchemaVersion
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
-    EpubPackageCitationSection,
-    EpubPackageDeclarationKind,
-    EpubPackageLimits,
+    MAX_DECLARATIONS,
+    EpubInspectionOutcome,
+    EpubObservationApplicability,
     EpubPackageCapability,
     EpubPackageCitation,
+    EpubPackageCitationSection,
     EpubPackageDeclaration,
+    EpubPackageDeclarationKind,
     EpubPackageField,
+    EpubPackageLimits,
     EpubPackageObservation,
-    EpubInspectionOutcome,
     EpubPackageReport,
     EpubPackageRequest,
     EpubPackageSourceError,
     EpubPackageUsage,
     EpubPackageWarning,
-    MAX_DECLARATIONS,
-    EpubObservationApplicability,
     epub_file_lineage,
     epub_resource_identity,
 )
-
+from mechanical_librarian.domain.evidence_bounds import (
+    EvidenceValueError,
+    validate_code,
+    validate_projection_text,
+)
+from mechanical_librarian.domain.identifiers import (
+    CompatibilityVersion,
+    ExtractorVersion,
+    SchemaVersion,
+)
 
 _CONTAINER = "META-INF/container.xml"
 _ENCRYPTION = "META-INF/encryption.xml"

@@ -12,8 +12,8 @@ library.
 from __future__ import annotations
 
 import argparse
-import io
 import hashlib
+import io
 import json
 import os
 import secrets
@@ -26,8 +26,8 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,39 +38,43 @@ if str(IMPORT_ROOT) not in sys.path:
     sys.path.insert(0, str(IMPORT_ROOT))
 
 import httpx
-import mechanical_librarian.bootstrap.composition as composition
 from argon2 import PasswordHasher
-from PIL import Image
 from fastapi.testclient import TestClient
+from PIL import Image
 
+import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.adapters.field_effect_fakes import (
-    FakeBackupReadiness, FakeDependencyCurrentness,
+    FakeBackupReadiness,
+    FakeDependencyCurrentness,
     FakeForwardReevaluation,
 )
 from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import (
     AudiobookshelfFieldEffectCapabilities,
     AudiobookshelfFieldEffectTarget,
 )
+from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
-from mechanical_librarian.domain.cover_evidence import CoverArtifact
-from mechanical_librarian.domain.field_effect import (
-    EffectAuthority, EffectConsent, FieldEffectError, FieldEffectOperation,
-    FieldEffectPlan,
-)
-from mechanical_librarian.domain.metadata_report import MetadataReport
-from mechanical_librarian.infrastructure.security.credentials import target_client_token
-from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.bootstrap.composition import (
     compose_continuous_guarded_application,
     create_review_pipeline,
 )
+from mechanical_librarian.domain.cover_evidence import CoverArtifact
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    EffectConsent,
+    FieldEffectError,
+    FieldEffectOperation,
+    FieldEffectPlan,
+)
+from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from mechanical_librarian.infrastructure.security.credentials import target_client_token
 from mechanical_librarian.interfaces.web.app import (
     create_review_app,
     load_owner_password_verifier,
@@ -79,7 +83,6 @@ from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetLoader,
     ReactAssetRecovery,
 )
-
 
 IMAGES = {
     "2.26.0": "ghcr.io/advplyr/audiobookshelf:2.26.0@sha256:16685fbba37a21d403f5390b907d286e15b3086d26527269b4ad785f71f571e5",

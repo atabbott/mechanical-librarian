@@ -66,13 +66,13 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalAssessment,
     ProposalOutcome,
     ProposalResult,
-    ProposalSet,
     ProposalScope,
+    ProposalSet,
     ProposalValue,
     ProposalValueError,
     ProposalValueKind,
-    _target_backed_lookup_contains,
     _ignored_policy_targets,
+    _target_backed_lookup_contains,
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase

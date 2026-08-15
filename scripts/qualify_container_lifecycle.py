@@ -8,7 +8,6 @@ import hashlib
 import http.cookiejar
 import io
 import json
-import os
 import re
 import shutil
 import ssl
@@ -22,7 +21,6 @@ import uuid
 from pathlib import Path
 
 from argon2 import PasswordHasher
-
 
 ROOT = Path(__file__).resolve().parents[1]
 OWNERSHIP_LABEL = "org.mechanical-librarian.qualification-run"

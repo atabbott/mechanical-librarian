@@ -36,20 +36,20 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_projection_text,
 )
 from mechanical_librarian.domain.failure_diagnostics import (
+    MAX_DIAGNOSTIC_COUNT,
     FailureCategory,
     FailureComponent,
     FailureDiagnostic,
     FailureStage,
-    MAX_DIAGNOSTIC_COUNT,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_DESCRIPTION_CHARACTERS,
+    MAX_PROVIDER_EVIDENCE,
+    MAX_SCALAR_CHARACTERS,
     ClaimKind,
     ClaimScope,
     FieldState,
     LocalClaim,
-    MAX_DESCRIPTION_CHARACTERS,
-    MAX_PROVIDER_EVIDENCE,
-    MAX_SCALAR_CHARACTERS,
     ProviderCandidate,
     ProviderClaim,
     ProviderEvidence,
@@ -63,7 +63,6 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
     provider_access_time,
 )
-
 
 GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 _VOLUME_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")

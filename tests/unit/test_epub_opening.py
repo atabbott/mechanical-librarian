@@ -4,20 +4,32 @@ import hashlib
 import html
 import json
 import time
+import unittest
 import zipfile
 from datetime import datetime, timedelta, timezone
-import unittest
 from unittest.mock import patch
 
-from hypothesis import given, settings, strategies as st
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
 import mechanical_librarian.adapters.evidence_extractors.epub_opening as opening
-
 from mechanical_librarian.adapters.evidence_extractors.epub_opening import (
     EpubOpeningExtractor,
     _looks_wide_encoded,
 )
-from mechanical_librarian.adapters.evidence_extractors.epub_package import EpubPackageExtractor
+from mechanical_librarian.adapters.evidence_extractors.epub_package import (
+    EpubPackageExtractor,
+)
+from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
+    EpubInspectionOutcome,
+    EpubObservationApplicability,
+    EpubPackageCancellation,
+    EpubPackageCapability,
+    EpubPackageRequest,
+    EpubPackageSource,
+    epub_file_lineage,
+)
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.epub_opening import (
     EPUB_OPENING_EXTRACTOR_VERSION,
     EpubOpeningLimits,
@@ -26,8 +38,8 @@ from mechanical_librarian.domain.epub_opening import (
     OpeningParseMode,
     OpeningResourceDisposition,
 )
+from mechanical_librarian.domain.epub_source import FileReference
 from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
-from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
     ConnectionId,
@@ -37,25 +49,14 @@ from mechanical_librarian.domain.identifiers import (
     SchemaVersion,
     TargetId,
 )
-from mechanical_librarian.domain.epub_source import FileReference
-from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
-    EpubPackageCancellation,
-    EpubPackageCapability,
-    EpubInspectionOutcome,
-    EpubPackageRequest,
-    EpubPackageSource,
-    EpubObservationApplicability,
-    epub_file_lineage,
-)
 from tests.support.epub_packages import (
     MATERIALIZED_RECIPES,
     _opening_epub,
     _opening_package,
     _xhtml,
-    epub_bytes,
     opening_active_content_inert,
-    opening_claims_complete,
     opening_claim_families,
+    opening_claims_complete,
     opening_epub3_landmark_conflict,
     opening_no_applicable,
     opening_recovered_html,

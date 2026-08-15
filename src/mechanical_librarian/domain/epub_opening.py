@@ -12,6 +12,15 @@ from types import MappingProxyType
 from typing import Any, ClassVar, Mapping, Self
 from xml.parsers import expat
 
+from .epub_inspection import (
+    MAX_PUBLIC_REPORT_BYTES,
+    DateEvent,
+    DatePrecision,
+    EpubInspectionOutcome,
+    EpubObservationApplicability,
+    EpubPackageLimits,
+    epub_file_lineage,
+)
 from .evidence_bounds import (
     EvidenceValueError,
     validate_code,
@@ -19,16 +28,6 @@ from .evidence_bounds import (
     validate_role_projection,
 )
 from .identifiers import Fingerprint, SchemaVersion
-from .epub_inspection import (
-    DateEvent,
-    DatePrecision,
-    EpubInspectionOutcome,
-    EpubObservationApplicability,
-    EpubPackageLimits,
-    MAX_PUBLIC_REPORT_BYTES,
-    epub_file_lineage,
-)
-
 
 EPUB_OPENING_REPORT_SCHEMA = SchemaVersion("epub-opening-report-v2")
 EPUB_OPENING_CITATION_SCHEMA = SchemaVersion("epub-opening-citation-v1")

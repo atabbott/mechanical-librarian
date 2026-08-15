@@ -10,7 +10,6 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
-
 BUILD_IDENTITY = "a" * 64
 HOSTILE_TEXT = "Hostile <img src=x onerror=window.__metadataExecuted=true>"
 UNBROKEN_TITLE_SEGMENT = "UnbrokenSyntheticCatalogueToken" * 12

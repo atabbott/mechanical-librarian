@@ -25,6 +25,13 @@ from mechanical_librarian.application.metadata_report import (
     metadata_discovery_plan,
     qualify_provider_observation,
 )
+from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
+from mechanical_librarian.domain.epub_inspection import DatePrecision
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -38,18 +45,11 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
     PublicationDateRelation,
     TargetDestination,
+    TargetFacts,
     TargetField,
     TargetFieldState,
-    TargetFacts,
     default_target_fields,
     isbn_family,
-)
-from mechanical_librarian.domain.epub_inspection import DatePrecision
-from mechanical_librarian.domain.cover_evidence import (
-    CoverDesignation,
-    CoverSourceState,
-    CoverSourceKind,
-    cover_source_id,
 )
 from mechanical_librarian.infrastructure.security.credentials import (
     open_library_client,

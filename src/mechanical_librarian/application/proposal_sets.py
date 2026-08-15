@@ -6,6 +6,12 @@ from collections.abc import Callable
 from typing import Protocol
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    ResolvedMetadataPolicy,
+    human_review_destinations,
+    resolve_policy,
+)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ReportValueError,
@@ -14,12 +20,6 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
     ProposalValueError,
     evaluate_report,
-)
-from mechanical_librarian.domain.metadata_policy import (
-    MetadataPolicyProfile,
-    ResolvedMetadataPolicy,
-    human_review_destinations,
-    resolve_policy,
 )
 
 

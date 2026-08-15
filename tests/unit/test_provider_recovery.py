@@ -5,21 +5,33 @@ import tempfile
 import threading
 import unittest
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
-from pathlib import Path
 
-from mechanical_librarian.adapters.persistence.provider_recovery import ProviderRecoveryJob, ProviderRecoveryStoreError, SQLiteProviderRecoveryStore
+import mechanical_librarian.adapters.persistence.provider_recovery as recovery_persistence
+from mechanical_librarian.adapters.persistence.provider_recovery import (
+    ProviderRecoveryJob,
+    ProviderRecoveryStoreError,
+    SQLiteProviderRecoveryStore,
+)
+from mechanical_librarian.application.metadata_report import CredentialError
+from mechanical_librarian.application.provider_recovery_runner import (
+    ScopedProviderRecoveryRunner,
+)
+from mechanical_librarian.application.provider_retry_successor import (
+    ProviderRetrySuccessorError,
+)
 from mechanical_librarian.bootstrap.composition import (
     _provider_recovery_jobs,
     _record_provider_recovery_observations,
 )
-import mechanical_librarian.adapters.persistence.provider_recovery as recovery_persistence
 from mechanical_librarian.domain.metadata_report import ProviderStatus
-from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP, ProviderRecovery, ProviderRecoveryError
-from mechanical_librarian.application.provider_recovery_runner import ScopedProviderRecoveryRunner
-from mechanical_librarian.application.metadata_report import CredentialError
-from mechanical_librarian.application.provider_retry_successor import ProviderRetrySuccessorError
+from mechanical_librarian.domain.provider_recovery import (
+    MAX_TIMESTAMP,
+    ProviderRecovery,
+    ProviderRecoveryError,
+)
 
 
 class ProviderRecoveryTests(unittest.TestCase):

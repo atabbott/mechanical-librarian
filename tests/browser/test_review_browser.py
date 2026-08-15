@@ -8,26 +8,30 @@ import tempfile
 import threading
 import time
 import unittest
-from urllib.parse import parse_qs, urlparse
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import uvicorn
 from argon2 import PasswordHasher
 from playwright.sync_api import (
     BrowserContext,
     Page,
-    TimeoutError as PlaywrightTimeoutError,
     expect,
     sync_playwright,
 )
+from playwright.sync_api import (
+    TimeoutError as PlaywrightTimeoutError,
+)
+from scripts.verify_playwright_browser import verify_playwright_browser
 
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
-from mechanical_librarian.application.cover_consideration import CoverConsiderationService
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationService,
+)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
@@ -35,20 +39,25 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
 )
+from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
-from scripts.verify_playwright_browser import verify_playwright_browser
 from tests.unit.review_app_fixture import create_transport_test_app
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
+)
+from tests.unit.test_bibliographic_bundles import (
     _source as _bibliographic_source,
 )
-from tests.unit.test_review_web import _ActivityApplication
 from tests.unit.test_cover_packets import (
     _preview as _cover_preview,
+)
+from tests.unit.test_cover_packets import (
     _report as _cover_report,
+)
+from tests.unit.test_cover_packets import (
     _source as _cover_source,
 )
-
+from tests.unit.test_review_web import _ActivityApplication
 
 _PASSWORD = "synthetic browser password"
 

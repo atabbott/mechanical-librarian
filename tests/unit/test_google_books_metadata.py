@@ -8,12 +8,12 @@ from pathlib import Path
 
 import httpx
 
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    open_repository,
+)
 from mechanical_librarian.adapters.providers.google_books_metadata import (
     GOOGLE_BOOKS_URL,
     GoogleBooksMetadataProvider,
-)
-from mechanical_librarian.adapters.persistence.metadata_reports import (
-    open_repository,
 )
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
@@ -22,20 +22,19 @@ from mechanical_librarian.application.metadata_report import (
     qualify_provider_observation,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_DESCRIPTION_CHARACTERS,
     ClaimKind,
     ClaimScope,
     FieldState,
+    FileFacts,
     LocalClaim,
     MetadataReport,
     ProviderEvidence,
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
-    PublicationDateRelation,
-    default_target_fields,
-    FileFacts,
-    MAX_DESCRIPTION_CHARACTERS,
     TargetFacts,
+    default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase

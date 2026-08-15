@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import tempfile
-import unittest
 import json
 import os
+import tempfile
+import unittest
 from pathlib import Path
 from unittest.mock import patch
 
@@ -34,7 +34,6 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectPlan,
     field_value_version,
 )
-
 
 _PNG = b"\x89PNG\r\n\x1a\nsynthetic-cover"
 

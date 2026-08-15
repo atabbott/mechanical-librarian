@@ -1,9 +1,12 @@
 from __future__ import annotations
+
 import tempfile
 import unittest
 from pathlib import Path
+
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.metadata_report import MetadataReportError
+
 
 class BatchAuthorityTests(unittest.TestCase):
  def test_expected_database_deleted_never_recreates(self):

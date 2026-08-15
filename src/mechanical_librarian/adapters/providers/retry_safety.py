@@ -17,7 +17,6 @@ import httpx
 
 from mechanical_librarian.domain.metadata_report import ProviderRequestAccounting
 
-
 _SAFE_OS_ERRNOS = frozenset(
     {
         errno.ECONNABORTED,

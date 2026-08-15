@@ -5,10 +5,25 @@ import struct
 import time
 import unittest
 import zipfile
-from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
-from mechanical_librarian.adapters.evidence_extractors.epub_package import EpubPackageExtractor
+from mechanical_librarian.adapters.evidence_extractors.epub_package import (
+    EpubPackageExtractor,
+)
+from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
+    EpubInspectionOutcome,
+    EpubObservationApplicability,
+    EpubPackageCancellation,
+    EpubPackageCapability,
+    EpubPackageCitationSection,
+    EpubPackageDeclarationKind,
+    EpubPackageField,
+    EpubPackageLimits,
+    EpubPackageRequest,
+    EpubPackageSource,
+)
+from mechanical_librarian.domain.epub_source import FileReference
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
     ConnectionId,
@@ -18,26 +33,13 @@ from mechanical_librarian.domain.identifiers import (
     SchemaVersion,
     TargetId,
 )
-from mechanical_librarian.domain.epub_source import FileReference
-from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
-    EpubPackageCitationSection,
-    EpubPackageDeclarationKind,
-    EpubPackageLimits,
-    EpubPackageCancellation,
-    EpubPackageCapability,
-    EpubPackageField,
-    EpubInspectionOutcome,
-    EpubPackageRequest,
-    EpubPackageSource,
-    EpubObservationApplicability,
-)
 from tests.support.epub_packages import (
     CONTAINER_MULTIPLE,
     CONTAINER_ONE,
     EPUB2_PACKAGE,
     EPUB3_PACKAGE,
-    epub_data_descriptor_bytes,
     epub_bytes,
+    epub_data_descriptor_bytes,
     epub_zip64_bytes,
 )
 

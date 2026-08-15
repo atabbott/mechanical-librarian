@@ -7,6 +7,11 @@ import unittest
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -27,18 +32,13 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalValueKind,
     evaluate_report,
 )
-from mechanical_librarian.domain.metadata_policy import (
-    MetadataPolicyProfile,
-    resolve_policy,
-)
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionIncompatibleError,
     ReviewAdmissionResult,
     ReviewCase,
     ReviewCaseValueError,
+    ReviewTransition,
 )
-from mechanical_librarian.domain.human_decision import HumanDecision
-from mechanical_librarian.domain.review_case import ReviewTransition
 
 
 def _report(

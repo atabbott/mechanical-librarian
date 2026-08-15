@@ -13,20 +13,26 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
-from mechanical_librarian.application.field_effects import FieldEffectError
+from mechanical_librarian.application.metadata_policy import (
+    MetadataPolicyApplicationError,
+    PolicyNotebook,
+)
+from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
-    MetadataPolicyProfile,
     OPTION_CATALOGUE,
     QUALIFIED_AUTOMATIC,
+    MetadataPolicyProfile,
     resolve_policy,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+)
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
-from mechanical_librarian.application.metadata_policy import MetadataPolicyApplicationError, PolicyNotebook
-from mechanical_librarian.bootstrap import composition
 from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report
 
 

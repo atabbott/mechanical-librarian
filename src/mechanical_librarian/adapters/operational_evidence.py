@@ -10,10 +10,14 @@ import threading
 from pathlib import Path
 from typing import Callable
 
-from mechanical_librarian.application.operations import (
-    MAX_SUPPORT_BYTES, MAX_TIMINGS, OperationsError, StageTiming, canonical_support,
-)
 from mechanical_librarian.adapters.private_recovery import require_private_directory
+from mechanical_librarian.application.operations import (
+    MAX_SUPPORT_BYTES,
+    MAX_TIMINGS,
+    OperationsError,
+    StageTiming,
+    canonical_support,
+)
 
 _PRIVATE_KEY = re.compile(
     r"(?:secret|token|password|credential|authorization|cookie|path|value|metadata|excerpt|cover|media|environment|database)",

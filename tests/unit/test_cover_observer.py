@@ -9,7 +9,10 @@ from PIL import Image
 
 from mechanical_librarian.adapters.cover_artifacts import CoverDecodeTimeout
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
-from mechanical_librarian.adapters.providers.remote_cover import CoverDeadline, RemoteCover
+from mechanical_librarian.adapters.providers.remote_cover import (
+    CoverDeadline,
+    RemoteCover,
+)
 from mechanical_librarian.application.configuration import (
     ProviderConnectionConfiguration,
 )

@@ -12,7 +12,10 @@ from mechanical_librarian.application.continuous_field_effects import (
 )
 from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
-from mechanical_librarian.domain.field_effect import FieldEffectError, SUPPORTED_DESTINATIONS
+from mechanical_librarian.domain.field_effect import (
+    SUPPORTED_DESTINATIONS,
+    FieldEffectError,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_QUALIFICATION_CANDIDATE_SHA256,

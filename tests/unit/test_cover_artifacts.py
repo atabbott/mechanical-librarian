@@ -5,10 +5,12 @@ import sys
 import unittest
 import zlib
 
-from PIL import Image
-from PIL import features
+from PIL import Image, features
 
-from mechanical_librarian.adapters.cover_artifacts import CoverDecodeRejected, decode_cover
+from mechanical_librarian.adapters.cover_artifacts import (
+    CoverDecodeRejected,
+    decode_cover,
+)
 from mechanical_librarian.domain.cover_evidence import CoverSourceState
 
 

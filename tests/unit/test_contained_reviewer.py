@@ -23,11 +23,15 @@ from PIL import Image
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
 
-from mechanical_librarian.adapters.reviewers import contained_reviewer as adapter  # noqa: E402
-from mechanical_librarian.application import contained_reviewer_contract as contract  # noqa: E402
+from mechanical_librarian.adapters.reviewers import (
+    contained_reviewer as adapter,  # noqa: E402
+)
+from mechanical_librarian.application import (
+    contained_reviewer_contract as contract,  # noqa: E402
+)
 from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
-    ContainedReviewRequest,
     ContainedReviewerIdentity,
+    ContainedReviewRequest,
     admit_cover_review_request,
     canonical_json,
 )

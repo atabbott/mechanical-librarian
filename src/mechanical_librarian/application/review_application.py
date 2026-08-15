@@ -11,6 +11,10 @@ from typing import Literal, Protocol, TypeVar
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationError,
+    CoverConsiderationService,
+)
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.metadata_policy import (
     AutomaticSafetyControls,
@@ -38,16 +42,17 @@ from mechanical_librarian.application.review_web import (
     ReviewSessionStore,
     SessionTokens,
 )
-from mechanical_librarian.application.cover_consideration import (
-    CoverConsiderationError,
-    CoverConsiderationService,
-)
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
 from mechanical_librarian.domain.field_effect import SUPPORTED_DESTINATIONS
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 
-
 _Result = TypeVar("_Result")
+
+
+class SerializedGate(Protocol):
+    """One serializing call gate that preserves its operation's return type."""
+
+    def __call__(self, call: Callable[[], _Result]) -> _Result: ...
 
 
 class ReviewApplicationError(RuntimeError):
@@ -189,7 +194,7 @@ class PreparationView:
 class PolicyOperations:
     """Serialized named policy operations; transport never receives its store."""
 
-    def __init__(self, notebook: PolicyNotebook, gate: Callable[[Callable[[], _Result]], _Result]) -> None:
+    def __init__(self, notebook: PolicyNotebook, gate: SerializedGate) -> None:
         self._notebook = notebook
         self._gate = gate
 
@@ -255,7 +260,7 @@ class AutomaticSafetyOperations:
     def __init__(
         self,
         controls: AutomaticSafetyControls,
-        gate: Callable[[Callable[[], _Result]], _Result],
+        gate: SerializedGate,
     ) -> None:
         self._controls = controls
         self._gate = gate
@@ -739,10 +744,10 @@ def prepare_cover_consideration(
     cover_considerations: CoverConsiderationService | None,
     review_case_id: str,
     *,
-    serialized: Callable[[Callable[[], _Result]], _Result],
+    serialized: SerializedGate,
     retry: bool = False,
     snapshot: Callable[[], tuple[str, str, bool] | None] | None = None,
-    finalize: Callable[[Callable[[], _Result]], _Result] | None = None,
+    finalize: SerializedGate | None = None,
 ) -> dict[str, object]:
     """Prepare one exact-current advisory cover consideration.
 

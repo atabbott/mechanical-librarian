@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import hashlib
-import io
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -31,16 +30,16 @@ from mechanical_librarian.application.metadata_report import (
     GenerateMetadataReport,
     InspectionResult,
     MetadataLookup,
+    MetadataReportError,
     ProviderBinding,
     ProviderLaneResult,
-    TargetFile,
     TargetCover,
+    TargetFile,
     TargetSnapshot,
     UnsupportedMediaError,
-    MetadataReportError,
     _variant_marker,
-    metadata_lookup,
     metadata_discovery_plan,
+    metadata_lookup,
     provider_observation,
     qualify_provider_observation,
 )
@@ -62,6 +61,8 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_CANDIDATES,
+    MAX_DESCRIPTION_CHARACTERS,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -77,14 +78,12 @@ from mechanical_librarian.domain.metadata_report import (
     IdentifierRelation,
     LocalClaim,
     MetadataReport,
-    MAX_CANDIDATES,
-    MAX_DESCRIPTION_CHARACTERS,
-    ProviderObservation,
     ProviderCandidate,
     ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
     ProviderIdentityBinding,
+    ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
     PublicationDateRelation,
@@ -95,24 +94,22 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     canonical_json,
-    comparison_links,
     claim_scope,
+    comparison_links,
     default_target_fields,
-    derive_identifier_evidence,
     derive_field_results,
+    derive_identifier_evidence,
     finalize_candidate_comparisons,
     manifestation_publication_compatible,
     normalize_date_value,
     normalize_title,
+    provider_access_time,
     publication_date_is_voting,
     publication_date_relation,
-    provider_access_time,
-    stable_reference,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
-from mechanical_librarian.interfaces.cli import main
 
 
 class _Target:

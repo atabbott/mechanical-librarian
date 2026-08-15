@@ -6,7 +6,12 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP, ProviderRecovery, ProviderRecoveryError, ProviderRecoveryJob
+from mechanical_librarian.domain.provider_recovery import (
+    MAX_TIMESTAMP,
+    ProviderRecovery,
+    ProviderRecoveryError,
+    ProviderRecoveryJob,
+)
 
 
 class ProviderRecoveryStoreError(RuntimeError):

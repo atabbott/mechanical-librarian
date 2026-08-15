@@ -14,8 +14,13 @@ import httpx
 
 import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.adapters.persistence.provider_recovery import ProviderRecoveryStoreError
-from mechanical_librarian.application.catalogue import CatalogueEntry, TargetConnectionError
+from mechanical_librarian.adapters.persistence.provider_recovery import (
+    ProviderRecoveryStoreError,
+)
+from mechanical_librarian.application.catalogue import (
+    CatalogueEntry,
+    TargetConnectionError,
+)
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
@@ -27,6 +32,8 @@ from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     TargetNotFoundError,
 )
+from mechanical_librarian.application.operations import StageTimer
+from mechanical_librarian.application.proposal_sets import ProposalCurrentnessError
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     PipelineProgress,
@@ -35,14 +42,12 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationSupervisor,
 )
 from mechanical_librarian.application.review_web import BrowseReviewLibrary
-from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderObservation,
     ProviderStatus,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
-from mechanical_librarian.application.proposal_sets import ProposalCurrentnessError
 from tests.unit.test_review_case_persistence import _report
 
 _PRODUCER = "f" * 64

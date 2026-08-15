@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import os
 import hashlib
 import json
+import os
 import sqlite3
 import tempfile
 import threading
@@ -30,23 +30,27 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     open_repository,
 )
-from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
-from tests.unit.review_app_fixture import (
-    TEST_REACT_BUILD_IDENTITY,
-    create_transport_test_app,
+from mechanical_librarian.domain.automatic_decision import (
+    F19A_QUALIFICATION_MANIFEST_SHA256,
+    AutomaticDecision,
 )
 from mechanical_librarian.domain.field_effect import (
+    SUPPORTED_DESTINATIONS,
     EffectAuthority,
     EffectConsent,
     FieldEffectError,
     FieldEffectNoChange,
     FieldEffectOperation,
     FieldEffectPlan,
-    SUPPORTED_DESTINATIONS,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -56,17 +60,12 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
-from mechanical_librarian.domain.metadata_policy import (
-    MetadataPolicyProfile,
-    resolve_policy,
-)
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from mechanical_librarian.domain.automatic_decision import (
-    AutomaticDecision,
-    F19A_QUALIFICATION_MANIFEST_SHA256,
+from tests.unit.review_app_fixture import (
+    TEST_REACT_BUILD_IDENTITY,
+    create_transport_test_app,
 )
-
 
 CAPABILITY = "c" * 64
 DEPENDENCY = "d" * 64

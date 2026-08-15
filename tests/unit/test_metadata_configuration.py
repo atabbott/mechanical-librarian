@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,7 +13,11 @@ from mechanical_librarian.application.configuration import (
     ProviderConnectionConfiguration,
     TargetConnectionConfiguration,
 )
-from mechanical_librarian.infrastructure.configuration import ConfigurationInput, configuration_schema_json, load_configuration_file
+from mechanical_librarian.infrastructure.configuration import (
+    ConfigurationInput,
+    configuration_schema_json,
+    load_configuration_file,
+)
 from mechanical_librarian.infrastructure.security.credentials import (
     hardcover_client,
     read_secret,

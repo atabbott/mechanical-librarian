@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import io
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -13,8 +13,8 @@ from pathlib import Path
 from unittest import mock
 
 from mechanical_librarian.application.configuration import ConfigurationError
-from mechanical_librarian.interfaces.cli import main
 from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.interfaces.cli import main
 
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
@@ -37,14 +37,15 @@ from mechanical_librarian_workbench import (  # noqa: E402
     WorkbenchOperations,
     WorkbenchResult,
     execute,
+    scenarios,  # noqa: E402
 )
+
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (  # noqa: E402
     ContainedReviewerProcessError,
 )
 from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
     ContainedReviewerAttempt,
 )
-from mechanical_librarian_workbench import scenarios  # noqa: E402
 
 
 def _operation(*_args: object) -> str:

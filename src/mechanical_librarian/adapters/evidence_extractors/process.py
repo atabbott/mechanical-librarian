@@ -11,11 +11,13 @@ import sys
 import time
 from collections.abc import Callable
 
-from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
+from mechanical_librarian.domain.epub_inspection import (
+    EpubInspection,
+    EpubInspectionOutcome,
+)
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
+from mechanical_librarian.domain.evidence_bounds import EvidenceValueError
 from mechanical_librarian.domain.identifiers import Fingerprint
-from mechanical_librarian.domain.epub_inspection import EpubInspection, EpubInspectionOutcome, EpubPackageLimits
-
 
 _STDOUT_LIMIT = 1_048_576
 _STDERR_LIMIT = 65_536

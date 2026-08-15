@@ -8,23 +8,48 @@ from tempfile import TemporaryDirectory
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers import hardcover_metadata
-from mechanical_librarian.application.configuration import MediaMountConfiguration, ReportLimits
+from mechanical_librarian.adapters.providers.retry_safety import ProviderAttemptRecord
+from mechanical_librarian.application.configuration import (
+    MediaMountConfiguration,
+    ReportLimits,
+)
 from mechanical_librarian.application.metadata_report import (
-    CredentialError, ProviderBinding, ProviderLaneResult, TargetFile, TargetSnapshot, metadata_discovery_plan,
+    CredentialError,
+    ProviderBinding,
+    ProviderLaneResult,
+    TargetFile,
+    TargetSnapshot,
+    metadata_discovery_plan,
     provider_observation,
 )
 from mechanical_librarian.application.provider_retry_successor import (
-    ConfiguredProviderRetry, GenerateProviderRetrySuccessor,
-    ProviderRetrySharedFailure, ProviderRetrySuccessorError,
+    ConfiguredProviderRetry,
+    GenerateProviderRetrySuccessor,
+    ProviderRetrySharedFailure,
+    ProviderRetrySuccessorError,
 )
-from mechanical_librarian.bootstrap.composition import _classify_provider_recovery_failure
-from mechanical_librarian.adapters.providers.retry_safety import ProviderAttemptRecord
-from mechanical_librarian.domain.metadata_report import (
-    ClaimKind, ClaimScope, FileFacts, LocalClaim, MetadataReport, ProviderCandidate, ProviderQueryKind, ProviderRequestAccounting, ProviderStatus,
-    TargetDestination, TargetFacts, TargetFieldState,
+from mechanical_librarian.bootstrap.composition import (
+    _classify_provider_recovery_failure,
 )
 from mechanical_librarian.domain.failure_diagnostics import (
-    FailureCategory, FailureComponent, FailureDiagnostic, FailureStage,
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
+)
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    FileFacts,
+    LocalClaim,
+    MetadataReport,
+    ProviderCandidate,
+    ProviderQueryKind,
+    ProviderRequestAccounting,
+    ProviderStatus,
+    TargetDestination,
+    TargetFacts,
+    TargetFieldState,
 )
 
 

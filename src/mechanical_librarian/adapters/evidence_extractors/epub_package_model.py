@@ -8,13 +8,20 @@ persistence projection is considered.
 
 from __future__ import annotations
 
-import re
 import hashlib
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Callable
 
+from mechanical_librarian.domain.epub_inspection import (
+    EpubInspectionOutcome,
+    EpubObservationApplicability,
+    EpubPackageLimits,
+    epub_file_lineage,
+)
+from mechanical_librarian.domain.epub_source import FileReference
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_code,
@@ -28,14 +35,6 @@ from mechanical_librarian.domain.identifiers import (
     SchemaVersion,
     TargetId,
 )
-from mechanical_librarian.domain.epub_source import FileReference
-from mechanical_librarian.domain.epub_inspection import (
-    EpubInspectionOutcome,
-    EpubObservationApplicability,
-    EpubPackageLimits,
-    epub_file_lineage,
-)
-
 
 MAX_FACT_FIELDS = 64
 MAX_OBSERVATIONS = 256

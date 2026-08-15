@@ -20,7 +20,6 @@ from tests.browser.fidelity_cohort import (
 from tests.browser.test_review_browser import _report
 from tests.unit.review_app_fixture import create_transport_test_app
 
-
 _ORIGIN = "https://testserver"
 _PASSWORD = "rich-fixture-proof"
 

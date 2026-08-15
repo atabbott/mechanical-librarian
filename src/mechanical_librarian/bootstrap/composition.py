@@ -10,9 +10,6 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import uvicorn
-import httpx
-
-from mechanical_librarian.bootstrap.contained_reviewer import run_cover_packet_reviewer
 
 from mechanical_librarian.adapters.cover_artifacts import (
     CoverDecodeRejected,
@@ -25,16 +22,6 @@ from mechanical_librarian.adapters.evidence_extractors.epub_cover import (
 from mechanical_librarian.adapters.evidence_extractors.process import (
     run_epub_inspector_child,
 )
-from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
-    AudiobookshelfCatalogueReader,
-)
-from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
-    AudiobookshelfItemReader,
-)
-from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import (
-    AudiobookshelfFieldEffectCapabilities,
-    AudiobookshelfFieldEffectTarget,
-)
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
@@ -44,28 +31,42 @@ from mechanical_librarian.adapters.field_effect_runtime import (
     PersistedEffectDependencies,
     PersistedForwardReevaluation,
 )
-from mechanical_librarian.adapters.private_recovery import (
-    PrivateCoverRecoveryStore,
-    require_private_directory,
+from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+    AudiobookshelfCatalogueReader,
+)
+from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import (
+    AudiobookshelfFieldEffectCapabilities,
+    AudiobookshelfFieldEffectTarget,
+)
+from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
+    AudiobookshelfItemReader,
+)
+from mechanical_librarian.adapters.persistence.batch_manifest import (
+    create as create_batch_manifest,
+)
+from mechanical_librarian.adapters.persistence.batch_manifest import (
+    read as read_batch_manifest,
 )
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
-from mechanical_librarian.adapters.persistence.batch_manifest import create as create_batch_manifest, read as read_batch_manifest
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
-from mechanical_librarian.adapters.reviewers.contained_reviewer import (
-    ContainedReviewerProcessError,
-    read_contained_reviewer_profile,
-)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
     open_shadow_preview_repository,
 )
-from mechanical_librarian.adapters.persistence.provider_recovery import ProviderRecoveryStoreError, SQLiteProviderRecoveryStore
-from mechanical_librarian.adapters.providers.hardcover_metadata import (
-    HardcoverMetadataProvider,
-    HardcoverPacer,
+from mechanical_librarian.adapters.persistence.provider_recovery import (
+    ProviderRecoveryStoreError,
+    SQLiteProviderRecoveryStore,
+)
+from mechanical_librarian.adapters.private_recovery import (
+    PrivateCoverRecoveryStore,
+    require_private_directory,
 )
 from mechanical_librarian.adapters.providers.google_books_metadata import (
     GoogleBooksMetadataProvider,
+)
+from mechanical_librarian.adapters.providers.hardcover_metadata import (
+    HardcoverMetadataProvider,
+    HardcoverPacer,
 )
 from mechanical_librarian.adapters.providers.open_library_metadata import (
     OpenLibraryMetadataProvider,
@@ -77,24 +78,51 @@ from mechanical_librarian.adapters.providers.remote_cover import (
     RemoteCoverTimeout,
     fetch_remote_cover,
 )
-from mechanical_librarian.application.batch import BatchError, BatchSelection, batch_fingerprint, catalogue_fingerprint as batch_catalogue_fingerprint, manifest as batch_manifest, parse_manifest, select
+from mechanical_librarian.adapters.reviewers.contained_reviewer import (
+    ContainedReviewerProcessError,
+    read_contained_reviewer_profile,
+)
+from mechanical_librarian.application.batch import (
+    BatchError,
+    BatchSelection,
+    batch_fingerprint,
+    parse_manifest,
+    select,
+)
+from mechanical_librarian.application.batch import (
+    catalogue_fingerprint as batch_catalogue_fingerprint,
+)
+from mechanical_librarian.application.batch import manifest as batch_manifest
 from mechanical_librarian.application.batch_run import ForegroundBatchRun
-from mechanical_librarian.application.catalogue import CatalogueError, RefreshCurrentCatalogue, TargetConnectionError
+from mechanical_librarian.application.catalogue import (
+    CatalogueError,
+    RefreshCurrentCatalogue,
+    TargetConnectionError,
+)
 from mechanical_librarian.application.configuration import (
     ConfigurationError,
     MediaMountConfiguration,
     ProviderConnectionConfiguration,
 )
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationService,
+)
+from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.decision_preview import preview_shadow_decision
+from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.metadata_report import (
+    ArtifactAuthorityError,
     CoverReadError,
     CoverSourceChangedError,
     CoverTimeoutError,
     CredentialError,
     CurrentnessError,
-    ItemInspectionError,
-    ArtifactAuthorityError,
     GenerateMetadataReport,
     InspectionResult,
+    ItemInspectionError,
     MetadataReportError,
     ProviderBinding,
     ProviderCoverDescriptor,
@@ -104,27 +132,14 @@ from mechanical_librarian.application.metadata_report import (
     UnsupportedMediaError,
     require_report_current,
 )
-from mechanical_librarian.application.continuous_field_effects import (
-    ContinuousGuardedApplication,
-)
-from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.proposal_sets import (
     CreateProposalSet,
     GetProposalSet,
     ProposalCurrentnessError,
 )
-from mechanical_librarian.application.review_cases import (
-    AdmitReviewCase,
-    GetReviewCase,
-    ReviewCaseError,
+from mechanical_librarian.application.provider_recovery_runner import (
+    ScopedProviderRecoveryRunner,
 )
-from mechanical_librarian.application.review_pipeline import (
-    PipelineAction,
-    ReviewPipelineError,
-    ReviewPreparationPipeline,
-    ReviewPreparationSupervisor,
-)
-from mechanical_librarian.application.provider_recovery_runner import ScopedProviderRecoveryRunner
 from mechanical_librarian.application.provider_retry_successor import (
     ConfiguredProviderRetry,
     GenerateProviderRetrySuccessor,
@@ -137,16 +152,18 @@ from mechanical_librarian.application.review_application import (
     compose_review_application,
     prepare_cover_consideration,
 )
-from mechanical_librarian.application.cover_consideration import CoverConsiderationService
-from mechanical_librarian.application.cover_policy import CoverPolicy
-from mechanical_librarian.application.decision_preview import preview_shadow_decision
-from mechanical_librarian.domain.metadata_report import MetadataReport
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
-from mechanical_librarian.domain.proposal_set import ProposalSet
-from mechanical_librarian.domain.review_case import (
-    ReviewAdmissionResult,
-    ReviewAdmissionStaleError,
+from mechanical_librarian.application.review_cases import (
+    AdmitReviewCase,
+    GetReviewCase,
+    ReviewCaseError,
 )
+from mechanical_librarian.application.review_pipeline import (
+    PipelineAction,
+    ReviewPipelineError,
+    ReviewPreparationPipeline,
+    ReviewPreparationSupervisor,
+)
+from mechanical_librarian.bootstrap.contained_reviewer import run_cover_packet_reviewer
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -162,17 +179,27 @@ from mechanical_librarian.domain.epub_inspection import (
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     FieldState,
     LocalClaim,
+    MetadataReport,
     ProviderObservation,
     ProviderStatus,
     RearClaimProvenance,
     claim_scope,
 )
+from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.provider_recovery import ProviderRecoveryJob
+from mechanical_librarian.domain.review_case import (
+    ReviewAdmissionResult,
+    ReviewAdmissionStaleError,
+)
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
@@ -188,14 +215,14 @@ from mechanical_librarian.infrastructure.security.credentials import (
     target_client,
     target_client_token,
 )
+from mechanical_librarian.infrastructure.security.review_protocol import (
+    MAX_REVIEW_CONNECTIONS,
+    REVIEW_TLS_CIPHERS,
+    BoundedReviewH11Protocol,
+)
 from mechanical_librarian.infrastructure.security.review_tls import (
     REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
     open_review_tls_identity,
-)
-from mechanical_librarian.infrastructure.security.review_protocol import (
-    BoundedReviewH11Protocol,
-    MAX_REVIEW_CONNECTIONS,
-    REVIEW_TLS_CIPHERS,
 )
 from mechanical_librarian.interfaces.web import (
     create_review_app,
@@ -1850,7 +1877,8 @@ def run_review_server(
         repository = open_repository(database_path, create=False, cross_thread=True)
         try:
             from mechanical_librarian.adapters.operational_evidence import (
-                LocalTimingStore, SupportBundle,
+                LocalTimingStore,
+                SupportBundle,
             )
 
             timing_store = LocalTimingStore(

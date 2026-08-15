@@ -8,9 +8,14 @@ import unittest
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.metadata_reports import (
-    open_repository, open_shadow_preview_repository,
+    open_repository,
+    open_shadow_preview_repository,
 )
-from mechanical_librarian.domain.metadata_report import FileFacts, MetadataReport, TargetFacts
+from mechanical_librarian.domain.metadata_report import (
+    FileFacts,
+    MetadataReport,
+    TargetFacts,
+)
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
 

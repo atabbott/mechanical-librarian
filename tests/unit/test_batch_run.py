@@ -4,8 +4,17 @@ import unittest
 
 from mechanical_librarian.application.batch import BatchSelection, CatalogueSnapshot
 from mechanical_librarian.application.batch_run import ForegroundBatchRun
-from mechanical_librarian.application.catalogue import CatalogueEntry, CatalogueStaleError
-from mechanical_librarian.application.metadata_report import CredentialError, CurrentnessError, ItemInspectionError, MetadataReportError, UnsupportedMediaError
+from mechanical_librarian.application.catalogue import (
+    CatalogueEntry,
+    CatalogueStaleError,
+)
+from mechanical_librarian.application.metadata_report import (
+    CredentialError,
+    CurrentnessError,
+    ItemInspectionError,
+    MetadataReportError,
+    UnsupportedMediaError,
+)
 from mechanical_librarian.domain.metadata_report import ProviderStatus
 
 

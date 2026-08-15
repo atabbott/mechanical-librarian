@@ -7,16 +7,26 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from mechanical_librarian.adapters.operational_evidence import LocalTimingStore, SupportBundle
+from mechanical_librarian.adapters.operational_evidence import (
+    LocalTimingStore,
+    SupportBundle,
+)
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
 from mechanical_librarian.application.operations import (
-    MAX_SUPPORT_BYTES, MAX_TIMINGS, OperationsError, OperationalStatus,
-    StageTimer, StageTiming, aggregate_incidents,
-)
-from mechanical_librarian.domain.field_effect import (
-    EffectAuthority, EffectConsent, FieldEffectPlan,
+    MAX_SUPPORT_BYTES,
+    MAX_TIMINGS,
+    OperationalStatus,
+    OperationsError,
+    StageTimer,
+    StageTiming,
+    aggregate_incidents,
 )
 from mechanical_librarian.bootstrap import container
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    EffectConsent,
+    FieldEffectPlan,
+)
 
 
 def _plan() -> FieldEffectPlan:

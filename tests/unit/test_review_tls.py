@@ -15,9 +15,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import httpx
+from argon2 import PasswordHasher
 from uvicorn.config import Config, create_ssl_context
 from uvicorn.server import ServerState
-from argon2 import PasswordHasher
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import (
@@ -25,15 +25,15 @@ from mechanical_librarian.application.configuration import (
     ReviewWebConfiguration,
 )
 from mechanical_librarian.bootstrap.composition import run_review_server
-from mechanical_librarian.infrastructure.security.review_tls import (
-    REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
-    open_review_tls_identity,
-)
 from mechanical_librarian.infrastructure.security.review_protocol import (
-    BoundedReviewH11Protocol,
     MAX_REVIEW_CONNECTIONS,
     REVIEW_HEADER_TIMEOUT_SECONDS,
     REVIEW_TLS_CIPHERS,
+    BoundedReviewH11Protocol,
+)
+from mechanical_librarian.infrastructure.security.review_tls import (
+    REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
+    open_review_tls_identity,
 )
 from tests.support.tls import synthetic_tls_identity
 

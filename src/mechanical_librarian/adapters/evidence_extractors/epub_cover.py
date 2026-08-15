@@ -20,7 +20,6 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
 
-
 _MAX_COVER_BYTES = 8 * 1024 * 1024
 _WALL_SECONDS = 60.0
 

@@ -43,22 +43,46 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.evidence_bounds import (
+    EvidenceValueError,
+    validate_projection_text,
+    validate_role_projection,
+)
+from mechanical_librarian.domain.failure_diagnostics import (
+    MAX_DIAGNOSTIC_COUNT,
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
+)
 from mechanical_librarian.domain.metadata_report import (
-    ClaimKind, ClaimScope, EditionEnrichmentOverflow, FieldState, LocalClaim, MAX_CANDIDATES,
-    MAX_CONTRIBUTIONS, MAX_DESCRIPTION_CHARACTERS, MAX_SCALAR_CHARACTERS,
-    MAX_SERIES, MAX_TAGS, ProviderCandidate, ProviderClaim,
-    ProviderEvidence, ProviderEvidenceKind, ProviderIdentityBinding,
+    MAX_CANDIDATES,
+    MAX_CONTRIBUTIONS,
+    MAX_DESCRIPTION_CHARACTERS,
+    MAX_SCALAR_CHARACTERS,
+    MAX_SERIES,
+    MAX_TAGS,
+    ClaimKind,
+    ClaimScope,
+    EditionEnrichmentOverflow,
+    FieldState,
+    LocalClaim,
+    ProviderCandidate,
+    ProviderClaim,
+    ProviderEvidence,
+    ProviderEvidenceKind,
+    ProviderIdentityBinding,
     ProviderObservation,
-    ProviderQueryKind, ProviderStatus, canonical_json, comparison_links,
-    finalize_candidate_comparisons, isbn_family, normalize_date_value, normalize_title,
+    ProviderQueryKind,
+    ProviderStatus,
+    canonical_json,
+    comparison_links,
+    finalize_candidate_comparisons,
+    isbn_family,
+    normalize_date_value,
+    normalize_title,
     provider_access_time,
 )
-from mechanical_librarian.domain.evidence_bounds import EvidenceValueError, validate_projection_text, validate_role_projection
-from mechanical_librarian.domain.failure_diagnostics import (
-    FailureCategory, FailureComponent, FailureDiagnostic, FailureStage,
-    MAX_DIAGNOSTIC_COUNT,
-)
-
 
 HARDCOVER_URL = "https://api.hardcover.app/v1/graphql"
 HARDCOVER_SCHEMA_COMMIT = "1c5bdbd3244e02b03ccc658a792793e39cba17a8"

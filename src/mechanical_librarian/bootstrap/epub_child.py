@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
-import re
 import resource
 import signal
 import sys
@@ -15,14 +14,45 @@ import zipfile
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
+from mechanical_librarian.adapters.evidence_extractors import (
+    epub_opening as opening_parser,
+)
+from mechanical_librarian.adapters.evidence_extractors.epub_local import (
+    package_facts as _adapter_package_facts,
+)
+from mechanical_librarian.adapters.evidence_extractors.epub_local import (
+    rear_facts as _adapter_rear_facts,
+)
+from mechanical_librarian.adapters.evidence_extractors.epub_opening import (
+    EpubOpeningExtractor,
+)
 from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     EpubPackageExtractor,
-    _SourceIO,
     _Rejected,
+    _SourceIO,
 )
-from mechanical_librarian.adapters.evidence_extractors.epub_opening import EpubOpeningExtractor
-from mechanical_librarian.adapters.evidence_extractors.epub_local import package_facts as _adapter_package_facts, rear_facts as _adapter_rear_facts
-from mechanical_librarian.adapters.evidence_extractors import epub_opening as opening_parser
+from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
+    EpubPackageCancellation,
+    EpubPackageCapability,
+    EpubPackageDeclarationKind,
+    EpubPackageField,
+    EpubPackageReport,
+    EpubPackageRequest,
+    EpubPackageSource,
+    EpubPackageSourceError,
+    epub_resource_identity,
+)
+from mechanical_librarian.domain.epub_inspection import (
+    EpubInspection,
+    EpubInspectionFact,
+    EpubInspectionOutcome,
+    EpubPackageLimits,
+)
+from mechanical_librarian.domain.epub_opening import (
+    EpubOpeningLimits,
+    EpubOpeningReport,
+)
+from mechanical_librarian.domain.epub_source import FileReference
 from mechanical_librarian.domain.identifiers import (
     AdapterId,
     ConnectionId,
@@ -32,22 +62,6 @@ from mechanical_librarian.domain.identifiers import (
     SchemaVersion,
     TargetId,
 )
-from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
-from mechanical_librarian.domain.epub_inspection import EpubPackageLimits, EpubInspectionOutcome
-from mechanical_librarian.domain.epub_inspection import EpubInspection, EpubInspectionFact, EpubInspectionField
-from mechanical_librarian.domain.epub_source import FileReference
-from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
-    EpubPackageCancellation,
-    EpubPackageCapability,
-    EpubPackageRequest,
-    EpubPackageSource,
-    EpubPackageSourceError,
-    EpubPackageReport,
-    epub_resource_identity,
-    EpubPackageDeclarationKind,
-    EpubPackageField,
-)
-
 
 _ADDRESS_SPACE = 256 * 1024 * 1024
 _CPU_SECONDS = 30

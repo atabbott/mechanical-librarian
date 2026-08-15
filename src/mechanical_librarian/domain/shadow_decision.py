@@ -16,7 +16,6 @@ from mechanical_librarian.domain.shadow_review_actions import (
     compile_shadow_review_actions,
 )
 
-
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
 DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v5"
 MAX_DECISION_SET_BYTES = 1_048_576

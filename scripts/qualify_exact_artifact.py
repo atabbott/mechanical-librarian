@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import argparse
-import configparser
 import base64
+import configparser
 import csv
 import hashlib
 import io
@@ -24,8 +24,7 @@ from dataclasses import asdict, dataclass
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Protocol
-from zipfile import ZIP_DEFLATED, ZIP_STORED, BadZipFile, ZipFile, ZipInfo
-
+from zipfile import BadZipFile, ZipFile, ZipInfo
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_SHA = re.compile(r"^[0-9a-f]{40}$")

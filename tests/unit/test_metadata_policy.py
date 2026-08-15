@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import unittest
 
+from mechanical_librarian.application.metadata_policy import (
+    bind_proposal_policy,
+    preview_policy,
+)
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
+    OPTION_CATALOGUE,
     MetadataPolicyError,
     MetadataPolicyProfile,
-    OPTION_CATALOGUE,
     ResolvedMetadataPolicy,
     resolve_policy,
 )
-from mechanical_librarian.application.metadata_policy import bind_proposal_policy, preview_policy
 
 
 class MetadataPolicyTests(unittest.TestCase):
@@ -203,7 +206,10 @@ class MetadataPolicyTests(unittest.TestCase):
         )
 
     def test_preview_caps_cases_across_libraries_and_uses_pair_snapshot_counts(self) -> None:
-        from mechanical_librarian.domain.metadata_report import MetadataReport, TargetFacts
+        from mechanical_librarian.domain.metadata_report import (
+            MetadataReport,
+            TargetFacts,
+        )
         from mechanical_librarian.domain.proposal_set import evaluate_report
         from tests.unit.test_proposal_set import _report
 

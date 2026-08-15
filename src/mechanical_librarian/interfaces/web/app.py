@@ -37,17 +37,20 @@ from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.field_effects import GuardedApplicationError
-from mechanical_librarian.domain.field_effect import (
-    FieldEffectError,
-    SUPPORTED_DESTINATIONS,
+from mechanical_librarian.application.metadata_policy import (
+    MetadataPolicyApplicationError,
+    PolicyTransition,
 )
-from mechanical_librarian.application.metadata_policy import MetadataPolicyApplicationError, PolicyTransition
 from mechanical_librarian.application.operations import OperationsError
 from mechanical_librarian.application.review_application import (
     ReviewApplication,
     ReviewApplicationError,
 )
 from mechanical_librarian.application.review_web import ReviewWebError
+from mechanical_librarian.domain.field_effect import (
+    SUPPORTED_DESTINATIONS,
+    FieldEffectError,
+)
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyError
 from mechanical_librarian.interfaces.web import review_frontend
 from mechanical_librarian.interfaces.web.react_assets import (
@@ -55,7 +58,6 @@ from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetLoader,
     ReactAssetRecovery,
 )
-
 
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _COOKIE_NAME = "ml_session"

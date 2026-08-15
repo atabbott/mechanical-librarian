@@ -17,13 +17,16 @@ from mechanical_librarian.application.field_effects import (
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import (
+    SUPPORTED_DESTINATIONS,
     FieldEffectError,
     FieldEffectOperation,
-    SUPPORTED_DESTINATIONS,
     project_decision_value,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
-from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+)
 
 
 @dataclass(frozen=True, slots=True)

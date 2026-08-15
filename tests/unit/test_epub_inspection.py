@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 import json
 import unittest
+from dataclasses import replace
 
 from mechanical_librarian.domain.epub_inspection import (
     DateEvent,

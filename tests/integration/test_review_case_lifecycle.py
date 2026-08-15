@@ -1,6 +1,5 @@
 """Synthetic installed-surface lifecycle proof for review admission storage."""
 import json
-import io
 import sys
 import tempfile
 import threading
@@ -18,7 +17,6 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
-from mechanical_librarian.interfaces.cli import main as cli_main
 
 
 def _actionable(report):

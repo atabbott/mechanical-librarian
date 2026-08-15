@@ -1,9 +1,17 @@
 import unittest
 
 from mechanical_librarian.domain.cover_evidence import (
-    CoverArtifact, CoverContext, CoverContextField, CoverDesignation,
-    CoverEvidenceError, CoverProvenance, CoverSource, CoverSourceKind,
-    CoverSourceState, cover_source_id, publication_ready,
+    CoverArtifact,
+    CoverContext,
+    CoverContextField,
+    CoverDesignation,
+    CoverEvidenceError,
+    CoverProvenance,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+    publication_ready,
 )
 
 

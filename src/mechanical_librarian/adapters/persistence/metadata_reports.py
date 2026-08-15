@@ -16,9 +16,12 @@ from pathlib import Path
 from typing import Iterator
 from urllib.parse import quote
 
-from mechanical_librarian.application.catalogue import CatalogueEntry, TargetConnectionError
-from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.catalogue import (
+    CatalogueEntry,
+    TargetConnectionError,
+)
 from mechanical_librarian.application.metadata_policy import PolicyTransition
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     PipelineProgress,
@@ -31,42 +34,31 @@ from mechanical_librarian.application.review_web import (
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
 )
-from mechanical_librarian.domain.failure_diagnostics import (
-    MAX_DIAGNOSTIC_COUNT,
-    FailureCategory,
-    FailureComponent,
-    FailureDiagnostic,
-    FailureStage,
-)
-from mechanical_librarian.domain.human_decision import (
-    HumanDecision,
-    HumanDecisionError,
+from mechanical_librarian.domain.automatic_decision import (
+    QUALIFIED_POLICY_OPTIONS,
+    AutomaticDecision,
+    AutomaticDecisionError,
+    AutomaticSafetyState,
+    qualification_manifest_sha256,
 )
 from mechanical_librarian.domain.field_effect import (
-    EffectAuthority,
-    EffectConsent,
     FIELD_EFFECT_FAILURES,
     SUPPORTED_DESTINATIONS,
+    EffectAuthority,
+    EffectConsent,
     FieldEffectError,
     FieldEffectNoChange,
     FieldEffectOperation,
     authority_to_data,
-    canonical_json as canonical_effect_json,
     field_value_version,
     project_decision_value,
 )
-from mechanical_librarian.domain.automatic_decision import (
-    AutomaticDecision,
-    AutomaticDecisionError,
-    AutomaticSafetyState,
-    QUALIFIED_POLICY_OPTIONS,
-    qualification_manifest_sha256,
+from mechanical_librarian.domain.field_effect import (
+    canonical_json as canonical_effect_json,
 )
-from mechanical_librarian.domain.metadata_report import (
-    MetadataReport,
-    ProviderStatus,
-    REPORT_SCHEMA,
-    ReportValueError,
+from mechanical_librarian.domain.human_decision import (
+    HumanDecision,
+    HumanDecisionError,
 )
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
@@ -75,6 +67,12 @@ from mechanical_librarian.domain.metadata_policy import (
     human_review_destinations,
     resolve_policy,
 )
+from mechanical_librarian.domain.metadata_report import (
+    REPORT_SCHEMA,
+    MetadataReport,
+    ProviderStatus,
+    ReportValueError,
+)
 from mechanical_librarian.domain.proposal_set import (
     POLICY_VERSION,
     ProposalSet,
@@ -82,8 +80,8 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import (
-    ReviewAdmissionResult,
     ReviewAdmissionIncompatibleError,
+    ReviewAdmissionResult,
     ReviewAdmissionStaleError,
     ReviewCase,
     ReviewCaseValueError,
@@ -95,14 +93,14 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     project_f20_automatic_decision_value,
     select_isbn_representation,
 )
-from mechanical_librarian.domain.shadow_review import (
-    ShadowReviewPacket,
-    ShadowReviewValueError,
-)
 from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
 from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeError,
     ShadowOutcomeSet,
+)
+from mechanical_librarian.domain.shadow_review import (
+    ShadowReviewPacket,
+    ShadowReviewValueError,
 )
 
 if sys.platform.startswith("linux"):

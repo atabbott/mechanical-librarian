@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import io
-import inspect
 import json
 import struct
 import sys
-import tempfile
 import unittest
 import zlib
 from dataclasses import replace
@@ -27,11 +25,11 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    ClaimScope,
     Comparison,
+    FieldState,
     FileFacts,
     IdentifierRelation,
-    FieldState,
-    ClaimScope,
     LocalClaim,
     MetadataReport,
     ProviderCandidate,
@@ -39,8 +37,8 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderLaneCandidate,
     ProviderLaneObservation,
-    ProviderQueryKind,
     ProviderObservation,
+    ProviderQueryKind,
     ProviderStatus,
     TargetFacts,
     default_target_fields,
@@ -50,41 +48,6 @@ from mechanical_librarian.domain.metadata_report import (
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
 
-from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
-    ContainedReviewRequest,
-    admit_cover_review_request,
-    canonical_json,
-)
-from mechanical_librarian.application.cover_observation import (  # noqa: E402
-    INSTRUCTION,
-    LEGACY_INSTRUCTION_SHA256,
-    OUTPUT_SCHEMA_VERSION,
-    SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
-    TAXONOMY,
-    TAXONOMY_DOCUMENT,
-    TAXONOMY_REFERENCE,
-    observe_cover_packet,
-    _observer_reference,
-    _output_schema,
-)
-from mechanical_librarian.application.cover_packets import (  # noqa: E402
-    MAX_COVER_PREVIEWS,
-    prepare_cover_packet,
-)
-from mechanical_librarian.application.cover_identity import (  # noqa: E402
-    SCHEMA_VERSION,
-    _CLASSIFIER_REFERENCE,
-    _preview_reference,
-    _classify_sources,
-    classify_cover_identity,
-)
-from mechanical_librarian.application.cover_policy import (  # noqa: E402
-    CoverPolicy,
-    adjudicate_cover_policy,
-)
-from mechanical_librarian.application import cover_packets as packet_builder  # noqa: E402
-from mechanical_librarian.bootstrap import contained_reviewer as reviewer_binding  # noqa: E402
-from mechanical_librarian.adapters.reviewers import contained_reviewer as reviewer_adapter  # noqa: E402
 from mechanical_librarian_workbench import (  # noqa: E402
     CoverIdentityRequest,
     CoverObservationRequest,
@@ -94,6 +57,50 @@ from mechanical_librarian_workbench import (  # noqa: E402
     WorkbenchFailure,
     WorkbenchOperations,
     execute,
+)
+
+from mechanical_librarian.adapters.reviewers import (
+    contained_reviewer as reviewer_adapter,  # noqa: E402
+)
+from mechanical_librarian.application import (
+    cover_packets as packet_builder,  # noqa: E402
+)
+from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
+    ContainedReviewRequest,
+    admit_cover_review_request,
+    canonical_json,
+)
+from mechanical_librarian.application.cover_identity import (  # noqa: E402
+    _CLASSIFIER_REFERENCE,
+    SCHEMA_VERSION,
+    _classify_sources,
+    _preview_reference,
+    classify_cover_identity,
+)
+from mechanical_librarian.application.cover_observation import (  # noqa: E402
+    INSTRUCTION,
+    LEGACY_INSTRUCTION_SHA256,
+    OUTPUT_SCHEMA_VERSION,
+    TAXONOMY,
+    TAXONOMY_DOCUMENT,
+    TAXONOMY_REFERENCE,
+    _observer_reference,
+    _output_schema,
+    observe_cover_packet,
+)
+from mechanical_librarian.application.cover_observation import (
+    SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
+)
+from mechanical_librarian.application.cover_packets import (  # noqa: E402
+    MAX_COVER_PREVIEWS,
+    prepare_cover_packet,
+)
+from mechanical_librarian.application.cover_policy import (  # noqa: E402
+    CoverPolicy,
+    adjudicate_cover_policy,
+)
+from mechanical_librarian.bootstrap import (
+    contained_reviewer as reviewer_binding,  # noqa: E402
 )
 
 

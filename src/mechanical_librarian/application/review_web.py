@@ -2,27 +2,32 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import secrets
-import base64
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationService,
+)
+from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+)
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
     classify_review_field,
 )
-from mechanical_librarian.application.operations import StageTimer
-from mechanical_librarian.application.cover_consideration import CoverConsiderationService
 
 
 class ReviewWebError(RuntimeError):

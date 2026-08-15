@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import gzip
-import json
 import hashlib
+import json
 import os
 import sqlite3
 import subprocess
@@ -19,28 +19,39 @@ from unittest.mock import patch
 import httpx
 
 import mechanical_librarian.adapters.persistence.metadata_reports as metadata_persistence
-
-from mechanical_librarian.adapters.library_services.audiobookshelf_item import AudiobookshelfItemReader, _raw_cover_authority
+import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
+from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
+    AudiobookshelfItemReader,
+    _raw_cover_authority,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HARDCOVER_URL,
     HardcoverMetadataProvider,
     HardcoverPacer,
 )
-import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
+from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
     CoverReadError,
     MetadataLookup,
     MetadataReportError,
-    TargetNotFoundError,
+    ProviderLaneResult,
     TargetCover,
+    TargetNotFoundError,
     TargetSnapshot,
     metadata_discovery_plan,
     provider_observation,
-    ProviderLaneResult,
     qualify_provider_observation,
 )
-from mechanical_librarian.application.catalogue import TargetConnectionError
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverDesignation,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
+from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.metadata_report import (
     MAX_CONTRIBUTIONS,
     MAX_DESCRIPTION_CHARACTERS,
@@ -50,19 +61,15 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     Comparison,
-    ComparisonLink,
     FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
-    ProviderCandidate,
-    ProviderClaim,
     ProviderEvidenceKind,
     ProviderIdentityBinding,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
-    PublicationDateRelation,
     ReportValueError,
     TargetDestination,
     TargetFacts,
@@ -72,13 +79,10 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
     isbn_family,
 )
-from mechanical_librarian.domain.cover_evidence import (
-    CoverArtifact, CoverDesignation, CoverSource, CoverSourceKind,
-    CoverSourceState, cover_source_id,
-)
-from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.proposal_set import (
-    POLICY_VERSION, ProposalOutcome, evaluate_report,
+    POLICY_VERSION,
+    ProposalOutcome,
+    evaluate_report,
 )
 
 

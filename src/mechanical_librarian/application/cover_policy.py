@@ -9,19 +9,23 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from .cover_identity import (
-    SCHEMA_VERSION as IDENTITY_SCHEMA_VERSION,
     CLASSIFIER_REFERENCE,
     _preview_reference,
     classify_cover_identity,
+)
+from .cover_identity import (
+    SCHEMA_VERSION as IDENTITY_SCHEMA_VERSION,
 )
 from .cover_observation import (
     INSTRUCTION,
     LEGACY_INSTRUCTION_SHA256,
     LEGACY_SCHEMA_VERSION,
-    SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
     TAXONOMY_REFERENCE,
     _observer_reference,
     _output_schema,
+)
+from .cover_observation import (
+    SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
 )
 from .cover_packet_semantics import bind_cover_packet, canonical_packet_json
 

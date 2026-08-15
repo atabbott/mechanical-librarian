@@ -12,8 +12,7 @@ import json
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Callable, Iterator, Literal, Protocol
-
+from typing import Callable, Iterator, Protocol
 
 STAGES = (
     "extraction", "provider_search", "policy_evaluation", "human_wait",

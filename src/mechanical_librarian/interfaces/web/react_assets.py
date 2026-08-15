@@ -10,7 +10,6 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Protocol
 
-
 _BUILD_IDENTITY = re.compile(r"^[0-9a-f]{64}$")
 _CSRF_TOKEN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 _ASSET_PATH = re.compile(

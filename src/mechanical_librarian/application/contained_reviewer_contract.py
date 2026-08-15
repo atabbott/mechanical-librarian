@@ -11,6 +11,8 @@ from typing import Protocol
 
 from mechanical_librarian.application.cover_packet_semantics import (
     MAX_COVER_PREVIEW_BYTES as MAX_IMAGE_BYTES,
+)
+from mechanical_librarian.application.cover_packet_semantics import (
     bind_cover_packet,
 )
 

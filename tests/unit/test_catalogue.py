@@ -1,18 +1,32 @@
 from __future__ import annotations
 
+import json
+import os
+import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
 from multiprocessing import Event, Process
 from pathlib import Path
-import os
-import sqlite3
-import json
 from unittest.mock import patch
 
-from mechanical_librarian.adapters.persistence.catalogue import SQLiteCatalogueRepository, open_catalogue
-from mechanical_librarian.application.catalogue import CatalogueBusyError, CatalogueEntry, CatalogueError, CatalogueStaleError, RefreshCurrentCatalogue, catalogue_fingerprint
-from mechanical_librarian.application.configuration import ApplicationConfiguration, LibraryConfiguration, TargetConnectionConfiguration
+from mechanical_librarian.adapters.persistence.catalogue import (
+    SQLiteCatalogueRepository,
+    open_catalogue,
+)
+from mechanical_librarian.application.catalogue import (
+    CatalogueBusyError,
+    CatalogueEntry,
+    CatalogueError,
+    CatalogueStaleError,
+    RefreshCurrentCatalogue,
+    catalogue_fingerprint,
+)
+from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
+    LibraryConfiguration,
+    TargetConnectionConfiguration,
+)
 from mechanical_librarian.bootstrap.composition import run_catalogue
 
 

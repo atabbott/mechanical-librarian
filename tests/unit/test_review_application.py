@@ -11,9 +11,9 @@ from mechanical_librarian.application.review_application import (
     ReviewApplicationError,
     compose_review_application,
 )
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.interfaces.web import create_review_app
 from tests.unit.test_review_case_persistence import _report
 from tests.unit.test_review_web import _Repository

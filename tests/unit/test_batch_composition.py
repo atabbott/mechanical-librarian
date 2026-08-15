@@ -1,15 +1,25 @@
 from __future__ import annotations
+
 import unittest
-from unittest.mock import patch
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
+
 from mechanical_librarian.application.batch import BatchError
+from mechanical_librarian.application.configuration import (
+ ApplicationConfiguration,
+ LibraryConfiguration,
+ MediaMountConfiguration,
+ ProviderConnectionConfiguration,
+ TargetConnectionConfiguration,
+)
 from mechanical_librarian.bootstrap import composition
-from mechanical_librarian.bootstrap.composition import run_batch
-from mechanical_librarian.application.configuration import ApplicationConfiguration,LibraryConfiguration,MediaMountConfiguration,ProviderConnectionConfiguration,TargetConnectionConfiguration
-from mechanical_librarian.application.batch import BatchSelection
-from mechanical_librarian.bootstrap.composition import _load_batch_credentials
+from mechanical_librarian.bootstrap.composition import (
+ _load_batch_credentials,
+ run_batch,
+)
 from mechanical_librarian.domain.metadata_report import ProviderStatus
+
 
 class BatchCompositionTests(unittest.TestCase):
  def test_review_receipt_keeps_complete_mixed_provider_report_for_proposal(self):

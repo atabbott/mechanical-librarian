@@ -10,36 +10,45 @@ from typing import Protocol
 
 from mechanical_librarian.application.cover_identity import (
     CLASSIFIER_REFERENCE,
-    SCHEMA_VERSION as IDENTITY_SCHEMA_VERSION,
     classify_cover_identity,
+)
+from mechanical_librarian.application.cover_identity import (
+    SCHEMA_VERSION as IDENTITY_SCHEMA_VERSION,
 )
 from mechanical_librarian.application.cover_observation import (
     INSTRUCTION,
     OUTPUT_SCHEMA_VERSION,
-    SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
     TAXONOMY_REFERENCE,
     observe_cover_packet,
 )
+from mechanical_librarian.application.cover_observation import (
+    SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
+)
+from mechanical_librarian.application.cover_packet_semantics import (
+    canonical_packet_json,
+)
+from mechanical_librarian.application.cover_packets import (
+    SCHEMA_VERSION as PACKET_SCHEMA_VERSION,
+)
 from mechanical_librarian.application.cover_packets import (
     PreparedCoverPacket,
-    SCHEMA_VERSION as PACKET_SCHEMA_VERSION,
     cover_source_reference,
     prepare_cover_packet,
 )
 from mechanical_librarian.application.cover_policy import (
     POLICY_SCHEMA_VERSION,
-    SCHEMA_VERSION as POLICY_REPORT_SCHEMA_VERSION,
     CoverPolicy,
     adjudicate_cover_policy,
 )
-from mechanical_librarian.application.cover_packet_semantics import canonical_packet_json
+from mechanical_librarian.application.cover_policy import (
+    SCHEMA_VERSION as POLICY_REPORT_SCHEMA_VERSION,
+)
 from mechanical_librarian.domain.cover_evidence import CoverSourceKind, CoverSourceState
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
     TargetFieldState,
 )
-
 
 SCHEMA_VERSION = "cover-consideration-v1"
 _IDENTITY_ELIGIBLE = frozenset(

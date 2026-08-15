@@ -13,7 +13,7 @@ from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from enum import StrEnum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Callable, ClassVar, Mapping
+from typing import TYPE_CHECKING, ClassVar, Mapping
 
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -379,7 +379,10 @@ class EpubInspection:
 
     @classmethod
     def from_opening_report(cls, report: EpubOpeningReport) -> "EpubInspection":
-        from mechanical_librarian.domain.epub_opening import EpubOpeningReport, OpeningField
+        from mechanical_librarian.domain.epub_opening import (
+            EpubOpeningReport,
+            OpeningField,
+        )
 
         if type(report) is not EpubOpeningReport:
             raise ValueError("EPUB inspection requires a typed opening report")

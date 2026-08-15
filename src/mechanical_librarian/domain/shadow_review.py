@@ -14,6 +14,7 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_projection_text,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_SCALAR_CHARACTERS,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -21,7 +22,6 @@ from mechanical_librarian.domain.metadata_report import (
     ComparisonMethod,
     DateLinkConfidence,
     FieldState,
-    MAX_SCALAR_CHARACTERS,
     MetadataReport,
     ProviderClaim,
     ProviderEvidence,
@@ -45,10 +45,6 @@ from mechanical_librarian.domain.reviewer_decision_summary import (
     proposal_decision_summary,
     validate_candidate_decision_summary,
     validate_proposal_decision_summary,
-)
-from mechanical_librarian.domain.shadow_review_actions import (
-    PolicyAction,
-    compile_shadow_review_actions,
 )
 
 PACKET_SCHEMA = "shadow-review-packet-v6"

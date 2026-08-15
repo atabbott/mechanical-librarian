@@ -7,8 +7,10 @@ from dataclasses import dataclass
 from ipaddress import ip_address
 from urllib.parse import urlsplit
 
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
-
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 
 _NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _CONTACT_EMAIL = re.compile(

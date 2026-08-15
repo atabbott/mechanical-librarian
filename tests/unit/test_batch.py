@@ -1,8 +1,26 @@
 from __future__ import annotations
+
 import unittest
-from mechanical_librarian.application.batch import BatchError, BatchSelection, CatalogueSnapshot, MAX_MANIFEST_BYTES, batch_fingerprint, manifest, parse_manifest, select
+
+from mechanical_librarian.application.batch import (
+    MAX_MANIFEST_BYTES,
+    BatchError,
+    BatchSelection,
+    CatalogueSnapshot,
+    batch_fingerprint,
+    manifest,
+    parse_manifest,
+    select,
+)
 from mechanical_librarian.application.catalogue import CatalogueEntry
-from mechanical_librarian.application.configuration import ApplicationConfiguration, LibraryConfiguration, ProviderConnectionConfiguration, ReportLimits, TargetConnectionConfiguration
+from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
+    LibraryConfiguration,
+    ProviderConnectionConfiguration,
+    ReportLimits,
+    TargetConnectionConfiguration,
+)
+
 
 def entry(item="one", eligible=True):
     return CatalogueEntry("primary","books","library",item,1,"Title",(),True,False,"singular-supported" if eligible else "needs-attention","a"*64,"book.epub","epub","books" if eligible else None)

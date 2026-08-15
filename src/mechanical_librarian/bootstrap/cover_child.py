@@ -16,7 +16,6 @@ import warnings
 
 from PIL import Image, ImageOps, UnidentifiedImageError, features
 
-
 _MAX_ORIGINAL_BYTES = 8 * 1024 * 1024
 _MAX_PREVIEW_BYTES = 1024 * 1024
 _MAX_PIXELS = 16_777_216

@@ -7,9 +7,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.bootstrap.composition import run_policy_preview
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.interfaces.cli import main
 
 

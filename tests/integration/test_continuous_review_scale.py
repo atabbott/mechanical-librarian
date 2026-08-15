@@ -18,7 +18,9 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 from argon2 import PasswordHasher
 
-from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import _entry as catalogue_entry
+from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+    _entry as catalogue_entry,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.batch import BatchSelection, batch_fingerprint
 from mechanical_librarian.application.review_pipeline import (
@@ -28,7 +30,6 @@ from mechanical_librarian.application.review_pipeline import (
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
-    ProviderStatus,
     TargetFacts,
     default_target_fields,
 )

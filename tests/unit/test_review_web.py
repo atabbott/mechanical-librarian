@@ -10,7 +10,6 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -19,6 +18,10 @@ from argon2 import PasswordHasher
 from argon2.low_level import Type
 from fastapi.testclient import TestClient
 
+from mechanical_librarian.adapters.operational_evidence import (
+    LocalTimingStore,
+    SupportBundle,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
@@ -28,7 +31,14 @@ from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.field_effects import GuardedApplicationError
+from mechanical_librarian.application.metadata_policy import PolicyTransition
+from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_application import (
+    ReviewApplication,
+    ReviewApplicationError,
+)
 from mechanical_librarian.application.review_pipeline import (
+    PipelineProgress,
     ReviewPipelineError,
     ReviewPreparationPipeline,
 )
@@ -39,29 +49,29 @@ from mechanical_librarian.application.review_web import (
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
     ReviewWebError,
-    _decode_cursor,
-    _encode_cursor,
-    _choice_observation,
     _choice_contexts,
-    _evidence_by_reference,
     _choice_limitations,
+    _choice_observation,
     _choice_rationale,
     _choice_source_label,
     _current_value_present,
+    _decode_cursor,
+    _encode_cursor,
+    _evidence_by_reference,
     _provider_comparison_notices,
     _provider_label,
     _provider_outcomes,
 )
-from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.application.review_pipeline import PipelineProgress
-from mechanical_librarian.application.review_application import (
-    ReviewApplication,
-    ReviewApplicationError,
-)
-from mechanical_librarian.interfaces.cli import main as cli_main
-from mechanical_librarian.interfaces.web.app import _CoverOmission
 from mechanical_librarian.bootstrap.composition import run_review_server
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.human_decision import (
+    HumanDecision,
+    HumanDecisionError,
+)
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -74,37 +84,41 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
 )
+from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from mechanical_librarian.domain.field_effect import FieldEffectError
-from mechanical_librarian.domain.human_decision import (
-    HumanDecision,
-    HumanDecisionError,
-)
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_OPTION_DISPOSITIONS,
 )
+from mechanical_librarian.interfaces.web.app import _CoverOmission
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
 )
-from mechanical_librarian.application.metadata_policy import PolicyTransition
-from mechanical_librarian.adapters.operational_evidence import LocalTimingStore, SupportBundle
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
-from tests.unit.test_review_case_persistence import _report
+from tests.unit.test_bibliographic_bundles import (
+    _bibliographic_report,
+)
+from tests.unit.test_bibliographic_bundles import (
+    _source as _bibliographic_source,
+)
 from tests.unit.test_cover_packets import (
     _preview as _cover_preview,
+)
+from tests.unit.test_cover_packets import (
     _report as _cover_report,
+)
+from tests.unit.test_cover_packets import (
     _source as _cover_source,
 )
 from tests.unit.test_proposal_set import (
     _claim as _proposal_claim,
+)
+from tests.unit.test_proposal_set import (
     _provider as _proposal_provider,
+)
+from tests.unit.test_proposal_set import (
     _report as _proposal_report,
 )
-from tests.unit.test_bibliographic_bundles import (
-    _bibliographic_report,
-    _source as _bibliographic_source,
-)
+from tests.unit.test_review_case_persistence import _report
 
 
 class _Repository:

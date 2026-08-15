@@ -70,7 +70,9 @@ def batch_fingerprint(configuration: ApplicationConfiguration, selections: tuple
 
 
 def catalogue_fingerprint(configuration: ApplicationConfiguration) -> str:
-    from mechanical_librarian.application.catalogue import catalogue_fingerprint as current
+    from mechanical_librarian.application.catalogue import (
+        catalogue_fingerprint as current,
+    )
     return current(configuration).digest
 
 

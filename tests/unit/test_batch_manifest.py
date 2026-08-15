@@ -1,9 +1,17 @@
 from __future__ import annotations
-import tempfile,unittest
+
+import tempfile
+import unittest
 from pathlib import Path
-from mechanical_librarian.adapters.persistence.batch_manifest import create,read
-from mechanical_librarian.application.batch import BatchError
-from mechanical_librarian.application.batch import manifest,CatalogueSnapshot,BatchSelection
+
+from mechanical_librarian.adapters.persistence.batch_manifest import create, read
+from mechanical_librarian.application.batch import (
+ BatchError,
+ CatalogueSnapshot,
+ manifest,
+)
+
+
 class Tests(unittest.TestCase):
  def test_create_read_and_refuse_overwrite(self):
   raw=manifest(CatalogueSnapshot(1,"a"*64,()),"b"*64,(),(),())

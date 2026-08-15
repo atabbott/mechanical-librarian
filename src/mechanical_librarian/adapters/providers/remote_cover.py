@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
 import ssl
-import time
 import threading
-import re
+import time
 from dataclasses import dataclass
-from urllib.parse import urlsplit, urljoin
+from urllib.parse import urljoin, urlsplit
 
 MAX_BYTES = 8 * 1024 * 1024
 _MAX_HEADER_BYTES = 65_536
@@ -243,7 +243,7 @@ def _redirect_target(current: str, location: str | None) -> str:
 
 
 def _admitted_media_type(headers: object) -> str:
-    get = getattr(headers, "get")
+    get = headers.get
     encoding = get("content-encoding")
     if encoding is not None and encoding.lower() != "identity":
         raise RemoteCoverError("remote cover encoding is unsupported")

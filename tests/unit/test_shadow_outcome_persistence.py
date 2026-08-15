@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -10,12 +10,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from mechanical_librarian.adapters.persistence.metadata_reports import MetadataReportError, open_repository
-from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
-from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.field_effect_fakes import (
     FakeBackupReadiness,
     FakeCapabilityObserver,
@@ -23,22 +20,43 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     FakeForwardReevaluation,
     FakeTargetService,
 )
-from mechanical_librarian.application.field_effects import GuardedFieldApplication
-from mechanical_librarian.application.continuous_field_effects import (
-    ContinuousGuardedApplication,
+from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
+from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    MetadataReportError,
+    open_repository,
 )
-from mechanical_librarian.application.metadata_policy import (
-    MAX_SHADOW_SAMPLE_RESPONSE_BYTES,
-    PolicyNotebook,
-)
+from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
     ReviewWebConfiguration,
     TargetConnectionConfiguration,
 )
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
+from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.metadata_policy import (
+    MAX_SHADOW_SAMPLE_RESPONSE_BYTES,
+    PolicyNotebook,
+)
+from mechanical_librarian.application.review_pipeline import (
+    PipelineAction,
+    ReviewPreparationPipeline,
+)
+from mechanical_librarian.application.review_web import (
+    BrowseReviewLibrary,
+    InspectCurrentReviewCase,
+)
 from mechanical_librarian.bootstrap import composition
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.automatic_decision import (
+    AutomaticDecision,
+    AutomaticDecisionError,
+    AutomaticSafetyState,
+)
+from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,
@@ -52,42 +70,38 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
     TargetDestination,
+    TargetFacts,
     TargetField,
     TargetFieldState,
-    TargetFacts,
 )
-from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
-from mechanical_librarian.domain.automatic_decision import (
-    AutomaticDecision,
-    AutomaticDecisionError,
-    AutomaticSafetyState,
-)
-from mechanical_librarian.domain.field_effect import FieldEffectError
-from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
+from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
-from mechanical_librarian.application.review_web import BrowseReviewLibrary, InspectCurrentReviewCase
-from mechanical_librarian.application.catalogue import CatalogueEntry
-from mechanical_librarian.application.review_pipeline import (
-    PipelineAction,
-    ReviewPreparationPipeline,
-)
+from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source,
+)
+from tests.unit.test_cover_packets import (
+    _observer_result as _cover_observer_result,
+)
+from tests.unit.test_cover_packets import (
+    _preview as _cover_preview,
+)
+from tests.unit.test_cover_packets import (
+    _report as _cover_report,
+)
+from tests.unit.test_cover_packets import (
+    _source as _cover_source,
 )
 from tests.unit.test_proposal_set import (
     _claim,
     _fields,
     _provider,
+)
+from tests.unit.test_proposal_set import (
     _report as _proposal_report,
 )
 from tests.unit.test_review_case_persistence import _report
-from tests.unit.test_cover_packets import (
-    _observer_result as _cover_observer_result,
-    _preview as _cover_preview,
-    _report as _cover_report,
-    _source as _cover_source,
-)
 
 
 def _case(repository):

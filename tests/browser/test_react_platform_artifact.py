@@ -16,7 +16,11 @@ from mechanical_librarian.interfaces.web.react_assets import (
 )
 from tests.browser.fidelity_cohort import (
     BUILD_IDENTITY as _BUILD_IDENTITY,
+)
+from tests.browser.fidelity_cohort import (
     HOSTILE_TEXT as _HOSTILE,
+)
+from tests.browser.fidelity_cohort import (
     LONG_TITLE,
     UNBROKEN_TITLE_SEGMENT,
     rich_payload,

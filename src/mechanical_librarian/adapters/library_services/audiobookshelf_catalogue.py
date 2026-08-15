@@ -10,6 +10,9 @@ from urllib.parse import quote
 
 import httpx
 
+from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
+    normalize_ebook_location,
+)
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
     CatalogueError,
@@ -22,9 +25,6 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.domain.metadata_report import (
     canonical_json,
     validate_observed_title,
-)
-from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
-    normalize_ebook_location,
 )
 
 

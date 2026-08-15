@@ -1,14 +1,25 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import unittest
 
 import httpx
 
-from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import AudiobookshelfCatalogueReader, _entry as catalogue_entry, _get
-from mechanical_librarian.application.catalogue import CatalogueError, TargetConnectionError
-from mechanical_librarian.application.configuration import LibraryConfiguration, MediaMountConfiguration
+from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+    AudiobookshelfCatalogueReader,
+    _get,
+)
+from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+    _entry as catalogue_entry,
+)
+from mechanical_librarian.application.catalogue import (
+    CatalogueError,
+    TargetConnectionError,
+)
+from mechanical_librarian.application.configuration import (
+    LibraryConfiguration,
+    MediaMountConfiguration,
+)
 from mechanical_librarian.domain.metadata_report import canonical_json
 
 

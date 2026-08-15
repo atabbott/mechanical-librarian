@@ -9,9 +9,11 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
-from mechanical_librarian.application.metadata_report import ArtifactAuthorityError, MetadataReportError
+from mechanical_librarian.application.metadata_report import (
+    ArtifactAuthorityError,
+    MetadataReportError,
+)
 from mechanical_librarian.domain.cover_evidence import CoverArtifact
-
 
 _MAX_ORIGINAL_BYTES = 8 * 1024 * 1024
 

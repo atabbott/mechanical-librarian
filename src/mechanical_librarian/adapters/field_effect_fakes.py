@@ -6,19 +6,23 @@ import hashlib
 import threading
 from typing import Callable
 
+from mechanical_librarian.adapters.private_recovery import (
+    PrivateCoverRecoveryStore as _PrivateCoverRecoveryStore,
+)
 from mechanical_librarian.application.field_effects import (
-    CapabilityObservation,
     AuthoritySnapshot,
+    CapabilityObservation,
     TargetEffectResult,
     TargetObservation,
     TargetServiceUnavailable,
 )
-from mechanical_librarian.domain.field_effect import EffectAuthority, EffectConsent, FieldEffectPlan
-from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
-from mechanical_librarian.adapters.private_recovery import (
-    PrivateCoverRecoveryStore as _PrivateCoverRecoveryStore,
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    EffectConsent,
+    FieldEffectPlan,
 )
+from mechanical_librarian.domain.human_decision import HumanDecision
 
 
 class FakeTargetService:

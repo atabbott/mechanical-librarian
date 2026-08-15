@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import io
 import os
 import sqlite3
 import tempfile
@@ -16,12 +15,14 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.proposal_set import evaluate_report
-from mechanical_librarian.domain.shadow_decision import ShadowDecisionSet, decide_shadow_packet
+from mechanical_librarian.domain.shadow_decision import (
+    ShadowDecisionSet,
+    decide_shadow_packet,
+)
 from mechanical_librarian.domain.shadow_review import (
     ShadowReviewPacket,
     ShadowReviewValueError,
 )
-from mechanical_librarian.interfaces.cli import main
 from tests.unit.test_review_case_persistence import _report
 
 

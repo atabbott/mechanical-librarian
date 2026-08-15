@@ -14,23 +14,24 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceKind,
     CoverSourceState,
 )
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
 )
-from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.field_outcomes import (
     language_identity,
     language_outcomes_compatible,
     publisher_statement_valid,
 )
+from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 from mechanical_librarian.domain.metadata_report import (
+    MAX_DESCRIPTION_CHARACTERS,
     ClaimKind,
     ClaimScope,
     FieldState,
     IdentifierRelation,
     LocalClaim,
-    MAX_DESCRIPTION_CHARACTERS,
     MetadataReport,
     ProviderCandidate,
     ProviderClaim,
@@ -41,18 +42,16 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     TargetField,
     TargetFieldState,
-    isbn_family,
     TargetSeries,
     canonical_json,
     complete_creator_identity_bindings,
     creator_comparison_key,
+    isbn_family,
     manifestation_publication_compatible,
     normalize_date_value,
     normalize_title,
     publication_date_is_voting,
 )
-from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
-
 
 PROPOSAL_SCHEMA = "proposal-set-v4"
 POLICY_VERSION = "fixed-conservative-v8"
@@ -1003,7 +1002,10 @@ def evaluate_report(
     if resolved_policy_id is None:
         # The production default is a real resolved built-in profile for this
         # exact report library.  Higher layers pass an explicit resolved id.
-        from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
+        from mechanical_librarian.domain.metadata_policy import (
+            MetadataPolicyProfile,
+            resolve_policy,
+        )
         resolved_policy_id = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library).resolved_id
     return ProposalSet.create(
         report_id=report.report_id,

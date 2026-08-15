@@ -2,19 +2,19 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import unittest
 from pathlib import Path
 
-from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     QUALIFIED_POLICY_OPTIONS,
 )
 from mechanical_librarian.domain.metadata_policy import (
-    MetadataPolicyProfile,
+    OPTION_CATALOGUE,
     QUALIFIED_AUTOMATIC,
+    MetadataPolicyProfile,
     resolve_policy,
 )
 from mechanical_librarian.domain.rich_metadata_qualification import (
@@ -23,7 +23,6 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_QUALIFICATION_CANDIDATE_SHA256,
     public_summary,
 )
-
 
 MANIFEST = (
     Path(__file__).parents[2]

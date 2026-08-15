@@ -8,30 +8,43 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Protocol
 
+from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
     MediaMountConfiguration,
     ReportLimits,
     TargetConnectionConfiguration,
 )
-from mechanical_librarian.application.catalogue import TargetConnectionError
+from mechanical_librarian.application.failure_diagnostics import (
+    FailureDiagnostic,
+    merge_provider_diagnostics,
+    provider_attempt_diagnostics,
+)
+from mechanical_librarian.application.operations import StageTimer
+from mechanical_librarian.domain.cover_evidence import (
+    CoverDesignation,
+    CoverProvenance,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+)
 from mechanical_librarian.domain.metadata_report import (
-    ClaimScope,
+    MAX_CANDIDATES,
     ClaimKind,
+    ClaimScope,
     DateLinkConfidence,
+    EditionEnrichmentOverflow,
     FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
-    MAX_CANDIDATES,
-    EditionEnrichmentOverflow, ProviderCandidate,
+    ProviderCandidate,
     ProviderEvidenceKind,
     ProviderLaneCandidate,
     ProviderLaneObservation,
     ProviderObservation,
-    ProviderRequestAccounting,
     ProviderQueryKind,
-    complete_creator_identity_bindings,
+    ProviderRequestAccounting,
     ProviderStatus,
     PublicationDateRelation,
     TargetDestination,
@@ -39,25 +52,13 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     canonical_json,
+    complete_creator_identity_bindings,
     default_target_fields,
     derive_field_results,
     isbn_family,
     normalize_title,
     provider_lane_candidate_reference,
     validate_provider_access_time,
-)
-from mechanical_librarian.application.operations import StageTimer
-from mechanical_librarian.application.failure_diagnostics import (
-    FailureDiagnostic,
-    merge_provider_diagnostics,
-    provider_attempt_diagnostics,
-)
-from mechanical_librarian.domain.cover_evidence import (
-    CoverDesignation,
-    CoverProvenance,
-    CoverSource,
-    CoverSourceKind,
-    CoverSourceState,
 )
 
 

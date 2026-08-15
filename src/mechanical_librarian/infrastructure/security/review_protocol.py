@@ -6,7 +6,6 @@ import asyncio
 
 from uvicorn.protocols.http import h11_impl
 
-
 MAX_REVIEW_CONNECTIONS = 100
 REVIEW_HEADER_TIMEOUT_SECONDS = 10.0
 REVIEW_TLS_CIPHERS = "ECDHE+AESGCM:ECDHE+CHACHA20"

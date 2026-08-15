@@ -7,11 +7,11 @@ import re
 
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.metadata_report import (
+    MAX_CONTRIBUTIONS,
     ClaimKind,
     ClaimScope,
     FieldState,
     IdentifierRelation,
-    MAX_CONTRIBUTIONS,
     MetadataReport,
     TargetDestination,
 )

@@ -8,8 +8,14 @@ import stat
 import sys
 from pathlib import Path
 
-from mechanical_librarian.adapters.persistence.metadata_reports import _LinuxDirectoryChain
-from mechanical_librarian.application.batch import BatchError, MAX_MANIFEST_BYTES, parse_manifest
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    _LinuxDirectoryChain,
+)
+from mechanical_librarian.application.batch import (
+    MAX_MANIFEST_BYTES,
+    BatchError,
+    parse_manifest,
+)
 
 
 def _binding(path: Path):

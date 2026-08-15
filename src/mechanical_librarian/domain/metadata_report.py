@@ -10,17 +10,32 @@ import unicodedata
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any, Mapping, Self
+from typing import Any, Self
 
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverContext,
+    CoverContextField,
+    CoverDesignation,
+    CoverEvidenceError,
+    CoverProvenance,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    CoverTruncationReason,
+    publication_ready,
+)
+from mechanical_librarian.domain.epub_inspection import (
+    DateEvent,
+    DatePrecision,
+)
+from mechanical_librarian.domain.epub_inspection import (
+    normalize_date_value as _normalize_date_value,
+)
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
     validate_role_projection,
-)
-from mechanical_librarian.domain.cover_evidence import (
-    CoverArtifact, CoverContext, CoverContextField, CoverDesignation,
-    CoverEvidenceError, CoverProvenance, CoverSource, CoverSourceKind,
-    CoverSourceState, CoverTruncationReason, publication_ready,
 )
 from mechanical_librarian.domain.failure_diagnostics import (
     FailureCategory,
@@ -29,12 +44,6 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
     diagnostics_are_canonical,
 )
-from mechanical_librarian.domain.epub_inspection import (
-    DateEvent,
-    DatePrecision,
-    normalize_date_value as _normalize_date_value,
-)
-
 
 REPORT_SCHEMA = "metadata-report-v26"
 COMPARISON_VERSION = "closed-title-creator-publication-v4"

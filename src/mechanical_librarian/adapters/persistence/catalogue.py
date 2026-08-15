@@ -10,14 +10,16 @@ import sys
 from pathlib import Path
 from urllib.parse import quote
 
-from mechanical_librarian.adapters.persistence.metadata_reports import _LinuxDirectoryChain
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    _LinuxDirectoryChain,
+)
+from mechanical_librarian.application.batch import CatalogueSnapshot
 from mechanical_librarian.application.catalogue import (
     CatalogueBusyError,
     CatalogueEntry,
     CatalogueError,
     CatalogueStaleError,
 )
-from mechanical_librarian.application.batch import CatalogueSnapshot
 
 _SCHEMA = "catalogue-v2"
 _SQL = (

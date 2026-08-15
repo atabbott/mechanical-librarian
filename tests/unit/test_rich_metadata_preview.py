@@ -4,24 +4,44 @@ from __future__ import annotations
 
 import unittest
 
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.domain.metadata_report import (
-    ClaimKind, ClaimScope, LocalClaim, MetadataReport, ProviderEvidence,
-    ProviderEvidenceKind, TargetFacts, TargetField, TargetFieldState,
+    ClaimKind,
+    ClaimScope,
+    LocalClaim,
+    MetadataReport,
+    ProviderEvidence,
+    ProviderEvidenceKind,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+    TargetSeries,
 )
 from mechanical_librarian.domain.proposal_set import (
-    BibliographicCombination, BibliographicSelection,
-    ProposalAlternative, ProposalAssessment, ProposalOutcome, ProposalResult,
-    ProposalScope, ProposalSet, ProposalValue, ProposalValueError,
-    ProposalValueKind, evaluate_report,
+    BibliographicCombination,
+    BibliographicSelection,
+    ProposalAlternative,
+    ProposalAssessment,
+    ProposalOutcome,
+    ProposalResult,
+    ProposalScope,
+    ProposalSet,
+    ProposalValue,
+    ProposalValueError,
+    ProposalValueKind,
+    evaluate_report,
 )
-from mechanical_librarian.domain.metadata_report import TargetDestination, TargetSeries
 from mechanical_librarian.domain.rich_metadata_preview import (
-    RichMetadataPreviewError, compile_rich_metadata_preview,
+    RichMetadataPreviewError,
+    compile_rich_metadata_preview,
     project_f20_automatic_decision_value,
 )
-from tests.unit.test_proposal_set import _claim, _fields, _provider, _report
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
+from tests.unit.test_proposal_set import _claim, _fields, _provider, _report
 
 
 class RichMetadataPreviewTests(unittest.TestCase):

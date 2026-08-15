@@ -13,6 +13,13 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from mechanical_librarian.application.cover_packet_semantics import (
+    bind_cover_packet,
+    canonical_packet_json,
+    normalize_cover_preview,
+    normalize_provenance,
+)
+from mechanical_librarian.application.cover_packets import cover_source_reference
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverSource,
@@ -31,13 +38,6 @@ from mechanical_librarian.domain.metadata_report import (
     creator_comparison_key,
     manifestation_publication_compatible,
 )
-from mechanical_librarian.application.cover_packet_semantics import (
-    bind_cover_packet,
-    canonical_packet_json,
-    normalize_cover_preview,
-    normalize_provenance,
-)
-from mechanical_librarian.application.cover_packets import cover_source_reference
 
 SCHEMA_VERSION = "cover-identity-report-v1"
 _OUTCOMES = frozenset({

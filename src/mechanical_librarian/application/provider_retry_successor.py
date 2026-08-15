@@ -7,10 +7,14 @@ otherwise awkward successor transaction testable without granting execution.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-import time
 
+from mechanical_librarian.application.configuration import (
+    MediaMountConfiguration,
+    ReportLimits,
+)
 from mechanical_librarian.application.metadata_report import (
     CurrentnessError,
     MetadataDiscoveryPlan,
@@ -20,14 +24,10 @@ from mechanical_librarian.application.metadata_report import (
     ProviderLaneResult,
     ReportRepository,
     TargetReader,
-    metadata_discovery_plan,
     merge_provider_diagnostics,
+    metadata_discovery_plan,
     provider_observation,
     require_report_current,
-)
-from mechanical_librarian.application.configuration import (
-    MediaMountConfiguration,
-    ReportLimits,
 )
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,

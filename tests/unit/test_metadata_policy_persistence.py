@@ -4,7 +4,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mechanical_librarian.adapters.persistence.metadata_reports import MetadataReportError, open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    MetadataReportError,
+    open_repository,
+)
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,

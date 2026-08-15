@@ -23,11 +23,11 @@ from typing import Iterator, cast
 from mechanical_librarian.application.contained_reviewer_contract import (
     COVER_MEMORY_BYTES,
     COVER_PROCESS_LIMIT,
-    ContainedReviewRequest,
-    ContainedReviewResult,
     ContainedReviewerAttempt,
     ContainedReviewerError,
     ContainedReviewerIdentity,
+    ContainedReviewRequest,
+    ContainedReviewResult,
     _CoverReviewImage,
     _CoverReviewRequest,
     admit_cover_review_request,
