@@ -58,6 +58,38 @@ class RichFidelityCohortTests(unittest.TestCase):
             "future_provider_origin",
             {event["origin"] for event in activity["events"]},
         )
+        cover_states = {
+            event["state"] for event in activity["events"]
+            if event["destination"] == "cover"
+        }
+        self.assertEqual(
+            {"considered", "unavailable", "failed", "stale", "superseded"},
+            cover_states,
+        )
+
+        completed = rich_payload("/api/v1/review-cases/case-1")
+        failed = rich_payload("/api/v1/review-cases/case-2")
+        unavailable = rich_payload("/api/v1/review-cases/case-3")
+        self.assertIsInstance(completed, dict)
+        self.assertIsInstance(failed, dict)
+        self.assertIsInstance(unavailable, dict)
+        for payload, status in (
+            (completed, "completed"),
+            (failed, "failed"),
+            (unavailable, "unavailable"),
+        ):
+            cover = next(
+                field for field in payload["fields"]
+                if field["destination"] == "cover"
+            )
+            consideration = cover["cover_consideration"]
+            self.assertEqual(status, consideration["reviewer_status"])
+            self.assertTrue(cover["editable"])
+            self.assertIsNone(cover["human_decision"])
+            self.assertTrue(any(
+                candidate["selectable"]
+                for candidate in consideration["candidates"]
+            ))
 
     def test_real_app_gates_aliases_and_synthetic_cursors(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

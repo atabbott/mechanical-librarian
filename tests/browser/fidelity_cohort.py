@@ -416,6 +416,112 @@ def _case(case_id: str) -> dict[str, object]:
             ),
         ),
     ]
+    if case_id in {"case-1", "case-2", "case-3"}:
+        reviewer_status = {
+            "case-1": "completed",
+            "case-2": "failed",
+            "case-3": "unavailable",
+        }[case_id]
+        fields.append(
+            {
+                **_field(
+                    "cover",
+                    "cover-current-synthetic",
+                    ["cover-current-synthetic", "cover-choice-synthetic"],
+                    disposition="review",
+                    needs_attention=True,
+                    notices=["Cover comparison remains an owner choice."],
+                ),
+                "cover_consideration": {
+                    "candidates": [
+                        {
+                            "artifact_id": "cover-current-synthetic",
+                            "height": 1200,
+                            "identity": {
+                                "candidate_reference": "cover-ref-current",
+                                "evidence_references": [],
+                                "outcome": "verified_work_match",
+                                "preview_reference": "cover-preview-current",
+                                "reasons": [],
+                            },
+                            "incumbent": True,
+                            "observation": None,
+                            "original_sha256": "a" * 64,
+                            "ordinal": 0,
+                            "preview_sha256": "b" * 64,
+                            "reference": "cover-ref-current",
+                            "selectable": False,
+                            "source_kinds": ["synthetic"],
+                            "state": "available",
+                            "width": 800,
+                        },
+                        {
+                            "artifact_id": "cover-choice-synthetic",
+                            "height": 1200,
+                            "identity": {
+                                "candidate_reference": "cover-ref-choice",
+                                "evidence_references": [],
+                                "outcome": "verified_work_match",
+                                "preview_reference": "cover-preview-choice",
+                                "reasons": [],
+                            },
+                            "incumbent": False,
+                            "observation": None,
+                            "original_sha256": "c" * 64,
+                            "ordinal": 1,
+                            "preview_sha256": "d" * 64,
+                            "reference": "cover-ref-choice",
+                            "selectable": True,
+                            "source_kinds": ["synthetic"],
+                            "state": "recommended" if reviewer_status == "completed" else "available",
+                            "width": 800,
+                        },
+                    ],
+                    "consideration_id": "cover-consideration-" + reviewer_status,
+                    "current": True,
+                    "incumbent": {
+                        "reference": "cover-ref-current",
+                        "state": "available",
+                    },
+                    "omissions": [],
+                    "policy": (
+                        {
+                            "acceptable_candidate_references": [
+                                "cover-ref-current",
+                                "cover-ref-choice",
+                            ],
+                            "cover_packet_reference": "cover-packet-synthetic",
+                            "identity_classifier_reference": "cover-identity-synthetic",
+                            "identity_report_sha256": "e" * 64,
+                            "observation_report_sha256": None,
+                            "observation_taxonomy_reference": "cover-taxonomy-synthetic",
+                            "policy_reference": "cover-policy-synthetic",
+                            "reasons": ["policy_satisfied"],
+                            "recommended_candidate_reference": "cover-ref-choice",
+                            "schema_version": "cover-policy-report-v1",
+                            "status": "recommended",
+                        }
+                        if reviewer_status == "completed"
+                        else None
+                    ),
+                    "policy_preferences": {
+                        "avoid_promotional_text": False,
+                        "avoid_tie_in_branding": False,
+                        "prefer_minimal_composition": False,
+                        "schema_version": "cover-policy-v1",
+                    },
+                    "policy_reference": "cover-policy-synthetic",
+                    "reviewer_status": reviewer_status,
+                    "schema_version": "cover-consideration-v1",
+                    "supersedes_id": (
+                        "cover-consideration-historical"
+                        if reviewer_status == "failed"
+                        else None
+                    ),
+                    "target_fingerprint": "f" * 64,
+                },
+            }
+        )
     work = next((item for item in LIBRARY_WORKS if item["review_case_id"] == case_id), LIBRARY_WORKS[0])
     return {
         "schema_version": "review-case-v1",
@@ -523,6 +629,11 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         ),
         ("Resolved work with retained history", "Research shelf", "authors", "resolved", "human", None),
         ("Automatic-only edition", "Household ebooks", "series", "running", "automatic_policy", None),
+        ("Synthetic completed cover advice", "Household ebooks", "cover", "considered", "human", None),
+        ("Synthetic unavailable cover advice", "Spoken stories", "cover", "unavailable", "human", None),
+        ("Synthetic failed cover advice", "Research shelf", "cover", "failed", "human", None),
+        ("Synthetic stale cover advice", "Household ebooks", "cover", "stale", "human", "currentness"),
+        ("Synthetic superseded cover advice", "Spoken stories", "cover", "superseded", "human", None),
     ]
     return {
         "schema_version": "continuous-field-activity-v2",
