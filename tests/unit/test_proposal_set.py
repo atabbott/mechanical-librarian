@@ -1057,10 +1057,43 @@ class ProposalSetTests(unittest.TestCase):
             applicability_basis="unlabelled",
             scope=ClaimScope.EDITION,
         )
+        non_valid_isbn = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="0306406152",
+            canonical="0306406152",
+            excerpt="0306406152",
+            applicability="unknown",
+            checksum="valid_isbn_10",
+            applicability_basis="unlabelled",
+            scope=ClaimScope.EDITION,
+            state=FieldState.UNTYPED,
+        )
         complete_lane = metadata_discovery_plan(
             TargetSnapshot("ebook", "Real Tigers", (), fields=fields),
-            (isbn, isbn_10),
+            (isbn, isbn_10, non_valid_isbn),
         ).lanes[0]
+        complete_references = tuple(
+            sorted(
+                claim.reference for claim in (isbn, isbn_10, non_valid_isbn)
+            )
+        )
+        complete_canonical_isbns = sorted(
+            {isbn.canonical, isbn_10.canonical, non_valid_isbn.canonical}
+        )
+        self.assertEqual(complete_references, complete_lane.input_references)
+        self.assertEqual(
+            "lane_" + hashlib.sha256(
+                canonical_json(
+                    {
+                        "canonical_isbns": complete_canonical_isbns,
+                        "input_references": list(complete_references),
+                        "kind": ProviderQueryKind.ISBN.value,
+                        "matched_family": complete_lane.matched_family,
+                    }
+                ).encode()
+            ).hexdigest(),
+            complete_lane.identity,
+        )
         complete_source = provider_observation(
             "hardcover-connection",
             (ProviderLaneResult(
@@ -1071,7 +1104,7 @@ class ProposalSetTests(unittest.TestCase):
         complete_report = MetadataReport.create(
             target=TargetFacts("primary", "ebooks", "item-1", fields),
             file=FileFacts(0, "a" * 64, "b" * 64),
-            local_claims=(isbn, isbn_10),
+            local_claims=(isbn, isbn_10, non_valid_isbn),
             local_reasons=("opening_matter_isbn",),
             providers=(complete_source,),
         )
@@ -1114,7 +1147,7 @@ class ProposalSetTests(unittest.TestCase):
             MetadataReport.create(
                 target=TargetFacts("primary", "ebooks", "item-1", fields),
                 file=FileFacts(0, "a" * 64, "b" * 64),
-                local_claims=(isbn, isbn_10),
+                local_claims=(isbn, isbn_10, non_valid_isbn),
                 local_reasons=("opening_matter_isbn",),
                 providers=(subset_source,),
             ).to_json()

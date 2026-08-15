@@ -1512,7 +1512,6 @@ def _isbn_family_claims(
         claim
         for claim in report.local_claims
         if claim.kind is ClaimKind.ISBN
-        and claim.state is FieldState.VALID
         and claim.canonical is not None
         and isbn_family(claim.canonical) == family
     )
