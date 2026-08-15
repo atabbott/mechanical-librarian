@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from mechanical_librarian.adapters.persistence.metadata_reports import MetadataReportError, open_repository
+from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
@@ -74,6 +75,12 @@ from tests.unit.test_proposal_set import (
     _report as _proposal_report,
 )
 from tests.unit.test_review_case_persistence import _report
+from tests.unit.test_cover_packets import (
+    _observer_result as _cover_observer_result,
+    _preview as _cover_preview,
+    _report as _cover_report,
+    _source as _cover_source,
+)
 
 
 def _case(repository):
@@ -172,7 +179,9 @@ def _preview_automatic_profile() -> MetadataPolicyProfile:
     )
 
 
-def _pipeline_configuration() -> ApplicationConfiguration:
+def _pipeline_configuration(
+    *, cover_reviewer_profile_file: str | None = None
+) -> ApplicationConfiguration:
     return ApplicationConfiguration(
         (
             TargetConnectionConfiguration(
@@ -183,7 +192,9 @@ def _pipeline_configuration() -> ApplicationConfiguration:
         (),
         (),
         review=ReviewWebConfiguration(
-            "https://review.example.invalid", "/run/owner-password"
+            "https://review.example.invalid",
+            "/run/owner-password",
+            cover_reviewer_profile_file=cover_reviewer_profile_file,
         ),
     )
 
@@ -904,6 +915,63 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             )
             self.assertEqual(1, len(repository.list_shadow_outcomes(50)))
             supervisor.stop()
+            repository.close()
+
+    def test_composed_projection_prepares_one_qualified_cover_advice_before_f22(self) -> None:
+        """Ordinary F22 composition persists advice before its package projection.
+
+        The synthetic runner is the only observer boundary in this test.  The
+        pipeline still composes its real consideration service and repository,
+        so replay can prove that neither restart nor projection replay dispatches
+        a second observer or gains cover-effect authority.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            payloads = (_cover_preview(1), _cover_preview(2))
+            sources = (
+                _cover_source(1, payloads[0], incumbent=True),
+                _cover_source(2, payloads[1], embedded=True),
+            )
+            report = _cover_report(sources)
+            artifacts = CoverArtifactStore(root / "artifacts")
+            for index, (source, payload) in enumerate(zip(sources, payloads, strict=True), 1):
+                assert source.artifact is not None
+                artifacts.stage(source.artifact, f"original-{index}".encode(), payload)
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+            assert case_id is not None
+            action = SimpleNamespace(review_case_id=case_id)
+            recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
+            calls: list[object] = []
+
+            def reviewer(*args):
+                calls.append(args)
+                return _cover_observer_result(*args)
+
+            with patch.object(composition, "read_contained_reviewer_profile", return_value=b"synthetic-profile"), patch.object(composition, "run_cover_packet_reviewer", side_effect=reviewer):
+                supervisor = composition.create_review_pipeline(
+                    _pipeline_configuration(cover_reviewer_profile_file="/run/synthetic-profile"),
+                    database,
+                    root / "catalogue.sqlite",
+                    root / "artifacts",
+                    database_authority=repository.authority,
+                    provider_recovery=recovery,
+                )
+                supervisor._pipeline._before_projection(repository, action)
+                first = repository.current_cover_consideration_document(case_id)
+                self.assertIsNotNone(first)
+                self.assertEqual(1, len(calls))
+                self.assertEqual("completed", json.loads(first)["reviewer_status"])
+                self.assertEqual("complete", supervisor._pipeline._project(repository, case_id))
+                supervisor._pipeline._before_projection(repository, action)
+                self.assertEqual(first, repository.current_cover_consideration_document(case_id))
+                self.assertEqual(1, len(calls))
+                self.assertEqual(0, repository._connection.execute("SELECT count(*) FROM field_effects").fetchone()[0])
+                supervisor.stop()
             repository.close()
 
     def test_review_posture_composed_stale_projection_restarts_instead_of_completing(self) -> None:
