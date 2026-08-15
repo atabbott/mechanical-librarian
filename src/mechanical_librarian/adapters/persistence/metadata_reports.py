@@ -44,6 +44,7 @@ from mechanical_librarian.domain.automatic_decision import (
 from mechanical_librarian.domain.field_effect import (
     FIELD_EFFECT_FAILURES,
     SUPPORTED_DESTINATIONS,
+    TERMINAL_STATES,
     EffectAuthority,
     EffectConsent,
     FieldEffectError,
@@ -102,6 +103,14 @@ from mechanical_librarian.domain.shadow_outcome import (
 from mechanical_librarian.domain.shadow_review import (
     ShadowReviewPacket,
     ShadowReviewValueError,
+)
+from mechanical_librarian.domain.validation import (
+    boolean,
+    bounded_integer,
+    closed_document,
+    literal,
+    non_negative_integer,
+    text,
 )
 
 if sys.platform.startswith("linux"):
@@ -9577,20 +9586,19 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
         control = connection.execute(
             "SELECT singleton,paused,updated_at FROM field_effect_control"
         ).fetchall()
-        if (len(control) != 1 or control[0][0] != 1
-                or control[0][1] not in (0, 1)
-                or type(control[0][2]) is not int or control[0][2] < 0):
+        if (len(control) != 1 or control[0][0] != 1 or control[0][1] not in (0, 1)
+                or not non_negative_integer(control[0][2])):
             raise FieldEffectError("invalid_control")
 
-        suspension_keys = {"connection", "destination", "reason", "schema_version",
-                           "scope", "updated_at"}
+        suspension = closed_document(
+            "connection", "destination", "reason", "scope", "updated_at",
+            schema_version=literal("field-effect-suspension-v1"))
         for scope, connection_name, destination, reason, updated_at, document in connection.execute(
             "SELECT scope,connection_name,destination,reason,updated_at,document "
             "FROM field_effect_suspensions"
         ):
             raw = json.loads(document)
-            if (type(raw) is not dict or set(raw) != suspension_keys
-                    or raw["schema_version"] != "field-effect-suspension-v1"
+            if (not suspension(raw)
                     or (raw["scope"], raw["connection"], raw["destination"],
                         raw["reason"], raw["updated_at"])
                     != (scope, connection_name, destination, reason, updated_at)
@@ -9598,20 +9606,18 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 raise FieldEffectError("invalid_suspension")
 
         authorities: dict[str, tuple[EffectAuthority, bool, int]] = {}
-        authority_keys = {"authority", "current", "schema_version", "updated_at"}
-        nested_authority_keys = {"decision_id", "origin", "outcome", "policy_identity",
-                                 "qualification_identity", "review_case_id",
-                                 "source", "target_fingerprint"}
+        authority_state = closed_document(
+            schema_version=literal("field-effect-authority-state-v1"), current=boolean,
+            updated_at=non_negative_integer,
+            authority=closed_document(
+                "decision_id", "origin", "outcome", "policy_identity",
+                "qualification_identity", "review_case_id", "source",
+                "target_fingerprint"))
         for decision_id, current, updated_at, document in connection.execute(
             "SELECT decision_id,current,updated_at,document FROM field_effect_authorities"
         ):
             raw = json.loads(document)
-            if (type(raw) is not dict or set(raw) != authority_keys
-                    or raw["schema_version"] != "field-effect-authority-state-v1"
-                    or type(raw["current"]) is not bool
-                    or type(raw["updated_at"]) is not int or raw["updated_at"] < 0
-                    or type(raw["authority"]) is not dict
-                    or set(raw["authority"]) != nested_authority_keys
+            if (not authority_state(raw)
                     or (raw["current"], raw["updated_at"]) != (bool(current), updated_at)
                     or canonical_effect_json(raw) != document):
                 raise FieldEffectError("invalid_authority")
@@ -9626,15 +9632,14 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             authorities[decision_id] = (authority, bool(current), updated_at)
 
         consents: dict[str, tuple[EffectConsent, bool, int]] = {}
-        consent_keys = {"consent", "current", "schema_version", "updated_at"}
+        consent_state = closed_document(
+            "consent", schema_version=literal("field-effect-consent-state-v1"),
+            current=boolean, updated_at=non_negative_integer)
         for consent_id, current, updated_at, document in connection.execute(
             "SELECT consent_id,current,updated_at,document FROM field_effect_consents"
         ):
             raw = json.loads(document)
-            if (type(raw) is not dict or set(raw) != consent_keys
-                    or raw["schema_version"] != "field-effect-consent-state-v1"
-                    or type(raw["current"]) is not bool
-                    or type(raw["updated_at"]) is not int or raw["updated_at"] < 0
+            if (not consent_state(raw)
                     or (raw["current"], raw["updated_at"]) != (bool(current), updated_at)
                     or canonical_effect_json(raw) != document):
                 raise FieldEffectError("invalid_consent")
@@ -9643,34 +9648,24 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 raise FieldEffectError("invalid_consent")
             consents[consent_id] = (consent, bool(current), updated_at)
 
+        pending_return = closed_document(requested_at=non_negative_integer,
+                                        scan_id=lambda value: type(value) is str and value != "")
+        manual_hold = closed_document(
+            "destination", "pending_return", "review_case_id",
+            schema_version=literal("field-effect-manual-hold-v2"), active=boolean,
+            decision_id=lambda value: type(value) is str and re.fullmatch(r"human_decision_[0-9a-f]{64}", value) is not None,
+            updated_at=non_negative_integer)
         for review_case_id, destination, active, updated_at, document in connection.execute(
             "SELECT review_case_id,destination,active,updated_at,document "
             "FROM field_effect_manual_holds"
         ):
             raw = json.loads(document)
-            if (type(raw) is not dict or set(raw) != {
-                    "active", "decision_id", "destination", "pending_return",
-                    "review_case_id", "schema_version", "updated_at"}
-                or raw["schema_version"] != "field-effect-manual-hold-v2"
-                or type(raw["active"]) is not bool
-                or type(raw["decision_id"]) is not str
-                or not re.fullmatch(r"human_decision_[0-9a-f]{64}", raw["decision_id"])
-                or type(raw["updated_at"]) is not int or raw["updated_at"] < 0
+            if (not manual_hold(raw)
                 or (raw["review_case_id"], raw["destination"], raw["active"],
                     raw["updated_at"]) != (review_case_id, destination,
                                             bool(active), updated_at)
-                or (
-                    raw["pending_return"] is not None
-                    and (
-                        not raw["active"]
-                        or type(raw["pending_return"]) is not dict
-                        or set(raw["pending_return"]) != {"requested_at", "scan_id"}
-                        or type(raw["pending_return"]["requested_at"]) is not int
-                        or raw["pending_return"]["requested_at"] < 0
-                        or type(raw["pending_return"]["scan_id"]) is not str
-                        or not raw["pending_return"]["scan_id"]
-                    )
-                )
+                or (raw["pending_return"] is not None
+                    and (not raw["active"] or not pending_return(raw["pending_return"])))
                 or canonical_effect_json(raw) != document):
                 raise FieldEffectError("invalid_manual_hold")
 
@@ -9693,9 +9688,12 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 raise FieldEffectError("invalid_operation")
             operations[plan.plan_id] = operation
 
-        event_keys = {"attempt", "decision_id", "desired_value", "destination",
-                      "event_id", "failure", "kind", "occurred_at", "origin",
-                      "plan_id", "pre_value", "schema_version", "sequence", "state"}
+        event = closed_document(
+            "decision_id", "desired_value", "destination", "event_id", "origin",
+            "plan_id", "pre_value",
+            schema_version=literal("field-effect-event-v1"), sequence=bounded_integer(1),
+            attempt=bounded_integer(0, 3), occurred_at=non_negative_integer,
+            kind=text, state=text, failure=FIELD_EFFECT_FAILURES.__contains__)
         next_sequence: dict[str, int] = {}
         last_events: dict[str, dict[str, object]] = {}
         for event_id, plan_id, sequence, kind, occurred_at, document in connection.execute(
@@ -9704,13 +9702,7 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             raw = json.loads(document)
             operation = operations.get(plan_id)
             expected_sequence = next_sequence.get(plan_id, 1)
-            if (operation is None or type(raw) is not dict or set(raw) != event_keys
-                    or raw["schema_version"] != "field-effect-event-v1"
-                    or type(raw["sequence"]) is not int or raw["sequence"] < 1
-                    or type(raw["attempt"]) is not int or not 0 <= raw["attempt"] <= 3
-                    or type(raw["occurred_at"]) is not int or raw["occurred_at"] < 0
-                    or type(raw["kind"]) is not str or type(raw["state"]) is not str
-                    or raw["failure"] not in FIELD_EFFECT_FAILURES
+            if (operation is None or not event(raw)
                     or (raw["event_id"], raw["plan_id"], raw["sequence"], raw["kind"], raw["occurred_at"])
                     != (event_id, plan_id, sequence, kind, occurred_at)
                     or sequence != expected_sequence
@@ -9742,18 +9734,16 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                     != (operation.state, operation.attempt, operation.failure)):
                 raise FieldEffectError("invalid_event")
 
-        action_keys = {"action_id", "attempt", "kind", "plan_id",
-                       "schema_version", "state", "updated_at"}
+        action = closed_document(
+            "action_id", "plan_id", schema_version=literal("field-effect-action-v1"),
+            attempt=bounded_integer(0, 3), updated_at=non_negative_integer,
+            kind=text, state=text)
         actions: dict[tuple[str, str], tuple[str, int]] = {}
         for action_id, plan_id, kind, state, attempt, updated_at, document in connection.execute(
             "SELECT action_id,plan_id,kind,state,attempt,updated_at,document FROM field_effect_actions"
         ):
             raw = json.loads(document)
-            if (plan_id not in operations or type(raw) is not dict or set(raw) != action_keys
-                    or raw["schema_version"] != "field-effect-action-v1"
-                    or type(raw["attempt"]) is not int or not 0 <= raw["attempt"] <= 3
-                    or type(raw["updated_at"]) is not int or raw["updated_at"] < 0
-                    or type(raw["kind"]) is not str or type(raw["state"]) is not str
+            if (plan_id not in operations or not action(raw)
                     or (raw["action_id"], raw["plan_id"], raw["kind"], raw["state"],
                         raw["attempt"], raw["updated_at"])
                     != (action_id, plan_id, kind, state, attempt, updated_at)
@@ -9774,7 +9764,9 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                          or operations[plan_id].failure != "third_value")):
                 raise FieldEffectError("invalid_action")
 
-        cleanup_keys = {"attempt", "plan_id", "schema_version", "state", "updated_at"}
+        cleanup = closed_document(
+            "plan_id", schema_version=literal("field-effect-cleanup-v1"),
+            attempt=bounded_integer(0, 3), updated_at=non_negative_integer, state=text)
         cleanups: set[str] = set()
         for plan_id, state, attempt, updated_at, document in connection.execute(
             "SELECT plan_id,state,attempt,updated_at,document FROM field_effect_cleanups"
@@ -9782,12 +9774,7 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             raw = json.loads(document)
             operation = operations.get(plan_id)
             if (operation is None or operation.plan.destination != "cover"
-                    or operation.state not in {"verified", "stale", "superseded", "abandoned"}
-                    or type(raw) is not dict or set(raw) != cleanup_keys
-                    or raw["schema_version"] != "field-effect-cleanup-v1"
-                    or type(raw["attempt"]) is not int or not 0 <= raw["attempt"] <= 3
-                    or type(raw["updated_at"]) is not int or raw["updated_at"] < 0
-                    or type(raw["state"]) is not str
+                    or operation.state not in TERMINAL_STATES or not cleanup(raw)
                     or (raw["plan_id"], raw["state"], raw["attempt"], raw["updated_at"])
                     != (plan_id, state, attempt, updated_at)
                     or canonical_effect_json(raw) != document):
@@ -9795,7 +9782,7 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             cleanups.add(plan_id)
         expected_cleanups = {plan_id for plan_id, operation in operations.items()
                              if operation.plan.destination == "cover"
-                             and operation.state in {"verified", "stale", "superseded", "abandoned"}}
+                             and operation.state in TERMINAL_STATES}
         if cleanups != expected_cleanups:
             raise FieldEffectError("invalid_cleanup")
     except (json.JSONDecodeError, KeyError, TypeError, ValueError, sqlite3.Error) as error:
