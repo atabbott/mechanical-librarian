@@ -115,6 +115,65 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertTrue(repository.discovery_requires_qualification(action))
         repository.close()
 
+    def test_connection_hold_guards_claims_and_stale_checkers_fail_closed(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+        repository.request_review_scan("primary", "history", "lib-2", _PRODUCER, 2)
+        repository.request_review_scan("secondary", "books", "lib-3", _PRODUCER, 3)
+        first = repository.claim_review_pipeline_action(4)
+        second = repository.claim_review_pipeline_action(5)
+        assert first is not None and second is not None
+        self.assertEqual((first.connection, second.connection), ("primary", "primary"))
+        repository.defer_for_target_connection(first, "unavailable", 6)
+        self.assertFalse(repository.guard_target_connection(second, 7))
+        states = repository._connection.execute(
+            "SELECT state FROM review_preparation_scans WHERE connection_name='primary'"
+        ).fetchall()
+        self.assertEqual(states, [("queued",), ("queued",)])
+        unrelated = repository.claim_review_pipeline_action(8)
+        assert unrelated is not None
+        self.assertEqual(unrelated.connection, "secondary")
+        check = repository.begin_target_connection_check("primary", 9)
+        assert check is not None
+        self.assertFalse(
+            repository.finish_target_connection_check(
+                "primary", check.epoch - 1, None, 10
+            )
+        )
+        repository.close()
+
+        reopened = open_repository(self.path)
+        reopened.recover_review_pipeline(
+            (("primary", "fiction", "lib-1", _PRODUCER),)
+        )
+        condition = reopened.target_connection_conditions()[0]
+        reopened.close()
+        self.assertEqual((condition.connection, condition.state), ("primary", "paused"))
+
+    def test_unexpected_owner_probe_durably_returns_to_paused(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+        action = repository.claim_review_pipeline_action(2)
+        assert action is not None
+        repository.defer_for_target_connection(action, "tls", 3)
+        repository.close()
+
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(self.path),
+            libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+            discover=lambda *_: (_ for _ in ()).throw(AssertionError),
+            extract=lambda *_: (_ for _ in ()).throw(AssertionError),
+            providers=lambda *_: (),
+            propose=lambda *_: "",
+            admit=lambda *_: ("", None),
+            project=lambda *_: True,
+            check_connection=lambda _: (_ for _ in ()).throw(RuntimeError()),
+            clock=lambda: 4,
+        )
+        self.assertTrue(pipeline.check_connection("primary"))
+        condition = pipeline.connection_conditions()[0]
+        self.assertEqual((condition.code, condition.state), ("unavailable", "paused"))
+
     def test_status_reads_all_latest_library_progress_and_pause_in_one_snapshot(self) -> None:
         repository = open_repository(self.path)
         first = repository.request_review_scan(

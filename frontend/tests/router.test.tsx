@@ -1722,6 +1722,33 @@ describe('typed review routes', () => {
     expect((await screen.findAllByText(title)).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
   })
 
+  it('announces checking immediately and settles the retained route authoritatively', async () => {
+    const user = userEvent.setup()
+    const connection = { connection: 'primary', code: 'unavailable' as const, state: 'paused' as const, affected: 2, updated_at: 1 }
+    const paused: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [], connections: [connection] }
+    const recovered: PreparationView = { ...paused, connections: [{ ...connection, state: 'recovered', affected: 0, updated_at: 2 }] }
+    let current = paused
+    let settle: ((value: PreparationView) => void) | undefined
+    const pending = new Promise<PreparationView>((resolve) => { settle = resolve })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => current),
+      preparationAction: vi.fn(() => pending),
+    }
+    renderRoute('/library?lens=needs_attention&q=A%20Book', http)
+
+    const check = await screen.findByRole('button', { name: 'Check connection again' })
+    await user.click(check)
+    expect((await screen.findAllByText('Checking library connection')).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
+    expect(check).toHaveFocus()
+    expect(screen.getByDisplayValue('A Book')).toBeVisible()
+
+    current = recovered
+    settle?.(recovered)
+    expect((await screen.findAllByText('Library connection recovered')).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
+    expect(screen.getByDisplayValue('A Book')).toBeVisible()
+  })
+
   it('moves focus to the persistent main landmark when polling removes preparation activity', async () => {
     const user = userEvent.setup()
     const active: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [] }

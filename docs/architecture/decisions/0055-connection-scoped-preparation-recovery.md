@@ -18,7 +18,11 @@ It blocks claims only for that connection while retaining queued work at its
 first uncommitted stage and all immutable report, proposal, and package state.
 An authenticated CSRF-bound owner action owns one epoch-checked, bounded TLS
 probe. A successful probe marks the condition recovered and wakes the existing
-supervisor; a failed or interrupted probe remains safely paused.
+supervisor; a failed or interrupted probe remains safely paused. Each scan also
+persists a nullable qualification epoch: discovery performs its adapter-owned
+probe exactly once before enumeration, records success before dispatch, and
+resets that marker only for a later scan cycle. Recovery authorizes retained
+held scans with its successful epoch, so they resume without a redundant probe.
 
 ## Consequences
 
