@@ -827,7 +827,7 @@ def _choice_contexts(
             "role": "local_presence",
             "source": "Local library record",
         }] if local_value_present else []) + current_rows,
-        "limitations": [],
+        "limitations": _choice_limitations(preserves[0], result) if preserves else [],
         "rationale": (
             ("Deterministic policy retained the local value."
              if current_recommended else "Keep the value currently held by the local library.")
@@ -854,7 +854,7 @@ def _choice_contexts(
         contexts.append({
             "alternative_id": alternative_id,
             "evidence": rows,
-            "limitations": [],
+            "limitations": _choice_limitations(alternative, result),
             "rationale": _choice_rationale(alternative, bool(rows)),
             "recommendation": "recommended" if recommended else "no_recommendation",
             "recommendation_reason": (
@@ -864,6 +864,23 @@ def _choice_contexts(
             "selection": "proposed",
         })
     return contexts
+
+
+def _choice_limitations(alternative: dict[str, object], result: dict[str, object]) -> list[str]:
+    """Keep material comparison constraints with their retained alternative lineage."""
+    correlations = alternative.get("correlations")
+    if not isinstance(correlations, list) or not correlations:
+        return []
+    reasons = result.get("reasons")
+    if not isinstance(reasons, list):
+        return []
+    material = {
+        "competing_evidence", "date_refinement_requires_corroboration",
+        "date_year_conflict", "field_policy_conflict",
+        "insufficient_independent_corroboration", "no_safe_bibliographic_combination",
+        "populated_subjective_field", "bibliographic_combination_unresolved",
+    }
+    return [reason for reason in reasons if isinstance(reason, str) and reason in material][:3]
 
 
 def _current_value_present(value: object) -> bool:

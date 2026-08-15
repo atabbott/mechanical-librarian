@@ -346,6 +346,7 @@ describe('typed review routes', () => {
     if (!base) throw new Error('cover fixture requires a field')
     const consideration = {
       id: `cover_consideration_${'c'.repeat(64)}`,
+      choiceContexts: [{ alternativeId: null, selection: 'current', evidence: [], limitations: [], rationale: 'Keep the local cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }, { alternativeId: `cover_transport_ref_${'2'.repeat(64)}`, selection: 'proposed', evidence: [{ source: 'Open Library', role: 'external_corroboration', observation: 'Retained catalogue cover supports this choice.' }], limitations: [], rationale: 'Selectable retained cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }],
       current: true,
       candidates: [
         { artifactId: `cover_${'a'.repeat(64)}`, height: 1200, identity: { outcome: 'verified_manifestation_match' }, incumbent: true, observation: null, originalSha256: 'a'.repeat(64), ordinal: 0, previewSha256: '1'.repeat(64), reference: `cover_transport_ref_${'1'.repeat(64)}`, selectable: false, sourceKinds: ['audiobookshelf_current'], state: 'incumbent', width: 800 },
@@ -398,6 +399,7 @@ describe('typed review routes', () => {
     })
     const consideration = {
       id: `cover_consideration_${'c'.repeat(64)}`,
+      choiceContexts: [{ alternativeId: null, selection: 'current', evidence: [], limitations: [], rationale: 'Keep the local cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }, { alternativeId: reference(2), selection: 'proposed', evidence: [], limitations: [], rationale: 'Selectable retained cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }, { alternativeId: reference(3), selection: 'proposed', evidence: [], limitations: [], rationale: 'Selectable retained cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }, { alternativeId: reference(4), selection: 'proposed', evidence: [], limitations: [], rationale: 'Selectable retained cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }],
       current: true,
       candidates: [candidate(1, true), candidate(2), candidate(3), candidate(4), { ...candidate(5), selectable: false, identity: { outcome: 'verified_work_match', reasons: ['accepted_work_identifier'] }, observation: { composition: 'dense', medium: 'photographic', promotional_text: 'absent', tie_in_branding: 'absent' } }, { ...candidate(6), selectable: false, identity: { outcome: 'verified_work_match', reasons: ['accepted_work_identifier'] }, observation: { composition: 'dense', medium: 'photographic', promotional_text: 'present', tie_in_branding: 'absent' } }],
       incumbent: { reference: reference(1), state: 'available' as const },
@@ -432,10 +434,12 @@ describe('typed review routes', () => {
   })
 
   it('retains an explicit keep-current control when the incumbent preview is unavailable', async () => {
+    const user = userEvent.setup()
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
     const consideration = {
       id: `cover_consideration_${'u'.repeat(64)}`,
+      choiceContexts: [{ alternativeId: null, selection: 'current', evidence: [{ source: 'Local library record', role: 'local_presence', observation: 'Current cover preview is unavailable; local presence is retained.' }], limitations: ['preview_unavailable'], rationale: 'Keep the retained local cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }, { alternativeId: `cover_transport_ref_${'a'.repeat(64)}`, selection: 'proposed', evidence: [], limitations: [], rationale: 'Selectable retained cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }],
       current: true,
       candidates: [{ artifactId: `cover_${'a'.repeat(64)}`, height: 1200, identity: { outcome: 'plausible_match' }, incumbent: false, observation: null, originalSha256: 'a'.repeat(64), ordinal: 1, previewSha256: 'a'.repeat(64), reference: `cover_transport_ref_${'a'.repeat(64)}`, selectable: true, sourceKinds: ['provider'], state: 'acceptable', width: 800 }],
       incumbent: { reference: `cover_transport_ref_${'b'.repeat(64)}`, state: 'unavailable' as const }, omissions: [], policy: null,
@@ -445,6 +449,12 @@ describe('typed review routes', () => {
     renderRoute('/library?lens=all&preview=case-1&field=cover', { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })) })
 
     expect(await screen.findByRole('button', { name: /Current cover.*Unavailable/u })).toBeVisible()
+    const evidence = screen.getByRole('button', { name: 'Evidence for Current cover' })
+    await user.click(evidence)
+    expect(evidence).toHaveFocus()
+    expect(screen.getByText('Local presence')).toBeVisible()
+    expect(screen.getByText('Preview unavailable')).toBeVisible()
+    expect(screen.getByRole('button', { name: /Current cover.*Unavailable/u })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('3')
   })
 
@@ -454,6 +464,7 @@ describe('typed review routes', () => {
     if (!base) throw new Error('cover fixture requires a field')
     const consideration = {
       id: `cover_consideration_${'p'.repeat(64)}`, current: true,
+      choiceContexts: [{ alternativeId: null, selection: 'current', evidence: [], limitations: [], rationale: 'Keep the local cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }, { alternativeId: `cover_transport_ref_${'a'.repeat(64)}`, selection: 'proposed', evidence: [], limitations: [], rationale: 'Selectable retained cover.', recommendation: 'no_recommendation', recommendationReason: 'No recommendation retained.' }],
       candidates: [{ artifactId: `cover_${'a'.repeat(64)}`, height: 1200, identity: { outcome: 'plausible_match' }, incumbent: false, observation: null, originalSha256: 'a'.repeat(64), ordinal: 1, previewSha256: 'a'.repeat(64), reference: `cover_transport_ref_${'a'.repeat(64)}`, selectable: true, sourceKinds: ['provider'], state: 'acceptable', width: 800 }],
       incumbent: { reference: `cover_transport_ref_${'b'.repeat(64)}`, state: 'unavailable' as const }, omissions: [], policy: null,
       policyPreferences: { avoidPromotionalText: false, avoidTieInBranding: false, preferMinimalComposition: false }, policyReference: `cover_policy_${'p'.repeat(64)}`, reviewerStatus: 'completed', targetFingerprint: 'fingerprint-cover',

@@ -63,8 +63,7 @@ export interface CoverCandidateView {
   width: number
 }
 export interface CoverConsiderationView {
-  /** Present on wire responses; optional only for hand-authored UI fixtures. */
-  choiceContexts?: readonly ChoiceContextView[]
+  choiceContexts: readonly ChoiceContextView[]
   id: string
   current: boolean
   candidates: readonly CoverCandidateView[]
@@ -402,8 +401,13 @@ const mapCoverConsideration = (value: unknown): CoverConsiderationView | null =>
   if (typeof preferences.avoid_promotional_text !== 'boolean' || typeof preferences.avoid_tie_in_branding !== 'boolean' || typeof preferences.prefer_minimal_composition !== 'boolean') throw new ApiError(502, 'invalid_cover_policy_preferences')
   const candidates = value.candidates.map((candidate, index) => {
     if (!record(candidate) || !record(candidate.identity) || (candidate.observation !== null && !record(candidate.observation))) throw new ApiError(502, `invalid_cover_candidate_${String(index)}`)
-    return { artifactId: stringValue(candidate.artifact_id, 'cover_artifact_id'), height: integerValue(candidate.height, 'cover_height'), identity: candidate.identity, incumbent: candidate.incumbent === true, observation: candidate.observation, originalSha256: stringValue(candidate.original_sha256, 'cover_original_digest'), ordinal: integerValue(candidate.ordinal, 'cover_ordinal'), previewSha256: stringValue(candidate.preview_sha256, 'cover_preview_digest'), reference: stringValue(candidate.reference, 'cover_reference'), selectable: candidate.selectable === true, sourceKinds: stringArray(candidate.source_kinds, 'cover_source_kinds'), state: stringValue(candidate.state, 'cover_state'), width: integerValue(candidate.width, 'cover_width') }
+    const state = stringValue(candidate.state, 'cover_state')
+    if (!['acceptable', 'available', 'excluded', 'incumbent', 'recommended', 'unavailable'].includes(state)) throw new ApiError(502, 'invalid_cover_candidate_state')
+    return { artifactId: stringValue(candidate.artifact_id, 'cover_artifact_id'), height: integerValue(candidate.height, 'cover_height'), identity: candidate.identity, incumbent: candidate.incumbent === true, observation: candidate.observation, originalSha256: stringValue(candidate.original_sha256, 'cover_original_digest'), ordinal: integerValue(candidate.ordinal, 'cover_ordinal'), previewSha256: stringValue(candidate.preview_sha256, 'cover_preview_digest'), reference: stringValue(candidate.reference, 'cover_reference'), selectable: candidate.selectable === true, sourceKinds: stringArray(candidate.source_kinds, 'cover_source_kinds'), state, width: integerValue(candidate.width, 'cover_width') }
   })
+  if (new Set(candidates.map((candidate) => candidate.reference)).size !== candidates.length || new Set(candidates.map((candidate) => candidate.artifactId)).size !== candidates.length || new Set(candidates.map((candidate) => candidate.ordinal)).size !== candidates.length || candidates.some((candidate, index) => candidate.ordinal !== index)) throw new ApiError(502, 'misaligned_cover_candidates')
+  const incumbents = candidates.filter((candidate) => candidate.incumbent)
+  if (incumbents.length > 1 || (incumbentState === 'absent' && incumbents.length !== 0) || (incumbentState === 'available' && (incumbents.length !== 1 || value.incumbent.reference !== incumbents[0]?.reference)) || (incumbentState === 'unavailable' && value.incumbent.reference === null)) throw new ApiError(502, 'misaligned_cover_incumbent')
   const proposedReferences = candidates.filter((candidate) => candidate.selectable && !candidate.incumbent).map((candidate) => candidate.reference)
   const choiceContexts = mapChoiceContexts(value.choice_contexts, proposedReferences.length)
   if (choiceContexts.slice(1).some((context, index) => context.alternativeId !== proposedReferences[index])) throw new ApiError(502, 'misaligned_cover_choice_contexts')
@@ -413,9 +417,9 @@ const mapCoverConsideration = (value: unknown): CoverConsiderationView | null =>
   const acceptable = policy === null ? [] : stringArray(policy.acceptable_candidate_references, 'cover_acceptable_references')
   const recommendedContexts = choiceContexts.filter((context) => context.recommendation === 'recommended')
   const currentReference = candidates.find((candidate) => candidate.incumbent)?.reference ?? null
-  const expectedReference = policyStatus === 'recommended' && recommendedReference !== null && acceptable.includes(recommendedReference) && candidates.some((candidate) => candidate.reference === recommendedReference && candidate.selectable) ? recommendedReference : null
-  const expectedContext = expectedReference === currentReference ? choiceContexts[0] : choiceContexts.find((context) => context.alternativeId === expectedReference)
-  if ((expectedContext === undefined && recommendedContexts.length !== 0) || (expectedContext !== undefined && (recommendedContexts.length !== 1 || recommendedContexts[0] !== expectedContext))) throw new ApiError(502, 'contradictory_cover_recommendation')
+  const expectedReference = policyStatus === 'recommended' && recommendedReference !== null && acceptable.includes(recommendedReference) && candidates.some((candidate) => candidate.reference === recommendedReference && (candidate.selectable || candidate.incumbent)) ? recommendedReference : null
+  const expectedContext = expectedReference === null ? undefined : expectedReference === currentReference ? choiceContexts[0] : choiceContexts.slice(1).find((context) => context.alternativeId === expectedReference)
+  if ((expectedContext === undefined && recommendedContexts.length !== 0) || (expectedContext !== undefined && (recommendedContexts.length !== 1 || recommendedContexts[0] !== expectedContext)) || candidates.some((candidate) => candidate.state === 'recommended' && candidate.reference !== expectedReference) || (expectedReference !== null && candidates.find((candidate) => candidate.reference === expectedReference)?.state !== 'recommended')) throw new ApiError(502, 'contradictory_cover_recommendation')
   return {
     id: stringValue(value.consideration_id, 'cover_consideration_id'),
     current: value.current === true,

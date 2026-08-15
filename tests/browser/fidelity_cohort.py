@@ -458,14 +458,14 @@ def _case(case_id: str) -> dict[str, object]:
                 **_field(
                     "cover",
                     "cover-current-synthetic",
-                    ["cover-current-synthetic", "cover-choice-synthetic"],
+                    ["cover-choice-synthetic"],
                     disposition="review",
                     needs_attention=True,
                     notices=["Cover comparison remains an owner choice."],
                 ),
                 "cover_consideration": {
                     "candidates": [
-                        {
+                        *([{
                             "artifact_id": "cover-current-synthetic",
                             "height": 1200,
                             "identity": {
@@ -485,7 +485,7 @@ def _case(case_id: str) -> dict[str, object]:
                             "source_kinds": ["synthetic"],
                             "state": "available",
                             "width": 800,
-                        },
+                        }] if case_id != "case-3" else []),
                         {
                             "artifact_id": "cover-choice-synthetic",
                             "height": 1200,
@@ -499,7 +499,7 @@ def _case(case_id: str) -> dict[str, object]:
                             "incumbent": False,
                             "observation": None,
                             "original_sha256": "c" * 64,
-                            "ordinal": 1,
+                            "ordinal": 0 if case_id == "case-3" else 1,
                             "preview_sha256": "d" * 64,
                             "reference": "cover-ref-choice",
                             "selectable": True,
@@ -509,10 +509,30 @@ def _case(case_id: str) -> dict[str, object]:
                         },
                     ],
                     "consideration_id": "cover-consideration-" + reviewer_status,
+                    "choice_contexts": [
+                        {
+                            "alternative_id": None,
+                            "selection": "current",
+                            "evidence": [{"source": "Local library record", "role": "local_presence", "observation": "Local library cover retained."}],
+                            "limitations": ["preview_unavailable"] if case_id == "case-3" else [],
+                            "rationale": "Keep the cover currently held by the local library.",
+                            "recommendation": "no_recommendation",
+                            "recommendation_reason": "No recommendation retained.",
+                        },
+                        {
+                            "alternative_id": "cover-ref-choice",
+                            "selection": "proposed",
+                            "evidence": [{"source": "Open Library", "role": "external_corroboration", "observation": "Retained catalogue cover supports this choice."}],
+                            "limitations": [],
+                            "rationale": "This retained cover candidate is selectable for owner review.",
+                            "recommendation": "recommended" if reviewer_status == "completed" else "no_recommendation",
+                            "recommendation_reason": "Authoritative cover policy recommends this retained cover." if reviewer_status == "completed" else "No recommendation retained.",
+                        },
+                    ],
                     "current": True,
                     "incumbent": {
                         "reference": "cover-ref-current",
-                        "state": "available",
+                        "state": "unavailable" if case_id == "case-3" else "available",
                     },
                     "omissions": [],
                     "policy": (

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -522,8 +523,8 @@ class ReactPlatformArtifactTests(unittest.TestCase):
 
             for case_id, label, retry in (
                 ("case-1", "Advisory visual review complete", False),
-                ("case-2", "Advisory review unavailable", True),
-                ("case-3", "Advisory review unavailable", True),
+                ("case-2", "Manual comparison available", True),
+                ("case-3", "Manual comparison available", True),
             ):
                 self._browser_stage = f"cover-library:{case_id}"
                 page.goto(
@@ -536,11 +537,12 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     "advice only" if not retry else "comparison remains manual",
                     comparison.inner_text(),
                 )
-                for choice in comparison.get_by_role("button").all():
-                    if choice.inner_text() == "Retry advisory review":
-                        continue
+                for choice in comparison.locator("button[aria-pressed]").all():
                     expect(choice).to_be_enabled()
                     expect(choice).to_have_attribute("aria-pressed", "false")
+                for evidence in comparison.get_by_role("button", name=re.compile(r"^Evidence for .+ cover$")).all():
+                    expect(evidence).to_be_enabled()
+                    expect(evidence).to_have_attribute("aria-expanded", "false")
                 self.assertEqual(
                     1 if retry else 0,
                     comparison.get_by_role(
@@ -551,6 +553,27 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     capture_visual_proof(
                         "library-completed" if case_id == "case-1" else "library-failed"
                     )
+                if case_id == "case-1":
+                    current_evidence = comparison.get_by_role("button", name="Evidence for Current cover")
+                    current_evidence.click()
+                    expect(current_evidence).to_have_attribute("aria-expanded", "true")
+                    comparison.get_by_text("Local library record", exact=True).wait_for()
+                    expect(comparison.locator(".library-cover-card.is-current")).to_have_attribute("aria-pressed", "false")
+                    alternative_evidence = comparison.get_by_role("button", name="Evidence for Alternative 1 cover")
+                    alternative_evidence.focus()
+                    page.keyboard.press("Enter")
+                    expect(alternative_evidence).to_be_focused()
+                    expect(alternative_evidence).to_have_attribute("aria-expanded", "true")
+                    comparison.get_by_text("Open Library", exact=True).wait_for()
+                    comparison.get_by_text("External corroboration", exact=True).wait_for()
+                    expect(comparison.locator(".library-cover-card:not(.is-current)")).to_have_attribute("aria-pressed", "false")
+                if case_id == "case-3":
+                    unavailable_evidence = comparison.get_by_role("button", name="Evidence for Current cover")
+                    unavailable_evidence.focus()
+                    page.keyboard.press("Enter")
+                    expect(unavailable_evidence).to_have_attribute("aria-expanded", "true")
+                    comparison.get_by_text("Local presence", exact=True).wait_for()
+                    comparison.get_by_text("Preview unavailable", exact=True).wait_for()
 
             missing_case_error_start = len(errors)
             for _ in range(2):
