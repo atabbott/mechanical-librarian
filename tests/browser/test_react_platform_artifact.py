@@ -155,6 +155,16 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertIsNotNone(response)
                 self.assertEqual(response.status, 200)
                 page.get_by_role("heading", name=heading).wait_for()
+                if path == "/attention":
+                    page.get_by_text(
+                        "This field needs your review.", exact=True
+                    ).first.wait_for()
+                    self.assertEqual(
+                        0,
+                        page.get_by_text(
+                            "Conflicting retained evidence", exact=True
+                        ).count(),
+                    )
                 if path.startswith("/policy"):
                     section = path.rsplit("=", 1)[-1]
                     expect(page.locator(f"#policy-{section}")).to_be_focused()
@@ -471,6 +481,15 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.locator(".attention-toggle").click()
             expect(page).to_have_url("https://react-platform.invalid/library?lens=all&preview=case-1&attention=open")
             expect(page.locator(".attention-rail")).to_be_visible()
+            expect(
+                page.locator(".attention-rail .attention-queue-copy b").first
+            ).to_have_text("Title · This field needs your review.")
+            self.assertEqual(
+                0,
+                page.locator(".attention-rail").get_by_text(
+                    "Conflicting retained evidence", exact=True
+                ).count(),
+            )
             expect(page.locator(".library-works")).to_be_visible()
             expect(page.locator(".workspace-detail")).to_be_visible()
             self.assertEqual(

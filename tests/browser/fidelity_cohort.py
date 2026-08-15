@@ -491,6 +491,7 @@ def _attention() -> dict[str, object]:
                     "media_kind": work["media_kind"],
                     "item": work["item"],
                     "detail_url": f"/review/{work['review_case_id']}?field={destination}",
+                    "classification_reason": "This field needs your review.",
                     "notices": ["Conflicting retained evidence"],
                     "provenance": ["catalogue observation", "local exact-current value"],
                     "work_attention_count": work["attention_count"],
