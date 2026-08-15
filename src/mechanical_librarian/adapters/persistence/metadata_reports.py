@@ -95,7 +95,10 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     project_f20_automatic_decision_value,
     select_isbn_representation,
 )
-from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
+from mechanical_librarian.domain.shadow_review import (
+    ShadowReviewPacket,
+    ShadowReviewValueError,
+)
 from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
 from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeError,
