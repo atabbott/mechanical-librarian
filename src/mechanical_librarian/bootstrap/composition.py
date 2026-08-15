@@ -2322,6 +2322,8 @@ def run_provider_recovery_once(
 ) -> None:
     """Run the same one-claim recovery path used by the preparation supervisor."""
     configuration = load_configuration_file(config_path)
+    if configuration.review is None:
+        raise ConfigurationError("review configuration is unavailable")
     store = SQLiteProviderRecoveryStore.open(
         _private_root(database_path) / "provider-recovery.sqlite"
     )
