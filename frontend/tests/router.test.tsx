@@ -704,7 +704,7 @@ describe('typed review routes', () => {
   it('recovers and paginates the contextual attention queue', async () => {
     const user = userEvent.setup()
     let calls = 0
-    const item = { id: 'case-1', destination: 'title', title: 'A Book', authors: [], library: 'Books', mediaKind: 'ebook', notices: [], provenance: [], workAttentionCount: 1 }
+    const item = { id: 'case-1', destination: 'title', title: 'A Book', authors: [], library: 'Books', mediaKind: 'ebook', classificationReason: 'Canonical library attention reason', notices: ['internal-library-notice'], provenance: [], workAttentionCount: 1 }
     const http: ReviewHttp = {
       ...createHttp(),
       getAttention: vi.fn(async (search: AttentionSearch) => {
@@ -720,6 +720,8 @@ describe('typed review routes', () => {
     const rail = screen.getByLabelText('Attention queue')
     await waitFor(() => expect(rail).toHaveFocus())
     expect(within(rail).getByText('A Book')).toBeVisible()
+    expect(within(rail).getByText(/Canonical library attention reason/u)).toBeVisible()
+    expect(within(rail).queryByText('internal-library-notice')).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Load more attention' }))
     expect(await screen.findByText('Second queued work')).toBeVisible()
     expect(http.getAttention).toHaveBeenLastCalledWith({ cursor: 'next' }, expect.any(AbortSignal))
@@ -902,7 +904,7 @@ describe('typed review routes', () => {
     const attention: AttentionView = {
       total: 2,
       items: [
-        { id: 'case-1', destination: 'title', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', classificationReason: 'Conflicting evidence', notices: ['conflicting_evidence'], provenance: ['opaque-source-1'], workAttentionCount: 3 },
+        { id: 'case-1', destination: 'title', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', classificationReason: 'Canonical standalone attention reason', notices: ['internal-standalone-notice'], provenance: ['opaque-source-1'], workAttentionCount: 3 },
         { id: 'case-1', destination: 'authors', title: 'A Book', authors: ['Ada Example'], library: 'Books', mediaKind: 'ebook', classificationReason: 'This field needs your review.', notices: [], provenance: [], workAttentionCount: 3 },
       ],
     }
@@ -911,7 +913,8 @@ describe('typed review routes', () => {
 
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
     expect(screen.getByText('3 fields')).toBeVisible()
-    expect(screen.getByText('Conflicting evidence')).toBeVisible()
+    expect(screen.getByText('Canonical standalone attention reason')).toBeVisible()
+    expect(screen.queryByText('internal-standalone-notice')).toBeNull()
     expect(screen.queryByText('opaque-source-1')).toBeNull()
     expect(screen.getByText(/1 evidence record available/u)).toBeVisible()
     expect(screen.getByText(/Inspect the current value and available authors choices/u)).toBeVisible()

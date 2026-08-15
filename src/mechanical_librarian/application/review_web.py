@@ -691,10 +691,6 @@ class BrowseReviewLibrary:
                     case_document, report_document, destination, work_attention_count = row[:4]
                     automatic_outcome = row[4] if len(row) > 4 else None
                     cause = row[5] if len(row) > 5 else None
-                    if len(items) >= bounded_limit:
-                        has_more = True
-                        break
-                    consumed += 1
                     item = _attention_item(
                         case_document,
                         report_document,
@@ -703,8 +699,18 @@ class BrowseReviewLibrary:
                         automatic_outcome=automatic_outcome,
                         cause=cause,
                     )
+                    if len(items) < bounded_limit:
+                        consumed += 1
+                        if item is not None:
+                            items.append(item)
+                        continue
                     if item is not None:
-                        items.append(item)
+                        # Leave the visible successor at the next cursor. A
+                        # contradictory lookahead row is safe to consume, but
+                        # this row must remain available to the next page.
+                        has_more = True
+                        break
+                    consumed += 1
                 if has_more:
                     break
                 if scan_offset + len(raw_rows) >= raw_total:
