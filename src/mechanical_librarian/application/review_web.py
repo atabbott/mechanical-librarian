@@ -361,7 +361,7 @@ class InspectCurrentReviewCase:
                     "navigation_role": classification.navigation_role,
                     "needs_attention": classification.needs_attention,
                     "preservation_only": classification.preservation_only,
-                    "notices": reasons,
+                    "notices": [*reasons, *_provider_comparison_notices(report)],
                     "proposed_values": [
                         alternative["value"] for alternative in alternatives
                     ],
@@ -1199,13 +1199,18 @@ def _provider_outcomes(report: MetadataReport) -> list[dict[str, object]]:
 
 
 def _provider_label(provider: str) -> str:
+    normalized = provider.strip().lower().replace("_", "-")
+    if normalized.startswith("google-books-"):
+        normalized = "google-books"
+    if normalized.startswith("open-library-"):
+        normalized = "open-library"
     return {
         "google_books": "Google Books",
         "google-books": "Google Books",
         "hardcover": "Hardcover",
         "open_library": "Open Library",
         "open-library": "Open Library",
-    }.get(provider, "Provider (name unavailable)")
+    }.get(normalized, "Provider (name unavailable)")
 
 
 def _provider_comparison_notices(report: MetadataReport) -> list[str]:
