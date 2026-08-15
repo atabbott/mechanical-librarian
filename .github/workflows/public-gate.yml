@@ -3,15 +3,20 @@ name: Public repository gate
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  group: public-gate-${{ github.workflow }}-${{ github.event.pull_request.number }}
+  # Pull-request work is grouped by pull request; a push to `main` is grouped by
+  # the merged commit so no post-merge verification shares a group with another.
+  group: public-gate-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   # A superseding pull-request head may cancel obsolete work for that pull
   # request. Delivery publishes one converged candidate whenever possible.
-  cancel-in-progress: true
+  # A merged `main` commit is verified exactly once and is never cancelled.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   fast-source:
@@ -21,7 +26,7 @@ jobs:
       - name: Check out the exact revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Install Python
@@ -84,7 +89,7 @@ jobs:
       - name: Check out the exact revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Install Python
@@ -112,7 +117,7 @@ jobs:
         run: >-
           python3
           scripts/qualify_exact_artifact.py
-          --source-sha "${{ github.event.pull_request.head.sha }}"
+          --source-sha "${{ github.event.pull_request.head.sha || github.sha }}"
           --test-tier required
 
   protected-browser:
@@ -122,7 +127,7 @@ jobs:
       - name: Check out the exact revision
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Install Python
@@ -149,11 +154,34 @@ jobs:
       - name: Install locked development dependencies
         run: uv sync --locked --all-groups
 
+      - name: Resolve the pinned Playwright version
+        id: playwright
+        run: >-
+          uv run python -c
+          'from importlib.metadata import version; print("version=" + version("playwright"))'
+          >> "$GITHUB_OUTPUT"
+
+      - name: Restore the pinned Chromium qualification payload
+        id: chromium-payload
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+
       - name: Install the pinned Chromium qualification browser
         run: uv run playwright install --with-deps chromium
 
       - name: Verify the exact Chromium qualification payload
         run: uv run python scripts/verify_playwright_browser.py
+
+      # Saved only after verification passes, so a corrupt or inexact payload is
+      # never persisted for a later run to restore.
+      - name: Save the verified Chromium qualification payload
+        if: steps.chromium-payload.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ steps.chromium-payload.outputs.cache-primary-key }}
 
       - name: Build the exact React browser artifact
         working-directory: frontend
@@ -168,3 +196,19 @@ jobs:
         env:
           ML_REACT_ASSET_DIR: ${{ runner.temp }}/react-assets
         run: uv run python scripts/run_test_tier.py browser
+
+  container-image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      # The shipped image must assemble from the exact revision. The build is
+      # never pushed, loaded, or run here: running the built image's lifecycle
+      # qualifier stays a documented maintainer-manual step.
+      - name: Build the shipped container image
+        run: docker build --pull --tag mechanical-librarian:gate .

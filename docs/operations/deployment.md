@@ -21,8 +21,10 @@ Use `docker compose up --build` for a local installed-product qualification.
 head-bound build, synthetic owner-secret/TLS seeding, non-root read-only-root
 run, health probes, bounded graceful termination and exact-current restart.
 Stop with `docker compose down`; do not add `-v` unless intentionally deleting
-the complete local application state. Image publication remains a separate
-release authority and is not part of this support contract.
+the complete local application state. The public gate's `container-image` job
+runs `docker build` at every candidate revision, so a build regression fails
+there; running the built image remains maintainer-manual. Image publication
+remains a separate release authority and is not part of this support contract.
 
 The image build has an exact pinned Node 24.19.0/npm 11.17.0 stage that
 regenerates browser DTOs from the committed OpenAPI document and emits the

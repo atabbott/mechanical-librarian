@@ -19,6 +19,12 @@ from pathlib import Path
 
 _STALL_DIAGNOSTIC_SECONDS = 30
 _SAFE_TEST_ID = re.compile(r"[A-Za-z0-9_.]{1,512}")
+# Ceilings for the failure-diagnostic stream. A single traceback keeps its tail,
+# which holds the assertion and the innermost frame. The aggregate ceiling keeps
+# a broad failure readable in a hosted log and well inside the exact-artifact
+# qualifier's one-mebibyte per-stream capture bound.
+_MAX_TEST_TRACEBACK_BYTES = 4_096
+_MAX_TRACEBACK_STREAM_BYTES = 262_144
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,10 +162,17 @@ def run_cohort(root: Path, name: str) -> bool:
             )
         )
         return True
+    tracebacks = tuple(
+        sorted(
+            (test.id(), detail)
+            for test, detail in (*result.failures, *result.errors)
+        )
+    )
     failed_ids = sorted(
-        [test.id() for test, _detail in (*result.failures, *result.errors)]
+        [identifier for identifier, _detail in tracebacks]
         + [test.id() for test in result.unexpectedSuccesses]
-    )[:32]
+    )
+    _report_failure_tracebacks(name, tracebacks)
     print(
         json.dumps(
             {
@@ -179,6 +192,40 @@ def run_cohort(root: Path, name: str) -> bool:
         file=sys.stderr,
     )
     return False
+
+
+def _report_failure_tracebacks(
+    tier: str,
+    tracebacks: tuple[tuple[str, str], ...],
+) -> None:
+    """Emit bounded per-test tracebacks on the narrative diagnostic stream.
+
+    The machine-readable ``test-tier-result-v1`` and ``test-tier-stall-v1``
+    lines stay on standard error. This stream stays on standard output so no
+    consumer of either schema sees narrative text on its stream. Raw cohort
+    output remains discarded; only the formatted traceback of a failing test
+    is reported.
+    """
+    remaining = _MAX_TRACEBACK_STREAM_BYTES
+    omitted = 0
+    for index, (identifier, detail) in enumerate(tracebacks):
+        encoded = detail.encode("utf-8", "replace")
+        elided = len(encoded) - _MAX_TEST_TRACEBACK_BYTES
+        if elided > 0:
+            encoded = encoded[-_MAX_TEST_TRACEBACK_BYTES:]
+        if len(encoded) > remaining:
+            omitted = len(tracebacks) - index
+            break
+        remaining -= len(encoded)
+        sys.stdout.write(f"==== {tier} failure: {identifier} ====\n")
+        if elided > 0:
+            sys.stdout.write(f"[elided {elided} leading bytes]\n")
+        sys.stdout.write(encoded.decode("utf-8", "replace"))
+        if not encoded.endswith(b"\n"):
+            sys.stdout.write("\n")
+    if omitted:
+        sys.stdout.write(f"==== {tier} tracebacks omitted: {omitted} ====\n")
+    sys.stdout.flush()
 
 
 def _report_stalled_test(
