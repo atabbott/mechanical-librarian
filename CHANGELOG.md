@@ -7,6 +7,23 @@
 
 ## Unreleased
 
+- Express field validation once, as a shared vocabulary applied declaratively,
+  instead of expanding the same checks longhand for every field. A new
+  dependency-free `mechanical_librarian.domain.validation` module names the
+  house conventions — exact-type checks that reject subclasses, bounded
+  integers, anchored and non-empty text, closed enums, and closed-object field
+  sets — as total predicates that never raise, so a caller keeps its own error
+  identity, message, and short-circuit order. The persisted field-effect state
+  validator now reads as eight declared document schemas rather than a
+  sequential wall of per-field conditions. Nothing changes about what is
+  accepted or rejected: the same inputs fail with the same errors, proven by
+  the existing suites passing unmodified. In the browser, the seven responses
+  that are checked only for their schema version now say so through one named
+  seam instead of seven separate double casts, and a case-detail field that is
+  not an object, or that omits `current` or `proposed_values`, is now rejected
+  as an invalid response rather than surfacing as an unhandled `TypeError`.
+  (#663)
+
 - Report a malformed bibliographic combination as a packet error rather than a
   `TypeError`. A combination whose `source_representations` mixed strings with
   other types was compared against its sorted set before its members were

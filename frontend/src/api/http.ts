@@ -460,16 +460,16 @@ export class ReviewApiClient implements ReviewHttp {
   async getEvidence(id: string, cursor?: string, signal?: AbortSignal) {
     const p = new URLSearchParams({ limit: '50' })
     if (cursor) p.set('cursor', cursor)
-    return validateObject(
+    return schemaVersionOnly<EvidenceView>(
       await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}/evidence?${p}`, signal),
       'evidence',
-    ) as unknown as EvidenceView
+    )
   }
   async getHistory(id: string, signal?: AbortSignal) {
-    return validateObject(
+    return schemaVersionOnly<HistoryView>(
       await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}/history`, signal),
       'history',
-    ) as unknown as HistoryView
+    )
   }
   async retryCoverConsideration(id: string, signal?: AbortSignal) {
     const value = mapCoverConsideration(
@@ -500,7 +500,7 @@ export class ReviewApiClient implements ReviewHttp {
       outcome,
       considerationId,
     } = command
-    return validateObject(
+    return schemaVersionOnly<Schema<'_DecisionAcknowledgement'>>(
       await this.mutate(
         `/api/v1/review-cases/${encodeURIComponent(id)}/decisions`,
         {
@@ -515,7 +515,7 @@ export class ReviewApiClient implements ReviewHttp {
         { 'idempotency-key': idempotencyKey },
       ),
       'decision',
-    ) as unknown as Schema<'_DecisionAcknowledgement'>
+    )
   }
   async returnToAutomatic(id: string, destination: string, signal?: AbortSignal) {
     await this.mutate(
@@ -525,16 +525,16 @@ export class ReviewApiClient implements ReviewHttp {
     )
   }
   async getPolicyState(signal?: AbortSignal) {
-    return validateObject(
+    return schemaVersionOnly<PolicyStateView>(
       await this.read('/api/v1/metadata-policy/state', signal),
       'policy_state',
-    ) as unknown as PolicyStateView
+    )
   }
   async getShadowPosture(signal?: AbortSignal) {
-    return validateObject(
+    return schemaVersionOnly<ShadowPostureView>(
       await this.read('/api/v1/metadata-policy/shadow', signal),
       'shadow_posture',
-    ) as unknown as ShadowPostureView
+    )
   }
   async getAutomaticSafety(signal?: AbortSignal) {
     const value = await this.read('/api/v1/metadata-policy/automatic-safety', signal)
@@ -542,16 +542,16 @@ export class ReviewApiClient implements ReviewHttp {
     return value as AutomaticSafetyView
   }
   async getShadowSample(signal?: AbortSignal) {
-    return validateObject(
+    return schemaVersionOnly<ShadowSampleView>(
       await this.read('/api/v1/metadata-policy/shadow/outcomes?limit=10', signal),
       'shadow_sample',
-    ) as unknown as ShadowSampleView
+    )
   }
   async getPolicyTransition(signal?: AbortSignal) {
     const value = await this.read('/api/v1/metadata-policy/transition', signal)
     return value === null
       ? null
-      : (validateObject(value, 'policy_transition') as unknown as PolicyTransitionView)
+      : schemaVersionOnly<PolicyTransitionView>(value, 'policy_transition')
   }
   async policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal) {
     const value = await this.mutate(`/api/v1/metadata-policy/${path}`, body, signal)
@@ -714,6 +714,23 @@ const validateObject = (value: unknown, name: string): Record<string, unknown> =
     throw new ApiError(502, `invalid_${name}_response`)
   return value
 }
+// A deliberate, named exception to the rule that every field a view reads is
+// validated. These responses are handed back as their generated DTO unchanged
+// instead of being narrowed into a hand-written view model, so the only
+// invariant this file can assert without transcribing
+// docs/reference/review-openapi-v1.json is the version handshake: a
+// hand-written copy of that document would become a second contract and would
+// fail closed on responses the server is entitled to send. Every response that
+// is narrowed into a hand-written view validates each field it reads instead —
+// see mapPreparation, mapLibrary, mapAttention, and mapCaseDetail. This is the
+// one place in the file allowed to widen a validated document to a DTO type,
+// which is why the call sites carry no cast of their own.
+// The lint rule below objects that a type parameter used once is an assertion in
+// disguise. It is, deliberately: this is the file's single declared assertion seam,
+// and naming it here is what keeps the seven call sites free of casts of their own.
+// eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
+const schemaVersionOnly = <T>(value: unknown, name: string): T =>
+  validateObject(value, name) as unknown as T
 const preparationProgress = (value: unknown): PreparationProgress => {
   if (!record(value)) throw new ApiError(502, 'invalid_preparation_progress')
   for (const field of ['scan_id', 'connection', 'library', 'library_id', 'state'])
@@ -722,6 +739,8 @@ const preparationProgress = (value: unknown): PreparationProgress => {
     integerValue(value[field], `preparation_${field}`)
   if (typeof value.rescan_requested !== 'boolean')
     throw new ApiError(502, 'invalid_preparation_rescan_requested')
+  // Validated: every field of the progress DTO is checked above, so the cast
+  // only re-attaches the generated type to an already-verified document.
   return value as unknown as PreparationProgress
 }
 export const mapPreparation = (value: unknown): PreparationView => {
@@ -754,6 +773,8 @@ export const mapPreparation = (value: unknown): PreparationView => {
     integerValue(item.affected, 'preparation_connection_affected')
     integerValue(item.updated_at, 'preparation_connection_updated_at')
   })
+  // Validated: the envelope, both collections, and every field inside them are
+  // checked above, so the cast only re-attaches the generated type.
   return value as unknown as PreparationView
 }
 const activityPrepared = (value: unknown, field: string): ActivityPreparedView => {
@@ -982,6 +1003,8 @@ export const mapLibrary = (value: unknown): LibraryView => {
   const lens = stringValue(value.lens, 'library_lens')
   if (!['needs_attention', 'all', 'no_attention_needed'].includes(lens))
     throw new ApiError(502, 'invalid_library_lens')
+  // Validated at each read: this cast names the DTO's fields, and every one the
+  // view model consumes passes through the validators below before it is used.
   const dto = value as unknown as LibraryDto
   stringValue(dto.schema_version, 'schema_version')
   const query = optionalString(dto.query, 'library_query')
@@ -1046,6 +1069,8 @@ export const mapLibrary = (value: unknown): LibraryView => {
 export const mapAttention = (value: unknown): AttentionView => {
   if (!record(value) || !Array.isArray(value.items))
     throw new ApiError(502, 'invalid_attention_response')
+  // Validated at each read: this cast names the DTO's fields, and every one the
+  // view model consumes passes through the validators below before it is used.
   const dto = value as unknown as AttentionDto
   stringValue(dto.schema_version, 'schema_version')
   const query = optionalString(dto.query, 'attention_query')
@@ -1075,6 +1100,8 @@ export const mapAttention = (value: unknown): AttentionView => {
 export const mapCaseDetail = (value: unknown): CaseDetailView => {
   if (!record(value) || !record(value.target) || !Array.isArray(value.fields))
     throw new ApiError(502, 'invalid_case_detail_response')
+  // Validated at each read: this cast names the DTO's fields, and every one the
+  // view model consumes passes through the validators below before it is used.
   const dto = value as unknown as CaseDetailDto
   stringValue(dto.schema_version, 'schema_version')
   if (typeof dto.current !== 'boolean') throw new ApiError(502, 'invalid_case_currentness')
@@ -1085,32 +1112,40 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
     authors: stringArray(dto.target.authors, 'target_authors'),
     subtitle: `${stringValue(dto.target.library, 'target_library')} · ${stringValue(dto.target.media_kind, 'target_media_kind')} · ${stringValue(dto.target.connection, 'target_connection')}`,
     comparisonNotices: stringArray(dto.comparison_notices, 'comparison_notices'),
-    fields: dto.fields.map((field) => ({
-      classification: classificationValue(field.classification),
-      classificationReason: stringValue(field.classification_reason, 'classification_reason'),
-      destination: stringValue(field.destination, 'destination'),
-      disposition: stringValue(field.deterministic_disposition, 'disposition'),
-      editable: booleanValue(field.editable, 'editable'),
-      effectCapability: stringValue(field.effect_capability, 'effect_capability'),
-      needsAttention: booleanValue(field.needs_attention, 'needs_attention'),
-      manualHold: booleanValue(field.manual_hold, 'manual_hold'),
-      navigationRole: navigationRole(field.navigation_role),
-      currentValue: displayValue(field.current.value),
-      currentRaw: field.current.value,
-      proposedValues: field.proposed_values,
-      choiceContexts: mapChoiceContexts(field.choice_contexts, field.proposed_values.length),
-      proposalId: stringValue(field.proposal_id, 'proposal_id'),
-      targetFingerprint: stringValue(field.target_fingerprint, 'target_fingerprint'),
-      humanDecision: field.human_decision,
-      automaticDecision: field.automatic_decision,
-      notices: stringArray(field.notices, 'notices'),
-      provenance: stringArray(field.provenance, 'provenance'),
-      preservationOnly: booleanValue(field.preservation_only, 'preservation_only'),
-      corroborationSources: stringArray(field.corroboration_sources, 'corroboration_sources'),
-      coverConsideration: mapCoverConsideration(
-        (field as unknown as Record<string, unknown>).cover_consideration,
-      ),
-    })),
+    fields: dto.fields.map((field) => {
+      // The three fields dereferenced without a validator below: an entry that
+      // is not an object, or that omits `current` or `proposed_values`, used to
+      // surface as an unhandled TypeError instead of a rejected response.
+      if (!record(field) || !record(field.current) || !Array.isArray(field.proposed_values))
+        throw new ApiError(502, 'invalid_case_detail_field')
+      return {
+        classification: classificationValue(field.classification),
+        classificationReason: stringValue(field.classification_reason, 'classification_reason'),
+        destination: stringValue(field.destination, 'destination'),
+        disposition: stringValue(field.deterministic_disposition, 'disposition'),
+        editable: booleanValue(field.editable, 'editable'),
+        effectCapability: stringValue(field.effect_capability, 'effect_capability'),
+        needsAttention: booleanValue(field.needs_attention, 'needs_attention'),
+        manualHold: booleanValue(field.manual_hold, 'manual_hold'),
+        navigationRole: navigationRole(field.navigation_role),
+        currentValue: displayValue(field.current.value),
+        currentRaw: field.current.value,
+        proposedValues: field.proposed_values,
+        choiceContexts: mapChoiceContexts(field.choice_contexts, field.proposed_values.length),
+        proposalId: stringValue(field.proposal_id, 'proposal_id'),
+        targetFingerprint: stringValue(field.target_fingerprint, 'target_fingerprint'),
+        humanDecision: field.human_decision,
+        automaticDecision: field.automatic_decision,
+        notices: stringArray(field.notices, 'notices'),
+        provenance: stringArray(field.provenance, 'provenance'),
+        preservationOnly: booleanValue(field.preservation_only, 'preservation_only'),
+        corroborationSources: stringArray(field.corroboration_sources, 'corroboration_sources'),
+        // `record(field)` above widens the entry to a string-keyed record, which
+        // is how this reads a field the generated DTO does not declare;
+        // mapCoverConsideration then validates the value in full.
+        coverConsideration: mapCoverConsideration(field.cover_consideration),
+      }
+    }),
   }
 }
 
