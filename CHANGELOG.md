@@ -7,6 +7,26 @@
 
 ## Unreleased
 
+- Report a failed field-effect claim as what it was, so `claim_conflict` again
+  means an actual concurrency conflict. Claiming a plan can fail because the
+  control table is paused, the capability is suspended, the authority or
+  consent was revoked, the row moved under an optimistic state check, or
+  storage faulted; every one of those was previously reported to callers,
+  history, and the API as `claim_conflict`. Each now surfaces under the
+  repository's own code — `paused`, `capability`, `authority`, `consent`,
+  `claim_conflict`, or `persistence` — and an unrecognised claim failure
+  surfaces as `claim_failed` rather than borrowing one. Some failures therefore
+  reach the API with a different code and status than before: a genuine
+  conflict and a paused control table stay 409, while a suspended capability, a
+  revoked authority or consent, and a storage fault now return 503 instead of
+  409. The cover-recovery cleanup that runs after a lost claim no longer
+  swallows its own failures: a plan row that has genuinely disappeared stays a
+  benign outcome, but a storage or filesystem fault during cleanup is reported
+  as `cover_recovery`, chained onto the claim failure that provoked it so
+  neither is lost. Every path that raised before still raises, still as a
+  guarded error, and the cleanup still attempts removal in exactly the same
+  circumstances. (#656)
+
 - Report known-vulnerable Python dependencies in CI, so the backend half of the
   supply chain is audited on every change the way the frontend half already
   was. A `dependency-audit` job in the public gate scans the complete `uv.lock`
