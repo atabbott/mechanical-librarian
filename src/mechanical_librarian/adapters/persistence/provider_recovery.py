@@ -236,20 +236,42 @@ class SQLiteProviderRecoveryStore:
                 ):
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
                 excluded, parameters = _blocked_targets(blocked_targets)
-                members = self._connection.execute(
-                    "SELECT state,attempt FROM provider_recovery_jobs WHERE connection=? AND adapter=? AND scope=? AND generation=?" + excluded,
-                    (recovery.connection, recovery.adapter, recovery.scope, recovery.generation, *parameters),
+                active = self._connection.execute(
+                    "SELECT target_connection,state,attempt FROM provider_recovery_jobs WHERE connection=? AND adapter=? AND scope=? AND generation=? AND state IN ('queued','running')",
+                    (recovery.connection, recovery.adapter, recovery.scope, recovery.generation),
                 ).fetchall()
-                if members:
-                    if any(state != "queued" or attempt < 5 for state, attempt in members):
+                unblocked = tuple(
+                    (state, attempt) for target, state, attempt in active
+                    if target not in blocked_targets
+                )
+                blocked = tuple(
+                    (state, attempt) for target, state, attempt in active
+                    if target in blocked_targets
+                )
+                if unblocked:
+                    if any(state != "queued" or attempt < 5 for state, attempt in unblocked):
                         self._connection.execute("COMMIT")
                         return None
                     changed = self._connection.execute(
                         "UPDATE provider_recovery_jobs SET state='failed',claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? AND scope=? AND generation=? AND state='queued' AND attempt>=5" + excluded,
                         (recovery.connection, recovery.adapter, recovery.scope, recovery.generation, *parameters),
                     ).rowcount
-                    if changed != len(members):
+                    if changed != len(unblocked):
                         raise ProviderRecoveryStoreError("provider recovery members changed")
+                if blocked:
+                    snapshot = self._claim_snapshots.get(
+                        (recovery.connection, recovery.adapter, recovery.scope,
+                         recovery.generation, token)
+                    )
+                    if snapshot is None:
+                        raise ProviderRecoveryStoreError("provider recovery claim snapshot is unavailable")
+                    self._connection.execute(
+                        "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,claim_token=?,claim_expires_at=? WHERE connection=? AND adapter=? AND scope=?",
+                        (*snapshot[0], recovery.connection, recovery.adapter, recovery.scope),
+                    )
+                    self._connection.execute("COMMIT")
+                    del self._claim_snapshots[(recovery.connection, recovery.adapter, recovery.scope, recovery.generation, token)]
+                    return None
                 successor = ProviderRecovery(
                     recovery.connection, recovery.adapter, recovery.scope,
                     recovery.generation, "exhausted", recovery.attempt, None,

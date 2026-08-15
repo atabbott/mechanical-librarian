@@ -248,6 +248,41 @@ class ProviderRecoveryTests(unittest.TestCase):
             self.assertEqual(["canary"], calls)
             store.close()
 
+    def test_blocked_active_member_releases_mixed_scope_after_open_member_exhausts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            store.record(ProviderRecovery.failed(connection="google", adapter="google_books", scope="books", generation=1, failure="transient", now=0, retry_after=1), occurred_at=0)
+            blocked = self._job("blocked")
+            exhausted = replace(self._job("open"), target_connection="secondary", attempt=5)
+            store.enqueue_jobs((blocked, exhausted))
+            held = frozenset(("primary",))
+            calls: list[str] = []
+            runner = ScopedProviderRecoveryRunner(
+                store=store, generation=1,
+                retry=lambda _, job, __: calls.append(job.member_id),
+                classify_failure=lambda _: ("transient", None),
+                blocked_targets=lambda: held,
+            )
+            self.assertEqual("idle", runner.run_one(now=1, token="mixed").state)
+            self.assertEqual(("waiting", 1, 1), (
+                store.snapshot()[0].state, store.snapshot()[0].attempt,
+                store.snapshot()[0].next_eligible_at,
+            ))
+            self.assertEqual(
+                [("blocked", "queued", 0), ("open", "failed", 5)],
+                store._connection.execute("SELECT member_id,state,attempt FROM provider_recovery_jobs ORDER BY member_id").fetchall(),
+            )
+            self.assertEqual(["waiting"], [
+                row[0] for row in store._connection.execute("SELECT state FROM provider_recovery_events ORDER BY sequence")
+            ])
+            held = frozenset()
+            self.assertEqual("exhausted", runner.run_one(now=2, token="released").state)
+            self.assertEqual(["blocked"], calls)
+            self.assertEqual(["waiting", "checking", "fanout", "exhausted"], [
+                row[0] for row in store._connection.execute("SELECT state FROM provider_recovery_events ORDER BY sequence")
+            ])
+            store.close()
+
     def test_attempt_five_job_is_never_persisted_as_attempt_six(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
