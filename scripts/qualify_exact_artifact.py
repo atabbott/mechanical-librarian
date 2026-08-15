@@ -1153,7 +1153,7 @@ def _verify_installed_record(
         parser = configparser.ConfigParser(interpolation=None, strict=True)
         # configparser's documented way to keep entry-point keys
         # case-sensitive; typeshed models optionxform as a method.
-        parser.optionxform = str  # type: ignore[method-assign,assignment]
+        parser.optionxform = str  # type: ignore[method-assign,assignment]  # reason: configparser's documented way to keep entry-point keys case-sensitive; typeshed models optionxform as a method
         parser.read_string(
             _read_bounded_file(entry_points, _MAX_METADATA_BYTES).decode("utf-8", "strict")
         )

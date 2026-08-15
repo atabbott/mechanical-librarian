@@ -523,8 +523,8 @@ class ReviewCasePersistenceTests(unittest.TestCase):
             threads = [threading.Thread(target=admit) for _ in range(2)]
             # The comprehensions are used for their effect; the collected `None`
             # results are discarded.
-            [thread.start() for thread in threads]  # type: ignore[func-returns-value]
-            [thread.join() for thread in threads]  # type: ignore[func-returns-value]
+            [thread.start() for thread in threads]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
+            [thread.join() for thread in threads]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
             self.assertEqual(2, len(results))
             self.assertEqual(1, len({value["review_case_id"] for value in results}))
 

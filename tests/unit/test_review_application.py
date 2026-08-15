@@ -159,7 +159,7 @@ class ReviewApplicationTests(unittest.TestCase):
         browse = threading.Thread(
             # The tuple sequences the browse call and the `set()` signal inside one
             # lambda, so the discarded `None` element is the point, not a mistake.
-            target=lambda: (application.library(lens="all", search=None, limit=20, cursor=None), browse_finished.set())  # type: ignore[func-returns-value]
+            target=lambda: (application.library(lens="all", search=None, limit=20, cursor=None), browse_finished.set())  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
         )
         browse.start()
         self.assertTrue(browse_finished.wait(1))

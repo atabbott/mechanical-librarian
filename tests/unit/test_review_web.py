@@ -459,7 +459,7 @@ class _Repository:
             # `BrowseReviewLibrary` pads with `row[n] if len(row) >= n + 1`,
             # which is the tolerance this fixture exercises.
             rows=tuple(
-                (  # type: ignore[misc]
+                (  # type: ignore[misc]  # reason: the short library row is the tolerance this fixture exercises; padding it would delete the coverage
                     case_document,
                     report_document,
                     (
@@ -581,7 +581,7 @@ class _ActivityApplication(ContinuousGuardedApplication):
 
     # Every production call site invokes `begin_drain()` with no argument, so
     # this fake deliberately narrows the base signature.
-    def begin_drain(self) -> None:  # type: ignore[override]
+    def begin_drain(self) -> None:  # type: ignore[override]  # reason: the fake narrows the base signature; every production call site invokes it with no argument
         return None
 
     def close_admission(self) -> None:
@@ -1369,7 +1369,7 @@ class ReviewWebTests(unittest.TestCase):
         payload = self.client.get("/api/v1/metadata-policy/state").json()["profile"]
         del payload["schema_version"]
         # A deliberate patch of the fake repository's bound method.
-        self.repository.create_metadata_policy_draft = Mock(side_effect=RuntimeError)  # type: ignore[method-assign]
+        self.repository.create_metadata_policy_draft = Mock(side_effect=RuntimeError)  # type: ignore[method-assign]  # reason: deliberate per-test monkeypatch of a bound method
         response = self.client.post("/api/v1/metadata-policy/drafts", headers=headers, json=payload)
         self.assertEqual(503, response.status_code)
         self.assertEqual("persistence", response.json()["error"]["code"])
@@ -2958,7 +2958,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             None,
         )
         # A deliberate patch of the bound method on a bare instance.
-        application.serialized = lambda call: call()  # type: ignore[method-assign]
+        application.serialized = lambda call: call()  # type: ignore[method-assign]  # reason: deliberate per-test monkeypatch of a bound method
 
         with self.assertRaisesRegex(ReviewApplicationError, "already_decided"):
             application.retry_cover_consideration("review_case_" + "e" * 64)
@@ -2968,7 +2968,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
         application = object.__new__(ReviewApplication)
         application._gate = threading.RLock()
         # A deliberate patch of the bound method on a bare instance.
-        application.serialized = ReviewApplication.serialized.__get__(application)  # type: ignore[method-assign]
+        application.serialized = ReviewApplication.serialized.__get__(application)  # type: ignore[method-assign]  # reason: deliberate per-test monkeypatch of a bound method
         application._cases = Mock()
         application._cases._read.return_value = (
             {
@@ -3041,7 +3041,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
         application._cover_considerations.prepare_observation.return_value = object()
         application._cover_considerations.observe.return_value = object()
         # A deliberate patch of the bound method on a bare instance.
-        application.serialized = lambda call: call()  # type: ignore[method-assign]
+        application.serialized = lambda call: call()  # type: ignore[method-assign]  # reason: deliberate per-test monkeypatch of a bound method
 
         self.assertEqual(
             successor,

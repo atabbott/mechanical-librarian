@@ -1545,7 +1545,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             extract=publish_report,
             providers=lambda *_: provider_statuses.pop(0),
             # `append` returns `None`, so the `or` always yields the proposal id.
-            propose=lambda _, report_id: proposed.append(report_id) or "unreachable",  # type: ignore[func-returns-value]
+            propose=lambda _, report_id: proposed.append(report_id) or "unreachable",  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
             admit=lambda *_: ("no_case", None),
             project=lambda *_: True,
             clock=lambda: clock[0],
@@ -1595,7 +1595,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             extract=publish_report,
             providers=unavailable,
             # `append` returns `None`, so the `or` always yields the proposal id.
-            propose=lambda _, report_id: proposed.append(report_id) or "proposal-set",  # type: ignore[func-returns-value]
+            propose=lambda _, report_id: proposed.append(report_id) or "proposal-set",  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
             admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
             project=lambda *_: True,
             clock=lambda: clock[0],

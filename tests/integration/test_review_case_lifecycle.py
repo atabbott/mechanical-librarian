@@ -117,8 +117,8 @@ class ReviewCaseLifecycleTests(unittest.TestCase):
             workers = [threading.Thread(target=admit) for _ in range(2)]
             # The comprehensions are used for their effect; the collected `None`
             # results are discarded.
-            [worker.start() for worker in workers]  # type: ignore[func-returns-value]
-            [worker.join() for worker in workers]  # type: ignore[func-returns-value]
+            [worker.start() for worker in workers]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
+            [worker.join() for worker in workers]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
             self.assertEqual(1, len({value["review_case_id"] for value in outcomes}))
 
 

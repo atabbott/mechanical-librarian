@@ -102,7 +102,7 @@ class OperationsTests(unittest.TestCase):
         timings = LocalTimingStore(Path("unused"), enabled=False)
         # `append` returns `None`, so the `or` always yields the snapshot dict; the
         # call is there to record that the snapshot was taken.
-        service = OperationalStatus(snapshot=lambda: calls.append(True) or {"signals": []},  # type: ignore[func-returns-value]
+        service = OperationalStatus(snapshot=lambda: calls.append(True) or {"signals": []},  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
                                     timings=timings)
         self.assertFalse(service.ready())
         service.start()

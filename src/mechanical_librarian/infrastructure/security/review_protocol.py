@@ -35,7 +35,7 @@ class BoundedReviewH11Protocol(h11_impl.H11Protocol):
         # re-exporting it, so mypy's no-implicit-reexport rejects the attribute
         # even though it exists at runtime. h11 is not a declared direct
         # dependency of this project, so it is deliberately not imported here.
-        if self.conn.their_state is not h11_impl.h11.IDLE:  # type: ignore[attr-defined]
+        if self.conn.their_state is not h11_impl.h11.IDLE:  # type: ignore[attr-defined]  # reason: uvicorn re-exports h11 through h11_impl at runtime but does not declare it, and h11 is a transitive dependency this unit may not add to pyproject.toml
             self._unset_review_header_timeout()
 
     def on_response_complete(self) -> None:
@@ -43,7 +43,7 @@ class BoundedReviewH11Protocol(h11_impl.H11Protocol):
         if (
             not self.transport.is_closing()
             # Suppression reason: as above, h11_impl.h11 exists at runtime.
-            and self.conn.their_state is h11_impl.h11.IDLE  # type: ignore[attr-defined]
+            and self.conn.their_state is h11_impl.h11.IDLE  # type: ignore[attr-defined]  # reason: uvicorn re-exports h11 through h11_impl at runtime but does not declare it, and h11 is a transitive dependency this unit may not add to pyproject.toml
         ):
             self._set_review_header_timeout()
 
