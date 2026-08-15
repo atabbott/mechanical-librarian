@@ -2150,11 +2150,11 @@ class SQLiteMetadataReportRepository:
               JOIN metadata_reports report ON report.report_id=no_change.report_id
             UNION ALL
             SELECT event.event_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, 'cover', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END,
-                   event.occurred_at, CASE event.kind WHEN 'automatic_prepared' THEN 'automatic_pipeline' WHEN 'owner_retry_prepared' THEN 'owner_retry' ELSE 'unknown' END, review.report_id,
-                   event.kind, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END,
+                   event.occurred_at, CASE event.kind WHEN 'automatic_prepared' THEN 'automatic_pipeline' WHEN 'owner_retry_prepared' THEN 'owner_retry' WHEN 'selected' THEN 'human' WHEN 'kept_incumbent' THEN 'human' WHEN 'no_action' THEN 'human' ELSE 'unknown' END, review.report_id,
+                   CASE WHEN event.kind IN ('automatic_prepared','owner_retry_prepared') THEN json_extract(consideration.document, '$.reviewer_status') ELSE event.kind END, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END,
                    event.document,
-                   CASE WHEN event.kind IN ('stale','superseded') THEN 'safety' WHEN event.kind='automatic_prepared' THEN 'metadata' WHEN event.kind='owner_retry_prepared' THEN 'review' ELSE 'unknown' END,
-                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'cover_safeguard', consideration.document, event.review_case_id, NULL, event.consideration_id,
+                   CASE WHEN event.kind IN ('stale','superseded') THEN 'safety' WHEN event.kind='automatic_prepared' THEN 'metadata' WHEN event.kind IN ('owner_retry_prepared','selected','kept_incumbent','no_action') THEN 'review' ELSE 'unknown' END,
+                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'cover_safeguard', CASE WHEN json_extract(consideration.document, '$.reviewer_status') IN ('completed','unavailable','failed') THEN json_object('reviewer_status', json_extract(consideration.document, '$.reviewer_status')) ELSE '{}' END, event.review_case_id, NULL, event.consideration_id,
                    CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) AND typeof(consideration.document)='text' AND length(CAST(consideration.document AS BLOB)) BETWEEN 2 AND 12582912 AND json_valid(consideration.document) THEN 1 ELSE 0 END
               FROM cover_consideration_events event
               JOIN cover_considerations consideration ON consideration.consideration_id=event.consideration_id
@@ -2379,7 +2379,18 @@ class SQLiteMetadataReportRepository:
                                 "automatic_prepared", "owner_retry_prepared", "superseded", "selected",
                                 "kept_incumbent", "no_action", "stale",
                             }
-                            or state != raw.get("kind")
+                            or (
+                                raw.get("kind") in {"automatic_prepared", "owner_retry_prepared"}
+                                and reviewer_status not in {"completed", "unavailable", "failed"}
+                            )
+                            or state != (
+                                reviewer_status if raw.get("kind") in {"automatic_prepared", "owner_retry_prepared"}
+                                else raw.get("kind")
+                            )
+                            or (raw.get("kind") == "automatic_prepared" and (origin, projected_type) != ("automatic_pipeline", "metadata"))
+                            or (raw.get("kind") == "owner_retry_prepared" and (origin, projected_type) != ("owner_retry", "review"))
+                            or (raw.get("kind") in {"selected", "kept_incumbent", "no_action"} and (origin, projected_type) != ("human", "review"))
+                            or (raw.get("kind") in {"stale", "superseded"} and (origin, projected_type) != ("unknown", "safety"))
                             or raw.get("occurred_at") != occurred_at
                             or raw.get("review_case_id") != source_parent_id
                             or _canonical_json(raw) != document

@@ -235,9 +235,9 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     )
                     activity_ledger = page.locator(".cm-activity-ledger")
                     for work, label in (
-                        ("Synthetic completed cover advice", "Cover advice prepared automatically"),
-                        ("Synthetic unavailable cover advice", "Owner cover retry prepared"),
-                        ("Synthetic failed cover advice", "Owner cover retry prepared"),
+                        ("Synthetic completed cover advice", "Cover advice completed"),
+                        ("Synthetic unavailable cover advice", "Cover advice unavailable"),
+                        ("Synthetic failed cover advice", "Cover advice failed safely"),
                         ("Synthetic stale cover advice", "Stale"),
                         ("Synthetic superseded cover advice", "Superseded"),
                     ):

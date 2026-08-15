@@ -1923,8 +1923,9 @@ describe('typed review routes', () => {
     ['accepted', { events: [{ work_label: 'Accepted work', state: 'accept', origin: 'human' }] }, 'Accepted'],
     ['kept current', { events: [{ work_label: 'Kept work', state: 'keep_current', origin: 'human' }] }, 'Kept current'],
     ['rejected', { events: [{ work_label: 'Rejected work', state: 'reject', origin: 'human' }] }, 'Rejected'],
-    ['automatic cover advice', { events: [{ work_label: 'Cover work', state: 'automatic_prepared', origin: 'automatic_pipeline' }] }, 'Cover advice prepared automatically'],
-    ['owner cover retry', { events: [{ work_label: 'Cover work', state: 'owner_retry_prepared', origin: 'owner_retry' }] }, 'Owner cover retry prepared'],
+    ['completed automatic cover advice', { events: [{ work_label: 'Cover work', state: 'completed', origin: 'automatic_pipeline' }] }, 'Cover advice completed'],
+    ['unavailable owner cover retry', { events: [{ work_label: 'Cover work', state: 'unavailable', origin: 'owner_retry' }] }, 'Cover advice unavailable'],
+    ['failed owner cover retry', { events: [{ work_label: 'Cover work', state: 'failed', origin: 'owner_retry' }] }, 'Cover advice failed safely'],
   ])('keeps the protected ledger row truthful for %s work', async (_name, current, rowStatus) => {
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity(current)) }
     renderRoute('/activity', http)
