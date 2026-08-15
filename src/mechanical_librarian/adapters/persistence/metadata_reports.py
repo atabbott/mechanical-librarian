@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Iterator
 from urllib.parse import quote
 
-from mechanical_librarian.application.catalogue import CatalogueEntry
+from mechanical_librarian.application.catalogue import CatalogueEntry, TargetConnectionError
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.metadata_policy import PolicyTransition
 from mechanical_librarian.application.review_pipeline import (
@@ -3816,15 +3816,7 @@ class SQLiteMetadataReportRepository:
                 ).rowcount
             if updated != 1:
                 raise MetadataReportError("review preparation state changed")
-            affected = self._connection.execute(
-                "SELECT (SELECT count(*) FROM review_preparation_scans scan "
-                "WHERE scan.connection_name=? AND scan.state IN ('queued','discovering','processing') "
-                "AND NOT EXISTS(SELECT 1 FROM review_preparation_work work "
-                "WHERE work.scan_id=scan.scan_id AND work.state IN ('queued','running')))+"
-                "(SELECT count(*) FROM review_preparation_work "
-                "WHERE connection_name=? AND state IN ('queued','running'))",
-                (action.connection, action.connection),
-            ).fetchone()[0]
+            affected = self._target_connection_affected(action.connection)
             self._connection.execute(
                 "UPDATE review_preparation_connection_conditions SET affected=? "
                 "WHERE connection_name=?", (affected, action.connection)
@@ -3836,6 +3828,17 @@ class SQLiteMetadataReportRepository:
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("target connection condition is unavailable") from error
+
+    def _target_connection_affected(self, connection: str) -> int:
+        return self._connection.execute(
+                "SELECT (SELECT count(*) FROM review_preparation_scans scan "
+                "WHERE scan.connection_name=? AND scan.state IN ('queued','discovering','processing') "
+                "AND NOT EXISTS(SELECT 1 FROM review_preparation_work work "
+                "WHERE work.scan_id=scan.scan_id AND work.state IN ('queued','running')))+"
+                "(SELECT count(*) FROM review_preparation_work "
+                "WHERE connection_name=? AND state IN ('queued','running'))",
+                (connection, connection),
+            ).fetchone()[0]
 
     def begin_target_connection_check(
         self, connection: str, checked_at: int
@@ -3872,10 +3875,7 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("target connection condition is invalid")
         try:
             self._connection.execute("BEGIN IMMEDIATE")
-            affected = self._connection.execute(
-                "SELECT count(*) FROM review_preparation_work WHERE connection_name=? "
-                "AND state IN ('queued','running')", (connection,)
-            ).fetchone()[0]
+            affected = self._target_connection_affected(connection)
             updated = self._connection.execute(
                 "UPDATE review_preparation_connection_conditions SET state=?,code=COALESCE(?,code),"
                 "affected=?,updated_at=? WHERE connection_name=? AND state='checking' AND epoch=?",
@@ -4975,6 +4975,9 @@ class SQLiteMetadataReportRepository:
             self._connection.execute("COMMIT")
             if self._binding is not None:
                 self._binding.require_current()
+        except TargetConnectionError:
+            self._connection.rollback()
+            raise
         except MetadataReportError:
             if self._connection.in_transaction:
                 self._connection.execute("ROLLBACK")
@@ -5091,6 +5094,9 @@ class SQLiteMetadataReportRepository:
                 self._binding.require_current()
             self._connection.commit()
             return self.get(report.report_id)
+        except TargetConnectionError:
+            self._connection.rollback()
+            raise
         except MetadataReportError:
             self._connection.rollback()
             raise

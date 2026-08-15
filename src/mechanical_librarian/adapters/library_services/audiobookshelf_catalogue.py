@@ -28,6 +28,17 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_locatio
 )
 
 
+def target_connection_code(error: BaseException) -> str:
+    """Classify only the closed, owner-actionable target transport outcome."""
+    if isinstance(error, httpx.TransportError):
+        current: BaseException | None = error
+        while current is not None:
+            if "SSL" in type(current).__name__.upper():
+                return "tls"
+            current = current.__cause__
+    return "unavailable"
+
+
 class AudiobookshelfCatalogueReader:
     def __init__(self, *, client_factory: Callable[[str], httpx.Client], mounts: dict[str, MediaMountConfiguration], maximum_bytes: int, timeout_seconds: int) -> None:
         self._client_factory = client_factory
@@ -74,8 +85,7 @@ class AudiobookshelfCatalogueReader:
         except httpx.TransportError as error:
             # httpx keeps certificate verification enabled in the configured
             # target client.  Classifying the outcome must not weaken it.
-            code = "tls" if isinstance(error, httpx.ConnectError) and error.__cause__ is not None and "SSL" in type(error.__cause__).__name__.upper() else "unavailable"
-            raise TargetConnectionError(code) from None
+            raise TargetConnectionError(target_connection_code(error)) from None
         except (httpx.HTTPError, OSError, UnicodeError, ValueError, TypeError) as error:
             raise TargetConnectionError("unavailable") from None
 
@@ -86,8 +96,8 @@ class AudiobookshelfCatalogueReader:
                 _get(client, "/api/libraries", self._maximum_bytes, self._timeout_seconds)
         except TargetConnectionError:
             raise
-        except Exception:
-            raise TargetConnectionError("unavailable") from None
+        except Exception as error:
+            raise TargetConnectionError(target_connection_code(error)) from None
 
 
 def _get(client: httpx.Client, path: str, maximum: int, timeout: int, params: dict[str, str] | None = None) -> dict[str, Any]:

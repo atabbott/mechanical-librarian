@@ -14,6 +14,7 @@ from mechanical_librarian.application.configuration import (
     ReportLimits,
     TargetConnectionConfiguration,
 )
+from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     ClaimKind,
@@ -1334,6 +1335,8 @@ class GenerateMetadataReport:
             if persisted != report.to_json() or repository.get(report.report_id) != persisted:
                 raise MetadataReportError("persisted report readback failed")
             return persisted
+        except TargetConnectionError:
+            raise
         except MetadataReportError as error:
             if str(error) in {"target or media changed", "current report changed"}:
                 raise CurrentnessError("target or media changed") from error
@@ -1347,7 +1350,7 @@ class GenerateMetadataReport:
     def _safe_read(self, item: str) -> TargetSnapshot:
         try:
             value = self._target.read(item)
-        except MetadataReportError:
+        except (MetadataReportError, TargetConnectionError):
             raise
         except Exception as error:
             raise MetadataReportError("target read failed") from error
@@ -1374,7 +1377,7 @@ def require_report_current(
         raise CurrentnessError("target or media changed")
     try:
         final = target.read(report.target.item)
-    except MetadataReportError:
+    except (MetadataReportError, TargetConnectionError):
         raise
     except Exception as error:
         raise MetadataReportError("target read failed") from error
