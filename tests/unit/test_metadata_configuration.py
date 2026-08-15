@@ -1,20 +1,26 @@
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import cast
 
 import httpx
 from pydantic import ValidationError
 
 from mechanical_librarian.application.configuration import (
     ConfigurationError,
+    MediaMountConfiguration,
     ProviderConnectionConfiguration,
     TargetConnectionConfiguration,
 )
-from mechanical_librarian.infrastructure.configuration import ConfigurationInput, configuration_schema_json, load_configuration_file
+from mechanical_librarian.application.metadata_report import CredentialError
+from mechanical_librarian.infrastructure.configuration import (
+    ConfigurationInput,
+    configuration_schema_json,
+    load_configuration_file,
+)
 from mechanical_librarian.infrastructure.security.credentials import (
     hardcover_client,
     read_secret,
@@ -86,7 +92,10 @@ class MetadataConfigurationTests(unittest.TestCase):
                 )
             ):
                 invalid = _source(root)
-                invalid["review"] = {**source["review"], **fields}
+                invalid["review"] = {
+                    **cast(dict[str, object], source["review"]),
+                    **cast(dict[str, object], fields),
+                }
                 candidate = root / f"invalid-review-{index}.json"
                 candidate.write_text(json.dumps(invalid), encoding="utf-8")
                 with self.subTest(index=index), self.assertRaises(
@@ -104,7 +113,7 @@ class MetadataConfigurationTests(unittest.TestCase):
         self.assertEqual(connection.name, "primary")
         self.assertEqual(library.library_id, "library-a")
         self.assertEqual(library.provider_connections, ("first", "second"))
-        self.assertEqual(mount.name, "books")
+        self.assertEqual(cast(MediaMountConfiguration, mount).name, "books")
         self.assertEqual([value.name for value in providers], ["first", "second"])
 
     def test_sparse_read_only_policy_override_is_closed(self) -> None:
@@ -428,11 +437,11 @@ class CredentialBoundaryTests(unittest.TestCase):
             secret.chmod(0o600)
             self.assertEqual(read_secret(str(secret)), "token-value")
             secret.chmod(0o644)
-            with self.assertRaises(Exception):
+            with self.assertRaises(CredentialError):
                 read_secret(str(secret))
             link = root / "link"
             link.symlink_to(secret)
-            with self.assertRaises(Exception):
+            with self.assertRaises(CredentialError):
                 read_secret(str(link))
 
     def test_target_authorization_is_confined_to_current_item_get(self) -> None:
@@ -441,7 +450,7 @@ class CredentialBoundaryTests(unittest.TestCase):
             secret.write_text("token-value", encoding="ascii")
             secret.chmod(0o600)
             requests: list[httpx.Request] = []
-            transport = httpx.MockTransport(lambda request: requests.append(request) or httpx.Response(200))
+            transport = httpx.MockTransport(lambda request: requests.append(request) or httpx.Response(200))  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
             client = target_client("https://library.invalid", str(secret), 5)
             # Replace only the transport for this structural authorization test.
             client._transport = transport
@@ -464,7 +473,7 @@ class CredentialBoundaryTests(unittest.TestCase):
                 str(secret),
                 5,
                 transport=httpx.MockTransport(
-                    lambda request: requests.append(request)
+                    lambda request: requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
                     or httpx.Response(200)
                 ),
             )

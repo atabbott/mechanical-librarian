@@ -5,11 +5,11 @@ import json
 import unittest
 
 from mechanical_librarian.domain.automatic_decision import (
+    F19A_QUALIFICATION_MANIFEST_SHA256,
+    QUALIFIED_POLICY_OPTIONS,
     AutomaticDecision,
     AutomaticDecisionError,
     AutomaticSafetyState,
-    F19A_QUALIFICATION_MANIFEST_SHA256,
-    QUALIFIED_POLICY_OPTIONS,
 )
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_QUALIFICATION_CANDIDATE_SHA256,

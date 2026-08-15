@@ -1,11 +1,15 @@
-import unittest
-import time
 import socket
+import time
+import unittest
 from unittest.mock import patch
 
 from mechanical_librarian.adapters.providers import remote_cover
-from mechanical_librarian.adapters.providers.remote_cover import RemoteCoverError, _pinned_address, fetch_remote_cover
-from mechanical_librarian.adapters.providers.remote_cover import RemoteCoverTimeout
+from mechanical_librarian.adapters.providers.remote_cover import (
+    RemoteCoverError,
+    RemoteCoverTimeout,
+    _pinned_address,
+    fetch_remote_cover,
+)
 
 
 class _FakeSocket:

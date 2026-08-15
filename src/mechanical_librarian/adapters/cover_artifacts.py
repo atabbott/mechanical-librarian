@@ -11,9 +11,7 @@ import sys
 import time
 from dataclasses import dataclass
 
-from mechanical_librarian.domain.cover_evidence import CoverArtifact
-from mechanical_librarian.domain.cover_evidence import CoverSourceState
-
+from mechanical_librarian.domain.cover_evidence import CoverArtifact, CoverSourceState
 
 _MAX_ORIGINAL_BYTES = 8 * 1024 * 1024
 _MAX_PREVIEW_BYTES = 1024 * 1024

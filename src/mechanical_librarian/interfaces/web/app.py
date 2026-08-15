@@ -5,10 +5,10 @@ from __future__ import annotations
 import os
 import re
 import stat
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, TypedDict, TypeVar, cast
 from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
@@ -37,17 +37,20 @@ from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.field_effects import GuardedApplicationError
-from mechanical_librarian.domain.field_effect import (
-    FieldEffectError,
-    SUPPORTED_DESTINATIONS,
+from mechanical_librarian.application.metadata_policy import (
+    MetadataPolicyApplicationError,
+    PolicyTransition,
 )
-from mechanical_librarian.application.metadata_policy import MetadataPolicyApplicationError, PolicyTransition
 from mechanical_librarian.application.operations import OperationsError
 from mechanical_librarian.application.review_application import (
     ReviewApplication,
     ReviewApplicationError,
 )
 from mechanical_librarian.application.review_web import ReviewWebError
+from mechanical_librarian.domain.field_effect import (
+    SUPPORTED_DESTINATIONS,
+    FieldEffectError,
+)
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyError
 from mechanical_librarian.interfaces.web import review_frontend
 from mechanical_librarian.interfaces.web.react_assets import (
@@ -56,9 +59,11 @@ from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetRecovery,
 )
 
-
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _COOKIE_NAME = "ml_session"
+
+_Result = TypeVar("_Result")
+_SessionDependency: TypeAlias = Callable[[Request, str | None], str]
 
 
 class _LoginRequest(BaseModel):
@@ -688,7 +693,9 @@ _RichQualification: TypeAlias = (
     | _GoogleDescriptionQualification
     | _IsbnQualification | _AsinQualification | _ExplicitQualification
 )
-_RICH_QUALIFICATION_ADAPTER = TypeAdapter(_RichQualification)
+_RICH_QUALIFICATION_ADAPTER: TypeAdapter[_RichQualification] = TypeAdapter(
+    _RichQualification
+)
 
 
 class _PolicyProfileResponse(_ClosedModel):
@@ -856,8 +863,22 @@ class _ShadowSampleResponse(_ClosedModel):
     schema_version: Literal["shadow-outcome-sample-v1"]
 
 
+class _PolicyTransitionFields(TypedDict):
+    """The exact closed field set carried from one PolicyTransition."""
+
+    transition_id: str
+    from_policy_id: str
+    to_policy_id: str
+    generation: int
+    state: str
+    completed: int
+    total: int
+    failed: int
+    acknowledged: bool
+
+
 def _policy_transition_response(value: PolicyTransition) -> _PolicyTransitionResponse:
-    return _PolicyTransitionResponse(**{
+    return _PolicyTransitionResponse(**cast("_PolicyTransitionFields", {
         "transition_id": value.transition_id,
         "from_policy_id": value.from_policy_id,
         "to_policy_id": value.to_policy_id,
@@ -867,7 +888,7 @@ def _policy_transition_response(value: PolicyTransition) -> _PolicyTransitionRes
         "total": value.total,
         "failed": value.failed,
         "acknowledged": value.acknowledged,
-    })
+    }))
 
 
 def _policy_application_http_error(error: MetadataPolicyApplicationError) -> HTTPException:
@@ -988,7 +1009,7 @@ def create_review_app(
     assets = ReactAssetLoader()
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         application.start()
         try:
             yield
@@ -1045,7 +1066,9 @@ def create_review_app(
     )
 
     @app.middleware("http")
-    async def trust_boundary(request: Request, call_next):
+    async def trust_boundary(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         if request.url.path not in {"/health/live", "/health/ready"}:
             if not _request_matches_origin(request, configuration):
                 return _secured_error(400, "invalid_origin")
@@ -1081,7 +1104,7 @@ def create_review_app(
 
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, error: HTTPException) -> JSONResponse:
-        detail = error.detail
+        detail: object = error.detail
         code = detail.get("code") if type(detail) is dict else "request"
         return _error(error.status_code, str(code))
 
@@ -1163,7 +1186,7 @@ def _register_session_and_operations_routes(
     app: FastAPI,
     application: ReviewApplication,
     configuration: ReviewWebConfiguration,
-    authenticated_session_cookie: Callable[[str | None], str],
+    authenticated_session_cookie: _SessionDependency,
 ) -> None:
     sessions = application
 
@@ -1289,7 +1312,7 @@ def _register_session_and_operations_routes(
 def _register_policy_routes(
     app: FastAPI,
     application: ReviewApplication,
-    authenticated_session_cookie: Callable[[str | None], str],
+    authenticated_session_cookie: _SessionDependency,
 ) -> None:
     sessions = application
     notebook = application.policy
@@ -1508,7 +1531,7 @@ def _register_case_and_effect_routes(
     app: FastAPI,
     application: ReviewApplication,
     session_cookie: APIKeyCookie,
-    authenticated_session_cookie: Callable[[str | None], str],
+    authenticated_session_cookie: _SessionDependency,
 ) -> None:
     sessions = application
 
@@ -1621,7 +1644,7 @@ def _register_case_and_effect_routes(
         )
         return acknowledgement
 
-    def field_effect_call(callable_):
+    def field_effect_call(callable_: Callable[[], _Result]) -> _Result:
         try:
             return callable_()
         except (GuardedApplicationError, FieldEffectError, RuntimeError) as error:
@@ -1769,7 +1792,7 @@ def _register_browse_and_preparation_routes(
     app: FastAPI,
     application: ReviewApplication,
     session_cookie: APIKeyCookie,
-    authenticated_session_cookie: Callable[[str | None], str],
+    authenticated_session_cookie: _SessionDependency,
 ) -> None:
     sessions = application
 
@@ -2151,7 +2174,7 @@ def _require_case_id(value: str) -> None:
         raise HTTPException(404, detail={"code": "not_found"})
 
 
-def _case_call(call):
+def _case_call(call: Callable[[], _Result]) -> _Result:
     try:
         return call()
     except (ReviewWebError, ReviewApplicationError) as error:
@@ -2163,7 +2186,7 @@ def _case_call(call):
         raise HTTPException(status, detail={"code": error.code}) from None
 
 
-def _query_call(call: Callable[[], dict[str, object]]) -> dict[str, object]:
+def _query_call(call: Callable[[], _Result]) -> _Result:
     try:
         return call()
     except ReviewWebError as error:

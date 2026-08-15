@@ -36,20 +36,20 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_projection_text,
 )
 from mechanical_librarian.domain.failure_diagnostics import (
+    MAX_DIAGNOSTIC_COUNT,
     FailureCategory,
     FailureComponent,
     FailureDiagnostic,
     FailureStage,
-    MAX_DIAGNOSTIC_COUNT,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_DESCRIPTION_CHARACTERS,
+    MAX_PROVIDER_EVIDENCE,
+    MAX_SCALAR_CHARACTERS,
     ClaimKind,
     ClaimScope,
     FieldState,
     LocalClaim,
-    MAX_DESCRIPTION_CHARACTERS,
-    MAX_PROVIDER_EVIDENCE,
-    MAX_SCALAR_CHARACTERS,
     ProviderCandidate,
     ProviderClaim,
     ProviderEvidence,
@@ -63,7 +63,6 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
     provider_access_time,
 )
-
 
 GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 _VOLUME_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -202,7 +201,7 @@ class GoogleBooksMetadataProvider:
                     title=lookup.title,
                     authors=lookup.authors,
                     projection=_FIELDS,
-                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),
+                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),  # noqa: B023 - `ledger.resolve` calls `execute` before it returns, so the lambda only ever sees this lane's lookup
                 )
                 observation = qualify_provider_observation(physical, lookup)
                 results.append(
@@ -419,7 +418,7 @@ class GoogleBooksMetadataProvider:
                         delay=delay,
                         outcome="deadline_exhausted",
                     )
-                    raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+                    raise _ProviderFailure(ProviderStatus.UNAVAILABLE) from None
                 self._record_attempt(
                     started,
                     category=error.category,
@@ -1076,7 +1075,7 @@ def _error_status(status_code: int, payload: bytes) -> ProviderStatus:
         value = _decode(payload)
         reasons = {
             item.get("reason")
-            for item in value.get("error", {}).get("errors", [])
+            for item in value.get("error", {}).get("errors", [])  # type: ignore[attr-defined]  # reason: the decoded payload is deliberately duck-typed here; a non-mapping body raises AttributeError, which this try block already catches.
             if type(item) is dict
         }
     except (AttributeError, TypeError, ValueError, UnicodeError, RecursionError):

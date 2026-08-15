@@ -1,35 +1,38 @@
 from __future__ import annotations
 
-import json
 import hashlib
 import io
+import json
 import struct
 import subprocess
 import sys
 import tempfile
 import threading
-import unittest
 import time
+import unittest
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import Mock, patch
 
 import mechanical_librarian.bootstrap.epub_child as child
 from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     EpubPackageExtractor,
     _Rejected,
 )
-from mechanical_librarian.adapters.evidence_extractors.process import run_epub_inspector_child
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
+    EpubPackageCancellation,
     EpubPackageCapability,
     EpubPackageDeclarationKind,
     EpubPackageLimits,
     EpubPackageReport,
+    EpubPackageRequest,
+    EpubPackageSource,
     EpubPackageSourceError,
 )
-from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
+from mechanical_librarian.adapters.evidence_extractors.process import (
+    run_epub_inspector_child,
+)
 from mechanical_librarian.domain.epub_inspection import (
     DateEvent,
     DatePrecision,
@@ -37,23 +40,39 @@ from mechanical_librarian.domain.epub_inspection import (
     EpubInspectionField,
     EpubInspectionOutcome,
 )
-from mechanical_librarian.domain.epub_opening import EpubOpeningLimits, EpubOpeningReport
-from mechanical_librarian.domain.epub_source import FileReference
-from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
-    EpubPackageCancellation,
-    EpubPackageCapability,
-    EpubPackageRequest,
-    EpubPackageSource,
+from mechanical_librarian.domain.epub_opening import (
+    EpubOpeningLimits,
+    EpubOpeningReport,
 )
+from mechanical_librarian.domain.epub_source import FileReference
 from mechanical_librarian.domain.identifiers import (
-    AdapterId, ConnectionId, ExternalItemId, LibraryId, TargetId,
+    AdapterId,
+    ConnectionId,
+    ExternalItemId,
+    Fingerprint,
+    LibraryId,
+    SchemaVersion,
+    TargetId,
 )
 from mechanical_librarian.domain.metadata_report import (
-    ClaimKind, FieldState, FileFacts, LocalClaim, MetadataReport, TargetFacts,
-    default_target_fields,
+    ClaimKind,
+    FieldState,
+    FileFacts,
+    LocalClaim,
+    MetadataReport,
+    TargetFacts,
     claim_scope,
+    default_target_fields,
 )
-from tests.support.epub_packages import EPUB2_PACKAGE, EPUB3_PACKAGE, _opening_epub, _opening_package, _xhtml, epub_bytes, opening_resource_limit
+from tests.support.epub_packages import (
+    EPUB2_PACKAGE,
+    EPUB3_PACKAGE,
+    _opening_epub,
+    _opening_package,
+    _xhtml,
+    epub_bytes,
+    opening_resource_limit,
+)
 
 
 class EpubChildCompositionTests(unittest.TestCase):

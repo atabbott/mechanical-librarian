@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import Self
+from typing import Self, TypedDict, cast, overload
 
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.evidence_bounds import (
@@ -14,6 +14,7 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_projection_text,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_SCALAR_CHARACTERS,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -21,7 +22,6 @@ from mechanical_librarian.domain.metadata_report import (
     ComparisonMethod,
     DateLinkConfidence,
     FieldState,
-    MAX_SCALAR_CHARACTERS,
     MetadataReport,
     ProviderClaim,
     ProviderEvidence,
@@ -45,10 +45,6 @@ from mechanical_librarian.domain.reviewer_decision_summary import (
     proposal_decision_summary,
     validate_candidate_decision_summary,
     validate_proposal_decision_summary,
-)
-from mechanical_librarian.domain.shadow_review_actions import (
-    PolicyAction,
-    compile_shadow_review_actions,
 )
 
 PACKET_SCHEMA = "shadow-review-packet-v6"
@@ -83,6 +79,15 @@ _PROVIDER_DATE_EVIDENCE_VALUES = frozenset(
 
 class ShadowReviewValueError(ValueError):
     """A deterministic packet is outside its closed domain contract."""
+
+
+class _WrappedProposal(TypedDict):
+    """One `ReviewCase.proposals` entry, exactly as that property builds it."""
+
+    destination: str
+    manual_required: bool
+    proposal_id: str
+    result: dict[str, object]
 
 
 
@@ -173,7 +178,12 @@ def _validate_bibliographic_combinations(
             proposal = by_destination[selection["destination"]]
             candidate_ids = {
                 value["candidate_id"]
-                for value in proposal["candidates"]
+                # The caller (ShadowReviewPacket.__post_init__) already
+                # rejected any proposal whose "candidates" is not a list of
+                # dicts before reaching this validation.
+                for value in cast(
+                    "list[dict[str, object]]", proposal["candidates"]
+                )
             }
             if selection["kind"] == "candidate":
                 if (
@@ -362,7 +372,9 @@ class ShadowReviewPacket:
                     )
             if (
                 any(type(value) is not str or _ALTERNATIVE_ID.fullmatch(value) is None for value in candidate_ids)
-                or candidate_ids != sorted(set(candidate_ids))
+                # The short-circuiting any(...) above has already proved every
+                # collected identity is a str by the time this runs.
+                or candidate_ids != sorted(set(cast("list[str]", candidate_ids)))
             ):
                 raise ShadowReviewValueError("shadow-review packet is invalid")
         if proposal_ids != sorted(set(proposal_ids)):
@@ -373,12 +385,18 @@ class ShadowReviewPacket:
         )
         expected_compatibility: dict[str, set[str]] = {}
         for combination in self.bibliographic_combinations:
-            for selection in combination["selections"]:
+            # _validate_bibliographic_combinations above has already proved
+            # every combination carries a str "combination_id" and a list of
+            # selection dicts whose "alternative_id" is a str whenever their
+            # "kind" is "candidate".
+            for selection in cast(
+                "list[dict[str, object]]", combination["selections"]
+            ):
                 alternative_id = selection["alternative_id"]
                 if selection["kind"] == "candidate":
                     expected_compatibility.setdefault(
-                        alternative_id, set()
-                    ).add(combination["combination_id"])
+                        cast("str", alternative_id), set()
+                    ).add(cast("str", combination["combination_id"]))
         for candidate_id, compatibility_ids in candidate_compatibility.items():
             if compatibility_ids != sorted(
                 expected_compatibility.get(candidate_id, [])
@@ -392,8 +410,10 @@ class ShadowReviewPacket:
                 or type(citation.get("fact")) is not dict
             ):
                 raise ShadowReviewValueError("shadow-review packet is invalid")
-            citation_id = citation["citation_id"]
-            fact = citation["fact"]
+            # The guard above already rejected any citation whose
+            # "citation_id" is not a str or whose "fact" is not a dict.
+            citation_id = cast("str", citation["citation_id"])
+            fact = cast("dict[str, object]", citation["fact"])
             if (
                 citation_id in provider_date_references
                 or citation_id.startswith("evidence_")
@@ -426,10 +446,12 @@ class ShadowReviewPacket:
                 or type(correlation.get("correlation_id")) is not str
                 or type(correlation.get("candidate_ids")) is not list
                 or type(correlation.get("proposal_ids")) is not list
+                # The type(...) is not list guards above proved both keys hold
+                # lists; the packet contract fills them with identity strings.
                 or correlation["candidate_ids"]
-                != sorted(set(correlation["candidate_ids"]))
+                != sorted(set(cast("list[str]", correlation["candidate_ids"])))
                 or correlation["proposal_ids"]
-                != sorted(set(correlation["proposal_ids"]))
+                != sorted(set(cast("list[str]", correlation["proposal_ids"])))
             ):
                 raise ShadowReviewValueError("shadow-review packet is invalid")
             correlation_ids.append(correlation["correlation_id"])  # type: ignore[arg-type]
@@ -473,10 +495,11 @@ class ShadowReviewPacket:
         }
         compatibility_ids = compatibility_by_candidate(proposal_set)
         raw_results = {
-            wrapped["result"]["destination"]: wrapped["result"]
-            for wrapped in case.proposals
+            # ProposalResult.to_data always projects a str "destination".
+            cast("str", wrapped["result"]["destination"]): wrapped["result"]
+            for wrapped in cast("tuple[_WrappedProposal, ...]", case.proposals)
         }
-        for wrapped in case.proposals:
+        for wrapped in cast("tuple[_WrappedProposal, ...]", case.proposals):
             result = wrapped["result"]
             manual_required = wrapped["manual_required"]
             preview_ignored = (
@@ -498,18 +521,29 @@ class ShadowReviewPacket:
             ):
                 continue
             candidates: list[dict[str, object]] = []
-            for alternative in result["alternatives"]:
-                references.update(alternative["evidence_references"])
-                for correlation_id in alternative["correlations"]:
+            # ProposalAlternative.to_data always projects str identities and
+            # lists of str references/correlations, and ProposalResult.to_data
+            # always projects "alternatives" as a list of those dicts.
+            for alternative in cast(
+                "list[dict[str, object]]", result["alternatives"]
+            ):
+                references.update(
+                    cast("list[str]", alternative["evidence_references"])
+                )
+                for correlation_id in cast(
+                    "list[str]", alternative["correlations"]
+                ):
                     grouped = correlations.setdefault(
                         correlation_id,
                         {"candidate_ids": set(), "proposal_ids": set()},
                     )
-                    grouped["candidate_ids"].add(alternative["alternative_id"])
+                    grouped["candidate_ids"].add(
+                        cast("str", alternative["alternative_id"])
+                    )
                     grouped["proposal_ids"].add(wrapped["proposal_id"])
                 decision_summary, role_references = candidate_decision_summary(
                     report,
-                    result["destination"],
+                    cast("str", result["destination"]),
                     alternative,
                     raw_results,
                     compatibility_ids,
@@ -531,13 +565,14 @@ class ShadowReviewPacket:
             proposals.append(
                 {
                     "candidates": sorted(
-                        candidates, key=lambda value: value["candidate_id"]
+                        candidates,
+                        key=lambda value: cast("str", value["candidate_id"]),
                     ),
-                    "current": current[result["destination"]],
+                    "current": current[cast("str", result["destination"])],
                     "decision_summary": proposal_decision_summary(
                         result,
                         manual_required=manual_required,
-                        current=current[result["destination"]],
+                        current=current[cast("str", result["destination"])],
                     ),
                     "destination": result["destination"],
                     "outcome": (
@@ -562,11 +597,11 @@ class ShadowReviewPacket:
         references.update(_date_link_local_references(report))
         if not references.issubset(evidence):
             raise ShadowReviewValueError("shadow-review evidence binding is invalid")
-        citations = tuple(
+        citations: tuple[dict[str, object], ...] = tuple(
             {"citation_id": reference, "fact": evidence[reference]}
             for reference in sorted(references)
         )
-        correlation_facts = tuple(
+        correlation_facts: tuple[dict[str, object], ...] = tuple(
             {
                 "candidate_ids": sorted(values["candidate_ids"]),
                 "correlation_id": correlation_id,
@@ -576,7 +611,12 @@ class ShadowReviewPacket:
         )
         value = cls(
             case.review_case_id,
-            tuple(sorted(proposals, key=lambda value: value["proposal_id"])),
+            tuple(
+                sorted(
+                    proposals,
+                    key=lambda value: cast("str", value["proposal_id"]),
+                )
+            ),
             citations,
             correlation_facts,
             bibliographic_combinations=tuple(
@@ -1268,6 +1308,14 @@ def _bounded_scalar(value: object) -> bool:
         and value.strip() == value
         and not any(ord(character) < 0x20 for character in value)
     )
+
+
+@overload
+def _copy_json(value: dict[str, object]) -> dict[str, object]: ...
+
+
+@overload
+def _copy_json(value: object) -> object: ...
 
 
 def _copy_json(value: object) -> object:

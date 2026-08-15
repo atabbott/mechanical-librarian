@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from typing import Self
+from typing import NoReturn, Self, cast
 
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -47,7 +47,7 @@ class ReviewAdmissionIncompatibleError(RuntimeError):
 class _FrozenJsonDict(dict[str, object]):
     """A JSON-object value that preserves dict equality and serialization."""
 
-    def _reject_mutation(self, *args: object, **kwargs: object) -> None:
+    def _reject_mutation(self, *args: object, **kwargs: object) -> NoReturn:
         raise TypeError("review case content is immutable")
 
     __delitem__ = _reject_mutation
@@ -63,7 +63,7 @@ class _FrozenJsonDict(dict[str, object]):
 class _FrozenJsonList(list[object]):
     """A JSON-array value that preserves list equality and serialization."""
 
-    def _reject_mutation(self, *args: object, **kwargs: object) -> None:
+    def _reject_mutation(self, *args: object, **kwargs: object) -> NoReturn:
         raise TypeError("review case content is immutable")
 
     __delitem__ = _reject_mutation
@@ -357,7 +357,8 @@ class ReviewCase:
         ):
             raise ReviewCaseValueError("review case binding is invalid")
         results = tuple(value.to_data() for value in proposal_set.results)
-        relationships = proposal_set.to_data()["relationships"]
+        # `ProposalSet.to_data` always emits "relationships" as a JSON object.
+        relationships = cast("dict[str, object]", proposal_set.to_data()["relationships"])
         data = cls._data(proposal_set.proposal_set_id, report.report_id, report.target.to_data(), report.target.fingerprint, report.file.identity, results, relationships, proposal_set.to_json())
         identity = "review_case_" + hashlib.sha256(
             _canonical(data).encode("utf-8")
@@ -474,7 +475,8 @@ class ReviewCase:
             target = TargetFacts.from_data(raw["target"])
         except Exception as error:
             raise ReviewCaseValueError("review case target is invalid") from error
-        results = tuple(raw["results"])
+        # The guard above already rejected anything but a list for "results".
+        results = tuple(cast("list[object]", raw["results"]))
         if any(type(value) is not dict for value in results):
             raise ReviewCaseValueError("review case is invalid")
         if target.to_data() != raw["target"] or target.fingerprint != raw["target_fingerprint"]:

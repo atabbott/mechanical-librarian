@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import os
 import hashlib
 import json
+import os
 import sqlite3
 import tempfile
 import threading
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 from argon2 import PasswordHasher
@@ -30,23 +30,30 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     open_repository,
 )
-from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.field_effects import (
+    GuardedApplicationError,
+    GuardedFieldApplication,
+)
 from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
-from tests.unit.review_app_fixture import (
-    TEST_REACT_BUILD_IDENTITY,
-    create_transport_test_app,
+from mechanical_librarian.domain.automatic_decision import (
+    F19A_QUALIFICATION_MANIFEST_SHA256,
+    AutomaticDecision,
 )
 from mechanical_librarian.domain.field_effect import (
+    SUPPORTED_DESTINATIONS,
     EffectAuthority,
     EffectConsent,
     FieldEffectError,
     FieldEffectNoChange,
     FieldEffectOperation,
     FieldEffectPlan,
-    SUPPORTED_DESTINATIONS,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -56,17 +63,17 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
-from mechanical_librarian.domain.metadata_policy import (
-    MetadataPolicyProfile,
-    resolve_policy,
-)
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from mechanical_librarian.domain.automatic_decision import (
-    AutomaticDecision,
-    F19A_QUALIFICATION_MANIFEST_SHA256,
+from tests.unit.review_app_fixture import (
+    TEST_REACT_BUILD_IDENTITY,
+    create_transport_test_app,
 )
 
+if TYPE_CHECKING:
+    # Annotation-only: `TimingCollector` stands in for `TimingRepository`, whose
+    # `append` takes exactly this record.
+    from mechanical_librarian.application.operations import StageTiming
 
 CAPABILITY = "c" * 64
 DEPENDENCY = "d" * 64
@@ -82,7 +89,7 @@ class Clock:
 
 class TimingCollector:
     def __init__(self) -> None:
-        self.values = []
+        self.values: list[StageTiming] = []
 
     def append(self, timing) -> None:
         self.values.append(timing)
@@ -354,7 +361,7 @@ class FieldEffectTests(unittest.TestCase):
 
     def test_activity_summary_reads_no_legacy_events_or_report_documents(self) -> None:
         self.plan(suffix="e")
-        statements = []
+        statements: list[str] = []
         self.repository._connection.set_trace_callback(statements.append)
         try:
             summary = self.repository.field_effect_activity_summary()
@@ -880,7 +887,7 @@ class FieldEffectTests(unittest.TestCase):
                     target_version="version-1",
                     dependency_digests=(DEPENDENCY,), capability_digest=CAPABILITY,
                 )
-                self.assertEqual(result.plan.destination, destination)
+                self.assertEqual(result.plan.destination, destination)  # type: ignore[union-attr]  # reason: `plan` returns `None` only when the desired value matches the current one, which is not this case; a `None` here still fails the test loudly.
         same = decision("title", envelope("title", "same"), "f")
         self.authorize(same, work_id="same-book")
         self.assertIsNone(self.service.plan(
@@ -1066,7 +1073,7 @@ class FieldEffectTests(unittest.TestCase):
         self.assertEqual(self.service.apply(stale.plan.plan_id).failure, "dependency")
         self.dependencies.current_value = True
         self.service.set_paused(True)
-        with self.assertRaises(Exception):
+        with self.assertRaises(GuardedApplicationError):
             self.service.apply(ready.plan.plan_id)
         self.assertEqual(self.service.status(ready.plan.plan_id).state, "planned")
         self.service.set_paused(False)
@@ -1097,7 +1104,7 @@ class FieldEffectTests(unittest.TestCase):
             scope="destination", connection="primary", destination="title",
             reason="field_unavailable", changed_at=self.clock(),
         )
-        with self.assertRaises(Exception):
+        with self.assertRaises(GuardedApplicationError):
             self.service.apply(operation.plan.plan_id)
         self.assertEqual(self.service.status(operation.plan.plan_id).state, "planned")
 
@@ -1731,7 +1738,7 @@ class FieldEffectTests(unittest.TestCase):
         connection.execute("ALTER TABLE field_effects ADD COLUMN drift TEXT")
         connection.commit()
         connection.close()
-        with self.assertRaises(Exception):
+        with self.assertRaises(MetadataReportError):
             open_repository(path, create=False)
         self.repository = open_repository(Path(self.temporary.name) / "fresh.sqlite")
 
@@ -1804,7 +1811,7 @@ class FieldEffectTests(unittest.TestCase):
         connection.execute(trigger)
         connection.commit()
         connection.close()
-        with self.assertRaises(Exception):
+        with self.assertRaises(MetadataReportError):
             open_repository(path, create=False)
         self.repository = open_repository(Path(self.temporary.name) / "fresh.sqlite")
         self.service._repository = self.repository
@@ -1816,7 +1823,7 @@ class FieldEffectTests(unittest.TestCase):
         connection.execute(statement, parameters)
         connection.commit()
         connection.close()
-        with self.assertRaises(Exception):
+        with self.assertRaises(MetadataReportError):
             open_repository(path, create=False)
         self.repository = open_repository(Path(self.temporary.name) / "fresh.sqlite")
         self.service._repository = self.repository
@@ -2025,7 +2032,7 @@ class FieldEffectDomainTests(unittest.TestCase):
             (True, "v1"),
         ):
             with self.subTest(work_id=work_id, target_version=target_version):
-                with self.assertRaises(Exception):
+                with self.assertRaises(FieldEffectError):
                     create(work_id, target_version)
 
     def test_series_is_one_atomic_destination_and_state_machine_rejects_skips(self) -> None:
@@ -2046,7 +2053,7 @@ class FieldEffectDomainTests(unittest.TestCase):
             consent=consent, capability_digest=CAPABILITY, created_at=1,
         )
         operation = FieldEffectOperation(plan, updated_at=1)
-        with self.assertRaises(Exception):
+        with self.assertRaises(FieldEffectError):
             operation.transition("verified", at=2)
 
         for member, invalid in (
@@ -2056,15 +2063,15 @@ class FieldEffectDomainTests(unittest.TestCase):
             with self.subTest(member=member):
                 raw = operation.to_data()
                 raw[member] = invalid
-                with self.assertRaises(Exception):
+                with self.assertRaises(FieldEffectError):
                     FieldEffectOperation.from_json(json.dumps(raw))
         raw = operation.to_data()
         raw["plan"]["created_at"] = True
-        with self.assertRaises(Exception):
+        with self.assertRaises(FieldEffectError):
             FieldEffectOperation.from_json(json.dumps(raw))
         raw = operation.to_data()
         raw["plan"]["consent"]["granted_at"] = True
-        with self.assertRaises(Exception):
+        with self.assertRaises(FieldEffectError):
             FieldEffectOperation.from_json(json.dumps(raw))
 
 

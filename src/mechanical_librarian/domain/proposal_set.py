@@ -8,51 +8,54 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Mapping, Self
+from typing import TYPE_CHECKING, Any, Mapping, Self, cast
 
 from mechanical_librarian.domain.cover_evidence import (
     CoverSourceKind,
     CoverSourceState,
 )
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
     validate_projection_text,
 )
-from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.field_outcomes import (
     language_identity,
     language_outcomes_compatible,
     publisher_statement_valid,
 )
+from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 from mechanical_librarian.domain.metadata_report import (
+    MAX_DESCRIPTION_CHARACTERS,
     ClaimKind,
     ClaimScope,
     FieldState,
     IdentifierRelation,
     LocalClaim,
-    MAX_DESCRIPTION_CHARACTERS,
     MetadataReport,
     ProviderCandidate,
     ProviderClaim,
     ProviderEvidenceKind,
     ProviderIdentityBinding,
+    ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
     TargetDestination,
     TargetField,
     TargetFieldState,
-    isbn_family,
     TargetSeries,
     canonical_json,
     complete_creator_identity_bindings,
     creator_comparison_key,
+    isbn_family,
     manifestation_publication_compatible,
     normalize_date_value,
     normalize_title,
     publication_date_is_voting,
 )
-from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 
+if TYPE_CHECKING:
+    from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
 PROPOSAL_SCHEMA = "proposal-set-v4"
 POLICY_VERSION = "fixed-conservative-v8"
@@ -850,7 +853,7 @@ class ProposalSet:
         return canonical_json(self.to_data())
 
     @classmethod
-    def from_json(cls, serialized: str) -> Self:
+    def from_json(cls, serialized: str) -> ProposalSet:
         try:
             size = len(serialized.encode("utf-8"))
         except (AttributeError, UnicodeError) as error:
@@ -1003,7 +1006,10 @@ def evaluate_report(
     if resolved_policy_id is None:
         # The production default is a real resolved built-in profile for this
         # exact report library.  Higher layers pass an explicit resolved id.
-        from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
+        from mechanical_librarian.domain.metadata_policy import (
+            MetadataPolicyProfile,
+            resolve_policy,
+        )
         resolved_policy_id = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library).resolved_id
     return ProposalSet.create(
         report_id=report.report_id,
@@ -1046,6 +1052,7 @@ def _observations(
     local_scope = ClaimScope.WORK if destination is TargetDestination.SUBTITLE else scope
     provider_scope = ClaimScope.EDITION if destination is TargetDestination.SUBTITLE else scope
     values: list[_Observed] = []
+    claim: LocalClaim | ProviderClaim
     for claim in report.local_claims:
         if (
             claim.kind in kinds
@@ -1138,6 +1145,8 @@ def _list_observations(
     else:
         kind, role, scope = ClaimKind.TAG, None, ClaimScope.WORK
     values: list[_Observed] = []
+    members: tuple[LocalClaim, ...] | tuple[ProviderClaim, ...]
+    claims: tuple[LocalClaim, ...] | tuple[ProviderClaim, ...]
     bases = tuple(
         sorted(
             {
@@ -1194,11 +1203,13 @@ def _list_observations(
             for claim in members
             if claim.state is FieldState.VALID and claim.canonical is not None
         )
+        # Every member of `claims` was filtered on `claim.canonical is not None`
+        # just above, so each canonical value here is a string.
         if (
             destination is TargetDestination.AUTHORS
             and len(
                 {
-                    creator_comparison_key(claim.canonical)
+                    creator_comparison_key(cast("str", claim.canonical))
                     for claim in claims
                 }
             )
@@ -1208,7 +1219,7 @@ def _list_observations(
         if claims:
             values.append(
                 _Observed(
-                    _value(destination, tuple(claim.canonical for claim in claims)),
+                    _value(destination, tuple(cast("str", claim.canonical) for claim in claims)),
                     tuple(claim.reference for claim in claims),
                     _correlation("local:selected_epub"),
                     _scope(scope),
@@ -1259,11 +1270,13 @@ def _list_observations(
                 )
             ):
                 continue
+            # Every member of `claims` was filtered on `claim.value is not None`
+            # just above, so each provider value here is a string.
             if (
                 destination is TargetDestination.AUTHORS
                 and len(
                     {
-                        creator_comparison_key(claim.value)
+                        creator_comparison_key(cast("str", claim.value))
                         for claim in claims
                     }
                 )
@@ -1273,7 +1286,7 @@ def _list_observations(
             if claims:
                 values.append(
                     _Observed(
-                        _value(destination, tuple(claim.value for claim in claims)),
+                        _value(destination, tuple(cast("str", claim.value) for claim in claims)),
                         tuple(claim.reference for claim in claims),
                         _provider_correlation(provider),
                         _scope(scope),
@@ -1418,13 +1431,15 @@ def _target_backed_lookup_contains(
         if title.state is TargetFieldState.VALUE and type(title.value) is str
         else None
     )
+    # The `all(type(value) is str ...)` guard below establishes that this AUTHORS
+    # field holds a tuple of strings rather than a tuple of TargetSeries.
     expected_authors = (
-        tuple(normalize_title(value) for value in authors.value)
+        tuple(normalize_title(value) for value in cast("tuple[str, ...]", authors.value))
         if authors.state is TargetFieldState.VALUE
         and type(authors.value) is tuple
         and authors.value
         and all(type(value) is str for value in authors.value)
-        and len({normalize_title(value).casefold() for value in authors.value})
+        and len({normalize_title(value).casefold() for value in cast("tuple[str, ...]", authors.value)})
         == len(authors.value)
         else ()
     )
@@ -1464,13 +1479,18 @@ def _target_backed_lookup_contains(
                 )
                 and lane.identity == _discovery_lane_identity(
                     {
+                        # `_isbn_family_claims` only yields claims whose
+                        # canonical value is not None.
                         "canonical_isbns": sorted(
-                            {
-                                claim.canonical
-                                for claim in _isbn_family_claims(
-                                    report, lane.matched_family,
-                                )
-                            }
+                            cast(
+                                "set[str]",
+                                {
+                                    claim.canonical
+                                    for claim in _isbn_family_claims(
+                                        report, lane.matched_family,
+                                    )
+                                },
+                            )
                         ),
                         "input_references": list(lane.input_references),
                         "kind": ProviderQueryKind.ISBN.value,
@@ -1558,8 +1578,9 @@ def _candidate_replays_work_qualification(
         )
     ):
         return False
+    # The guard above returned False when any creator claim carried no value.
     creator_names = tuple(
-        normalize_title(claim.value).casefold() for claim in creators
+        normalize_title(cast("str", claim.value)).casefold() for claim in creators
     )
     expected = tuple(value.casefold() for value in expected_authors)
     if all(claim.role == "author" for claim in creators):
@@ -1646,6 +1667,7 @@ def _controlled_creator_placeholder(claim: LocalClaim) -> bool:
 
 def _series_observations(report: MetadataReport) -> tuple[_Observed, ...]:
     values: list[_Observed] = []
+    source_claims: tuple[LocalClaim, ...] | tuple[ProviderClaim, ...]
     for basis in tuple(
         sorted(
             {
@@ -1711,10 +1733,12 @@ def _series_from_claims(
             if index >= len(claims):
                 return None
         name_claim = claims[index]
+        # `claims` only ever holds LocalClaim or ProviderClaim, so failing the
+        # exact LocalClaim test leaves a ProviderClaim.
         name = (
             name_claim.canonical
             if type(name_claim) is LocalClaim
-            else name_claim.value
+            else cast("ProviderClaim", name_claim).value
         )
         if (
             name_claim.kind is not ClaimKind.SERIES
@@ -1735,7 +1759,7 @@ def _series_from_claims(
             sequence_value = (
                 sequence_claim.canonical
                 if type(sequence_claim) is LocalClaim
-                else sequence_claim.value
+                else cast("ProviderClaim", sequence_claim).value
             )
             if sequence_claim.state is FieldState.VALID:
                 if sequence_value is None:
@@ -1756,6 +1780,7 @@ def _series_from_claims(
 
 def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
     values: list[_Observed] = []
+    claim: LocalClaim | ProviderClaim
     for claim in report.local_claims:
         if (
             claim.kind is ClaimKind.PUBLICATION_DATE
@@ -2005,7 +2030,10 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
     ]
     grouped: dict[str, list[Any]] = {}
     for source in retrieved:
-        grouped.setdefault(source.artifact.original_digest, []).append(source)
+        # `retrieved` was filtered on `source.artifact is not None`.
+        grouped.setdefault(
+            cast("CoverArtifact", source.artifact).original_digest, []
+        ).append(source)
     alternatives: list[ProposalAlternative] = []
     for digest in sorted(grouped):
         sources = grouped[digest]
@@ -2429,13 +2457,15 @@ def _value(
     if type(value) is tuple:
         normalized = tuple(normalize_title(item) for item in value)
         return ProposalValue(ProposalValueKind.LIST, normalized)
+    # The tuple branch above returned, so only the `str` half of the parameter
+    # union reaches here.
     if destination in {
         TargetDestination.TITLE,
         TargetDestination.SUBTITLE,
     }:
-        value = normalize_title(value)
+        value = normalize_title(cast("str", value))
     elif destination is TargetDestination.ASIN:
-        value = value.upper()
+        value = cast("str", value).upper()
     return ProposalValue(ProposalValueKind.TEXT, value)
 
 
@@ -2444,6 +2474,8 @@ def _matches(
     target: object,
     candidate: ProposalValue,
 ) -> bool:
+    # `ProposalValue.__post_init__` binds each kind to its value shape: a tuple
+    # value is TargetSeries for the SERIES destination and str everywhere else.
     if destination is TargetDestination.SERIES:
         return (
             type(target) is tuple
@@ -2454,12 +2486,13 @@ def _matches(
             )
             == tuple(
                 (_comparison(TargetDestination.SERIES, value.name), value.sequence)
-                for value in candidate.value
+                for value in cast("tuple[TargetSeries, ...]", candidate.value)
             )
         )
     if type(target) is tuple and type(candidate.value) is tuple:
         return tuple(_comparison(destination, item) for item in target) == tuple(
-            _comparison(destination, item) for item in candidate.value
+            _comparison(destination, item)
+            for item in cast("tuple[str, ...]", candidate.value)
         )
     if type(target) is str and type(candidate.value) is str:
         if destination is TargetDestination.LANGUAGE:
@@ -2481,13 +2514,18 @@ def _comparison(destination: TargetDestination, value: str) -> str:
 
 
 def _observation_key(destination: TargetDestination, value: ProposalValue) -> str:
+    # `ProposalValue.__post_init__` binds each kind to its value shape: a tuple
+    # value is TargetSeries for the SERIES destination and str everywhere else.
     if destination is TargetDestination.SERIES:
         normalized: object = tuple(
             (_comparison(TargetDestination.SERIES, item.name), item.sequence)
-            for item in value.value
+            for item in cast("tuple[TargetSeries, ...]", value.value)
         )
     elif type(value.value) is tuple:
-        normalized = tuple(_comparison(destination, item) for item in value.value)
+        normalized = tuple(
+            _comparison(destination, item)
+            for item in cast("tuple[str, ...]", value.value)
+        )
     elif (
         destination
         in {
@@ -2790,7 +2828,7 @@ def _bibliographic_combinations(
                 results,
             )
 
-        component_members = {
+        component_members: dict[TargetDestination, set[str]] = {
             destination: values
             for destination, values in represented.items()
             if destination

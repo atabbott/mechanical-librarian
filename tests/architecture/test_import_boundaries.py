@@ -4,7 +4,6 @@ import ast
 import unittest
 from pathlib import Path
 
-
 PACKAGE_ROOT = Path(__file__).parents[2] / "src" / "mechanical_librarian"
 WORKBENCH_ROOT = (
     Path(__file__).parents[2] / "workbench" / "mechanical_librarian_workbench"

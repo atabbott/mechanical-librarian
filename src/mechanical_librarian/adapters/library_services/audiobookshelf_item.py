@@ -13,15 +13,26 @@ from urllib.parse import quote
 
 import httpx
 
+from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+    target_connection_code,
+)
+from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
+    normalize_ebook_location,
+)
+from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
-    MetadataReportError,
     CoverReadError,
     CoverSourceChangedError,
     CoverTimeoutError,
+    MetadataReportError,
+    TargetCover,
     TargetFile,
     TargetNotFoundError,
-    TargetCover,
     TargetSnapshot,
+)
+from mechanical_librarian.domain.evidence_bounds import (
+    EvidenceValueError,
+    validate_projection_text,
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_CONTRIBUTIONS,
@@ -34,18 +45,9 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     TargetSeries,
-    canonical_json,
     isbn_family,
     validate_observed_title,
 )
-from mechanical_librarian.domain.evidence_bounds import (
-    EvidenceValueError,
-    validate_projection_text,
-)
-from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import normalize_ebook_location
-from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import target_connection_code
-from mechanical_librarian.application.catalogue import TargetConnectionError
-
 
 _ASIN = re.compile(r"^[A-Za-z0-9]{10}$")
 _MISSING = object()

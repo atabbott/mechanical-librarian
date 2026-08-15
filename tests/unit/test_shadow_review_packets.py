@@ -1,15 +1,69 @@
 from __future__ import annotations
+
 import hashlib
 import json
 import unittest
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from typing import cast
+
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverDesignation,
+    CoverProvenance,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
-from mechanical_librarian.domain.cover_evidence import CoverArtifact, CoverDesignation, CoverProvenance, CoverSource, CoverSourceKind, CoverSourceState, cover_source_id
-from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope, FieldState, FileFacts, LocalClaim, MAX_CONTRIBUTIONS, MetadataReport, ProviderCandidate, ProviderClaim, ProviderEvidence, ProviderEvidenceKind, ProviderObservation, ProviderQueryKind, ProviderStatus, PublicationDateRelation, TargetDestination, TargetFacts, TargetField, TargetFieldState, default_target_fields
+from mechanical_librarian.domain.metadata_report import (
+    MAX_CONTRIBUTIONS,
+    ClaimKind,
+    ClaimScope,
+    FieldState,
+    FileFacts,
+    LocalClaim,
+    MetadataReport,
+    ProviderCandidate,
+    ProviderClaim,
+    ProviderEvidence,
+    ProviderEvidenceKind,
+    ProviderObservation,
+    ProviderQueryKind,
+    ProviderStatus,
+    PublicationDateRelation,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+    default_target_fields,
+)
+from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from mechanical_librarian.domain.reviewer_decision_summary import MAX_CREATOR_ROLE_FACTS, MAX_DECISION_CORRELATIONS
-from mechanical_librarian.domain.shadow_review import MAX_LINKAGE_FORMAT_FACTS, MAX_LINKAGE_IDENTIFIER_FACTS, PACKET_SCHEMA, ShadowReviewPacket, ShadowReviewValueError, canonical_json
-from tests.unit.test_proposal_set import _claim, _contradictory_publication_provider, _explicit_local_ebook_isbn, _fields as _proposal_fields, _identity_bound_alias_report, _partially_bound_direct_author_report, _publication_local_isbn, _publication_provider, _provider, _report as _proposal_report
+from mechanical_librarian.domain.reviewer_decision_summary import (
+    MAX_CREATOR_ROLE_FACTS,
+    MAX_DECISION_CORRELATIONS,
+)
+from mechanical_librarian.domain.shadow_review import (
+    MAX_LINKAGE_FORMAT_FACTS,
+    MAX_LINKAGE_IDENTIFIER_FACTS,
+    PACKET_SCHEMA,
+    ShadowReviewPacket,
+    ShadowReviewValueError,
+    canonical_json,
+)
+from tests.unit.test_proposal_set import (
+    _claim,
+    _contradictory_publication_provider,
+    _explicit_local_ebook_isbn,
+    _identity_bound_alias_report,
+    _partially_bound_direct_author_report,
+    _provider,
+    _publication_local_isbn,
+    _publication_provider,
+)
+from tests.unit.test_proposal_set import _fields as _proposal_fields
+from tests.unit.test_proposal_set import _report as _proposal_report
+
 
 def _local_isbn() -> LocalClaim:
     return LocalClaim.create(kind=ClaimKind.ISBN, observed='9780061120084', canonical='9780061120084', excerpt='9780061120084', applicability='unknown', checksum='valid_isbn_13', applicability_basis='unlabelled', scope=ClaimScope.EDITION)
@@ -221,7 +275,7 @@ class ShadowReviewPacketTests(unittest.TestCase):
         self.assertEqual('edition-1', citation['candidate'])
         self.assertEqual('work-1', citation['work_identity'])
         self.assertEqual('B000000001', asin.value)
-        expected_identifier_facts = sorted([{'applicability': 'ebook', 'kind': 'isbn', 'raw_order': 0, 'reference': identifier.reference, 'scope': 'edition', 'value': '9780061120084'}, {'applicability': 'ebook', 'kind': 'asin', 'raw_order': 1, 'reference': asin.reference, 'scope': 'edition', 'value': 'B000000001'}], key=lambda fact: fact['reference'])
+        expected_identifier_facts = sorted([{'applicability': 'ebook', 'kind': 'isbn', 'raw_order': 0, 'reference': identifier.reference, 'scope': 'edition', 'value': '9780061120084'}, {'applicability': 'ebook', 'kind': 'asin', 'raw_order': 1, 'reference': asin.reference, 'scope': 'edition', 'value': 'B000000001'}], key=lambda fact: cast(str, fact['reference']))
         self.assertEqual([fact['reference'] for fact in expected_identifier_facts], citation['linkage']['identifier_references'])
         self.assertEqual(expected_identifier_facts, citation['linkage']['identifier_facts'])
         self.assertEqual('ebook', citation['linkage']['format_facts'][0]['value'])
@@ -332,7 +386,7 @@ class ShadowReviewPacketTests(unittest.TestCase):
         case = ReviewCase.create(proposal, report)
         packet = ShadowReviewPacket.create(case, proposal, report)
         replayed = ShadowReviewPacket.from_json(packet.to_json(), report)
-        rich = next((citation['fact'] for citation in replayed.citations if 'evidence' in citation['fact'] and citation['fact']['evidence']['kind'] == 'first_publication_date'))
+        rich = next((citation['fact'] for citation in replayed.citations if 'evidence' in cast(dict[str, object], citation['fact']) and citation['fact']['evidence']['kind'] == 'first_publication_date'))
         self.assertEqual([identifier.reference], rich['linkage']['identifier_references'])
         self.assertEqual('event_incompatible', rich['evidence']['links'][0]['publication_date_relation'])
         self.assertEqual(0, rich['linkage']['identifier_facts'][0]['raw_order'])

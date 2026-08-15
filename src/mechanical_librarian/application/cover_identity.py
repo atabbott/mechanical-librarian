@@ -12,8 +12,17 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import cast
 
+from mechanical_librarian.application.cover_packet_semantics import (
+    bind_cover_packet,
+    canonical_packet_json,
+    normalize_cover_preview,
+    normalize_provenance,
+)
+from mechanical_librarian.application.cover_packets import cover_source_reference
 from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
     CoverDesignation,
     CoverSource,
     CoverSourceKind,
@@ -31,13 +40,6 @@ from mechanical_librarian.domain.metadata_report import (
     creator_comparison_key,
     manifestation_publication_compatible,
 )
-from mechanical_librarian.application.cover_packet_semantics import (
-    bind_cover_packet,
-    canonical_packet_json,
-    normalize_cover_preview,
-    normalize_provenance,
-)
-from mechanical_librarian.application.cover_packets import cover_source_reference
 
 SCHEMA_VERSION = "cover-identity-report-v1"
 _OUTCOMES = frozenset({
@@ -170,9 +172,14 @@ def _report_bound_candidate_sources(
     candidate: dict[str, object],
     read_preview: Callable[[str, str], bytes],
 ) -> tuple[CoverSource, ...]:
+    # ``bind_cover_packet`` admitted the candidate, so its source bindings are
+    # a list of validated ``{"reference", "preview_sha256"}`` mappings, and
+    # every source retained below has a retrieved artifact.
     bindings = {
         (value["reference"], value["preview_sha256"])
-        for value in candidate["source_bindings"]
+        for value in cast(
+            "list[dict[str, object]]", candidate["source_bindings"]
+        )
     }
     sources = tuple(sorted(
         (
@@ -194,7 +201,7 @@ def _report_bound_candidate_sources(
         for source in sources
     )
     if bindings != {
-        (reference, source.artifact.preview_digest)
+        (reference, cast("CoverArtifact", source.artifact).preview_digest)
         for source, reference in zip(sources, references, strict=True)
     }:
         raise ValueError("identity candidate source binding is invalid")
@@ -218,9 +225,10 @@ def _report_bound_candidate_sources(
     best = max(
         sources,
         key=lambda source: (
-            source.artifact.width * source.artifact.height,
-            source.artifact.width,
-            source.artifact.height,
+            cast("CoverArtifact", source.artifact).width
+            * cast("CoverArtifact", source.artifact).height,
+            cast("CoverArtifact", source.artifact).width,
+            cast("CoverArtifact", source.artifact).height,
         ),
     )
     expected_provenance = normalize_provenance([
@@ -246,11 +254,12 @@ def _report_bound_candidate_sources(
         candidate["reference"] != expected_reference
         or candidate["preview_sha256"] != dict(bindings)[expected_reference]
         or candidate["incumbent"] != bool(incumbent_references)
-        or candidate["width"] != best.artifact.width
-        or candidate["height"] != best.artifact.height
+        or candidate["width"] != cast("CoverArtifact", best.artifact).width
+        or candidate["height"] != cast("CoverArtifact", best.artifact).height
         or candidate["provenance"] != expected_provenance
         or any(
-            source.artifact.preview_variant != candidate["preview_variant"]
+            cast("CoverArtifact", source.artifact).preview_variant
+            != candidate["preview_variant"]
             for source in sources
         )
     ):
@@ -444,8 +453,10 @@ def _plausible_match_evidence(
             creator_or_contributor_disagreement
             or Comparison.DISAGREEMENT in outcomes
         )
+    # Both comprehensions filter on the attribute they then read, so the
+    # retained claims carry a value and the local claims are ``LocalClaim``.
     retained_creator_or_contributor_values = {
-        creator_comparison_key(claim.value)
+        creator_comparison_key(cast("str", claim.value))
         for claim in candidate.claims
         if (
             getattr(claim, "kind", None) in _CREATOR_OR_CONTRIBUTOR_CLAIMS
@@ -453,7 +464,7 @@ def _plausible_match_evidence(
         )
     }
     local_creator_or_contributor_values = {
-        creator_comparison_key(claim.observed)
+        creator_comparison_key(cast("LocalClaim", claim).observed)
         for claim in local_claims
         if (
             getattr(claim, "kind", None) in _CREATOR_OR_CONTRIBUTOR_CLAIMS

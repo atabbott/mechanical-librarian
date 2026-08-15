@@ -4,21 +4,25 @@ from __future__ import annotations
 
 import hashlib
 import threading
-from typing import Callable
+from typing import Any, Callable, Literal
 
+from mechanical_librarian.adapters.private_recovery import (
+    PrivateCoverRecoveryStore as _PrivateCoverRecoveryStore,
+)
 from mechanical_librarian.application.field_effects import (
-    CapabilityObservation,
     AuthoritySnapshot,
+    CapabilityObservation,
     TargetEffectResult,
     TargetObservation,
     TargetServiceUnavailable,
 )
-from mechanical_librarian.domain.field_effect import EffectAuthority, EffectConsent, FieldEffectPlan
-from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
-from mechanical_librarian.adapters.private_recovery import (
-    PrivateCoverRecoveryStore as _PrivateCoverRecoveryStore,
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    EffectConsent,
+    FieldEffectPlan,
 )
+from mechanical_librarian.domain.human_decision import HumanDecision
 
 
 class FakeTargetService:
@@ -31,14 +35,17 @@ class FakeTargetService:
         self._lock = threading.RLock()
         self.fail_next = False
         self.fail_read_next = False
-        self.unavailable_scope_next: str | None = None
-        self.unavailable_reason_next: str | None = None
+        self.unavailable_scope_next: Literal["connection", "destination"] | None = None
+        self.unavailable_reason_next: Literal[
+            "connection_unavailable", "insufficient_permission",
+            "field_unavailable", "unexpected_effect_behavior",
+        ] | None = None
         self.fail_reads_for: set[str] = set()
         self.fail_read_after_apply_for: set[str] = set()
         self.ambiguous_next: str | None = None
-        self.suspension_scope_next: str | None = None
-        self.before_apply: Callable[[FieldEffectPlan], None] | None = None
-        self.after_apply: Callable[[FieldEffectPlan], None] | None = None
+        self.suspension_scope_next: Literal["connection", "destination"] | None = None
+        self.before_apply: Callable[[FieldEffectPlan], object] | None = None
+        self.after_apply: Callable[[FieldEffectPlan], object] | None = None
 
     def seed(self, plan: FieldEffectPlan) -> None:
         with self._lock:
@@ -123,7 +130,10 @@ class FakeBackupReadiness:
 class FakeCapabilityObserver:
     def __init__(self, digest: str) -> None:
         self.digest = digest
-        self.category = "allowed"
+        self.category: Literal[
+            "allowed", "insufficient_permission", "connection_unavailable",
+            "field_unavailable",
+        ] = "allowed"
     def observe(self, plan: FieldEffectPlan) -> CapabilityObservation:
         return CapabilityObservation(self.category, self.digest)
 
@@ -135,9 +145,10 @@ class FakeAuthorityCurrentness:
         self.bindings: dict[str, AuthoritySnapshot] = {}
     def bind(self, decision: HumanDecision | AutomaticDecision, *, connection: str,
              library: str, work_id: str, target_version: str,
-             source: str = "fake_service") -> None:
+             source: Literal["persisted_review_case", "fake_service"] = "fake_service",
+             ) -> None:
         if type(decision) is HumanDecision and decision.outcome == "accept":
-            value = decision.selected_value
+            value: object = decision.selected_value
         elif type(decision) is AutomaticDecision and decision.outcome == "candidate":
             value = self.automatic_values[decision.decision_id]
         else:
@@ -154,7 +165,7 @@ class FakeAuthorityCurrentness:
 
 
 class FakeConsentCurrentness:
-    def __init__(self, envelope_identity=None) -> None:
+    def __init__(self, envelope_identity: Callable[[str], str] | None = None) -> None:
         self.revoked: set[str] = set()
         self.allowed: dict[tuple[str, str, str, str], EffectConsent] = {}
         self._envelope_identity = envelope_identity or (lambda _: "a" * 64)
@@ -181,7 +192,7 @@ class FakeDependencyCurrentness:
 
 class FakePreclaimHook:
     def __init__(self) -> None:
-        self.callback: Callable[[FieldEffectPlan], None] | None = None
+        self.callback: Callable[[FieldEffectPlan], object] | None = None
 
     def __call__(self, plan: FieldEffectPlan) -> None:
         if self.callback is not None:
@@ -205,7 +216,7 @@ class FakeForwardReevaluation:
 class PrivateCoverRecoveryStore(_PrivateCoverRecoveryStore):
     """Production adapter with one explicit synthetic cleanup fault."""
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self.fail_remove_next = False
 

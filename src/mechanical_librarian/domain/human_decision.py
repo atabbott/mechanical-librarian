@@ -10,7 +10,6 @@ from typing import Self
 
 from mechanical_librarian.domain.review_case import ReviewCase
 
-
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 _OUTCOMES = {"accept", "keep_current", "reject"}
 

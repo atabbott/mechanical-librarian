@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from mechanical_librarian.domain.field_outcomes import (
     language_outcomes_compatible,
@@ -309,16 +309,22 @@ def _combination_citations(
     combination_ids: set[str],
     known_citations: set[str],
 ) -> set[str]:
+    # ShadowReviewPacket.__post_init__ has already proved every proposal's
+    # "candidates" and every combination's "selections" are lists of dicts.
     candidates = {
         candidate["candidate_id"]: candidate
         for proposal in packet.proposals
-        for candidate in proposal["candidates"]
+        for candidate in cast(
+            "list[dict[str, object]]", proposal["candidates"]
+        )
     }
     references: set[str] = set()
     for combination in packet.bibliographic_combinations:
         if combination["combination_id"] not in combination_ids:
             continue
-        for selection in combination["selections"]:
+        for selection in cast(
+            "list[dict[str, object]]", combination["selections"]
+        ):
             candidate = candidates.get(selection.get("alternative_id"))
             if candidate is None:
                 continue
@@ -340,8 +346,10 @@ def _candidate_combination_ids(
     summary: dict[str, object],
     reasons: set[str],
 ) -> set[str]:
+    # ShadowReviewPacket.__post_init__ has already proved every combination
+    # carries a str "combination_id" and a list of selection dicts.
     known = {
-        value["combination_id"]: value
+        cast("str", value["combination_id"]): value
         for value in packet.bibliographic_combinations
     }
     raw = summary.get("bibliographic_compatibility_ids")
@@ -364,7 +372,9 @@ def _candidate_combination_ids(
             if any(
                 selection.get("destination") == destination
                 and selection.get("kind") == "preserve_target"
-                for selection in combination["selections"]
+                for selection in cast(
+                    "list[dict[str, object]]", combination["selections"]
+                )
             )
         }
     if (
@@ -420,8 +430,10 @@ def _candidate_action(
     known_citations: set[str],
     correlation_bindings: set[tuple[str, str, str]],
 ) -> tuple[PolicyAction, set[str]]:
-    proposal_id = proposal["proposal_id"]
-    destination = proposal["destination"]
+    # ShadowReviewPacket.__post_init__ has already proved every proposal
+    # carries a str "proposal_id" and a known str "destination".
+    proposal_id = cast("str", proposal["proposal_id"])
+    destination = cast("str", proposal["destination"])
     candidate_id = candidate.get("candidate_id")
     if type(candidate_id) is not str:
         raise PolicyActionCompilationError("packet candidate identity is invalid")
@@ -520,7 +532,8 @@ def _text_value(value: object) -> str | None:
         and value.get("kind") == "text"
         and type(value.get("value")) is str
     ):
-        return value["value"]
+        # The guard above proved the "value" member is a str.
+        return cast("str", value["value"])
     return None
 
 
@@ -536,8 +549,11 @@ def _keep_action(
     known_citations: set[str],
     correlation_bindings: set[tuple[str, str, str]],
 ) -> tuple[PolicyAction, set[str]]:
-    proposal_id = proposal["proposal_id"]
-    destination = proposal["destination"]
+    # ShadowReviewPacket.__post_init__ has already proved every proposal
+    # carries a str "proposal_id", a known str "destination", and a list of
+    # candidate dicts.
+    proposal_id = cast("str", proposal["proposal_id"])
+    destination = cast("str", proposal["destination"])
     current = proposal.get("current")
     reasons: set[str] = set()
     references: set[str] = set()
@@ -545,7 +561,7 @@ def _keep_action(
         _text_value(current.get("value")) if type(current) is dict else None
     )
     rejected_preservation_reasons: set[str] = set()
-    for candidate in proposal["candidates"]:
+    for candidate in cast("list[dict[str, object]]", proposal["candidates"]):
         candidate_text = _text_value(candidate.get("value"))
         preserves = candidate.get("assessment") == "preserves_target"
         compatible_language = (
@@ -575,12 +591,14 @@ def _keep_action(
     combination_ids: set[str] = set()
     if packet.bibliographic_combinations and destination in _BIBLIOGRAPHIC_DESTINATIONS:
         combination_ids = {
-            value["combination_id"]
+            cast("str", value["combination_id"])
             for value in packet.bibliographic_combinations
             if any(
                 selection.get("destination") == destination
                 and selection.get("kind") == "preserve_target"
-                for selection in value["selections"]
+                for selection in cast(
+                    "list[dict[str, object]]", value["selections"]
+                )
             )
         }
         if not combination_ids:
@@ -612,20 +630,23 @@ def compile_shadow_review_actions(
 
     if type(packet) is not ShadowReviewPacket:
         raise PolicyActionCompilationError("action compiler packet is invalid")
+    # ShadowReviewPacket.__post_init__ has already proved every citation
+    # carries a str "citation_id" and every correlation a str
+    # "correlation_id" over lists of proposal and candidate identities.
     known_citations = {
-        value["citation_id"] for value in packet.citations
+        cast("str", value["citation_id"]) for value in packet.citations
     }
     correlation_bindings = {
-        (correlation["correlation_id"], proposal_id, candidate_id)
+        (cast("str", correlation["correlation_id"]), proposal_id, candidate_id)
         for correlation in packet.correlations
-        for proposal_id in correlation["proposal_ids"]
-        for candidate_id in correlation["candidate_ids"]
+        for proposal_id in cast("list[str]", correlation["proposal_ids"])
+        for candidate_id in cast("list[str]", correlation["candidate_ids"])
     }
     actions: list[PolicyAction] = []
     exclusions: list[PolicyActionExclusion] = []
     for proposal in packet.proposals:
-        proposal_id = proposal["proposal_id"]
-        destination = proposal["destination"]
+        proposal_id = cast("str", proposal["proposal_id"])
+        destination = cast("str", proposal["destination"])
         if destination not in _DESTINATION_POLICIES:
             raise PolicyActionCompilationError(
                 "packet destination policy is unknown"
@@ -638,7 +659,7 @@ def compile_shadow_review_actions(
             else set()
         )
         proposal_citations: set[str] = set()
-        for candidate in proposal["candidates"]:
+        for candidate in cast("list[dict[str, object]]", proposal["candidates"]):
             action, reasons = _candidate_action(
                 packet,
                 proposal,

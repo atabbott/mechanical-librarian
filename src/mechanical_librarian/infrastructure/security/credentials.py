@@ -6,6 +6,7 @@ import ipaddress
 import os
 import re
 import stat
+from collections.abc import Generator
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -123,7 +124,9 @@ class _TargetAuth(httpx.Auth):
         self._origin = httpx.URL(origin)
         self._token = token
 
-    def auth_flow(self, request):
+    def auth_flow(
+        self, request: httpx.Request
+    ) -> Generator[httpx.Request, httpx.Response, None]:
         same_origin = (
             request.url.scheme == self._origin.scheme
             and request.url.host == self._origin.host
@@ -149,7 +152,9 @@ class _HardcoverAuth(httpx.Auth):
     def __init__(self, token: str) -> None:
         self._token = token
 
-    def auth_flow(self, request):
+    def auth_flow(
+        self, request: httpx.Request
+    ) -> Generator[httpx.Request, httpx.Response, None]:
         if request.method == "POST" and request.url == httpx.URL("https://api.hardcover.app/v1/graphql"):
             request.headers["Authorization"] = f"Bearer {self._token}"
         yield request

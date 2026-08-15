@@ -10,10 +10,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import uuid4
 
-from mechanical_librarian.domain.provider_recovery import ProviderRecovery, ProviderRecoveryJob
+from mechanical_librarian.domain.provider_recovery import (
+    ProviderRecovery,
+    ProviderRecoveryJob,
+)
 
 
 class ProviderRecoveryStore(Protocol):
@@ -99,7 +102,10 @@ class ScopedProviderRecoveryRunner:
             # Due health without an exact member is incomplete durable state,
             # never evidence that the provider recovered.
             missing = self._store.complete_missing_jobs(
-                token=token, recovery=claimed, now=self._current(current), blocked_targets=blocked,
+                # This branch is only reachable while ``fanout_state`` is None,
+                # which is exactly where ``claimed`` was already asserted above.
+                token=token, recovery=cast("ProviderRecovery", claimed),
+                now=self._current(current), blocked_targets=blocked,
             )
             return RecoveryRun("exhausted" if missing is not None else "idle")
         if fanout_state is None:
@@ -111,7 +117,7 @@ class ScopedProviderRecoveryRunner:
                 ) -> None:
                     self._store.renew_job(
                         job=member, token=claim_token,
-                        now=self._current(current),
+                        now=self._current(current),  # noqa: B023 - `current` is deliberately read late: the renewal must use the newest clock reading, and `self._retry` invokes the renewal before `current` is next reassigned
                     )
 
                 try:
@@ -168,7 +174,7 @@ class ScopedProviderRecoveryRunner:
                 ) -> None:
                     self._store.renew_job(
                         job=active, token=claim_token,
-                        now=self._current(current),
+                        now=self._current(current),  # noqa: B023 - `current` is deliberately read late: the renewal must use the newest clock reading, and `self._retry` invokes the renewal before `current` is next reassigned
                     )
 
                 self._retry(fanout_state, member, renew_member)

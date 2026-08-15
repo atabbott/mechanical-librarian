@@ -6,7 +6,6 @@ import tomllib
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG_PATH = ROOT / ".github" / "renovate.json"
 

@@ -5,18 +5,29 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
-from mechanical_librarian.adapters.operational_evidence import LocalTimingStore, SupportBundle
+from mechanical_librarian.adapters.operational_evidence import (
+    LocalTimingStore,
+    SupportBundle,
+)
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
 from mechanical_librarian.application.operations import (
-    MAX_SUPPORT_BYTES, MAX_TIMINGS, OperationsError, OperationalStatus,
-    StageTimer, StageTiming, aggregate_incidents,
-)
-from mechanical_librarian.domain.field_effect import (
-    EffectAuthority, EffectConsent, FieldEffectPlan,
+    MAX_SUPPORT_BYTES,
+    MAX_TIMINGS,
+    OperationalStatus,
+    OperationsError,
+    StageTimer,
+    StageTiming,
+    aggregate_incidents,
 )
 from mechanical_librarian.bootstrap import container
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    EffectConsent,
+    FieldEffectPlan,
+)
 
 
 def _plan() -> FieldEffectPlan:
@@ -89,7 +100,9 @@ class OperationsTests(unittest.TestCase):
     def test_status_is_not_ready_until_exact_current_snapshot_opens_and_drains(self) -> None:
         calls = []
         timings = LocalTimingStore(Path("unused"), enabled=False)
-        service = OperationalStatus(snapshot=lambda: calls.append(True) or {"signals": []},
+        # `append` returns `None`, so the `or` always yields the snapshot dict; the
+        # call is there to record that the snapshot was taken.
+        service = OperationalStatus(snapshot=lambda: calls.append(True) or {"signals": []},  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
                                     timings=timings)
         self.assertFalse(service.ready())
         service.start()
@@ -205,7 +218,7 @@ class OperationsTests(unittest.TestCase):
                  "nested": {"private_path": "/owner/books", "code": "ok"}}
         bundle = SupportBundle((("runtime", lambda: state),))
         preview = bundle.preview()
-        self.assertLessEqual(preview["bytes"], MAX_SUPPORT_BYTES)
+        self.assertLessEqual(cast(int, preview["bytes"]), MAX_SUPPORT_BYTES)
         self.assertEqual(preview["payload"]["sections"], {
             "runtime": {"nested": {"code": "ok"}, "status": "ready"}
         })
@@ -219,7 +232,7 @@ class OperationsTests(unittest.TestCase):
         bundle = SupportBundle((("runtime", lambda: {"safe": "x" * (MAX_SUPPORT_BYTES + 1)}),))
         # Long strings redact before bounding.
         self.assertEqual(bundle.preview()["payload"]["sections"]["runtime"]["safe"], "[redacted]")
-        nested = value = {}
+        nested = value = cast(dict[str, Any], {})
         for _ in range(15):
             value["safe"] = {}
             value = value["safe"]

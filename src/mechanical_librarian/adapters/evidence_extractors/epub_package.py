@@ -19,35 +19,39 @@ import zlib
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from typing import cast
 from xml.parsers import expat
 
-from mechanical_librarian.domain.evidence_bounds import (
-    EvidenceValueError,
-    validate_code,
-    validate_projection_text,
-)
-from mechanical_librarian.domain.identifiers import CompatibilityVersion, ExtractorVersion, SchemaVersion
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
-    EpubPackageCitationSection,
-    EpubPackageDeclarationKind,
-    EpubPackageLimits,
+    MAX_DECLARATIONS,
+    EpubInspectionOutcome,
+    EpubObservationApplicability,
     EpubPackageCapability,
     EpubPackageCitation,
+    EpubPackageCitationSection,
     EpubPackageDeclaration,
+    EpubPackageDeclarationKind,
     EpubPackageField,
+    EpubPackageLimits,
     EpubPackageObservation,
-    EpubInspectionOutcome,
     EpubPackageReport,
     EpubPackageRequest,
     EpubPackageSourceError,
     EpubPackageUsage,
     EpubPackageWarning,
-    MAX_DECLARATIONS,
-    EpubObservationApplicability,
     epub_file_lineage,
     epub_resource_identity,
 )
-
+from mechanical_librarian.domain.evidence_bounds import (
+    EvidenceValueError,
+    validate_code,
+    validate_projection_text,
+)
+from mechanical_librarian.domain.identifiers import (
+    CompatibilityVersion,
+    ExtractorVersion,
+    SchemaVersion,
+)
 
 _CONTAINER = "META-INF/container.xml"
 _ENCRYPTION = "META-INF/encryption.xml"
@@ -508,7 +512,7 @@ def _central_directory(request: EpubPackageRequest) -> tuple[_Entry, ...]:
         cursor += 46 + name_length + extra_length + comment_length
     if cursor != central_offset + central_size:
         raise _Rejected(EpubInspectionOutcome.MALFORMED)
-    for previous, current in zip(sorted(intervals), sorted(intervals)[1:]):
+    for previous, current in zip(sorted(intervals), sorted(intervals)[1:], strict=False):
         if previous[1] > current[0]:
             raise _Rejected(EpubInspectionOutcome.MALFORMED)
     if not any(entry.name == _MIMETYPE for entry in result):
@@ -1773,7 +1777,7 @@ def _package_report(
     ):
         warnings.append(EpubPackageWarning("invalid_media_overlay"))
     for start in manifest_fallbacks:
-        visited: set[str] = set()
+        visited = set()
         current = start
         while current in manifest_fallbacks:
             if current in visited:
@@ -1991,8 +1995,9 @@ def _package_report(
         manifest_ids[selected_cover_id] if selected_cover_id is not None else None
     )
     if selected_cover:
+        # `selected_cover` is only truthy when `selected_cover_id` is not None.
         cover_node = (
-            manifest_nodes[selected_cover_id]
+            manifest_nodes[cast(str, selected_cover_id)]
             if cover_current_ids
             else legacy_cover_node
         )
@@ -2006,7 +2011,7 @@ def _package_report(
                     _citation(request, package_name, EpubPackageCitationSection.COVER, cover_node),
                     selected_cover,
                     selected_cover_id,
-                    manifest_media_types[selected_cover_id],
+                    manifest_media_types[cast(str, selected_cover_id)],
                 )
             )
     if (
@@ -2157,7 +2162,10 @@ class EpubPackageExtractor:
                     archive = zipfile.ZipFile(source_io, "r", allowZip64=True)
                 except (zipfile.BadZipFile, OSError, ValueError):
                     raise _Rejected(EpubInspectionOutcome.INTEGRITY_FAILURE) from None
-            with (archive if own_archive else nullcontext(archive)):
+            # `own_archive` is `archive is None`, and the block above binds a
+            # real `ZipFile` in exactly that case, so `archive` is non-None
+            # for the whole `with` body below.
+            with (cast(zipfile.ZipFile, archive) if own_archive else nullcontext(archive)):
                 marker = entries[_MIMETYPE]
                 noncanonical_mimetype = (
                     entries_tuple[0].name != _MIMETYPE
@@ -2168,12 +2176,12 @@ class EpubPackageExtractor:
                     or bool(marker.central_extra_length)
                     or marker.expanded_size != len(_MIMETYPE_VALUE)
                 )
-                mimetype = _member_bytes(request, archive, entries, _MIMETYPE, 64)
+                mimetype = _member_bytes(request, cast(zipfile.ZipFile, archive), entries, _MIMETYPE, 64)
                 if mimetype != _MIMETYPE_VALUE:
                     if mimetype.removeprefix(b"\xef\xbb\xbf").strip() != _MIMETYPE_VALUE:
                         raise _Rejected(EpubInspectionOutcome.UNSUPPORTED_FORMAT)
                     noncanonical_mimetype = True
-                container_bytes = _member_bytes(request, archive, entries, _CONTAINER, request.limits.container_xml_bytes)
+                container_bytes = _member_bytes(request, cast(zipfile.ZipFile, archive), entries, _CONTAINER, request.limits.container_xml_bytes)
                 container_root, container_usage = _parse_xml(container_bytes, request.limits, request)
                 if container_root.name != "{" + _CONTAINER_NS + "}container" or _attribute(container_root, "version") != "1.0":
                     raise _Rejected(EpubInspectionOutcome.MALFORMED)
@@ -2212,7 +2220,7 @@ class EpubPackageExtractor:
                 encryption_declarations: list[tuple[str, _Node]] = []
                 encryption_usage = _XmlUsage()
                 if _ENCRYPTION in entries:
-                    encryption_bytes = _member_bytes(request, archive, entries, _ENCRYPTION, request.limits.container_xml_bytes)
+                    encryption_bytes = _member_bytes(request, cast(zipfile.ZipFile, archive), entries, _ENCRYPTION, request.limits.container_xml_bytes)
                     encryption_root, encryption_usage = _parse_xml(encryption_bytes, request.limits, request)
                     if encryption_root.name != f"{{{_ENC_NS}}}encryption":
                         raise _Rejected(EpubInspectionOutcome.MALFORMED)
@@ -2270,7 +2278,7 @@ class EpubPackageExtractor:
                         )
                 if package_name in encryption_names:
                     raise _Rejected(EpubInspectionOutcome.ENCRYPTED)
-                package_bytes = _member_bytes(request, archive, entries, package_name, request.limits.opf_package_bytes)
+                package_bytes = _member_bytes(request, cast(zipfile.ZipFile, archive), entries, package_name, request.limits.opf_package_bytes)
                 package_root, package_usage = _parse_xml(package_bytes, request.limits, request)
             usage = EpubPackageUsage(
                 archive_entries=len(entries),

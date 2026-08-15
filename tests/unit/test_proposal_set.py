@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.metadata_report import (
@@ -66,13 +67,13 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalAssessment,
     ProposalOutcome,
     ProposalResult,
-    ProposalSet,
     ProposalScope,
+    ProposalSet,
     ProposalValue,
     ProposalValueError,
     ProposalValueKind,
-    _target_backed_lookup_contains,
     _ignored_policy_targets,
+    _target_backed_lookup_contains,
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -1078,7 +1079,10 @@ class ProposalSetTests(unittest.TestCase):
             )
         )
         complete_canonical_isbns = sorted(
-            {isbn.canonical, isbn_10.canonical, non_valid_isbn.canonical}
+            cast(
+                set[str],
+                {isbn.canonical, isbn_10.canonical, non_valid_isbn.canonical},
+            )
         )
         self.assertEqual(complete_references, complete_lane.input_references)
         self.assertEqual(
@@ -1635,7 +1639,7 @@ class ProposalSetTests(unittest.TestCase):
         ))
         self.assertEqual(
             {"connection", "fields", "item", "library"},
-            set(_report().to_data()["target"]),
+            set(cast(dict[str, object], _report().to_data()["target"])),
         )
         self.assertEqual(
             {
@@ -2542,6 +2546,7 @@ class ProposalSetTests(unittest.TestCase):
         for source in ("local", "provider"):
             for role in ("author", "pseudonym", "collective", None):
                 with self.subTest(source=source, role=role):
+                    claims: tuple[LocalClaim, ...] | tuple[ProviderClaim, ...]
                     if source == "local":
                         claims = (
                             LocalClaim.create(

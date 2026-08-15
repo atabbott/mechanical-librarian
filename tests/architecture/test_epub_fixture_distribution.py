@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
 import subprocess
-import sys
 import tarfile
 import tempfile
 import unittest
+from pathlib import Path
 from zipfile import ZipFile
-
 
 ROOT = Path(__file__).parents[2]
 

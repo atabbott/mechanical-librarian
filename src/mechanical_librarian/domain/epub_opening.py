@@ -9,9 +9,18 @@ import re
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, ClassVar, Mapping, Self
+from typing import Any, ClassVar, Mapping
 from xml.parsers import expat
 
+from .epub_inspection import (
+    MAX_PUBLIC_REPORT_BYTES,
+    DateEvent,
+    DatePrecision,
+    EpubInspectionOutcome,
+    EpubObservationApplicability,
+    EpubPackageLimits,
+    epub_file_lineage,
+)
 from .evidence_bounds import (
     EvidenceValueError,
     validate_code,
@@ -19,16 +28,6 @@ from .evidence_bounds import (
     validate_role_projection,
 )
 from .identifiers import Fingerprint, SchemaVersion
-from .epub_inspection import (
-    DateEvent,
-    DatePrecision,
-    EpubInspectionOutcome,
-    EpubObservationApplicability,
-    EpubPackageLimits,
-    MAX_PUBLIC_REPORT_BYTES,
-    epub_file_lineage,
-)
-
 
 EPUB_OPENING_REPORT_SCHEMA = SchemaVersion("epub-opening-report-v2")
 EPUB_OPENING_CITATION_SCHEMA = SchemaVersion("epub-opening-citation-v1")
@@ -654,7 +653,7 @@ class EpubOpeningReport:
         return json.dumps(self.to_data(), ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
     @classmethod
-    def from_json(cls, serialized: str) -> Self:
+    def from_json(cls, serialized: str) -> EpubOpeningReport:
         if type(serialized) is not str or len(serialized.encode("utf-8")) > MAX_PUBLIC_REPORT_BYTES:
             raise EvidenceValueError("EPUB opening report JSON is invalid")
         try:

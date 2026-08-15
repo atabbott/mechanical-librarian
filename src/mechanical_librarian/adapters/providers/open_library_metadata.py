@@ -12,7 +12,7 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -46,25 +46,25 @@ from mechanical_librarian.domain.cover_evidence import (
     cover_source_id,
 )
 from mechanical_librarian.domain.evidence_bounds import (
-    EvidenceValueError,
     MAX_FIELD_VALUE_LENGTH,
+    EvidenceValueError,
     validate_projection_text,
 )
 from mechanical_librarian.domain.failure_diagnostics import (
+    MAX_DIAGNOSTIC_COUNT,
     FailureCategory,
     FailureComponent,
     FailureDiagnostic,
     FailureStage,
-    MAX_DIAGNOSTIC_COUNT,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_DESCRIPTION_CHARACTERS,
+    MAX_PROVIDER_EVIDENCE,
+    MAX_SCALAR_CHARACTERS,
     ClaimKind,
     ClaimScope,
     FieldState,
     LocalClaim,
-    MAX_DESCRIPTION_CHARACTERS,
-    MAX_PROVIDER_EVIDENCE,
-    MAX_SCALAR_CHARACTERS,
     ProviderCandidate,
     ProviderClaim,
     ProviderEvidence,
@@ -80,7 +80,6 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_title,
     provider_access_time,
 )
-
 
 OPEN_LIBRARY_ORIGIN = "https://openlibrary.org"
 OPEN_LIBRARY_SEARCH_URL = OPEN_LIBRARY_ORIGIN + "/search.json"
@@ -303,7 +302,7 @@ class OpenLibraryMetadataProvider:
                         if lookup.kind is ProviderQueryKind.ISBN
                         else _WORK_SEARCH_PROJECTION
                     ),
-                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),
+                    execute=lambda: self._observe_lookup(lookup, deadline=deadline),  # noqa: B023 - `ledger.resolve` calls `execute` before it returns, so the lambda only ever sees this lane's lookup
                 )
                 observation = qualify_provider_observation(physical, lookup)
                 results.append(
@@ -384,7 +383,7 @@ class OpenLibraryMetadataProvider:
                 query_kind=lookup.kind,
             )
         if lookup.kind is ProviderQueryKind.ISBN:
-            family: str | None = next(iter(families))
+            family = next(iter(families))
             references = tuple(
                 sorted(
                     claim.reference
@@ -427,7 +426,9 @@ class OpenLibraryMetadataProvider:
                         },
                         deadline=deadline,
                     )
-                    admitted = tuple(
+                    admitted: tuple[
+                        tuple[str, str, tuple[tuple[str, str | None], ...]], ...
+                    ] = tuple(
                         (edition, work, ())
                         for edition, work in _admitted_candidates(
                             search, family or ""
@@ -661,7 +662,7 @@ class OpenLibraryMetadataProvider:
                         delay=delay,
                         outcome="deadline_exhausted",
                     )
-                    raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+                    raise _ProviderFailure(ProviderStatus.UNAVAILABLE) from None
                 self._record_attempt(
                     started,
                     category=error.category,
@@ -951,6 +952,11 @@ def _candidate(
     work_authors: tuple[tuple[str, str | None], ...] = (),
     search_work: dict[str, Any] | None = None,
 ) -> tuple[ProviderCandidate, _CoverId, _CoverId]:
+    # `kind` names both a claim kind (while claims are added) and a provider
+    # evidence kind (while evidence is added); `author` names both a display
+    # name and a raw author object.
+    kind: ClaimKind | ProviderEvidenceKind
+    author: str | dict[str, Any]
     if _key(edition.get("key"), _EDITION_KEY) != edition_key:
         raise ValueError("edition identity is malformed")
     if _key(work.get("key"), _WORK_KEY) != work_key:
@@ -1221,7 +1227,7 @@ def _candidate(
     for field, kind, scope in (("description", ProviderEvidenceKind.EDITION_DESCRIPTION, ClaimScope.EDITION),):
         if field in edition and edition[field] is not None:
             try:
-                evidence.append(ProviderEvidence(kind, _description(edition[field]), scope))
+                evidence.append(ProviderEvidence(kind, _description(edition[field]), scope))  # type: ignore[arg-type]  # reason: `_description` unwraps an untrusted provider member, so its value stays `object`; `ProviderEvidence` validates it and this `try` already absorbs ValueError/EvidenceValueError for a non-string payload.
             except (ValueError, EvidenceValueError):
                 pass
     for field, kind in (
@@ -2166,7 +2172,9 @@ def _parser_optional_rejections(
         for item in value:
             if type(item) is not expected:
                 count += 1
-            elif field == "covers" and not 0 < item <= 2_147_483_647:
+            # For "covers" the expected member type is `int`, and the branch
+            # above has already counted every item that is not that type.
+            elif field == "covers" and not 0 < cast(int, item) <= 2_147_483_647:
                 count += 1
             elif expected is str:
                 try:

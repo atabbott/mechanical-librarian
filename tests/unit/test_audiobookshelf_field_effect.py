@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import tempfile
-import unittest
 import json
 import os
+import tempfile
+import unittest
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import httpx
@@ -35,6 +36,9 @@ from mechanical_librarian.domain.field_effect import (
     field_value_version,
 )
 
+if TYPE_CHECKING:
+    # Imported for the `cast` below only, which is a runtime no-op.
+    from collections.abc import Callable
 
 _PNG = b"\x89PNG\r\n\x1a\nsynthetic-cover"
 
@@ -167,7 +171,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         original = self.artifacts.read_original_digest
         with patch.object(
             self.artifacts, "read_original_digest",
-            side_effect=lambda digest: self.events.append("artifact") or original(digest),
+            side_effect=lambda digest: self.events.append("artifact") or original(digest),  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - `append` returning `None` is what lets the real call's result be the side effect's result.
         ):
             self.assertEqual(self.target.apply(plan).outcome, "accepted")
         self.assertEqual(self.events[0], "artifact")
@@ -298,11 +302,13 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         )
 
         nested = b'{"value":' + b"[" * 101 + b"0" + b"]" * 101 + b"}"
-        deep_client = lambda: httpx.Client(transport=httpx.MockTransport(
-            lambda request: httpx.Response(
-                200, headers={"content-type": "application/json"}, content=nested
-            )
-        ))
+        def deep_client() -> httpx.Client:
+            return httpx.Client(transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200, headers={"content-type": "application/json"}, content=nested
+                )
+            ))
+
         deep_capabilities = AudiobookshelfFieldEffectCapabilities(
             client_factory=deep_client,
             endpoint="https://abs.example.invalid", library_id="library-1",
@@ -405,11 +411,11 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         for status, disposition in expected.items():
             with self.subTest(status=status):
                 target = AudiobookshelfFieldEffectTarget(
-                    client_factory=lambda status=status: httpx.Client(
+                    client_factory=cast("Callable[[], httpx.Client]", lambda status=status: httpx.Client(
                         transport=httpx.MockTransport(
                             lambda request: httpx.Response(status)
                         )
-                    ),
+                    )),
                     endpoint="https://abs.example.invalid", library_id="library-1",
                     artifacts=self.artifacts,
                 )
@@ -446,7 +452,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                         wrote = True
                         return httpx.Response(200)
                     if request.url.path.endswith("/cover"):
-                        if phase == "preclaim" or wrote:
+                        if phase == "preclaim" or wrote:  # noqa: B023 - closure is created and consumed within this iteration
                             return httpx.Response(
                                 200, headers={"content-type": "image/jpeg"},
                                 content=oversized,
@@ -480,7 +486,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                     FakeCapabilityObserver("e" * 64), current,
                     FakeDependencyCurrentness(), current,
                     PrivateCoverRecoveryStore(root / "recovery", lambda _: b""),
-                    FakeForwardReevaluation(), lambda: next(ticks),
+                    FakeForwardReevaluation(), lambda: next(ticks),  # noqa: B023 - closure is created and consumed within this iteration
                 )
                 result = service.apply(plan.plan_id)
                 self.assertEqual(
@@ -504,14 +510,14 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                 requests: list[str] = []
 
                 def handle(request: httpx.Request) -> httpx.Response:
-                    requests.append(request.method)
+                    requests.append(request.method)  # noqa: B023 - closure is created and consumed within this iteration
                     if request.method == "GET":
-                        return httpx.Response(200, headers={"content-type": "application/json"}, json=detail)
-                    detail["media"]["metadata"]["title"] = "After"
-                    detail["updatedAt"] = 8
-                    if outcome == "transport_loss":
+                        return httpx.Response(200, headers={"content-type": "application/json"}, json=detail)  # noqa: B023 - closure is created and consumed within this iteration
+                    detail["media"]["metadata"]["title"] = "After"  # noqa: B023 - closure is created and consumed within this iteration
+                    detail["updatedAt"] = 8  # noqa: B023 - closure is created and consumed within this iteration
+                    if outcome == "transport_loss":  # noqa: B023 - closure is created and consumed within this iteration
                         raise httpx.ReadError("response lost", request=request)
-                    return httpx.Response(outcome)
+                    return httpx.Response(outcome)  # noqa: B023 - closure is created and consumed within this iteration
 
                 target = AudiobookshelfFieldEffectTarget(
                     client_factory=lambda: httpx.Client(transport=httpx.MockTransport(handle)),
@@ -532,7 +538,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
                     repository, target, FakeBackupReadiness(), FakeCapabilityObserver("e" * 64),
                     current, FakeDependencyCurrentness(), current,
                     PrivateCoverRecoveryStore(root / "recovery", lambda _: b""),
-                    FakeForwardReevaluation(), lambda: next(ticks),
+                    FakeForwardReevaluation(), lambda: next(ticks),  # noqa: B023 - closure is created and consumed within this iteration
                 )
                 self.assertEqual(service.apply(plan.plan_id).state, "verified")
                 self.assertEqual(requests.count("PATCH"), 1)

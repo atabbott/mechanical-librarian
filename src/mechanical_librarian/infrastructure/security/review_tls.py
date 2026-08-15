@@ -15,7 +15,6 @@ from typing import Iterator
 
 from mechanical_librarian.application.configuration import ConfigurationError
 
-
 _MAX_CERTIFICATE_BYTES = 65_536
 _MAX_PRIVATE_KEY_BYTES = 32_768
 REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD = "\0"

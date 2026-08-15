@@ -101,7 +101,7 @@ class ReviewFieldClassificationTests(unittest.TestCase):
                 return ReviewAttentionSnapshot(rows, 99)
 
         repository = Repository()
-        browse = BrowseReviewLibrary(repository)  # type: ignore[arg-type]
+        browse = BrowseReviewLibrary(repository)
         with patch(
             "mechanical_librarian.application.review_web._attention_item",
             return_value=None,
@@ -117,7 +117,7 @@ class ReviewFieldClassificationTests(unittest.TestCase):
                 raise RuntimeError("offline")
 
         with self.assertRaisesRegex(ReviewWebError, "unavailable"):
-            BrowseReviewLibrary(Repository()).attention(  # type: ignore[arg-type]
+            BrowseReviewLibrary(Repository()).attention(
                 search=None, limit=1, cursor=None,
             )
 
@@ -132,7 +132,7 @@ class ReviewFieldClassificationTests(unittest.TestCase):
             def read_review_attention(self, search, limit, offset):
                 return ReviewAttentionSnapshot(rows[offset:offset + limit], len(rows))
 
-        browse = BrowseReviewLibrary(Repository())  # type: ignore[arg-type]
+        browse = BrowseReviewLibrary(Repository())
         with patch(
             "mechanical_librarian.application.review_web._attention_item",
             side_effect=lambda case, report, destination, count, **_kwargs: (
@@ -154,7 +154,7 @@ class ReviewFieldClassificationTests(unittest.TestCase):
             "mechanical_librarian.application.review_web._attention_item",
             side_effect=lambda case, report, destination, count, **_kwargs: None if destination == "stale" else {"destination": destination},
         ):
-            page = BrowseReviewLibrary(Repository()).attention(search=None, limit=1, cursor=None)  # type: ignore[arg-type]
+            page = BrowseReviewLibrary(Repository()).attention(search=None, limit=1, cursor=None)
         self.assertEqual(page["items"], [{"destination": "valid"}])
         self.assertIsNone(page["next_cursor"])
         self.assertEqual(page["total"], 2)
@@ -177,7 +177,7 @@ class ReviewFieldClassificationTests(unittest.TestCase):
 
         repository = Repository()
         with patch("mechanical_librarian.application.review_web._attention_item", return_value=None):
-            page = BrowseReviewLibrary(repository).attention(search=None, limit=1, cursor=None)  # type: ignore[arg-type]
+            page = BrowseReviewLibrary(repository).attention(search=None, limit=1, cursor=None)
         self.assertEqual([], page["items"])
         self.assertIsNone(page["next_cursor"])
         self.assertEqual(4, page["total"])
@@ -196,7 +196,7 @@ class ReviewFieldClassificationTests(unittest.TestCase):
                 None if destination == "invalid" else {"destination": destination}
             ),
         ):
-            page = BrowseReviewLibrary(Repository()).attention(search=None, limit=1, cursor=None)  # type: ignore[arg-type]
+            page = BrowseReviewLibrary(Repository()).attention(search=None, limit=1, cursor=None)
         self.assertEqual([{"destination": "valid"}], page["items"])
         self.assertIsNone(page["next_cursor"])
         self.assertEqual(2, page["total"])
@@ -216,7 +216,7 @@ class ReviewFieldClassificationTests(unittest.TestCase):
             return None if destination == "invalid" else {"destination": destination}
 
         repository = Repository()
-        browse = BrowseReviewLibrary(repository)  # type: ignore[arg-type]
+        browse = BrowseReviewLibrary(repository)
         with patch("mechanical_librarian.application.review_web._attention_item", side_effect=item):
             first = browse.attention(search=None, limit=1, cursor=None)
             second = browse.attention(search=None, limit=1, cursor=first["next_cursor"])

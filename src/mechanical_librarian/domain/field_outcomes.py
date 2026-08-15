@@ -11,7 +11,6 @@ import unicodedata
 from dataclasses import dataclass
 from types import MappingProxyType
 
-
 _LANGUAGE_TAG = re.compile(
     r"^(?P<language>[a-z]{2,3})"
     r"(?:-(?P<script>[A-Z][a-z]{3}))?"

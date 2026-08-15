@@ -37,6 +37,7 @@ def provider_attempt_diagnostics(
         except Exception:
             category = None
             outcome = None
+        key: tuple[FailureCategory, FailureStage, bool | None]
         if type(category) is not str or type(outcome) is not str:
             key = (
                 FailureCategory.UNKNOWN,
@@ -59,7 +60,9 @@ def provider_attempt_diagnostics(
             )
             key = (category, stage, retryable)
         counts[key] = min(counts[key] + 1, MAX_DIAGNOSTIC_COUNT)
-    status_mapping = {
+    status_mapping: dict[
+        str | None, tuple[FailureCategory, FailureStage, bool | None]
+    ] = {
         "authentication": (
             FailureCategory.AUTHENTICATION,
             FailureStage.RESPONSE,

@@ -32,7 +32,6 @@ from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetLoader,
 )
 
-
 TEST_REACT_BUILD_IDENTITY = "a" * 64
 
 

@@ -7,12 +7,18 @@ otherwise awkward successor transaction testable without granting execution.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-import time
 
+from mechanical_librarian.application.configuration import (
+    MediaMountConfiguration,
+    ReportLimits,
+)
 from mechanical_librarian.application.metadata_report import (
     CurrentnessError,
+    EpubInspector,
+    MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataProvider,
     MetadataReportError,
@@ -20,17 +26,15 @@ from mechanical_librarian.application.metadata_report import (
     ProviderLaneResult,
     ReportRepository,
     TargetReader,
-    metadata_discovery_plan,
     merge_provider_diagnostics,
+    metadata_discovery_plan,
     provider_observation,
     require_report_current,
 )
-from mechanical_librarian.application.configuration import (
-    MediaMountConfiguration,
-    ReportLimits,
-)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
+    ProviderCandidate,
+    ProviderLaneObservation,
     ProviderObservation,
     ProviderRequestAccounting,
     ProviderStatus,
@@ -112,12 +116,14 @@ class GenerateProviderRetrySuccessor:
         self,
         *,
         target: TargetReader,
-        inspector,
+        inspector: EpubInspector,
         repository_factory: Callable[[], ReportRepository],
         provider_resolver: ProviderRetryResolver,
         mount: MediaMountConfiguration | None,
         limits: ReportLimits,
-        after_publication: Callable[[ReportRepository, MetadataReport], None],
+        # The staging result is deliberately discarded, so the callback's
+        # return type is unconstrained rather than required to be None.
+        after_publication: Callable[[ReportRepository, MetadataReport], object],
         heartbeat: Callable[[], None] = lambda: None,
     ) -> None:
         self._target = target
@@ -298,7 +304,7 @@ class GenerateProviderRetrySuccessor:
     def _selected(
         self, plan: MetadataDiscoveryPlan, original: ProviderObservation,
         identities: tuple[str, ...], *, generation_woken: bool = False,
-    ):
+    ) -> tuple[MetadataDiscoveryLane, ...]:
         planned = {lane.identity: lane for lane in plan.lanes}
         observed = {lane.identity: lane for lane in original.lanes}
         if set(planned) != set(observed):
@@ -315,7 +321,7 @@ class GenerateProviderRetrySuccessor:
         self,
         provider: ConfiguredProviderRetry,
         plan: MetadataDiscoveryPlan,
-        selected: tuple,
+        selected: tuple[MetadataDiscoveryLane, ...],
         *,
         deadline: float,
     ) -> tuple[ProviderObservation, int | None]:
@@ -358,7 +364,10 @@ class GenerateProviderRetrySuccessor:
     def _retry_after(provider: MetadataProvider) -> int | None:
         """Read only a canonical final bounded delay from adapter-safe evidence."""
         try:
-            records = provider.attempt_records
+            # Adapter-optional evidence the MetadataProvider contract
+            # deliberately does not require; a provider without the attribute
+            # is handled by the AttributeError branch below.
+            records = provider.attempt_records  # type: ignore[attr-defined]  # reason: optional adapter evidence, guarded by the except clause
         except (AttributeError, TypeError, ValueError):
             return None
         if type(records) is not tuple or not records:
@@ -382,7 +391,13 @@ class GenerateProviderRetrySuccessor:
             return None
         return integer
 
-    def _merged(self, plan, original, selected, replacement) -> ProviderObservation:
+    def _merged(
+        self,
+        plan: MetadataDiscoveryPlan,
+        original: ProviderObservation,
+        selected: tuple[MetadataDiscoveryLane, ...],
+        replacement: ProviderObservation,
+    ) -> ProviderObservation:
         selected_ids = {lane.identity for lane in selected}
         old_candidates = self._canonical_candidates(original.candidates)
         new_candidates = self._canonical_candidates(replacement.candidates)
@@ -391,7 +406,7 @@ class GenerateProviderRetrySuccessor:
 
         aggregate_accessed_at = replacement.accessed_at or original.accessed_at
 
-        def result(lane):
+        def result(lane: MetadataDiscoveryLane) -> ProviderLaneResult:
             observation = new_lanes[lane.identity] if lane.identity in selected_ids else old_lanes[lane.identity]
             candidates = new_candidates if lane.identity in selected_ids else old_candidates
             evidence = replacement if lane.identity in selected_ids else original
@@ -436,8 +451,10 @@ class GenerateProviderRetrySuccessor:
         return merged
 
     @staticmethod
-    def _canonical_candidates(candidates):
-        result = {}
+    def _canonical_candidates(
+        candidates: tuple[ProviderCandidate, ...],
+    ) -> dict[str, ProviderCandidate]:
+        result: dict[str, ProviderCandidate] = {}
         for candidate in candidates:
             previous = result.setdefault(candidate.identity, candidate)
             if previous.to_data() != candidate.to_data():
@@ -445,8 +462,10 @@ class GenerateProviderRetrySuccessor:
         return result
 
     @staticmethod
-    def _canonical_lanes(lanes):
-        result = {}
+    def _canonical_lanes(
+        lanes: tuple[ProviderLaneObservation, ...],
+    ) -> dict[str, ProviderLaneObservation]:
+        result: dict[str, ProviderLaneObservation] = {}
         for lane in lanes:
             previous = result.setdefault(lane.identity, lane)
             if previous.to_data() != lane.to_data():

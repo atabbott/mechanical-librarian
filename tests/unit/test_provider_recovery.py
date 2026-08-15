@@ -5,21 +5,34 @@ import tempfile
 import threading
 import unittest
 from dataclasses import replace
-from types import SimpleNamespace
-from unittest.mock import patch
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
+from unittest.mock import patch
 
-from mechanical_librarian.adapters.persistence.provider_recovery import ProviderRecoveryJob, ProviderRecoveryStoreError, SQLiteProviderRecoveryStore
+import mechanical_librarian.adapters.persistence.provider_recovery as recovery_persistence
+from mechanical_librarian.adapters.persistence.provider_recovery import (
+    ProviderRecoveryJob,
+    ProviderRecoveryStoreError,
+    SQLiteProviderRecoveryStore,
+)
+from mechanical_librarian.application.metadata_report import CredentialError
+from mechanical_librarian.application.provider_recovery_runner import (
+    ScopedProviderRecoveryRunner,
+)
+from mechanical_librarian.application.provider_retry_successor import (
+    ProviderRetrySuccessorError,
+)
 from mechanical_librarian.bootstrap.composition import (
     _provider_recovery_jobs,
     _record_provider_recovery_observations,
 )
-import mechanical_librarian.adapters.persistence.provider_recovery as recovery_persistence
 from mechanical_librarian.domain.metadata_report import ProviderStatus
-from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP, ProviderRecovery, ProviderRecoveryError
-from mechanical_librarian.application.provider_recovery_runner import ScopedProviderRecoveryRunner
-from mechanical_librarian.application.metadata_report import CredentialError
-from mechanical_librarian.application.provider_retry_successor import ProviderRetrySuccessorError
+from mechanical_librarian.domain.provider_recovery import (
+    MAX_TIMESTAMP,
+    ProviderRecovery,
+    ProviderRecoveryError,
+)
 
 
 class ProviderRecoveryTests(unittest.TestCase):
@@ -38,11 +51,11 @@ class ProviderRecoveryTests(unittest.TestCase):
         ):
             with self.subTest(package=package):
                 self.assertEqual(package, (
-                    ProviderRecoveryJob(*common, *package, '["work"]').package_proposal_id,
-                    ProviderRecoveryJob(*common, *package, '["work"]').package_report_id,
-                    ProviderRecoveryJob(*common, *package, '["work"]').package_case_id,
-                    ProviderRecoveryJob(*common, *package, '["work"]').package_checkpoint,
-                    ProviderRecoveryJob(*common, *package, '["work"]').package_outcome,
+                    ProviderRecoveryJob(*common, *cast(tuple[str | None, str, str | None, int | None, str], package), '["work"]').package_proposal_id,
+                    ProviderRecoveryJob(*common, *cast(tuple[str | None, str, str | None, int | None, str], package), '["work"]').package_report_id,
+                    ProviderRecoveryJob(*common, *cast(tuple[str | None, str, str | None, int | None, str], package), '["work"]').package_case_id,
+                    ProviderRecoveryJob(*common, *cast(tuple[str | None, str, str | None, int | None, str], package), '["work"]').package_checkpoint,
+                    ProviderRecoveryJob(*common, *cast(tuple[str | None, str, str | None, int | None, str], package), '["work"]').package_outcome,
                 ))
         with self.assertRaises(ProviderRecoveryError):
             ProviderRecoveryJob(*common, None, "report", "case", 1, "report_only", '["work"]')
@@ -535,7 +548,8 @@ class ProviderRecoveryTests(unittest.TestCase):
                 except Exception as error:
                     failures.append(error)
             worker = threading.Thread(target=observe)
-            worker.start(); worker.join()
+            worker.start()
+            worker.join()
             self.assertEqual([], failures)
             store.reconcile_generation(generation=2, now=1)
             self.assertIsNone(store.claim_one(generation=2, now=1, token="owner"))
@@ -562,7 +576,7 @@ class ProviderRecoveryTests(unittest.TestCase):
                 calls: list[str] = []
                 runner = ScopedProviderRecoveryRunner(
                     store=store, generation=2,
-                    retry=lambda _, member, __: calls.append(member.member_id),
+                    retry=lambda _, member, __: calls.append(member.member_id),  # noqa: B023 - closure is created and consumed within this iteration
                     classify_failure=lambda _: ("transient", None),
                 )
                 self.assertEqual("recovered", runner.run_one(now=20).state)
@@ -776,7 +790,7 @@ class ProviderRecoveryTests(unittest.TestCase):
             claimed = store.claim_one(generation=1, now=2, token="owner")
             self.assertIsNotNone(claimed)
             with self.assertRaises(TypeError):
-                store.record(ProviderRecovery("primary", "hardcover", "books", 1, "waiting", 2, 6), occurred_at=2, owner_token="owner")
+                store.record(ProviderRecovery("primary", "hardcover", "books", 1, "waiting", 2, 6), occurred_at=2, owner_token="owner")  # type: ignore[call-arg]  # reason: the test proves `record` rejects an unknown `owner_token` keyword at runtime with TypeError.
             with self.assertRaises(ProviderRecoveryStoreError):
                 store.record(ProviderRecovery("primary", "hardcover", "books", 1, "waiting", 2, 6), occurred_at=2)
             waiting = ProviderRecovery("primary", "hardcover", "books", 1, "waiting", 2, 6)
@@ -814,7 +828,9 @@ class ProviderRecoveryTests(unittest.TestCase):
             dormant = ProviderRecovery.failed(connection="primary", adapter="hardcover", scope="books", generation=1, failure="authentication", now=0)
             waiting = ProviderRecovery.failed(connection="other", adapter="hardcover", scope="books", generation=1, failure="transient", now=0, retry_after=1)
             checking = ProviderRecovery.failed(connection="aaa", adapter="hardcover", scope="books", generation=1, failure="transient", now=0, retry_after=1)
-            store.record(dormant, occurred_at=0); store.record(waiting, occurred_at=0); store.record(checking, occurred_at=0)
+            store.record(dormant, occurred_at=0)
+            store.record(waiting, occurred_at=0)
+            store.record(checking, occurred_at=0)
             self.assertIsNotNone(store.claim_one(generation=1, now=1, token="owner"))
             self.assertEqual(3, store.reconcile_generation(generation=2, now=9))
             rows = {item.connection: item for item in store.snapshot(limit=3)}

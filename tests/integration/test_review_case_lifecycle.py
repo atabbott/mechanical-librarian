@@ -1,6 +1,5 @@
 """Synthetic installed-surface lifecycle proof for review admission storage."""
 import json
-import io
 import sys
 import tempfile
 import threading
@@ -18,7 +17,6 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
-from mechanical_librarian.interfaces.cli import main as cli_main
 
 
 def _actionable(report):
@@ -32,7 +30,7 @@ def _report(
     *,
     actionable: bool = True,
 ) -> MetadataReport:
-    claims = ()
+    claims: tuple[LocalClaim, ...] = ()
     reasons = ("no_opening_claims",)
     if actionable:
         claims = (
@@ -68,18 +66,27 @@ class ReviewCaseLifecycleTests(unittest.TestCase):
             database = Path(directory) / "reviews.sqlite"
             repository = open_repository(database)
             first = _report()
-            repository.publish(first, lambda: True); proposal = _actionable(first); repository.publish_proposal(proposal)
-            admitted = json.loads(repository.admit_review_case(proposal)); case_id = admitted["review_case_id"]
-            self.assertEqual("admitted", admitted["status"]); self.assertEqual("replayed", json.loads(repository.admit_review_case(proposal))["status"])
-            repository.close(); repository = open_repository(database, create=False)
+            repository.publish(first, lambda: True)
+            proposal = _actionable(first)
+            repository.publish_proposal(proposal)
+            admitted = json.loads(repository.admit_review_case(proposal))
+            case_id = admitted["review_case_id"]
+            self.assertEqual("admitted", admitted["status"])
+            self.assertEqual("replayed", json.loads(repository.admit_review_case(proposal))["status"])
+            repository.close()
+            repository = open_repository(database, create=False)
             self.assertTrue(json.loads(repository.get_review_case(case_id))["current"])
             successor = _report("Changed", "c", "d")
-            repository.publish(successor, lambda: True); later = _actionable(successor); repository.publish_proposal(later)
+            repository.publish(successor, lambda: True)
+            later = _actionable(successor)
+            repository.publish_proposal(later)
             later_case = json.loads(repository.admit_review_case(later))["review_case_id"]
-            self.assertFalse(json.loads(repository.get_review_case(case_id))["current"]); self.assertTrue(json.loads(repository.get_review_case(later_case))["current"])
+            self.assertFalse(json.loads(repository.get_review_case(case_id))["current"])
+            self.assertTrue(json.loads(repository.get_review_case(later_case))["current"])
             retired_report = _report("Retired", "e", "f", actionable=False)
             repository.publish(retired_report, lambda: True)
-            retired = evaluate_report(retired_report); repository.publish_proposal(retired)
+            retired = evaluate_report(retired_report)
+            repository.publish_proposal(retired)
             self.assertEqual("retired", json.loads(repository.admit_review_case(retired))["status"])
             self.assertFalse(json.loads(repository.get_review_case(later_case))["current"])
             self.assertEqual((2,), repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone())
@@ -87,9 +94,13 @@ class ReviewCaseLifecycleTests(unittest.TestCase):
 
     def test_concurrent_identical_admission_converges(self):
         with tempfile.TemporaryDirectory() as directory:
-            database = Path(directory) / "reviews.sqlite"; repository = open_repository(database)
+            database = Path(directory) / "reviews.sqlite"
+            repository = open_repository(database)
             report = _report()
-            repository.publish(report, lambda: True); proposal = _actionable(report); repository.publish_proposal(proposal); repository.close()
+            repository.publish(report, lambda: True)
+            proposal = _actionable(report)
+            repository.publish_proposal(proposal)
+            repository.close()
             barrier, outcomes = threading.Barrier(2), []
             def admit():
                 if sys.platform.startswith("linux"):
@@ -98,11 +109,18 @@ class ReviewCaseLifecycleTests(unittest.TestCase):
                 else:
                     local = open_repository(database, create=False)
                     barrier.wait()
-                try: outcomes.append(json.loads(local.admit_review_case(proposal)))
-                finally: local.close()
+                try:
+                    outcomes.append(json.loads(local.admit_review_case(proposal)))
+                finally:
+                    local.close()
+
             workers = [threading.Thread(target=admit) for _ in range(2)]
-            [worker.start() for worker in workers]; [worker.join() for worker in workers]
+            # The comprehensions are used for their effect; the collected `None`
+            # results are discarded.
+            [worker.start() for worker in workers]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
+            [worker.join() for worker in workers]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
             self.assertEqual(1, len({value["review_case_id"] for value in outcomes}))
 
 
-if __name__ == "__main__": unittest.main()
+if __name__ == "__main__":
+    unittest.main()

@@ -7,26 +7,34 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     SQLiteMetadataReportRepository,
     open_repository,
 )
-from mechanical_librarian.application.field_effects import FieldEffectError
+from mechanical_librarian.application.metadata_policy import (
+    MetadataPolicyApplicationError,
+    PolicyNotebook,
+)
+from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
-    MetadataPolicyProfile,
     OPTION_CATALOGUE,
     QUALIFIED_AUTOMATIC,
+    MetadataPolicyProfile,
+    ResolvedMetadataPolicy,
     resolve_policy,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+)
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
-from mechanical_librarian.application.metadata_policy import MetadataPolicyApplicationError, PolicyNotebook
-from mechanical_librarian.bootstrap import composition
 from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report
 
 
@@ -93,7 +101,7 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         self.assertEqual("preview", repository.shadow_posture())
         self.assertEqual(
             "automatic",
-            dict(repository.current_resolved_metadata_policy("ebooks").destinations)[
+            dict(cast(ResolvedMetadataPolicy, repository.current_resolved_metadata_policy("ebooks")).destinations)[
                 "title_layout"
             ],
         )
@@ -696,11 +704,11 @@ class MetadataPolicyActivationTests(unittest.TestCase):
                     lambda: True,
                     None,
                     lambda value, exact: value.complete_review_extraction_publication(
-                        extraction,
+                        extraction,  # noqa: B023 - closure is created and consumed within this iteration
                         exact.report_id,
                         27,
                         provider_failure_code=(
-                            "provider" if outcome == "provider" else None
+                            "provider" if outcome == "provider" else None  # noqa: B023 - closure is created and consumed within this iteration
                         ),
                     ),
                 )

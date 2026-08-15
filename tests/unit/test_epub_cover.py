@@ -1,5 +1,5 @@
-import os
 import hashlib
+import os
 import subprocess
 import tempfile
 import unittest
@@ -8,7 +8,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mechanical_librarian.adapters.evidence_extractors import epub_cover
-from mechanical_librarian.adapters.evidence_extractors.epub_cover import read_declared_cover
+from mechanical_librarian.adapters.evidence_extractors.epub_cover import (
+    read_declared_cover,
+)
 from mechanical_librarian.domain.cover_evidence import CoverSourceState
 from tests.support.epub_packages import EPUB3_PACKAGE, epub_bytes
 

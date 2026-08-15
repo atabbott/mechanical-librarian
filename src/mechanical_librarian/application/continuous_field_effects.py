@@ -6,7 +6,7 @@ import json
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable, Protocol
+from typing import Callable, Protocol, cast
 
 from mechanical_librarian.application.field_effects import (
     AuthorityCurrentness,
@@ -17,19 +17,28 @@ from mechanical_librarian.application.field_effects import (
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import (
+    SUPPORTED_DESTINATIONS,
     FieldEffectError,
     FieldEffectOperation,
-    SUPPORTED_DESTINATIONS,
     project_decision_value,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
-from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+)
 
 
 @dataclass(frozen=True, slots=True)
 class _CapabilityProbe:
     work_id: str
     destination: str
+
+
+class _ScanProgress(Protocol):
+    """The scan snapshot shape a caller has already checked with ``getattr``."""
+
+    updated_at: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +70,9 @@ class ContinuousFieldEffectRepository(Protocol):
     def suspend_field_effect_capability(self, **values: object) -> None: ...
     def clear_field_effect_capability_suspension(self, **values: object) -> None: ...
     def field_effect_capability_suspension(self, *values: object) -> str | None: ...
-    def next_field_effect_plan_id(self, last_library: str | None) -> str | None: ...
+    def next_field_effect_plan_id(
+        self, last_library: str | None
+    ) -> tuple[str, str] | None: ...
     def field_effect_activity_data(self, limit: int) -> dict[str, object]: ...
     def field_effect_activity_summary(self) -> dict[str, object]: ...
 
@@ -69,7 +80,9 @@ class ContinuousFieldEffectRepository(Protocol):
         self, *, search: str | None, event_type: str, occurred_after: int,
         page: int, page_size: int,
     ) -> dict[str, object]: ...
-    def pending_field_effect_manual_returns(self, limit: int, after: object = None) -> tuple[object, ...]: ...
+    def pending_field_effect_manual_returns(
+        self, limit: int, after: object = None
+    ) -> tuple[tuple[str, str, str, str, str, str, int, int], ...]: ...
     def clear_field_effect_manual_hold(self, *values: object, **kwargs: object) -> tuple[str, str] | None: ...
 
 
@@ -232,7 +245,7 @@ class ContinuousGuardedApplication:
         prepared_libraries = {
             str(item["library"])
             for item in prepared
-            if int(item["count"]) > 0
+            if int(cast(int, item["count"])) > 0
         }
         if any(library not in prepared_libraries for library in libraries):
             raise GuardedApplicationError("not_ready")
@@ -240,7 +253,9 @@ class ContinuousGuardedApplication:
         eligible = {
             str(item["library"]): tuple(
                 str(destination["destination"])
-                for destination in item["destinations"]
+                for destination in cast(
+                    "list[dict[str, object]]", item["destinations"]
+                )
                 if destination["state"] == "allowed"
             )
             for item in readiness
@@ -379,8 +394,8 @@ class ContinuousGuardedApplication:
                 raise
             del consent
             observed_at = self._clock()
-            observed = capability.observe(  # type: ignore[arg-type]
-                _CapabilityProbe(snapshot.work_id, snapshot.destination)
+            observed = capability.observe(
+                _CapabilityProbe(snapshot.work_id, snapshot.destination)  # type: ignore[arg-type]  # reason: observers read only work_id and destination, which the probe supplies; a full FieldEffectPlan does not exist before planning.
             )
             if observed.category != "allowed":
                 scope = (
@@ -526,7 +541,7 @@ class ContinuousGuardedApplication:
             event["work_label"] = report.target.current_title or "Untitled"
             authors = next((field.value for field in report.target.fields if field.destination is TargetDestination.AUTHORS), ())
             if type(authors) is tuple and all(type(author) is str for author in authors):
-                joined = ", ".join(authors)
+                joined = ", ".join(cast("tuple[str, ...]", authors))
                 event["author_label"] = (
                     joined if len(joined) <= 512 else joined[:511].rstrip() + "…"
                 ) or "Author details are not recorded"
@@ -542,7 +557,10 @@ class ContinuousGuardedApplication:
                 str(value["connection"]), str(value["library"]),
                 str(value["destination"]),
             )
-            for value in data.pop("consented_destinations", [])
+            for value in cast(
+                "list[dict[str, object]]",
+                data.pop("consented_destinations", []),
+            )
         }
         documents = self._repository.pending_field_effect_decision_documents(100)
         prepared_rows = self._repository.pending_field_effect_decision_counts()
@@ -553,7 +571,7 @@ class ContinuousGuardedApplication:
         for item in prepared_rows:
             library = str(item["library"])
             origin = str(item["origin"])
-            count = int(item["count"])
+            count = int(cast(int, item["count"]))
             values = prepared_by_library.setdefault(
                 library, {"automatic": 0, "human": 0, "total": 0}
             )
@@ -589,7 +607,9 @@ class ContinuousGuardedApplication:
         for capability in capabilities:
             connection = str(capability["connection"])
             library = str(capability["library"])
-            for destination in capability["destinations"]:
+            for destination in cast(
+                "list[dict[str, object]]", capability["destinations"]
+            ):
                 destination["consented"] = (
                     connection, library, str(destination["destination"])
                 ) in consented
@@ -622,12 +642,12 @@ class ContinuousGuardedApplication:
             "prepared": prepared,
             "ledger": {
                 "event_type": event_type,
-                "page": int(page_projection["page"]),
-                "page_count": int(page_projection["page_count"]),
-                "page_size": int(page_projection["page_size"]),
+                "page": int(cast(int, page_projection["page"])),
+                "page_count": int(cast(int, page_projection["page_count"])),
+                "page_size": int(cast(int, page_projection["page_size"])),
                 "query": normalized_search,
                 "range_days": range_days,
-                "total": int(page_projection["total"]),
+                "total": int(cast(int, page_projection["total"])),
             },
             "schema_version": "continuous-field-activity-v2",
             "provider_recovery": provider_recovery,
@@ -638,11 +658,11 @@ class ContinuousGuardedApplication:
     ) -> list[dict[str, object]]:
         """Project least-authority readiness before consent can be granted."""
         if self._activity_only:
-            results = []
+            results: list[dict[str, object]] = []
             for connection, library in self._libraries:
                 if library not in libraries:
                     continue
-                destinations = tuple(
+                destinations: tuple[tuple[str, str], ...] | list[dict[str, str]] = tuple(
                     (
                         destination,
                         self._repository.field_effect_capability_suspension(
@@ -682,7 +702,7 @@ class ContinuousGuardedApplication:
                     continue
                 if snapshot.library in libraries:
                     representatives.setdefault(snapshot.library, snapshot.work_id)
-        results: list[dict[str, object]] = []
+        results = []
         for connection, library in self._libraries:
             if library not in libraries:
                 continue
@@ -693,7 +713,9 @@ class ContinuousGuardedApplication:
                     **cached[1],
                     "destinations": [
                         {"destination": destination, "state": state}
-                        for destination, state in cached[1]["destinations"]
+                        for destination, state in cast(
+                            "tuple[tuple[str, str], ...]", cached[1]["destinations"]
+                        )
                     ],
                 })
                 continue
@@ -775,7 +797,9 @@ class ContinuousGuardedApplication:
                 ),
             }
             with self._capability_lock:
-                self._capability_cache[library] = (now, cached_result)
+                self._capability_cache[library] = (
+                    now, cast("dict[str, object]", cached_result),
+                )
             results.append({
                 **cached_result,
                 "destinations": [
@@ -834,10 +858,10 @@ class ContinuousGuardedApplication:
                 or getattr(progress, "state", None) != "completed"
                 or getattr(progress, "rescan_requested", None) is not False
                 or type(getattr(progress, "updated_at", None)) is not int
-                or progress.updated_at < release.requested_at
+                or cast(_ScanProgress, progress).updated_at < release.requested_at
             ):
                 continue
-            cleared = self._repository.clear_field_effect_manual_hold(
+            self._repository.clear_field_effect_manual_hold(
                 review_case_id, destination, self._clock(), release.hold_token
             )
         self._manual_return_cursor = (

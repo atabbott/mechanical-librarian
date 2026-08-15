@@ -32,7 +32,6 @@ from mechanical_librarian.application.configuration import (
     TargetConnectionConfiguration,
 )
 
-
 _MAX_CONFIG_BYTES = 262_144
 Name = Annotated[StrictStr, Field(pattern=r"^[a-z][a-z0-9_-]{0,63}$")]
 BoundedAbsolutePath = Annotated[

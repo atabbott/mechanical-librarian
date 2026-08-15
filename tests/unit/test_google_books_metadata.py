@@ -8,12 +8,12 @@ from pathlib import Path
 
 import httpx
 
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    open_repository,
+)
 from mechanical_librarian.adapters.providers.google_books_metadata import (
     GOOGLE_BOOKS_URL,
     GoogleBooksMetadataProvider,
-)
-from mechanical_librarian.adapters.persistence.metadata_reports import (
-    open_repository,
 )
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
@@ -22,20 +22,19 @@ from mechanical_librarian.application.metadata_report import (
     qualify_provider_observation,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_DESCRIPTION_CHARACTERS,
     ClaimKind,
     ClaimScope,
     FieldState,
+    FileFacts,
     LocalClaim,
     MetadataReport,
     ProviderEvidence,
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
-    PublicationDateRelation,
-    default_target_fields,
-    FileFacts,
-    MAX_DESCRIPTION_CHARACTERS,
     TargetFacts,
+    default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -108,7 +107,7 @@ def _discovery_plan() -> MetadataDiscoveryPlan:
             matched_family=value,
             canonical_isbns=(value,),
         )
-        for index, (claim, value) in enumerate(zip(claims, values))
+        for index, (claim, value) in enumerate(zip(claims, values, strict=False))
     ]
     lanes.append(
         MetadataDiscoveryLane(
@@ -539,7 +538,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
                 return httpx.Response(
                     503,
                     headers={"content-encoding": "gzip"},
-                    stream=_HostileEncodedStream(raw_body),
+                    stream=_HostileEncodedStream(raw_body),  # noqa: B023 - closure is created and consumed within this iteration
                 )
 
             provider = GoogleBooksMetadataProvider(
@@ -567,7 +566,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             provider = GoogleBooksMetadataProvider(
                 "google_books",
                 httpx.Client(
-                    transport=httpx.MockTransport(lambda _: response)
+                    transport=httpx.MockTransport(lambda _: response)  # noqa: B023 - closure is created and consumed within this iteration
                 ),
                 1_024,
                 sleep=lambda _: self.fail(
@@ -704,7 +703,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             requests: list[httpx.Request] = []
 
             def handler(request: httpx.Request) -> httpx.Response:
-                requests.append(request)
+                requests.append(request)  # noqa: B023 - closure is created and consumed within this iteration
                 return httpx.Response(
                     200,
                     headers={"content-type": "application/json"},
@@ -913,7 +912,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
                             lambda _: httpx.Response(
                                 200,
                                 headers={"content-type": "application/json"},
-                                json=payload,
+                                json=payload,  # noqa: B023 - closure is created and consumed within this iteration
                             )
                         )
                     ),
@@ -965,9 +964,9 @@ class GoogleBooksMetadataTests(unittest.TestCase):
                     httpx.Client(
                         transport=httpx.MockTransport(
                             lambda _: httpx.Response(
-                                status_code,
+                                status_code,  # noqa: B023 - closure is created and consumed within this iteration
                                 headers={"content-type": "application/json"},
-                                json=payload,
+                                json=payload,  # noqa: B023 - closure is created and consumed within this iteration
                             )
                         )
                     ),
@@ -1059,7 +1058,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
                             lambda _: httpx.Response(
                                 200,
                                 headers={"content-type": "application/json"},
-                                json={"totalItems": 1, "items": [volume]},
+                                json={"totalItems": 1, "items": [volume]},  # noqa: B023 - closure is created and consumed within this iteration
                             )
                         )
                     ),
@@ -1125,7 +1124,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             "google_books",
             httpx.Client(
                 transport=httpx.MockTransport(
-                    lambda request: requests.append(request)
+                    lambda request: requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
                     or httpx.Response(200, json={})
                 )
             ),
@@ -1147,7 +1146,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
                         lambda _: httpx.Response(
                             200,
                             headers={"content-type": "application/json"},
-                            content=payload,
+                            content=payload,  # noqa: B023 - closure is created and consumed within this iteration
                         )
                     )
                 ),

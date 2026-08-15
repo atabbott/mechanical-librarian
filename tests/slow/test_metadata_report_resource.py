@@ -3,11 +3,6 @@ from __future__ import annotations
 import unittest
 
 from mechanical_librarian.domain.metadata_report import (
-    ClaimKind,
-    ClaimScope,
-    FieldState,
-    FileFacts,
-    LocalClaim,
     MAX_CANDIDATES,
     MAX_CONTRIBUTIONS,
     MAX_DESCRIPTION_CHARACTERS,
@@ -15,6 +10,11 @@ from mechanical_librarian.domain.metadata_report import (
     MAX_SCALAR_CHARACTERS,
     MAX_SERIES,
     MAX_TAGS,
+    ClaimKind,
+    ClaimScope,
+    FieldState,
+    FileFacts,
+    LocalClaim,
     MetadataReport,
     ProviderCandidate,
     ProviderClaim,

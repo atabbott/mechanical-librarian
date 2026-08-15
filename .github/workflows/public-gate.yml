@@ -48,6 +48,12 @@ jobs:
       - name: Install locked development dependencies
         run: uv sync --locked --all-groups
 
+      - name: Lint the Python source
+        run: uv run ruff check src tests scripts
+
+      - name: Typecheck the Python source
+        run: uv run mypy src tests scripts
+
       - name: Qualify the frontend source
         working-directory: frontend
         run: |
