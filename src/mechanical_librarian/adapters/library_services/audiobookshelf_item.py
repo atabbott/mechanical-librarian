@@ -43,6 +43,7 @@ from mechanical_librarian.domain.evidence_bounds import (
     validate_projection_text,
 )
 from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import normalize_ebook_location
+from mechanical_librarian.application.catalogue import TargetConnectionError
 
 
 _ASIN = re.compile(r"^[A-Za-z0-9]{10}$")
@@ -74,8 +75,10 @@ class AudiobookshelfItemReader:
             ) as response:
                 if response.status_code == 404:
                     raise TargetNotFoundError("target item is absent")
-                if response.status_code in {401, 403}:
-                    raise MetadataReportError("target item is unavailable")
+                if response.status_code == 401:
+                    raise TargetConnectionError("authentication")
+                if response.status_code == 403:
+                    raise TargetConnectionError("authorization")
                 if response.status_code != 200:
                     raise MetadataReportError("target service is unavailable")
                 content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
@@ -84,8 +87,9 @@ class AudiobookshelfItemReader:
                 payload = _bounded_body(response, self._maximum_bytes, deadline=deadline)
         except MetadataReportError:
             raise
-        except (httpx.HTTPError, OSError, ValueError) as error:
-            raise MetadataReportError("target service is unavailable") from error
+        except (httpx.HTTPError, OSError) as error:
+            code = "tls" if isinstance(error, httpx.TransportError) and error.__cause__ is not None and "SSL" in type(error.__cause__).__name__.upper() else "unavailable"
+            raise TargetConnectionError(code) from None
         try:
             source = json.loads(
                 payload.decode("utf-8", "strict"),

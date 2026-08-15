@@ -388,6 +388,10 @@ class ReviewPreparationPipeline:
                 self._check_connection(connection)
             except TargetConnectionError as error:
                 code = error.code
+            except Exception:
+                # A probe that did not produce a closed successful observation
+                # must never strand this connection in checking.
+                code = "unavailable"
             repository.finish_target_connection_check(connection, condition.epoch, code, self._clock())
             return True
         finally:

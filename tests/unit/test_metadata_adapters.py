@@ -40,6 +40,7 @@ from mechanical_librarian.application.metadata_report import (
     ProviderLaneResult,
     qualify_provider_observation,
 )
+from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.domain.metadata_report import (
     MAX_CONTRIBUTIONS,
     MAX_DESCRIPTION_CHARACTERS,
@@ -5250,7 +5251,7 @@ class AudiobookshelfItemTests(unittest.TestCase):
             reader(404).read("item-1")
         for status in (401, 403):
             with self.subTest(status=status), self.assertRaises(
-                MetadataReportError
+                TargetConnectionError
             ) as raised:
                 reader(status).read("item-1")
             self.assertNotIsInstance(raised.exception, TargetNotFoundError)
