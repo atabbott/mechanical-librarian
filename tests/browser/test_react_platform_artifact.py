@@ -437,7 +437,9 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             expect(page.locator(".workspace-detail .direct-choice-grid .value-choice")).to_have_count(4)
             expect(page.locator(".library-works")).to_be_visible()
             expect(page.locator(".workspace-detail")).to_be_visible()
-            expect(page.locator(".field-filmstrip button")).to_have_count(2)
+            # #598 keeps automatic, unsupported, and recorded siblings in the
+            # primary strip; only server-classified attention advances normally.
+            expect(page.locator(".field-filmstrip button")).to_have_count(4)
             self.assertIn("Title", page.locator(".field-filmstrip").inner_text())
             self.assertFalse(page.locator(".automatic-resolution-details").evaluate("node => node.open"))
             self.assertFalse(page.locator(".source-ledger").evaluate("node => node.open"))
@@ -677,7 +679,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.locator(".attention-queue-item").first.click()
             expect(page.locator(".workspace-detail")).to_be_visible()
             expect(page.locator(".library-works")).to_be_hidden()
-            expect(page.locator(".field-filmstrip button")).to_have_count(2)
+            expect(page.locator(".field-filmstrip button")).to_have_count(4)
             self.assertIn("Title", page.locator(".field-filmstrip").inner_text())
             self.assertFalse(page.locator(".automatic-resolution-details").evaluate("node => node.open"))
             self.assertFalse(page.locator(".source-ledger").evaluate("node => node.open"))
@@ -755,7 +757,14 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             expect(author_notices).to_contain_text("Hardcover · Open Library")
             self.assertNotIn("provider_", author_notices.inner_text())
             page.get_by_role("button", name="subtitle", exact=True).click()
-            page.get_by_text("No eligible proposed values.", exact=True).wait_for()
+            subtitle = page.locator("#field-subtitle")
+            subtitle.get_by_text(
+                "This field is unavailable for the current service capability.", exact=True
+            ).wait_for()
+            self.assertIn("Unavailable", subtitle.inner_text())
+            self.assertEqual(subtitle.locator(".direct-choice-grid").count(), 0)
+            self.assertEqual(subtitle.get_by_text("Not set", exact=True).count(), 0)
+            self.assertEqual(page.get_by_role("button", name="subtitle", exact=True).count(), 1)
             page.get_by_role("button", name="Evidence", exact=True).click()
             page.get_by_role("heading", name="Evidence and source ledger").wait_for()
             page.locator(".evidence-item").first.wait_for()
@@ -783,12 +792,53 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             for destination in ("title", "authors", "subtitle", "series"):
                 page.get_by_role("button", name=destination, exact=True).click()
                 page.locator(f"#field-{destination}").get_by_text(
-                    "No eligible proposed values.", exact=True
+                    "There is no owner decision available for this field.", exact=True
                 ).wait_for()
                 self.assertEqual(
                     page.locator(f"#field-{destination} .direct-choice-grid").count(),
                     0,
                 )
+                self.assertIn(
+                    "Current value", page.locator(f"#field-{destination}").inner_text()
+                )
+
+            page.goto(
+                "https://react-platform.invalid/review/case-5?field=authors&subview=review"
+            )
+            page.get_by_role("heading", name="Current review case").wait_for()
+            automatic_rail = page.locator(".detail-layout > .field-navigation")
+            expect(automatic_rail.get_by_role("button")).to_have_count(4)
+            page.get_by_role("button", name="title", exact=True).click()
+            automatic_title = page.locator("#field-title")
+            expect(automatic_title.locator(".direct-choice-grid .value-choice")).to_have_count(4)
+            expect(automatic_title.locator(".current-value")).to_have_attribute("aria-pressed", "true")
+            self.assertIn(
+                "is-selected", automatic_title.locator(".current-value").get_attribute("class")
+            )
+            page.get_by_role("button", name="authors", exact=True).click()
+            automatic_authors = page.locator("#field-authors")
+            expect(automatic_authors.locator(".direct-choice-grid .value-choice")).to_have_count(3)
+            expect(automatic_authors.locator(".current-value")).to_have_attribute("aria-pressed", "true")
+            automatic_authors.locator(".proposed-value").first.focus()
+            page.keyboard.press("Space")
+            page.get_by_text(
+                "The response was lost. The current case was reloaded before any retry.",
+                exact=True,
+            ).wait_for()
+            self.assertEqual(ambiguous_decisions, 2)
+
+            page.goto(
+                "https://react-platform.invalid/review/case-equal?field=title&subview=review"
+            )
+            page.get_by_role("heading", name="Current review case").wait_for()
+            equal_title = page.locator("#field-title")
+            self.assertIn(
+                "preservation-only",
+                equal_title.locator(".direct-choice-grid").get_attribute("class"),
+            )
+            expect(equal_title.locator(".direct-choice-grid .value-choice")).to_have_count(1)
+            self.assertEqual(equal_title.locator(".proposed-value").count(), 0)
+            self.assertIn("Current <script> title", equal_title.locator(".current-value").inner_text())
             page.goto(
                 "https://react-platform.invalid/review/case-4"
                 "?field=title&subview=review"
@@ -955,28 +1005,24 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             )
             self.assertEqual(
                 expected_ambiguous_errors,
-                ["Failed to load resource: net::ERR_FAILED"],
+                ["Failed to load resource: net::ERR_FAILED"] * ambiguous_decisions,
             )
             decision_request_failures = [
                 failure
                 for failure in failed_requests
                 if failure[2] == "net::ERR_FAILED"
             ]
-            self.assertEqual(len(decision_request_failures), 1, failed_requests)
-            failed_method, failed_url, failed_reason = decision_request_failures[0]
-            self.assertEqual(
-                (
-                    failed_method,
+            self.assertEqual(len(decision_request_failures), ambiguous_decisions, failed_requests)
+            for failed_method, failed_url, failed_reason in decision_request_failures:
+                self.assertEqual(failed_method, "POST")
+                self.assertTrue(
+                    failed_url.startswith(
+                        "https://react-platform.invalid/api/v1/review-cases/"
+                    )
+                    and failed_url.endswith("/decisions"),
                     failed_url,
-                    failed_reason,
-                ),
-                (
-                    "POST",
-                    "https://react-platform.invalid/api/v1/review-cases/"
-                    "case-1/decisions",
-                    "net::ERR_FAILED",
-                ),
-            )
+                )
+                self.assertEqual(failed_reason, "net::ERR_FAILED")
             self.assertEqual(
                 [
                     failure

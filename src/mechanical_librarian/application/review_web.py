@@ -16,6 +16,9 @@ from mechanical_librarian.domain.human_decision import (
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.review_field_classification import (
+    classify_review_field,
+)
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.application.cover_consideration import CoverConsiderationService
 
@@ -42,6 +45,7 @@ class CurrentReviewCaseSnapshot:
     decision_documents: tuple[str, ...]
     history: tuple[dict[str, object], ...]
     automatic_attention_destinations: tuple[str, ...] = ()
+    suspended_destinations: tuple[str, ...] = ()
     cover_consideration_document: str | None = None
     cover_history: tuple[dict[str, object], ...] = ()
 
@@ -304,6 +308,21 @@ class InspectCurrentReviewCase:
                     **automatic_decision,
                     "selected_value": selected,
                 }
+            classification = classify_review_field(
+                attention_candidate=_needs_attention(
+                    proposal, snapshot.automatic_attention_destinations,
+                ),
+                automatic_outcome=(
+                    None if automatic_decision is None
+                    else str(automatic_decision["outcome"])
+                ),
+                has_human_decision=decision is not None,
+                suspended=destination in snapshot.suspended_destinations,
+                current_value=target_fields[destination]["value"],
+                proposed_values=tuple(
+                    alternative["value"] for alternative in alternatives
+                ),
+            )
             field = {
                     "current": target_fields[destination],
                     "deterministic_disposition": result["outcome"],
@@ -314,7 +333,12 @@ class InspectCurrentReviewCase:
                     ),
                     "automatic_decision": automatic_decision,
                     "manual_hold": decision is not None and automatic_decision is not None,
-                    "needs_attention": decision is None and automatic_decision is None and _needs_attention(proposal, snapshot.automatic_attention_destinations),
+                    "classification": classification.state,
+                    "classification_reason": classification.reason,
+                    "editable": classification.editable,
+                    "navigation_role": classification.navigation_role,
+                    "needs_attention": classification.needs_attention,
+                    "preservation_only": classification.preservation_only,
                     "notices": reasons,
                     "proposed_values": [
                         alternative["value"] for alternative in alternatives
@@ -635,28 +659,58 @@ class BrowseReviewLibrary:
         bounded_limit = _review_limit(limit)
         offset = _decode_cursor(cursor, "attention", "needs_attention", normalized)
         try:
-            snapshot = self._repository.read_review_attention(
-                normalized, bounded_limit + 1, offset
-            )
+            # A row may become contradictory after the SQL snapshot's durable
+            # membership check.  Read at most two existing bounded repository
+            # pages to replace it, never turning one stale row into a 503.
+            scan_offset = offset
+            consumed = 0
+            items: list[dict[str, object]] = []
+            has_more = False
+            snapshot: ReviewAttentionSnapshot | None = None
+            for batch in range(2):
+                snapshot = self._repository.read_review_attention(
+                    normalized, bounded_limit + 1, scan_offset
+                )
+                raw_rows = snapshot.rows
+                for row in raw_rows:
+                    case_document, report_document, destination, work_attention_count = row[:4]
+                    automatic_outcome = row[4] if len(row) > 4 else None
+                    if len(items) >= bounded_limit:
+                        has_more = True
+                        break
+                    consumed += 1
+                    item = _attention_item(
+                        case_document,
+                        report_document,
+                        destination,
+                        work_attention_count,
+                        *(() if automatic_outcome is None else (automatic_outcome,)),
+                    )
+                    if item is not None:
+                        items.append(item)
+                if has_more or len(raw_rows) <= bounded_limit:
+                    break
+                if batch == 1:
+                    # The bounded race-defense scan cannot prove that a later
+                    # raw page is empty.  Keep the cursor truthful rather
+                    # than claiming terminal exhaustion.
+                    has_more = True
+                    break
+                scan_offset += len(raw_rows)
+            if snapshot is None:
+                raise ValueError
         except Exception as error:
             raise ReviewWebError("unavailable") from error
-        items = [
-            _attention_item(
-                case_document, report_document, destination, work_attention_count
-            )
-            for case_document, report_document, destination, work_attention_count
-            in snapshot.rows[:bounded_limit]
-        ]
         return {
             "items": items,
             "next_cursor": (
                 _encode_cursor(
-                    offset + bounded_limit,
+                    offset + consumed,
                     "attention",
                     "needs_attention",
                     normalized,
                 )
-                if len(snapshot.rows) > bounded_limit
+                if has_more
                 else None
             ),
             "query": normalized,
@@ -976,10 +1030,14 @@ def _library_item(
     if case_document is not None:
         case, report = _case_and_report(case_document, report_document)
     decisions = set()
+    automatic_outcomes: dict[str, str] = {}
     for document in decision_documents:
         value = json.loads(document)
         if type(value) is dict and value.get("origin") == "automatic_policy":
-            decisions.add(str(value["destination"]))
+            destination = str(value["destination"])
+            automatic_outcomes[destination] = str(value["outcome"])
+            if value.get("outcome") != "abstention":
+                decisions.add(destination)
         else:
             decision = HumanDecision.from_json(document)
             assert case is not None
@@ -990,7 +1048,16 @@ def _library_item(
         for value in case.proposals
         if (value["destination"] not in decisions
             and value["destination"] not in suspended_destinations
-            and _needs_attention(value, automatic_attention_destinations))
+            and classify_review_field(
+                attention_candidate=_needs_attention(
+                    value, automatic_attention_destinations,
+                ),
+                automatic_outcome=automatic_outcomes.get(value["destination"]),
+                has_human_decision=value["destination"] in decisions,
+                suspended=value["destination"] in suspended_destinations,
+                current_value=None,
+                proposed_values=(),
+            ).needs_attention)
     ]
     outcomes = [] if case is None else sorted(
         {
@@ -1028,7 +1095,8 @@ def _attention_item(
     report_document: str,
     destination: str,
     work_attention_count: int,
-) -> dict[str, object]:
+    automatic_outcome: str | None = None,
+) -> dict[str, object] | None:
     case, report = _case_and_report(case_document, report_document)
     proposal = next(
         (
@@ -1038,8 +1106,17 @@ def _attention_item(
         ),
         None,
     )
-    if proposal is None or not _needs_attention(proposal):
-        raise ReviewWebError("unavailable")
+    if proposal is None or not classify_review_field(
+        attention_candidate=_needs_attention(proposal),
+        automatic_outcome=automatic_outcome,
+        has_human_decision=False,
+        suspended=False,
+        current_value=None,
+        proposed_values=(),
+    ).needs_attention:
+        # Query membership can race a durable automatic or human decision.  A
+        # stale browse row is omitted; it is never an outage for other work.
+        return None
     result = proposal["result"]
     assert type(result) is dict
     return {

@@ -513,12 +513,17 @@ _REVIEW_FIELD_ATTENTION_SQL = (
     "OR (json_extract(result.value,'$.destination') "
     "IN ('title','subtitle','series') AND "
     + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
-    + ") OR " + _AUTOMATIC_SAFETY_ATTENTION_SQL + ") AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
+    + ") OR " + _AUTOMATIC_SAFETY_ATTENTION_SQL
+    + " OR EXISTS (SELECT 1 FROM automatic_decisions automatic "
+    "WHERE automatic.review_case_id=rc.review_case_id "
+    "AND automatic.destination=json_extract(result.value,'$.destination') "
+    "AND json_extract(automatic.document,'$.outcome')='abstention')) AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
     "AND decision.destination=json_extract(result.value,'$.destination')) "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
-    "AND decision.destination=json_extract(result.value,'$.destination')) "
+    "AND decision.destination=json_extract(result.value,'$.destination') "
+    "AND json_extract(decision.document,'$.outcome')<>'abstention') "
     "AND NOT EXISTS (SELECT 1 FROM field_effect_suspensions suspension "
     "WHERE suspension.connection_name=c.connection_name AND ("
     "(suspension.scope='connection' AND suspension.destination='') OR "
@@ -5198,6 +5203,9 @@ class SQLiteMetadataReportRepository:
                     else self.get_review_case_history(review_case_id, history_limit)
                 ),
                 automatic_attention_destinations=self._automatic_attention_destinations(review_case_id),
+                suspended_destinations=self._field_effect_capability_suspended_destinations(
+                    review_case_id
+                ),
                 cover_consideration_document=(
                     self.current_cover_consideration_document(review_case_id)
                 ),
@@ -5465,14 +5473,17 @@ class SQLiteMetadataReportRepository:
 
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[tuple[str, str, str, int], ...]:
+    ) -> tuple[tuple[str, str, str, int, str | None], ...]:
         try:
             query, pattern = _review_search_pattern(search)
             rows = self._connection.execute(
                 "SELECT rc.document,mr.document,"
                 "json_extract(result.value,'$.destination'),"
                 "(SELECT count(*) FROM json_each(rc.document,'$.results') result "
-                "WHERE " + _REVIEW_FIELD_ATTENTION_SQL + ") "
+                "WHERE " + _REVIEW_FIELD_ATTENTION_SQL + "),"
+                "(SELECT json_extract(automatic.document,'$.outcome') FROM automatic_decisions automatic "
+                "WHERE automatic.review_case_id=rc.review_case_id "
+                "AND automatic.destination=json_extract(result.value,'$.destination') LIMIT 1) "
                 + _CURRENT_REVIEW_FROM_SQL
                 + ",json_each(rc.document,'$.results') result "
                 "WHERE "
@@ -5500,9 +5511,10 @@ class SQLiteMetadataReportRepository:
                     type(row[2]) is not str
                     or type(row[3]) is not int
                     or row[3] < 1
+                    or (row[4] is not None and type(row[4]) is not str)
                 ):
                     raise MetadataReportError("review attention field is invalid")
-                values.append((case_document, report_document, row[2], row[3]))
+                values.append((case_document, report_document, row[2], row[3], row[4]))
             return tuple(values)
         except (
             sqlite3.Error,

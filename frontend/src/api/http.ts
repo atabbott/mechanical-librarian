@@ -22,10 +22,14 @@ export interface LibraryView { lens: LibraryLens; query?: string; nextCursor?: s
 export interface AttentionItemView { id: string; destination: string; title: string; authors: readonly string[]; library: string; mediaKind: string; notices: readonly string[]; provenance: readonly string[]; workAttentionCount: number }
 export interface AttentionView { query?: string; nextCursor?: string; total: number; items: readonly AttentionItemView[] }
 export interface ReviewFieldView {
+  classification: string
+  classificationReason: string
   destination: string
+  editable: boolean
   disposition: string
   effectCapability: string
   needsAttention: boolean
+  navigationRole: string
   manualHold: boolean
   currentValue: string
   currentRaw: unknown
@@ -36,6 +40,7 @@ export interface ReviewFieldView {
   automaticDecision: Schema<'_AutomaticDecisionProjection'> | null
   notices: readonly string[]
   provenance: readonly string[]
+  preservationOnly: boolean
   corroborationSources: readonly string[]
   coverConsideration?: CoverConsiderationView | null
 }
@@ -276,7 +281,10 @@ const stringValue = (value: unknown, field: string) => { if (typeof value !== 's
 const integerValue = (value: unknown, field: string) => { if (!Number.isSafeInteger(value) || (value as number) < 0) throw new ApiError(502, `invalid_${field}`); return value as number }
 const optionalString = (value: unknown, field: string) => value === null || value === undefined ? undefined : stringValue(value, field)
 const stringArray = (value: unknown, field: string) => { if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) throw new ApiError(502, `invalid_${field}`); return value }
-export const displayValue = (value: unknown): string => value === null ? 'Not set' : typeof value === 'string' || typeof value === 'boolean' ? String(value) : Array.isArray(value) ? value.map(displayValue).join(' · ') : record(value) && typeof value.name === 'string' ? `${value.name}${typeof value.sequence === 'string' ? ` · ${value.sequence}` : ''}` : 'Unavailable'
+const booleanValue = (value: unknown, field: string) => { if (typeof value !== 'boolean') throw new ApiError(502, `invalid_${field}`); return value }
+const classificationValue = (value: unknown) => { const allowed = ['needs_attention', 'manual_fallback', 'automatic_recorded', 'human_recorded', 'unsupported']; if (typeof value !== 'string' || !allowed.includes(value)) throw new ApiError(502, 'invalid_classification'); return value }
+const navigationRole = (value: unknown) => { if (value !== 'attention' && value !== 'inspect') throw new ApiError(502, 'invalid_navigation_role'); return value }
+export const displayValue = (value: unknown): string => value === null ? 'Unavailable' : typeof value === 'string' || typeof value === 'boolean' ? String(value) : Array.isArray(value) ? value.map(displayValue).join(' · ') : record(value) && typeof value.name === 'string' ? `${value.name}${typeof value.sequence === 'string' ? ` · ${value.sequence}` : ''}` : 'Unavailable'
 
 const validateObject = (value: unknown, name: string): Record<string, unknown> => { if (!record(value) || typeof value.schema_version !== 'string') throw new ApiError(502, `invalid_${name}_response`); return value }
 const preparationProgress = (value: unknown): PreparationProgress => {
@@ -352,7 +360,7 @@ export const mapAttention = (value: unknown): AttentionView => {
 export const mapCaseDetail = (value: unknown): CaseDetailView => {
   if (!record(value) || !record(value.target) || !Array.isArray(value.fields)) throw new ApiError(502, 'invalid_case_detail_response')
   const dto = value as unknown as CaseDetailDto; stringValue(dto.schema_version, 'schema_version'); if (typeof dto.current !== 'boolean') throw new ApiError(502, 'invalid_case_currentness')
-  return { id: stringValue(dto.review_case_id, 'review_case_id'), current: dto.current, title: stringValue(dto.target.item, 'target_item'), authors: stringArray(dto.target.authors, 'target_authors'), subtitle: `${stringValue(dto.target.library, 'target_library')} · ${stringValue(dto.target.media_kind, 'target_media_kind')} · ${stringValue(dto.target.connection, 'target_connection')}`, fields: dto.fields.map((field) => ({ destination: stringValue(field.destination, 'destination'), disposition: stringValue(field.deterministic_disposition, 'disposition'), effectCapability: stringValue(field.effect_capability, 'effect_capability'), needsAttention: field.needs_attention, manualHold: field.manual_hold, currentValue: displayValue(field.current.value), currentRaw: field.current.value, proposedValues: field.proposed_values, proposalId: stringValue(field.proposal_id, 'proposal_id'), targetFingerprint: stringValue(field.target_fingerprint, 'target_fingerprint'), humanDecision: field.human_decision, automaticDecision: field.automatic_decision, notices: stringArray(field.notices, 'notices'), provenance: stringArray(field.provenance, 'provenance'), corroborationSources: stringArray(field.corroboration_sources, 'corroboration_sources'), coverConsideration: mapCoverConsideration((field as unknown as Record<string, unknown>).cover_consideration) })) }
+  return { id: stringValue(dto.review_case_id, 'review_case_id'), current: dto.current, title: stringValue(dto.target.item, 'target_item'), authors: stringArray(dto.target.authors, 'target_authors'), subtitle: `${stringValue(dto.target.library, 'target_library')} · ${stringValue(dto.target.media_kind, 'target_media_kind')} · ${stringValue(dto.target.connection, 'target_connection')}`, fields: dto.fields.map((field) => ({ classification: classificationValue(field.classification), classificationReason: stringValue(field.classification_reason, 'classification_reason'), destination: stringValue(field.destination, 'destination'), disposition: stringValue(field.deterministic_disposition, 'disposition'), editable: booleanValue(field.editable, 'editable'), effectCapability: stringValue(field.effect_capability, 'effect_capability'), needsAttention: booleanValue(field.needs_attention, 'needs_attention'), manualHold: booleanValue(field.manual_hold, 'manual_hold'), navigationRole: navigationRole(field.navigation_role), currentValue: displayValue(field.current.value), currentRaw: field.current.value, proposedValues: field.proposed_values, proposalId: stringValue(field.proposal_id, 'proposal_id'), targetFingerprint: stringValue(field.target_fingerprint, 'target_fingerprint'), humanDecision: field.human_decision, automaticDecision: field.automatic_decision, notices: stringArray(field.notices, 'notices'), provenance: stringArray(field.provenance, 'provenance'), preservationOnly: booleanValue(field.preservation_only, 'preservation_only'), corroborationSources: stringArray(field.corroboration_sources, 'corroboration_sources'), coverConsideration: mapCoverConsideration((field as unknown as Record<string, unknown>).cover_consideration) })) }
 }
 
 const mapCoverConsideration = (value: unknown): CoverConsiderationView | null => {

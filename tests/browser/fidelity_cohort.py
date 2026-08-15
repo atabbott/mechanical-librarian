@@ -233,18 +233,43 @@ def _field(
     notices: list[str] | None = None,
     provenance: list[str] | None = None,
     corroboration_sources: list[str] | None = None,
+    classification: str | None = None,
+    classification_reason: str | None = None,
+    editable: bool | None = None,
+    navigation_role: str | None = None,
+    preservation_only: bool | None = None,
 ) -> dict[str, object]:
+    inferred_classification = (
+        "human_recorded" if human_decision is not None
+        else "automatic_recorded" if automatic_decision is not None
+        else "needs_attention" if needs_attention
+        else "unsupported"
+    )
+    resolved_classification = classification or inferred_classification
+    inferred_reason = (
+        "This field needs your review." if needs_attention
+        else "Automatic handling recorded this field; you may inspect or override it."
+        if automatic_decision is not None
+        else "There is no owner decision available for this field."
+    )
     return {
+        "classification": resolved_classification,
+        "classification_reason": classification_reason or inferred_reason,
         "destination": destination,
         "deterministic_disposition": disposition,
         "effect_capability": "manual",
+        "editable": editable if editable is not None else (
+            (human_decision is None and automatic_decision is not None) or needs_attention
+        ),
         "needs_attention": needs_attention,
         "manual_hold": manual_hold,
         "manual_required": needs_attention,
+        "navigation_role": navigation_role or ("attention" if needs_attention else "inspect"),
         "current": {"kind": "synthetic", "value": current},
         "proposed_values": [
             {"kind": "synthetic", "value": value} for value in proposed
         ],
+        "preservation_only": preservation_only if preservation_only is not None else False,
         "proposal_id": f"proposal-{destination}",
         "target_fingerprint": "f" * 64,
         "human_decision": human_decision,
@@ -275,6 +300,7 @@ def _case(case_id: str) -> dict[str, object]:
     resolved = case_id in {"case-7", "case-12"}
     automatic = case_id in {"case-5", "case-8"}
     current_only = case_id == "case-11"
+    equal_preservation = case_id == "case-equal"
     provider_evidence = [
         "Local catalogue record: current field value",
         "Project Gutenberg record: title and contributor corroboration",
@@ -286,9 +312,8 @@ def _case(case_id: str) -> dict[str, object]:
             "title",
             "Current <script> title",
             [] if current_only else [
-                "The Clockmaker's Cartography",
-                "Cartography of Impossible Libraries",
-                LONG_TITLE,
+                "Current <script> title" if equal_preservation else "The Clockmaker's Cartography",
+                *( [] if equal_preservation else ["Cartography of Impossible Libraries", LONG_TITLE] ),
             ],
             needs_attention=not (resolved or automatic or current_only),
             manual_hold=case_id == "case-4",
@@ -312,6 +337,7 @@ def _case(case_id: str) -> dict[str, object]:
                     "decision_id": "automatic-title",
                     "outcome": "keep_current",
                     "origin": "automatic_policy",
+                    "selected_value": None,
                 }
                 if automatic
                 else None
@@ -321,6 +347,7 @@ def _case(case_id: str) -> dict[str, object]:
                 "Punctuation and subtitle boundaries remain an owner choice.",
             ],
             provenance=provider_evidence,
+            preservation_only=equal_preservation,
         ),
         _field(
             "authors",
@@ -346,6 +373,7 @@ def _case(case_id: str) -> dict[str, object]:
                     "decision_id": "automatic-authors",
                     "outcome": "keep_current",
                     "origin": "automatic_policy",
+                    "selected_value": None,
                 }
                 if automatic
                 else None
@@ -361,6 +389,14 @@ def _case(case_id: str) -> dict[str, object]:
             disposition="ineligible",
             needs_attention=False,
             notices=["No eligible proposed value is supported by the retained evidence."],
+            classification="unsupported",
+            classification_reason=(
+                "There is no owner decision available for this field."
+                if current_only
+                else "This field is unavailable for the current service capability."
+            ),
+            editable=False,
+            navigation_role="inspect",
         ),
         _field(
             "series",
@@ -375,6 +411,7 @@ def _case(case_id: str) -> dict[str, object]:
                     "decision_id": "automatic-series",
                     "outcome": "keep_current",
                     "origin": "automatic_policy",
+                    "selected_value": None,
                 }
             ),
         ),

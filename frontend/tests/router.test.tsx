@@ -34,10 +34,14 @@ const detail: CaseDetailView = {
   authors: [],
   subtitle: 'Books · local',
   fields: [{
+    classification: 'needs_attention',
+    classificationReason: 'This field needs your review.',
     destination: 'title',
+    editable: true,
     disposition: 'review',
     effectCapability: 'manual',
     needsAttention: true,
+    navigationRole: 'attention',
     manualHold: false,
     currentValue: 'Old title',
     currentRaw: 'Old title',
@@ -48,6 +52,7 @@ const detail: CaseDetailView = {
     automaticDecision: null,
     notices: [],
     provenance: [],
+    preservationOnly: false,
     corroborationSources: [],
   }],
 }
@@ -1067,7 +1072,7 @@ describe('typed review routes', () => {
     expect(screen.queryByRole('img')).toBeNull()
   })
 
-  it('never offers a false human choice for an automatically decided field', async () => {
+  it('keeps an automatically decided field inspectable and owner-editable', async () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('detail fixture requires a title field')
     const automatic: CaseDetailView = {
@@ -1092,9 +1097,8 @@ describe('typed review routes', () => {
     renderRoute('/review/case-1?field=title&subview=review', http)
 
     expect(await screen.findByText('Handled automatically: accept · policy origin.')).toBeVisible()
-    expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
-    expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
-    expect(http.recordDecision).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /Choose current value/ })).toBeVisible()
+    expect(screen.getByRole('button', { name: /Choose proposed value/ })).toBeVisible()
   })
 
   it('shows the exact accepted recorded value without interpreting hostile content', async () => {

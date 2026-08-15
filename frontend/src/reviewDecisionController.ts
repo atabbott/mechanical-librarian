@@ -5,7 +5,7 @@ import { AmbiguousMutationError, ApiError } from './api/http'
 import type { CaseDetailView, DecisionCommand } from './api/http'
 import { detailQuery, useReviewContext } from './router'
 
-export const actionable = (field: CaseDetailView['fields'][number]) => field.needsAttention && field.humanDecision === null && field.automaticDecision === null
+export const actionable = (field: CaseDetailView['fields'][number]) => field.needsAttention
 export const reconciliationKey = (id: string) => ['decision-reconciliation', id] as const
 const decisionStatusKey = (id: string) => ['decision-status', id] as const
 export interface ReconciliationLock { message: string; detailUpdatedAt: number }
