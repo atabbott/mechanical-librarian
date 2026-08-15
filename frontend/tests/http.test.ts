@@ -36,6 +36,8 @@ describe('ReviewApiClient', () => {
     expect(mapCoverConsideration(payload({ incumbent: { state: 'unavailable', reference: null } }))?.incumbent.state).toBe('unavailable')
     const invalid: readonly [string, Record<string, unknown>][] = [
       ['policy-null-candidates', { policy: null }],
+      ['nonnull-policy-zero-candidates', { candidates: [], choice_contexts: [context(null, 'current')] }],
+      ['recommended-null-reference', { policy: policy({ status: 'recommended' }) }],
       ['invalid-candidate-enum', { candidates: [candidate({ state: 'incumbent' })] }],
       ['duplicate-reference', { candidates: [candidate(), candidate({ artifact_id: 'artifact-2', ordinal: 1 })] }],
       ['duplicate-artifact', { candidates: [candidate(), candidate({ reference: 'candidate-2', ordinal: 1 })] }],
@@ -51,6 +53,8 @@ describe('ReviewApiClient', () => {
       ['available-inside-acceptable', { candidates: [candidate()], policy: policy({ acceptable_candidate_references: ['candidate-1'] }) }],
       ['recommended-nonselectable', { candidates: [candidate({ state: 'recommended', selectable: false })], policy: policy({ status: 'recommended', recommended_candidate_reference: 'candidate-1', acceptable_candidate_references: ['candidate-1'] }), choice_contexts: [context(null, 'current')] }],
       ['recommended-ref-nonmember', { candidates: [candidate({ state: 'recommended' })], policy: policy({ status: 'recommended', recommended_candidate_reference: 'candidate-1', acceptable_candidate_references: [] }), choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed', 'recommended')] }],
+      ['duplicate-acceptable', { candidates: [candidate({ state: 'recommended' })], policy: policy({ status: 'recommended', recommended_candidate_reference: 'candidate-1', acceptable_candidate_references: ['candidate-1', 'candidate-1'] }), choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed', 'recommended')] }],
+      ['acceptable-unknown', { candidates: [candidate({ state: 'recommended' })], policy: policy({ status: 'recommended', recommended_candidate_reference: 'candidate-1', acceptable_candidate_references: ['candidate-1', 'ghost'] }), choice_contexts: [context(null, 'current'), context('candidate-1', 'proposed', 'recommended')] }],
       ['multiple-incumbents', { candidates: [candidate({ incumbent: true }), candidate({ incumbent: true, reference: 'candidate-2', artifact_id: 'artifact-2', ordinal: 1 })], incumbent: { state: 'available', reference: 'candidate-1' }, choice_contexts: [context(null, 'current')] }],
       ['stray-recommendation-context', { choice_contexts: [context(null, 'current', 'recommended'), context('candidate-1', 'proposed')] }],
     ]
