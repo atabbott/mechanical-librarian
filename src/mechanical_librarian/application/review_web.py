@@ -1195,23 +1195,16 @@ def _provider_outcomes(report: MetadataReport) -> list[dict[str, object]]:
             if status in successful:
                 continue
             kind = (lane.kind if provider.lanes else provider.query_kind).value
-            outcomes.append({"provider_requests": provider.request_accounting.logical_requests, "lane_kind": kind, "provider": _provider_label(provider.provider), "reason": "Provider returned no matching metadata." if status == "no_match" else "Provider returned a bounded terminal status.", "status": status})
+            outcomes.append({"provider_requests": provider.request_accounting.logical_requests, "lane_kind": kind, "provider": _provider_label(provider.authority), "reason": "Provider returned no matching metadata." if status == "no_match" else "Provider returned a bounded terminal status.", "status": status})
     return outcomes
 
 
-def _provider_label(provider: str) -> str:
-    normalized = provider.strip().lower().replace("_", "-")
-    if normalized.startswith("google-books-"):
-        normalized = "google-books"
-    if normalized.startswith("open-library-"):
-        normalized = "open-library"
+def _provider_label(authority: str | None) -> str:
     return {
         "google_books": "Google Books",
-        "google-books": "Google Books",
         "hardcover": "Hardcover",
         "open_library": "Open Library",
-        "open-library": "Open Library",
-    }.get(normalized, "Provider (name unavailable)")
+    }.get(authority, "Provider (name unavailable)")
 
 
 def _provider_comparison_notices(report: MetadataReport) -> list[str]:

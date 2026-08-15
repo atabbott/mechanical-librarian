@@ -2119,8 +2119,8 @@ class ReviewWebTests(unittest.TestCase):
             target=source.target, file=source.file, local_claims=source.local_claims,
             local_reasons=source.local_reasons,
             providers=(
-                ProviderObservation("hardcover", ProviderStatus.DISABLED),
-                ProviderObservation("open-library", ProviderStatus.NO_MATCH),
+                ProviderObservation("hardcover-main", ProviderStatus.DISABLED, authority="hardcover"),
+                ProviderObservation("open-library-main", ProviderStatus.NO_MATCH, authority="open_library"),
                 ProviderObservation("private-connection", ProviderStatus.UNAVAILABLE),
             ),
         )
@@ -2131,8 +2131,30 @@ class ReviewWebTests(unittest.TestCase):
                 "Provider limitation: Provider (name unavailable) — Provider returned a bounded terminal status.",
             ],
         )
-        self.assertEqual("Google Books", _provider_label("google-books-main"))
-        self.assertEqual("Provider (name unavailable)", _provider_label("private-instance"))
+        self.assertEqual("Google Books", _provider_label("google_books"))
+        self.assertEqual("Provider (name unavailable)", _provider_label(None))
+        for spoofed_name in (
+            "google-books-private-instance",
+            "open-library-owner-home",
+        ):
+            spoofed = MetadataReport.create(
+                target=source.target,
+                file=source.file,
+                local_claims=source.local_claims,
+                local_reasons=source.local_reasons,
+                providers=(
+                    ProviderObservation(
+                        spoofed_name,
+                        ProviderStatus.UNAVAILABLE,
+                    ),
+                ),
+            )
+            self.assertEqual(
+                [
+                    "Provider limitation: Provider (name unavailable) — Provider returned a bounded terminal status.",
+                ],
+                _provider_comparison_notices(spoofed),
+            )
 
     def test_choice_limitations_leave_multi_alternative_global_reasons_field_scoped(self) -> None:
         first = {"alternative_id": "alternative-a"}
