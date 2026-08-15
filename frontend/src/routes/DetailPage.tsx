@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import { displayValue } from '../api/http'
 import type { CaseDetailView, DecisionCommand, DecisionOutcome, EvidenceView, HistoryView } from '../api/http'
 import { useRouteReadyFocus } from '../focus'
-import { detailRoute, useReviewContext } from '../router'
+import { detailRoute, PreparationNotice, useReviewContext } from '../router'
 import { useReviewDecisionController } from '../reviewDecisionController'
 import { automaticChoiceSelected } from '../reviewAutomaticSelection'
 import { ownerChoiceCount } from '../reviewChoiceCounts'
@@ -76,7 +76,8 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   const controller = useReviewDecisionController({ reviewCaseId, fields: data.fields, active: (command) => currentLocation.current.pathname === `/review/${reviewCaseId}` && currentSearch.current.subview === 'review' && currentSearch.current.field === command.destination, onAdvance: async (field) => { await navigate({ search: { ...currentSearch.current, field, subview: 'review' } }) }, onStale: async () => { await navigate({ to: '/library', search: { lens: 'needs_attention' } }) } })
   const returnAutomatic = useMutation({ mutationFn: (destination: string) => http.returnToAutomatic(reviewCaseId, destination), retry: false, onSuccess: async () => { controller.announce('Automatic policy resumes after fresh checks.'); await controller.settle() }, onError: async () => { controller.announce('Manual hold is unchanged. Try again.'); await controller.settle() } })
   const selected = data.fields.some((field) => field.destination === search.field) ? search.field : data.fields[0]?.destination
-  useRouteReadyFocus(`${search.subview}:${selected ?? ''}`)
+  const routeIdentity = `${search.subview}:${selected ?? ''}`
+  useRouteReadyFocus(routeIdentity)
   useEffect(() => { currentSearch.current = search }, [search])
   useEffect(() => { currentLocation.current = location }, [location])
   useEffect(() => { if (controller.canRetry) retryButton.current?.focus() }, [controller.canRetry])
@@ -86,6 +87,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   if (!data.current) return <section className="route-state" data-route-focus tabIndex={-1}><h1>Case superseded</h1><p role="alert">Failed or superseded cases are never treated as current.</p><Link to="/library" search={{ lens: 'needs_attention' }}>Return to library</Link></section>
   return <>
     <header className="page-heading"><div><p className="eyebrow">Exact-current review</p><h1>Current review case</h1><p><strong>{data.title}</strong> · {data.authors.length ? data.authors.join(', ') : 'Author details unavailable'} · {data.subtitle}</p></div><span className="badge">Current</span></header>
+    <PreparationNotice routeIdentity={routeIdentity}/>
     <nav className="subviews" aria-label="Case view"><button aria-current={search.subview === 'review'} onClick={() => void navigate({ search: { ...search, subview: 'review' } })}>Review</button><button aria-current={search.subview === 'evidence'} onClick={() => void navigate({ search: { ...search, subview: 'evidence' } })}>Evidence</button><button aria-current={search.subview === 'history'} onClick={() => void navigate({ search: { ...search, subview: 'history' } })}>History</button></nav>
     {search.subview === 'review' ? <div className="detail-layout">
       <nav className="field-navigation" aria-label="Review fields">{data.fields.map((field) => <button key={field.destination} aria-current={selected === field.destination} onClick={() => void navigate({ search: { ...search, field: field.destination } })}>{friendly(field.destination)}</button>)}</nav>

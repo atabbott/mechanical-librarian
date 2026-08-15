@@ -2860,6 +2860,53 @@
         "title": "_PolicyTransitionResponse",
         "type": "object"
       },
+      "_PreparationConnection": {
+        "additionalProperties": false,
+        "properties": {
+          "affected": {
+            "minimum": 0.0,
+            "title": "Affected",
+            "type": "integer"
+          },
+          "code": {
+            "enum": [
+              "tls",
+              "authentication",
+              "authorization",
+              "unavailable"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "connection": {
+            "title": "Connection",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "paused",
+              "checking",
+              "recovered"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "updated_at": {
+            "minimum": 0.0,
+            "title": "Updated At",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "connection",
+          "code",
+          "state",
+          "affected",
+          "updated_at"
+        ],
+        "title": "_PreparationConnection",
+        "type": "object"
+      },
       "_PreparationFailure": {
         "additionalProperties": false,
         "properties": {
@@ -2982,6 +3029,13 @@
             "default": false,
             "title": "Active",
             "type": "boolean"
+          },
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/_PreparationConnection"
+            },
+            "title": "Connections",
+            "type": "array"
           },
           "libraries": {
             "items": {
@@ -7915,6 +7969,119 @@
           }
         ],
         "summary": "Resume Review Preparation"
+      }
+    },
+    "/api/v1/review-preparation/{connection}/check-connection": {
+      "post": {
+        "operationId": "check_review_preparation_connection_api_v1_review_preparation__connection__check_connection_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection",
+            "required": true,
+            "schema": {
+              "title": "Connection",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_PreparationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Check Review Preparation Connection"
       }
     },
     "/api/v1/review-preparation/{connection}/{library_name}/retry": {

@@ -10,7 +10,11 @@ from urllib.parse import quote
 
 import httpx
 
-from mechanical_librarian.application.catalogue import CatalogueEntry, CatalogueError
+from mechanical_librarian.application.catalogue import (
+    CatalogueEntry,
+    CatalogueError,
+    TargetConnectionError,
+)
 from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
     MediaMountConfiguration,
@@ -22,6 +26,17 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
     normalize_ebook_location,
 )
+
+
+def target_connection_code(error: BaseException) -> str:
+    """Classify only the closed, owner-actionable target transport outcome."""
+    if isinstance(error, httpx.TransportError):
+        current: BaseException | None = error
+        while current is not None:
+            if "SSL" in type(current).__name__.upper():
+                return "tls"
+            current = current.__cause__
+    return "unavailable"
 
 
 class AudiobookshelfCatalogueReader:
@@ -67,14 +82,46 @@ class AudiobookshelfCatalogueReader:
                 return tuple(_entry(connection, library, mount, summary, _get(client, f"/api/items/{quote(str(summary.get('id')), safe='')}", self._maximum_bytes, self._timeout_seconds, {"expanded": "1"})) for summary in summaries)
         except CatalogueError:
             raise
+        except httpx.TransportError as error:
+            # httpx keeps certificate verification enabled in the configured
+            # target client.  Classifying the outcome must not weaken it.
+            raise TargetConnectionError(target_connection_code(error)) from None
         except (httpx.HTTPError, OSError, UnicodeError, ValueError, TypeError) as error:
-            raise CatalogueError("catalogue service unavailable") from error
+            raise TargetConnectionError("unavailable") from None
+
+    def probe_connection(
+        self, connection: str, libraries: tuple[LibraryConfiguration, ...]
+    ) -> None:
+        """Perform the bounded configured ABS trust/read authority probe."""
+        try:
+            with self._client_factory(connection) as client:
+                payload = _get(
+                    client, "/api/libraries", self._maximum_bytes,
+                    self._timeout_seconds,
+                )
+                available = {
+                    value.get("id")
+                    for value in payload.get("libraries", [])
+                    if type(value) is dict and value.get("mediaType") == "book"
+                }
+                if any(library.library_id not in available for library in libraries):
+                    # Deliberately retain only the closed owner-actionable
+                    # condition; configured IDs never cross this boundary.
+                    raise TargetConnectionError("unavailable")
+        except TargetConnectionError:
+            raise
+        except Exception as error:
+            raise TargetConnectionError(target_connection_code(error)) from None
 
 
 def _get(client: httpx.Client, path: str, maximum: int, timeout: int, params: dict[str, str] | None = None) -> dict[str, Any]:
     with client.stream("GET", path, params=params, headers={"Accept": "application/json", "Accept-Encoding": "identity"}, timeout=timeout) as response:
+        if response.status_code == 401:
+            raise TargetConnectionError("authentication")
+        if response.status_code == 403:
+            raise TargetConnectionError("authorization")
         if response.status_code != 200 or response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
-            raise CatalogueError("catalogue service unavailable")
+            raise TargetConnectionError("unavailable")
         chunks: list[bytes] = []
         size = 0
         for chunk in response.iter_bytes():

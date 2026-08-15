@@ -7,6 +7,11 @@
 
 ## Unreleased
 
+- Pause only review-preparation work that shares an unavailable Audiobookshelf
+  connection. The owner can run one authenticated, CSRF-protected bounded
+  connection check; recovery resumes the retained checkpoint without rerunning
+  completed packages or provider/proposal work. (#638)
+
 - Run one configured, qualified cover-reviewer comparison during ordinary
   review preparation before the review package is published. Advice remains
   immutable, exact-current, and owner-only; unavailable or failed reviewers

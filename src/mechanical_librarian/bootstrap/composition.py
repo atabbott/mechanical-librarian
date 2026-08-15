@@ -10,6 +10,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 import uvicorn
+import httpx
 
 from mechanical_librarian.bootstrap.contained_reviewer import run_cover_packet_reviewer
 
@@ -78,7 +79,7 @@ from mechanical_librarian.adapters.providers.remote_cover import (
 )
 from mechanical_librarian.application.batch import BatchError, BatchSelection, batch_fingerprint, catalogue_fingerprint as batch_catalogue_fingerprint, manifest as batch_manifest, parse_manifest, select
 from mechanical_librarian.application.batch_run import ForegroundBatchRun
-from mechanical_librarian.application.catalogue import CatalogueError, RefreshCurrentCatalogue
+from mechanical_librarian.application.catalogue import CatalogueError, RefreshCurrentCatalogue, TargetConnectionError
 from mechanical_librarian.application.configuration import (
     ConfigurationError,
     MediaMountConfiguration,
@@ -1042,7 +1043,13 @@ def _current_resolved_policy(configuration, repository, library: str):
     return configured_resolution
 
 
+class _TargetConnectionHeld(CurrentnessError):
+    """Private runner signal: retain provider recovery unchanged for a target hold."""
+
+
 def _classify_provider_recovery_failure(error: Exception) -> tuple[str, int | None]:
+    if isinstance(error, _TargetConnectionHeld):
+        return "target_held", None
     if isinstance(error, CredentialError) or (
         isinstance(error, ProviderRetrySuccessorError)
         and isinstance(error.__cause__, CredentialError)
@@ -1213,20 +1220,40 @@ def create_review_pipeline(
             maximum_bytes=configuration.limits.target_response_bytes,
             timeout_seconds=configuration.limits.timeout_seconds,
         )
-        serialized = GenerateProviderRetrySuccessor(
-            target=target, inspector=_IsolatedEpubInspector(artifacts),
-            repository_factory=repository_factory, provider_resolver=retry_resolver,
-            mount=mount, limits=configuration.limits,
-            after_publication=lambda bound, report: bound.stage_provider_retry_successor(
-                job.source_report_id, report, int(time.time())
-            ),
-            heartbeat=heartbeat,
-        ).run(
-            job.source_report_id, tuple(json.loads(job.lane_ids)),
-            provider_name=job.connection, adapter=job.adapter,
-            generation=job.generation,
-            generation_woken=recovery_state.attempt == 0,
-        )
+        try:
+            serialized = GenerateProviderRetrySuccessor(
+                target=target, inspector=_IsolatedEpubInspector(artifacts),
+                repository_factory=repository_factory, provider_resolver=retry_resolver,
+                mount=mount, limits=configuration.limits,
+                after_publication=lambda bound, report: bound.stage_provider_retry_successor(
+                    job.source_report_id, report, int(time.time())
+                ),
+                heartbeat=heartbeat,
+            ).run(
+                job.source_report_id, tuple(json.loads(job.lane_ids)),
+                provider_name=job.connection, adapter=job.adapter,
+                generation=job.generation,
+                generation_woken=recovery_state.attempt == 0,
+            )
+        except TargetConnectionError as error:
+            if pipeline is not None:
+                pipeline.hold_connection(job.target_connection, error.code)
+            # This is a target hold, not provider evidence: retain the
+            # completed provider observation and stop successor backoff.
+            raise _TargetConnectionHeld("target connection is held") from None
+        except CurrentnessError as error:
+            # Currentness deliberately hides target details at the report
+            # boundary, but retains the closed target condition as its cause.
+            # Recover that safe taxonomy here so this successor cannot be
+            # mistaken for a provider transient/backoff condition.
+            cause = error.__cause__
+            while cause is not None and not isinstance(cause, TargetConnectionError):
+                cause = cause.__cause__
+            if isinstance(cause, TargetConnectionError):
+                if pipeline is not None:
+                    pipeline.hold_connection(job.target_connection, cause.code)
+                raise _TargetConnectionHeld("target connection is held") from None
+            raise
         successor = MetadataReport.from_json(serialized)
         if pipeline is None or not pipeline.run_recovery_successor(
             successor.report_id, heartbeat
@@ -1247,6 +1274,10 @@ def create_review_pipeline(
         store=provider_recovery, generation=configuration.provider_recovery_generation,
         retry=retry_member, classify_failure=_classify_provider_recovery_failure,
         clock=lambda: int(time.time()), cancelled=recovery_cancel.is_set,
+        blocked_targets=lambda: frozenset(
+            condition.connection for condition in pipeline_holder["pipeline"].connection_conditions()
+            if condition.state in {"paused", "checking"}
+        ),
     )
 
     def drain_provider_recovery_outbox(repository=None) -> None:
@@ -1304,6 +1335,8 @@ def create_review_pipeline(
                     batch_catalogue_fingerprint(configuration)
                 )
                 return snapshot.generation, snapshot.fingerprint, snapshot.entries
+            except TargetConnectionError:
+                raise
             except CatalogueError as error:
                 raise ReviewPipelineError("transient") from error
             finally:
@@ -1471,6 +1504,14 @@ def create_review_pipeline(
             return
         drain_provider_recovery_outbox(pipeline_repository)
 
+    def check_connection(connection: str) -> None:
+        if connection not in clients:
+            raise ReviewPipelineError("library")
+        reader.probe_connection(
+            connection,
+            tuple(value for value in configuration.libraries if value.connection == connection),
+        )
+
     pipeline = ReviewPreparationPipeline(
         repository_factory=repository_factory,
         libraries=tuple(
@@ -1503,6 +1544,7 @@ def create_review_pipeline(
         project=project,
         before_projection=prepare_cover,
         after_advance=after_advance,
+        check_connection=check_connection,
         timing=timing,
     )
     pipeline_holder["pipeline"] = pipeline

@@ -24,6 +24,21 @@ class CatalogueStaleError(CatalogueError):
     pass
 
 
+class TargetConnectionError(CatalogueError):
+    """A safe, connection-wide target observation failure.
+
+    This deliberately carries only the closed condition code.  In particular it
+    is not a transport wrapper: endpoints, credentials and provider payloads
+    must never cross the adapter/application boundary in an error value.
+    """
+
+    def __init__(self, code: str) -> None:
+        if code not in {"tls", "authentication", "authorization", "unavailable"}:
+            raise CatalogueError("target connection condition is invalid")
+        self.code = code
+        super().__init__("target connection is unavailable")
+
+
 @dataclass(frozen=True, slots=True)
 class CatalogueEntry:
     connection: str

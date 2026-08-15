@@ -7,7 +7,7 @@ import unittest
 import httpx
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import AudiobookshelfCatalogueReader, _entry as catalogue_entry, _get
-from mechanical_librarian.application.catalogue import CatalogueError
+from mechanical_librarian.application.catalogue import CatalogueError, TargetConnectionError
 from mechanical_librarian.application.configuration import LibraryConfiguration, MediaMountConfiguration
 from mechanical_librarian.domain.metadata_report import canonical_json
 
@@ -21,6 +21,23 @@ def _item(identifier: str = "item-1") -> dict[str, object]:
 
 
 class AudiobookshelfCatalogueTests(unittest.TestCase):
+    def test_probe_requires_every_configured_book_library(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            self.assertEqual(request.url.path, "/api/libraries")
+            return httpx.Response(200, json={"libraries": [
+                {"id": "library-1", "mediaType": "book"},
+                {"id": "audio", "mediaType": "podcast"},
+            ]})
+
+        reader = AudiobookshelfCatalogueReader(
+            client_factory=lambda _: httpx.Client(
+                transport=httpx.MockTransport(handler), base_url="https://abs.invalid"
+            ), mounts={}, maximum_bytes=65_536, timeout_seconds=1,
+        )
+        with self.assertRaises(TargetConnectionError) as raised:
+            reader.probe_connection("primary", (_library(), _library("history", "missing")))
+        self.assertEqual(raised.exception.code, "unavailable")
+
     def test_aggregate_capacity_is_checked_before_any_detail_request(self) -> None:
         requests: list[str] = []
         def handler(request: httpx.Request) -> httpx.Response:

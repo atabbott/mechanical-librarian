@@ -40,6 +40,16 @@ tampered schema fails closed and requires an operator-created clean database.
 Configuration changes produce `catalogue requires refresh`; they never silently
 adapt a current generation.
 
+When normal review preparation observes a target TLS, authentication,
+authorization, or availability failure, it records a value-free condition for
+that configured connection and pauses only its queued work. Existing completed
+review packages remain visible. An authenticated owner uses **Check connection
+again** after correcting the condition. The probe uses the configured TLS client,
+requires a bounded JSON Audiobookshelf response, and exposes neither endpoint,
+credential, path, nor raw transport diagnostic. A restart turns an interrupted
+check back into the paused owner-actionable state; it never treats an abandoned
+check as recovery.
+
 The current generation can be frozen into an explicit or all-eligible
 foreground evidence batch. See
 [Foreground ebook evidence batches](ebook-evidence-batches.md).

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Protocol
 
+from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import CurrentnessError
 from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.review_case import (
@@ -47,6 +48,8 @@ class AdmitReviewCase:
                 raise ReviewCaseError("incompatible")
             try:
                 current = self._require_current(proposal)
+            except TargetConnectionError:
+                raise
             except CurrentnessError:
                 return ReviewAdmissionResult("stale", None).to_json()
             except ReviewCaseError:
@@ -56,6 +59,8 @@ class AdmitReviewCase:
             if current is not True:
                 return ReviewAdmissionResult("stale", None).to_json()
             return self._repository.admit_review_case(proposal)
+        except TargetConnectionError:
+            raise
         except (CurrentnessError, ReviewAdmissionStaleError):
             return ReviewAdmissionResult("stale", None).to_json()
         except ReviewAdmissionIncompatibleError as error:

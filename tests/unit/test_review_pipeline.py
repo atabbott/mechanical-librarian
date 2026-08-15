@@ -5,14 +5,23 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
+
 import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.provider_recovery import ProviderRecoveryStoreError
-from mechanical_librarian.application.catalogue import CatalogueEntry
+from mechanical_librarian.application.catalogue import CatalogueEntry, TargetConnectionError
+from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
+    LibraryConfiguration,
+    MediaMountConfiguration,
+    TargetConnectionConfiguration,
+)
 from mechanical_librarian.application.metadata_report import (
     CredentialError,
     MetadataReportError,
@@ -33,6 +42,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.application.proposal_sets import ProposalCurrentnessError
 from tests.unit.test_review_case_persistence import _report
 
 _PRODUCER = "f" * 64
@@ -75,6 +85,381 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         ).fetchone()
         repository.close()
         self.assertEqual(count, (0,))
+
+    def test_scan_qualification_survives_restart_and_resets_for_new_cycle(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 1
+        )
+        action = repository.claim_review_pipeline_action(2)
+        assert action is not None
+        self.assertTrue(repository.discovery_requires_qualification(action))
+        self.assertTrue(repository.qualify_review_discovery(action, 3))
+        repository.close()
+
+        repository = open_repository(self.path)
+        repository.recover_review_pipeline(
+            (("primary", "fiction", "lib-1", _PRODUCER),)
+        )
+        action = repository.claim_review_pipeline_action(4)
+        assert action is not None
+        self.assertFalse(repository.discovery_requires_qualification(action))
+        repository.defer_for_target_connection(action, "unavailable", 5)
+        condition = repository.begin_target_connection_check("primary", 6)
+        assert condition is not None
+        self.assertTrue(
+            repository.finish_target_connection_check(
+                "primary", condition.epoch, None, 7
+            )
+        )
+        action = repository.claim_review_pipeline_action(8)
+        assert action is not None
+        self.assertFalse(repository.discovery_requires_qualification(action))
+        repository.complete_review_discovery(action, 1, "a" * 64, (), 9)
+        self.assertIsNone(repository.claim_review_pipeline_action(10))
+        repository.request_review_scan(
+            "primary", "fiction", "lib-1", _PRODUCER, 11
+        )
+        action = repository.claim_review_pipeline_action(12)
+        assert action is not None
+        self.assertTrue(repository.discovery_requires_qualification(action))
+        repository.close()
+
+    def test_pipeline_preflight_is_once_per_cycle_and_recovery_retains_qualification(self) -> None:
+        checks: list[str] = []
+        discoveries = 0
+
+        def discover(_connection: str, _library: str):
+            nonlocal discoveries
+            discoveries += 1
+            if discoveries == 1:
+                raise KeyboardInterrupt()
+            return 1, "a" * 64, ()
+
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(self.path),
+            libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+            discover=discover,
+            extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            providers=lambda *_: (),
+            propose=lambda *_: "",
+            admit=lambda *_: ("", None),
+            project=lambda *_: True,
+            check_connection=checks.append,
+            clock=lambda: 10,
+        )
+        pipeline.request("primary", "fiction")
+        with self.assertRaises(KeyboardInterrupt):
+            pipeline.run_next()
+        self.assertEqual(checks, ["primary"])
+
+        pipeline.recover()
+        self.assertTrue(pipeline.run_next())
+        self.assertEqual(checks, ["primary"])
+        self.assertFalse(pipeline.run_next())
+        pipeline.request("primary", "fiction")
+        self.assertTrue(pipeline.run_next())
+        self.assertEqual(checks, ["primary", "primary"])
+
+    def test_composed_currentness_preserves_target_connection_errors(self) -> None:
+        configuration = ApplicationConfiguration(
+            (TargetConnectionConfiguration("primary", "https://example.invalid", "/token"),),
+            (LibraryConfiguration("ebooks", "primary", "library-id", "book", "media", ()),),
+            (MediaMountConfiguration("media", "/media", "/library", True),),
+            (),
+        )
+        report = _report()
+        proposal = evaluate_report(report)
+        repository = open_repository(self.path)
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        repository.close()
+
+        def current(target, *_args):
+            target.read("item-1")
+            return True
+
+        for status, code in ((401, "authentication"), (403, "authorization")):
+            with self.subTest(status=status):
+                with ExitStack() as stack:
+                    stack.enter_context(
+                        patch.object(composition, "CoverArtifactStore", return_value=object())
+                    )
+                    stack.enter_context(
+                        patch.object(
+                            composition,
+                            "target_client",
+                            side_effect=lambda *_args: httpx.Client(
+                                transport=httpx.MockTransport(
+                                    lambda _request: httpx.Response(status)
+                                )
+                            ),
+                        )
+                    )
+                    stack.enter_context(
+                        patch.object(
+                            composition, "require_report_current", side_effect=current
+                        )
+                    )
+                    with self.assertRaises(TargetConnectionError) as raised:
+                        composition.create_proposal_set_loaded(
+                            configuration, self.path, Path("ignored"), report.report_id
+                        )
+                    self.assertEqual(raised.exception.code, code)
+                    with self.assertRaises(TargetConnectionError) as raised:
+                        composition.admit_review_case_loaded(
+                            configuration, self.path, Path("ignored"), proposal.proposal_set_id
+                        )
+                    self.assertEqual(raised.exception.code, code)
+
+        with (
+            patch.object(composition, "CoverArtifactStore", return_value=object()),
+            patch.object(
+                composition,
+                "target_client",
+                side_effect=lambda *_args: httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _request: (_ for _ in ()).throw(httpx.ConnectError("offline"))
+                    )
+                ),
+            ),
+            patch.object(composition, "require_report_current", side_effect=current),
+        ):
+            with self.assertRaises(TargetConnectionError) as raised:
+                composition.create_proposal_set_loaded(
+                    configuration, self.path, Path("ignored"), report.report_id
+                )
+            self.assertEqual(raised.exception.code, "unavailable")
+            with self.assertRaises(TargetConnectionError) as raised:
+                composition.admit_review_case_loaded(
+                    configuration, self.path, Path("ignored"), proposal.proposal_set_id
+                )
+            self.assertEqual(raised.exception.code, "unavailable")
+
+        with (
+            patch.object(composition, "CoverArtifactStore", return_value=object()),
+            patch.object(
+                composition,
+                "target_client",
+                side_effect=lambda *_args: httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _request: httpx.Response(404)
+                    )
+                ),
+            ),
+            patch.object(composition, "require_report_current", side_effect=current),
+        ):
+            with self.assertRaises(ProposalCurrentnessError):
+                composition.create_proposal_set_loaded(
+                    configuration, self.path, Path("ignored"), report.report_id
+                )
+            result = json.loads(
+                composition.admit_review_case_loaded(
+                    configuration, self.path, Path("ignored"), proposal.proposal_set_id
+                )
+            )
+        self.assertEqual(result["status"], "stale")
+
+    def test_late_target_connection_errors_rollback_and_defer_retained_stage(self) -> None:
+        class Repository:
+            def __init__(self) -> None:
+                self.begun = 0
+                self.rolled_back = 0
+                self.deferred: list[tuple[PipelineAction, str]] = []
+
+            def guard_target_connection(self, _action, _checked_at):
+                return True
+
+            def begin_review_pipeline_output(self) -> None:
+                self.begun += 1
+
+            def rollback_review_pipeline_output(self) -> None:
+                self.rolled_back += 1
+
+            def defer_for_target_connection(self, action, code, _updated_at) -> None:
+                self.deferred.append((action, code))
+
+            def fail_review_pipeline_action(self, *_args) -> None:
+                raise AssertionError("target connection must not create item failure")
+
+        callbacks = {"proposal": 0, "admission": 0, "projection": 0}
+
+        def failing(stage: str):
+            def callback(*_args):
+                callbacks[stage] += 1
+                raise TargetConnectionError("tls")
+            return callback
+
+        for stage, identifiers in (
+            ("proposal", {"report_id": "report-1"}),
+            ("admission", {"report_id": "report-1", "proposal_set_id": "proposal-1"}),
+            ("projection", {"report_id": "report-1", "proposal_set_id": "proposal-1", "review_case_id": "case-1"}),
+        ):
+            with self.subTest(stage=stage):
+                repository = Repository()
+                action = PipelineAction(
+                    "action-1", "scan-1", stage, 1, "primary", "ebooks", "library-id",
+                    _PRODUCER, 1, "a" * 64, "item-1", "b" * 64, 0,
+                    source_fingerprint="c" * 64, **identifiers,
+                )
+                pipeline = ReviewPreparationPipeline(
+                    repository_factory=lambda: repository,
+                    libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+                    discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+                    extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+                    providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+                    propose=failing("proposal"),
+                    admit=failing("admission"),
+                    project=failing("projection"),
+                    clock=lambda: 1,
+                )
+                self.assertIsNone(pipeline._run_claimed_action(repository, action, claim_next=False))
+                self.assertEqual(repository.begun, 1)
+                self.assertEqual(repository.rolled_back, 1)
+                self.assertEqual(repository.deferred, [(action, "tls")])
+        self.assertEqual(callbacks, {"proposal": 1, "admission": 1, "projection": 1})
+
+    def test_connection_hold_guards_claims_and_stale_checkers_fail_closed(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+        repository.request_review_scan("primary", "history", "lib-2", _PRODUCER, 2)
+        repository.request_review_scan("secondary", "books", "lib-3", _PRODUCER, 3)
+        first = repository.claim_review_pipeline_action(4)
+        second = repository.claim_review_pipeline_action(5)
+        assert first is not None and second is not None
+        self.assertEqual((first.connection, second.connection), ("primary", "primary"))
+        repository.defer_for_target_connection(first, "unavailable", 6)
+        self.assertFalse(repository.guard_target_connection(second, 7))
+        states = repository._connection.execute(
+            "SELECT state FROM review_preparation_scans WHERE connection_name='primary'"
+        ).fetchall()
+        self.assertEqual(states, [("queued",), ("queued",)])
+        unrelated = repository.claim_review_pipeline_action(8)
+        assert unrelated is not None
+        self.assertEqual(unrelated.connection, "secondary")
+        check = repository.begin_target_connection_check("primary", 9)
+        assert check is not None
+        self.assertFalse(
+            repository.finish_target_connection_check(
+                "primary", check.epoch - 1, None, 10
+            )
+        )
+        repository.close()
+
+        reopened = open_repository(self.path)
+        reopened.recover_review_pipeline(
+            (("primary", "fiction", "lib-1", _PRODUCER),)
+        )
+        condition = reopened.target_connection_conditions()[0]
+        reopened.close()
+        self.assertEqual((condition.connection, condition.state), ("primary", "paused"))
+
+    def test_restart_retires_removed_active_scope_before_any_orphan_claim(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+        repository.request_review_scan("removed", "old-library", "lib-2", _PRODUCER, 2)
+        repository.recover_review_pipeline((("primary", "fiction", "lib-1", _PRODUCER),))
+        first = repository.claim_review_pipeline_action(3)
+        self.assertIsNotNone(first)
+        self.assertEqual(first.connection, "primary")
+        self.assertIsNone(repository.claim_review_pipeline_action(4))
+        retired = repository._connection.execute(
+            "SELECT state FROM review_preparation_scans WHERE connection_name='removed'"
+        ).fetchone()
+        repository.close()
+        self.assertEqual(retired, ("completed_with_failures",))
+
+    def test_unexpected_owner_probe_durably_returns_to_paused(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+        action = repository.claim_review_pipeline_action(2)
+        assert action is not None
+        repository.defer_for_target_connection(action, "tls", 3)
+        repository.close()
+
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(self.path),
+            libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+            discover=lambda *_: (_ for _ in ()).throw(AssertionError),
+            extract=lambda *_: (_ for _ in ()).throw(AssertionError),
+            providers=lambda *_: (),
+            propose=lambda *_: "",
+            admit=lambda *_: ("", None),
+            project=lambda *_: True,
+            check_connection=lambda _: (_ for _ in ()).throw(RuntimeError()),
+            clock=lambda: 4,
+        )
+        self.assertTrue(pipeline.check_connection("primary"))
+        condition = pipeline.connection_conditions()[0]
+        self.assertEqual((condition.code, condition.state), ("unavailable", "paused"))
+
+    def test_owner_probe_releases_its_repository_before_network_and_refreshes_affected(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+        action = repository.claim_review_pipeline_action(2)
+        assert action is not None
+        repository.defer_for_target_connection(action, "unavailable", 3)
+        repository.request_review_scan("primary", "history", "lib-2", _PRODUCER, 4)
+        self.assertEqual(repository.target_connection_conditions()[0].affected, 2)
+        repository.close()
+
+        opened: list[object] = []
+        def factory():
+            value = open_repository(self.path)
+            opened.append(value)
+            return value
+
+        def probe(_connection: str) -> None:
+            # Begin committed before the external observation: an unrelated
+            # repository read can proceed while this probe is deliberately slow.
+            observer = open_repository(self.path)
+            try:
+                self.assertEqual(observer.target_connection_conditions()[0].state, "checking")
+            finally:
+                observer.close()
+
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=factory,
+            libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+            discover=lambda *_: (_ for _ in ()).throw(AssertionError),
+            extract=lambda *_: (_ for _ in ()).throw(AssertionError),
+            providers=lambda *_: (), propose=lambda *_: "", admit=lambda *_: ("", None),
+            project=lambda *_: True, check_connection=probe, clock=lambda: 5,
+        )
+        self.assertTrue(pipeline.check_connection("primary"))
+        self.assertEqual(pipeline.connection_conditions()[0].state, "recovered")
+
+    def test_checking_condition_allows_admission_replay_and_rejects_stale_finish_epoch(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+        action = repository.claim_review_pipeline_action(2)
+        assert action is not None
+        repository.defer_for_target_connection(action, "unavailable", 3)
+        first = repository.begin_target_connection_check("primary", 4)
+        assert first is not None
+        self.assertEqual("checking", first.state)
+        repository.close()
+
+        concurrent = open_repository(self.path)
+        concurrent.request_review_scan("primary", "history", "lib-2", _PRODUCER, 5)
+        concurrent.request_review_scan("primary", "history", "lib-2", _PRODUCER, 5)
+        self.assertEqual("checking", concurrent.target_connection_conditions()[0].state)
+        self.assertTrue(concurrent.finish_target_connection_check("primary", first.epoch, "unavailable", 6))
+        paused = concurrent.target_connection_conditions()[0]
+        self.assertEqual(("paused", 2), (paused.state, paused.affected))
+        second = concurrent.begin_target_connection_check("primary", 7)
+        assert second is not None
+        self.assertFalse(concurrent.finish_target_connection_check("primary", first.epoch, None, 8))
+        self.assertEqual(("checking", second.epoch), (
+            concurrent.target_connection_conditions()[0].state,
+            concurrent.target_connection_conditions()[0].epoch,
+        ))
+        self.assertTrue(concurrent.finish_target_connection_check("primary", second.epoch, "unavailable", 9))
+        self.assertEqual(("paused", 2), (
+            concurrent.target_connection_conditions()[0].state,
+            concurrent.target_connection_conditions()[0].affected,
+        ))
+        concurrent.close()
 
     def test_status_reads_all_latest_library_progress_and_pause_in_one_snapshot(self) -> None:
         repository = open_repository(self.path)

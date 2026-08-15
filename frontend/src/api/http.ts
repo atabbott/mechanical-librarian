@@ -222,11 +222,11 @@ export class ReviewApiClient implements ReviewHttp {
     if (value === null) throw new ApiError(502, 'invalid_cover_consideration_response')
     return value
   }
-  async getPreparation(signal?: AbortSignal) { return validateObject(await this.read('/api/v1/review-preparation', signal), 'preparation') as unknown as PreparationView }
+  async getPreparation(signal?: AbortSignal) { return mapPreparation(await this.read('/api/v1/review-preparation', signal)) }
   async preparationAction(path: string, signal?: AbortSignal) {
     const value = await this.mutate(`/api/v1/review-preparation/${path}`, undefined, signal)
     if (/(?:^|\/)(?:scan|retry)$/.test(path)) return preparationProgress(value)
-    return validateObject(value, 'preparation') as unknown as PreparationView
+    return mapPreparation(value)
   }
   async recordDecision(id: string, command: DecisionCommand, signal?: AbortSignal) {
     const { idempotencyKey, proposalId, targetFingerprint, selectedValue, destination, outcome, considerationId } = command
@@ -293,6 +293,17 @@ const preparationProgress = (value: unknown): PreparationProgress => {
   for (const field of ['checked', 'total', 'ready', 'blocked']) integerValue(value[field], `preparation_${field}`)
   if (typeof value.rescan_requested !== 'boolean') throw new ApiError(502, 'invalid_preparation_rescan_requested')
   return value as unknown as PreparationProgress
+}
+export const mapPreparation = (value: unknown): PreparationView => {
+  if (!record(value) || value.schema_version !== 'review-preparation-v1' || !Array.isArray(value.libraries) || !Array.isArray(value.connections) || typeof value.paused !== 'boolean' || typeof value.active !== 'boolean' || typeof value.actionable !== 'boolean') throw new ApiError(502, 'invalid_preparation_response')
+  value.libraries.forEach((item, index) => { if (!record(item)) throw new ApiError(502, `invalid_preparation_library_${String(index)}`); preparationProgress(item) })
+  value.connections.forEach((item, index) => {
+    if (!record(item)) throw new ApiError(502, `invalid_preparation_connection_${String(index)}`)
+    stringValue(item.connection, 'preparation_connection')
+    if (!['tls', 'authentication', 'authorization', 'unavailable'].includes(stringValue(item.code, 'preparation_connection_code')) || !['paused', 'checking', 'recovered'].includes(stringValue(item.state, 'preparation_connection_state'))) throw new ApiError(502, `invalid_preparation_connection_${String(index)}`)
+    integerValue(item.affected, 'preparation_connection_affected'); integerValue(item.updated_at, 'preparation_connection_updated_at')
+  })
+  return value as unknown as PreparationView
 }
 const activityPrepared = (value: unknown, field: string): ActivityPreparedView => {
   if (!record(value)) throw new ApiError(502, `invalid_${field}`)

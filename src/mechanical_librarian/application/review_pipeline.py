@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from mechanical_librarian.application.catalogue import CatalogueEntry
+from mechanical_librarian.application.catalogue import CatalogueEntry, TargetConnectionError
 from mechanical_librarian.application.metadata_report import CredentialError
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.metadata_report import ProviderStatus
@@ -19,6 +19,7 @@ __all__ = [
     "ReviewPipelineRepository",
     "ReviewPreparationPipeline",
     "ReviewPreparationSupervisor",
+    "TargetConnectionCondition",
 ]
 
 
@@ -30,6 +31,14 @@ _STAGES = (
     "admission",
     "projection",
 )
+
+
+def _unconfigured_connection_check(_connection: str) -> None:
+    # Direct pipeline construction remains a pure test/application seam. The
+    # composed product always supplies the adapter-owned probe.
+    return None
+
+
 class ReviewPipelineError(RuntimeError):
     """A fixed, value-free review-preparation failure."""
 
@@ -51,6 +60,18 @@ class PipelineProgress:
     blocked: int
     rescan_requested: bool
     updated_at: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class TargetConnectionCondition:
+    """The value-free durable condition for one configured target connection."""
+
+    connection: str
+    code: str
+    state: str
+    epoch: int
+    affected: int
+    updated_at: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,6 +159,15 @@ class ReviewPipelineRepository(Protocol):
 
     def set_review_pipeline_paused(self, paused: bool, updated_at: int) -> None: ...
 
+    def target_connection_conditions(self) -> tuple[TargetConnectionCondition, ...]: ...
+    def guard_target_connection(self, action: PipelineAction, checked_at: int) -> bool: ...
+    def discovery_requires_qualification(self, action: PipelineAction) -> bool: ...
+    def qualify_review_discovery(self, action: PipelineAction, qualified_at: int) -> bool: ...
+    def defer_for_target_connection(self, action: PipelineAction, code: str, updated_at: int) -> None: ...
+    def hold_target_connection(self, connection: str, code: str, updated_at: int) -> None: ...
+    def begin_target_connection_check(self, connection: str, checked_at: int) -> TargetConnectionCondition | None: ...
+    def finish_target_connection_check(self, connection: str, epoch: int, code: str | None, checked_at: int) -> bool: ...
+
     def claim_review_pipeline_action(self, claimed_at: int) -> PipelineAction | None: ...
     def claim_review_pipeline_work(self, work_id: str, claimed_at: int) -> PipelineAction | None: ...
     def provider_retry_work_id(self, report_id: str) -> str: ...
@@ -212,6 +242,7 @@ class ReviewPreparationPipeline:
         after_advance: Callable[
             [ReviewPipelineRepository, PipelineAction, str | None], None
         ] = lambda *_args: None,
+        check_connection: Callable[[str], None] = _unconfigured_connection_check,
         clock: Callable[[], int] = lambda: int(time.time()),
         timing: StageTimer | None = None,
     ) -> None:
@@ -230,6 +261,7 @@ class ReviewPreparationPipeline:
         self._project = project
         self._before_projection = before_projection
         self._after_advance = after_advance
+        self._check_connection = check_connection
         self._clock = clock
         self._timing = timing or StageTimer(None)
         self._draining = threading.Event()
@@ -342,6 +374,56 @@ class ReviewPreparationPipeline:
         finally:
             repository.close()
 
+    def connection_conditions(self) -> tuple[TargetConnectionCondition, ...]:
+        repository = self._open_repository()
+        try:
+            return repository.target_connection_conditions()
+        finally:
+            repository.close()
+
+    def check_connection(self, connection: str) -> bool:
+        """One owner-triggered, epoch-bound connection check.
+
+        A duplicate click while checking is intentionally a no-op.  A stale
+        checker cannot clear a later failure because finish compares its epoch.
+        """
+        # The durable begin/finish transitions are deliberately separate from
+        # the external probe.  Holding a SQLite connection (or the web
+        # application's serialization gate) across network I/O would make an
+        # owner check globally disruptive.
+        repository = self._open_repository()
+        try:
+            condition = repository.begin_target_connection_check(connection, self._clock())
+        finally:
+            repository.close()
+        if condition is None:
+            return False
+        code: str | None = None
+        try:
+            self._check_connection(connection)
+        except TargetConnectionError as error:
+            code = error.code
+        except Exception:
+            # A probe that did not produce a closed successful observation
+            # must never strand this connection in checking.
+            code = "unavailable"
+        repository = self._open_repository()
+        try:
+            repository.finish_target_connection_check(
+                connection, condition.epoch, code, self._clock()
+            )
+        finally:
+            repository.close()
+        return True
+
+    def hold_connection(self, connection: str, code: str) -> None:
+        """Record a retry-successor target observation as a connection hold."""
+        repository = self._open_repository()
+        try:
+            repository.hold_target_connection(connection, code, self._clock())
+        finally:
+            repository.close()
+
     def begin_drain(self) -> None:
         """Finish the current claim without admitting another one."""
         with self._claim_lock:
@@ -441,8 +523,24 @@ class ReviewPreparationPipeline:
     ) -> PipelineAction | None:
         output_transaction = False
         try:
+            # A connection can become paused after this worker obtained its
+            # durable claim. Re-check before every target-dependent stage so
+            # the claim returns to its retained checkpoint without an item
+            # failure.
+            guard = getattr(repository, "guard_target_connection", None)
+            if guard is not None and not guard(action, self._clock()):
+                return None
             output_id: str | None = None
             if action.stage == "discovery":
+                requires_qualification = getattr(
+                    repository, "discovery_requires_qualification", None
+                )
+                if requires_qualification is not None and requires_qualification(action):
+                    self._check_connection(action.connection)
+                    if not repository.qualify_review_discovery(
+                        action, self._clock()
+                    ):
+                        return None
                 generation, fingerprint, entries = self._discover(
                     action.connection, action.library
                 )
@@ -506,6 +604,13 @@ class ReviewPreparationPipeline:
                 error.code in {"stale", "transient"},
                 error.root,
             )
+        except TargetConnectionError as error:
+            # The action remains at its first uncommitted target-dependent
+            # checkpoint.  This is deliberately distinct from provider and
+            # item-currentness failures.
+            if output_transaction:
+                repository.rollback_review_pipeline_output()
+            repository.defer_for_target_connection(action, error.code, self._clock())
         except CredentialError as error:
             if output_transaction:
                 repository.rollback_review_pipeline_output()
@@ -714,6 +819,19 @@ class ReviewPreparationSupervisor:
         if progress is None or progress.state != "completed_with_failures":
             raise ReviewPipelineError("retry")
         return self.request(connection, library)
+
+    def connection_conditions(self) -> tuple[TargetConnectionCondition, ...]:
+        return self._pipeline.connection_conditions()
+
+    def check_connection(self, connection: str) -> bool:
+        changed = self._pipeline.check_connection(connection)
+        if changed:
+            self._wake.set()
+        return changed
+
+    def hold_connection(self, connection: str, code: str) -> None:
+        self._pipeline.hold_connection(connection, code)
+        self._wake.set()
 
     def recover_provider_once(self) -> None:
         """Use the same durable claim path for an explicit owner invocation."""

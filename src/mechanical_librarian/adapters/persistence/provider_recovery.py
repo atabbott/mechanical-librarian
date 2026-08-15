@@ -23,10 +23,32 @@ _RECOVERY_NAMES = frozenset(("provider_recovery_health", "provider_recovery_memb
 _CREATE = (_MEMBERS, _HEALTH, _JOBS, _EVENTS, _NO_UPDATE, _NO_DELETE)
 
 
+def _blocked_targets(targets: frozenset[str]) -> tuple[str, tuple[str, ...]]:
+    if not isinstance(targets, frozenset) or any(
+        type(target) is not str or not 1 <= len(target) <= 64 for target in targets
+    ):
+        raise ProviderRecoveryStoreError("provider recovery claim is invalid")
+    if not targets:
+        return "", ()
+    return " AND target_connection NOT IN (" + ",".join("?" for _ in targets) + ")", tuple(sorted(targets))
+
+
+def _append_checking(connection: sqlite3.Connection, recovery: ProviderRecovery, now: int) -> None:
+    connection.execute(
+        "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,NULL,?)",
+        (recovery.connection, recovery.adapter, recovery.scope, recovery.generation,
+         "checking", recovery.attempt, now),
+    )
+
+
 class SQLiteProviderRecoveryStore:
     def __init__(self, connection: sqlite3.Connection) -> None:
         self._connection = connection
         self._lock = threading.RLock()
+        # Claim rollback is deliberately process-local.  It only protects the
+        # owned, in-flight dispatch; durable history remains the source of
+        # truth after a restart.
+        self._claim_snapshots: dict[tuple[str, str, str, int, str], tuple[tuple[object, ...], tuple[object, ...] | None, int | None]] = {}
 
     @classmethod
     def open(cls, path: Path) -> "SQLiteProviderRecoveryStore":
@@ -174,9 +196,14 @@ class SQLiteProviderRecoveryStore:
                 if eligible is not None:
                     raise ProviderRecoveryStoreError("provider recovery members remain")
                 successor = ProviderRecovery(recovery.connection, recovery.adapter, recovery.scope, recovery.generation, "recovered", 0, None)
+                _append_checking(self._connection, recovery, now)
                 self._connection.execute("UPDATE provider_recovery_health SET state='recovered',attempt=0,next_eligible_at=NULL,claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? AND scope=?", (recovery.connection, recovery.adapter, recovery.scope))
                 self._connection.execute("INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)", (successor.connection, successor.adapter, successor.scope, successor.generation, successor.state, successor.attempt, successor.next_eligible_at, now))
                 self._connection.execute("COMMIT")
+                self._claim_snapshots.pop(
+                    (recovery.connection, recovery.adapter, recovery.scope,
+                     recovery.generation, token), None,
+                )
                 return successor
         except ProviderRecoveryStoreError:
             if self._connection.in_transaction: self._connection.execute("ROLLBACK")
@@ -187,7 +214,8 @@ class SQLiteProviderRecoveryStore:
 
     def complete_missing_jobs(
         self, *, token: str, recovery: ProviderRecovery, now: int,
-    ) -> ProviderRecovery:
+        blocked_targets: frozenset[str] = frozenset(),
+    ) -> ProviderRecovery | None:
         """Fail closed when due health has no exact persisted member."""
         if (type(token) is not str or not 1 <= len(token) <= 128
                 or type(now) is not int or not 0 <= now <= MAX_TIMESTAMP):
@@ -207,10 +235,48 @@ class SQLiteProviderRecoveryStore:
                     or current[4] <= now
                 ):
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
+                excluded, parameters = _blocked_targets(blocked_targets)
+                active = self._connection.execute(
+                    "SELECT target_connection,state,attempt FROM provider_recovery_jobs WHERE connection=? AND adapter=? AND scope=? AND generation=? AND state IN ('queued','running')",
+                    (recovery.connection, recovery.adapter, recovery.scope, recovery.generation),
+                ).fetchall()
+                unblocked = tuple(
+                    (state, attempt) for target, state, attempt in active
+                    if target not in blocked_targets
+                )
+                blocked = tuple(
+                    (state, attempt) for target, state, attempt in active
+                    if target in blocked_targets
+                )
+                if unblocked:
+                    if any(state != "queued" or attempt < 5 for state, attempt in unblocked):
+                        self._connection.execute("COMMIT")
+                        return None
+                    changed = self._connection.execute(
+                        "UPDATE provider_recovery_jobs SET state='failed',claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? AND scope=? AND generation=? AND state='queued' AND attempt>=5" + excluded,
+                        (recovery.connection, recovery.adapter, recovery.scope, recovery.generation, *parameters),
+                    ).rowcount
+                    if changed != len(unblocked):
+                        raise ProviderRecoveryStoreError("provider recovery members changed")
+                if blocked:
+                    snapshot = self._claim_snapshots.get(
+                        (recovery.connection, recovery.adapter, recovery.scope,
+                         recovery.generation, token)
+                    )
+                    if snapshot is None:
+                        raise ProviderRecoveryStoreError("provider recovery claim snapshot is unavailable")
+                    self._connection.execute(
+                        "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,claim_token=?,claim_expires_at=? WHERE connection=? AND adapter=? AND scope=?",
+                        (*snapshot[0], recovery.connection, recovery.adapter, recovery.scope),
+                    )
+                    self._connection.execute("COMMIT")
+                    del self._claim_snapshots[(recovery.connection, recovery.adapter, recovery.scope, recovery.generation, token)]
+                    return None
                 successor = ProviderRecovery(
                     recovery.connection, recovery.adapter, recovery.scope,
                     recovery.generation, "exhausted", recovery.attempt, None,
                 )
+                _append_checking(self._connection, recovery, now)
                 self._connection.execute(
                     "UPDATE provider_recovery_health SET state='exhausted',"
                     "next_eligible_at=NULL,claim_token=NULL,claim_expires_at=NULL "
@@ -224,6 +290,10 @@ class SQLiteProviderRecoveryStore:
                      successor.generation, successor.state, successor.attempt, now),
                 )
                 self._connection.execute("COMMIT")
+                self._claim_snapshots.pop(
+                    (recovery.connection, recovery.adapter, recovery.scope,
+                     recovery.generation, token), None,
+                )
                 return successor
         except ProviderRecoveryStoreError:
             if self._connection.in_transaction:
@@ -244,6 +314,7 @@ class SQLiteProviderRecoveryStore:
                 raise ProviderRecoveryStoreError("provider recovery claim is owned")
             base = ProviderRecovery(recovery.connection, recovery.adapter, recovery.scope, recovery.generation, "waiting", recovery.attempt, now)
             successor = ProviderRecovery.failed(connection=recovery.connection, adapter=recovery.adapter, scope=recovery.scope, generation=recovery.generation, failure=failure, now=now, retry_after=retry_after) if failure in {"authentication", "authorization", "configuration"} else base.retry(now=now, retry_after=retry_after)
+            _append_checking(self._connection, recovery, now)
             self._connection.execute("UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? AND scope=?", (successor.state, successor.attempt, successor.next_eligible_at, successor.connection, successor.adapter, successor.scope))
             self._connection.execute("INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)", (successor.connection, successor.adapter, successor.scope, successor.generation, successor.state, successor.attempt, successor.next_eligible_at, now))
             self._connection.execute("COMMIT")
@@ -343,20 +414,21 @@ class SQLiteProviderRecoveryStore:
             if self._connection.in_transaction: self._connection.execute("ROLLBACK")
             raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
-    def claim_one(self, *, generation: int, now: int, token: str, lease_seconds: int = 300) -> ProviderRecovery | None:
+    def claim_one(self, *, generation: int, now: int, token: str, blocked_targets: frozenset[str] = frozenset(), lease_seconds: int = 300) -> ProviderRecovery | None:
         if type(generation) is not int or generation < 1 or type(now) is not int or now < 0 or type(token) is not str or not 1 <= len(token) <= 128 or type(lease_seconds) is not int or not 1 <= lease_seconds <= 900:
             raise ProviderRecoveryStoreError("provider recovery claim is invalid")
         try:
             with self._lock:
-                return self._claim_one(generation, now, token, lease_seconds)
+                return self._claim_one(generation, now, token, blocked_targets, lease_seconds)
         except (sqlite3.Error, OverflowError, ProviderRecoveryError) as error:
             raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
-    def _claim_one(self, generation: int, now: int, token: str, lease_seconds: int) -> ProviderRecovery | None:
+    def _claim_one(self, generation: int, now: int, token: str, blocked_targets: frozenset[str], lease_seconds: int) -> ProviderRecovery | None:
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
-                row = self._connection.execute("SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at FROM provider_recovery_health WHERE generation=? AND ((state='waiting' AND next_eligible_at<=?) OR (state='checking' AND claim_expires_at<=?)) ORDER BY next_eligible_at,connection,adapter,scope LIMIT 1", (generation, now, now)).fetchone()
+                excluded, parameters = _blocked_targets(blocked_targets)
+                row = self._connection.execute("SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at FROM provider_recovery_health h WHERE generation=? AND ((state='waiting' AND next_eligible_at<=?) OR (state='checking' AND claim_expires_at<=?)) AND (NOT EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation AND j.state IN ('queued','running')) OR EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation AND j.state IN ('queued','running')" + excluded + ")) ORDER BY next_eligible_at,connection,adapter,scope LIMIT 1", (generation, now, now, *parameters)).fetchone()
                 if row is None:
                     self._connection.execute("COMMIT")
                     return None
@@ -364,8 +436,8 @@ class SQLiteProviderRecoveryStore:
                 if changed != 1:
                     self._connection.execute("COMMIT")
                     return None
-                self._connection.execute("INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)", (*row[:4], "checking", row[5], None, now))
                 self._connection.execute("COMMIT")
+                self._claim_snapshots[(*row[:4], token)] = (row[4:], None, None)
                 return ProviderRecovery(*row[:4], "checking", row[5], None)
             except Exception:
                 self._connection.execute("ROLLBACK")
@@ -385,7 +457,7 @@ class SQLiteProviderRecoveryStore:
         except (sqlite3.Error, ProviderRecoveryError) as error:
             raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
-    def resume_fanout(self, *, generation: int, now: int, token: str, lease_seconds: int = 300) -> ProviderRecovery | None:
+    def resume_fanout(self, *, generation: int, now: int, token: str, blocked_targets: frozenset[str] = frozenset(), lease_seconds: int = 300) -> ProviderRecovery | None:
         """Claim one authorized scope before dispatching any remaining sibling."""
         if (type(generation) is not int or generation < 1 or type(now) is not int
                 or now < 0 or type(token) is not str or not 1 <= len(token) <= 128
@@ -394,11 +466,13 @@ class SQLiteProviderRecoveryStore:
         try:
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
+                excluded, parameters = _blocked_targets(blocked_targets)
                 row = self._connection.execute(
-                    "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at "
-                    "FROM provider_recovery_health WHERE generation=? AND state='fanout' AND claim_expires_at<=? "
+                    "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at "
+                    "FROM provider_recovery_health h WHERE generation=? AND state='fanout' AND claim_expires_at<=? "
+                    "AND EXISTS (SELECT 1 FROM provider_recovery_jobs j WHERE j.connection=h.connection AND j.adapter=h.adapter AND j.scope=h.scope AND j.generation=h.generation AND j.state IN ('queued','running')" + excluded + ") "
                     "ORDER BY connection,adapter,scope LIMIT 1",
-                    (generation, now),
+                    (generation, now, *parameters),
                 ).fetchone()
                 if row is None:
                     self._connection.execute("COMMIT")
@@ -409,7 +483,10 @@ class SQLiteProviderRecoveryStore:
                     (token, now + lease_seconds, *row[:4], now),
                 ).rowcount
                 self._connection.execute("COMMIT")
-                return ProviderRecovery(*row) if changed == 1 else None
+                if changed != 1:
+                    return None
+                self._claim_snapshots[(*row[:4], token)] = (row[4:], None, None)
+                return ProviderRecovery(*row[:7])
         except (sqlite3.Error, ProviderRecoveryError) as error:
             if self._connection.in_transaction: self._connection.execute("ROLLBACK")
             raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
@@ -465,21 +542,27 @@ class SQLiteProviderRecoveryStore:
             if self._connection.in_transaction: self._connection.execute("ROLLBACK")
             raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
-    def claim_job(self, *, recovery: ProviderRecovery, token: str, now: int, lease_seconds: int = 300) -> ProviderRecoveryJob | None:
+    def claim_job(self, *, recovery: ProviderRecovery, token: str, now: int, blocked_targets: frozenset[str] = frozenset(), lease_seconds: int = 300) -> ProviderRecoveryJob | None:
         if type(token) is not str or not token or type(now) is not int or now < 0 or type(lease_seconds) is not int or not 1 <= lease_seconds <= 900:
             raise ProviderRecoveryStoreError("provider recovery claim is invalid")
         try:
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
-                health = self._connection.execute("SELECT state,claim_token,claim_expires_at FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=? AND generation=?", (recovery.connection, recovery.adapter, recovery.scope, recovery.generation)).fetchone()
-                if health is None or health[0] not in {'checking', 'fanout'} or health[1] != token or health[2] <= now:
+                health = self._connection.execute("SELECT state,attempt,next_eligible_at,claim_token,claim_expires_at FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=? AND generation=?", (recovery.connection, recovery.adapter, recovery.scope, recovery.generation)).fetchone()
+                if health is None or health[0] not in {'checking', 'fanout'} or health[3] != token or health[4] <= now:
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
-                row = self._connection.execute("SELECT connection,adapter,scope,generation,member_id,target_connection,library,item,file_identity,source_report_id,package_proposal_id,package_report_id,package_case_id,package_checkpoint,package_outcome,lane_ids,state,attempt FROM provider_recovery_jobs WHERE connection=? AND adapter=? AND scope=? AND generation=? AND attempt<5 AND (state='queued' OR (state='running' AND claim_expires_at<=?)) ORDER BY member_id LIMIT 1", (recovery.connection, recovery.adapter, recovery.scope, recovery.generation, now)).fetchone()
+                excluded, parameters = _blocked_targets(blocked_targets)
+                row = self._connection.execute("SELECT connection,adapter,scope,generation,member_id,target_connection,library,item,file_identity,source_report_id,package_proposal_id,package_report_id,package_case_id,package_checkpoint,package_outcome,lane_ids,state,attempt,claim_token,claim_expires_at FROM provider_recovery_jobs WHERE connection=? AND adapter=? AND scope=? AND generation=? AND attempt<5 AND (state='queued' OR (state='running' AND claim_expires_at<=?))" + excluded + " ORDER BY member_id LIMIT 1", (recovery.connection, recovery.adapter, recovery.scope, recovery.generation, now, *parameters)).fetchone()
                 if row is None:
                     self._connection.execute("COMMIT"); return None
                 if self._connection.execute("UPDATE provider_recovery_jobs SET state='running',attempt=attempt+1,claim_token=?,claim_expires_at=? WHERE connection=? AND adapter=? AND scope=? AND generation=? AND member_id=? AND (state='queued' OR (state='running' AND claim_expires_at<=?))", (token, now + lease_seconds, *row[:5], now)).rowcount != 1:
                     self._connection.execute("COMMIT"); return None
                 self._connection.execute("COMMIT")
+                key = (recovery.connection, recovery.adapter, recovery.scope, recovery.generation, token)
+                prior = self._claim_snapshots.get(key)
+                health_snapshot = health if prior is None else prior[0]
+                event_sequence = None if prior is None else prior[2]
+                self._claim_snapshots[key] = (health_snapshot, (row[16], row[17], row[18], row[19]), event_sequence)
                 return ProviderRecoveryJob(*row[:16], "running", row[17] + 1)
         except ProviderRecoveryStoreError:
             if self._connection.in_transaction: self._connection.execute("ROLLBACK")
@@ -587,6 +670,50 @@ class SQLiteProviderRecoveryStore:
             if self._connection.in_transaction: self._connection.execute("ROLLBACK")
             raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
+    def release_target_hold(self, *, job: ProviderRecoveryJob, token: str,
+                            recovery: ProviderRecovery, now: int) -> None:
+        """Release a target-held lease without consuming provider evidence."""
+        try:
+            with self._lock:
+                self._connection.execute("BEGIN IMMEDIATE")
+                current = self._connection.execute(
+                    "SELECT state,attempt,next_eligible_at,claim_token,claim_expires_at FROM provider_recovery_health "
+                    "WHERE connection=? AND adapter=? AND scope=? AND generation=?",
+                    (recovery.connection, recovery.adapter, recovery.scope, recovery.generation),
+                ).fetchone()
+                if (current is None or current[0] not in {"checking", "fanout"}
+                        or current[3] != token or current[4] <= now):
+                    raise ProviderRecoveryStoreError("provider recovery claim is owned")
+                snapshot = self._claim_snapshots.get(
+                    (recovery.connection, recovery.adapter, recovery.scope, recovery.generation, token)
+                )
+                if snapshot is None or snapshot[1] is None:
+                    raise ProviderRecoveryStoreError("provider recovery claim snapshot is unavailable")
+                health_snapshot, job_snapshot, event_sequence = snapshot
+                changed = self._connection.execute(
+                    "UPDATE provider_recovery_jobs SET state=?,attempt=?,claim_token=?,claim_expires_at=? WHERE connection=? AND adapter=? "
+                    "AND scope=? AND generation=? AND member_id=? AND state='running' "
+                    "AND claim_token=? AND claim_expires_at>?",
+                    (*job_snapshot, job.connection, job.adapter, job.scope, job.generation, job.member_id,
+                     token, now),
+                ).rowcount
+                if changed != 1:
+                    raise ProviderRecoveryStoreError("provider recovery claim is owned")
+                self._connection.execute(
+                    "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,claim_token=?,claim_expires_at=? WHERE connection=? AND adapter=? AND scope=?",
+                    (*health_snapshot, recovery.connection, recovery.adapter, recovery.scope),
+                )
+                self._connection.execute("COMMIT")
+                del self._claim_snapshots[(recovery.connection, recovery.adapter, recovery.scope, recovery.generation, token)]
+        except ProviderRecoveryStoreError:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
+        except (sqlite3.Error, OverflowError) as error:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
+
     def complete_exhausted_scope(
         self, *, job: ProviderRecoveryJob, token: str,
         recovery: ProviderRecovery, now: int,
@@ -615,6 +742,7 @@ class SQLiteProviderRecoveryStore:
                     recovery.connection, recovery.adapter, recovery.scope,
                     recovery.generation, "exhausted", recovery.attempt, None,
                 )
+                _append_checking(self._connection, recovery, now)
                 self._connection.execute(
                     "UPDATE provider_recovery_health SET state='exhausted',next_eligible_at=NULL,"
                     "claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? AND scope=?",
@@ -627,6 +755,10 @@ class SQLiteProviderRecoveryStore:
                      None, now),
                 )
                 self._connection.execute("COMMIT")
+                self._claim_snapshots.pop(
+                    (recovery.connection, recovery.adapter, recovery.scope,
+                     recovery.generation, token), None,
+                )
                 return successor
         except ProviderRecoveryStoreError:
             if self._connection.in_transaction: self._connection.execute("ROLLBACK")
@@ -680,6 +812,7 @@ class SQLiteProviderRecoveryStore:
                     if failure in {"authentication", "authorization", "configuration"}
                     else base.retry(now=now, retry_after=retry_after)
                 )
+                _append_checking(self._connection, recovery, now)
                 self._connection.execute(
                     "UPDATE provider_recovery_health SET state=?,attempt=?,next_eligible_at=?,"
                     "claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? AND scope=?",
@@ -728,6 +861,7 @@ class SQLiteProviderRecoveryStore:
                     recovery.connection, recovery.adapter, recovery.scope,
                     recovery.generation, "fanout", recovery.attempt, None,
                 )
+                _append_checking(self._connection, recovery, now)
                 self._connection.execute(
                     "UPDATE provider_recovery_health SET state='fanout',next_eligible_at=NULL "
                     "WHERE connection=? AND adapter=? AND scope=? AND generation=? AND state='checking' "
@@ -742,6 +876,10 @@ class SQLiteProviderRecoveryStore:
                      None, now),
                 )
                 self._connection.execute("COMMIT")
+                self._claim_snapshots.pop(
+                    (recovery.connection, recovery.adapter, recovery.scope,
+                     recovery.generation, token), None,
+                )
                 return successor
         except ProviderRecoveryStoreError:
             if self._connection.in_transaction: self._connection.execute("ROLLBACK")
