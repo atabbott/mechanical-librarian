@@ -7,6 +7,16 @@
 
 ## Unreleased
 
+- Gate the Python backend on ruff and strict mypy in the public gate, with the
+  configuration and the exact tool pins committed alongside the code they
+  check, so `py.typed` and the `Typing :: Typed` classifier now describe a
+  verified property. Every narrowing is explicit configuration with a stated
+  reason and every site suppression is inline, named, and justified. Fixing the
+  findings corrected one real defect: both shadow-review preview paths named
+  `ShadowReviewValueError` in their `except` tuples without importing it, so an
+  invalid persisted packet raised `NameError` from the handler instead of the
+  intended `MetadataReportError`. (#652)
+
 - Make a clean frontend checkout pass every documented source check without a
   manual ritual. `npm run typecheck`, `npm run lint`, `npm test`, and
   `npm run build` regenerate the gitignored DTOs first, so a fresh clone no

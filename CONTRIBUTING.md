@@ -64,6 +64,57 @@ Do not install project tools globally or add unrecorded dependencies. Update
 `pyproject.toml` and regenerate `uv.lock` together when the dependency graph
 changes.
 
+## Python linting and typing
+
+The backend is linted by ruff and type-checked by mypy in strict mode. Both are
+exact-pinned in the `dev` dependency group and configured entirely in
+`pyproject.toml`; there is no separate tool configuration file. From a clean
+checkout, these are the exact commands the `fast-source` gate job runs, and
+both must pass before a pull request is ready:
+
+```text
+uv run ruff check src tests scripts
+uv run mypy src tests scripts
+```
+
+`uv run ruff check --fix src tests scripts` applies the automatic fixes.
+
+ruff selects pyflakes (`F`), pycodestyle (`E`, `W`), bugbear (`B`), and import
+ordering (`I`). `E501` (line length) is deliberately not enforced: the backend
+has never been width-formatted, so enforcing it would mean a whole-tree
+reformat rather than a lint fix. Backend formatting is separate future work.
+
+mypy runs in strict mode over `src/`, which is what ships with `py.typed`.
+`tests/` and `scripts/` are checked too, but without strict's annotation
+requirements and without `arg-type`, `attr-defined`, or `index`: a suite proves
+behaviour with deliberately narrow fakes and indexes the JSON documents the
+code under test returns, so those three classes measure fixtures rather than
+defects. Every relaxation is an explicit `[[tool.mypy.overrides]]` block in
+`pyproject.toml` with its reason beside it; do not add a silent one.
+
+The analysed platform is pinned to `linux` so the commands above reproduce the
+ubuntu gate byte for byte from any development host.
+
+Suppress a finding only where the code is right and the tool is wrong, and
+always inline, named, and justified:
+
+```text
+value = mapping[key]  # noqa: B023 - the closure is consumed in this iteration
+result = handler()  # type: ignore[arg-type]  # reason: <why this is sound>
+```
+
+mypy honours `# type: ignore` only as the first trailing comment on a line, so
+when a line needs both, put the type suppression first; ruff finds its `noqa`
+anywhere in the trailing comments. `warn_unused_ignores` is on, so a
+suppression that stops suppressing anything fails the gate and must be deleted
+rather than left behind.
+
+Four sources are byte-frozen by the F20 rich-metadata qualification manifest
+and appear in `[tool.ruff.lint.per-file-ignores]` and a mypy override, because
+an inline suppression would itself change the bytes that
+`docs/reference/f20-rich-metadata-qualification-candidate-v1.json` pins. Do not
+edit those files to satisfy a linter; changing them requires re-qualification.
+
 ## Frontend bootstrap
 
 The authenticated-browser source under `frontend/` uses Node 24.19.0 and npm

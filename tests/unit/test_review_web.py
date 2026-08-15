@@ -10,15 +10,19 @@ import tempfile
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
-from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
 from argon2 import PasswordHasher
 from argon2.low_level import Type
 from fastapi.testclient import TestClient
 
+from mechanical_librarian.adapters.operational_evidence import (
+    LocalTimingStore,
+    SupportBundle,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
@@ -28,7 +32,14 @@ from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.field_effects import GuardedApplicationError
+from mechanical_librarian.application.metadata_policy import PolicyTransition
+from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_application import (
+    ReviewApplication,
+    ReviewApplicationError,
+)
 from mechanical_librarian.application.review_pipeline import (
+    PipelineProgress,
     ReviewPipelineError,
     ReviewPreparationPipeline,
 )
@@ -39,29 +50,29 @@ from mechanical_librarian.application.review_web import (
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
     ReviewWebError,
-    _decode_cursor,
-    _encode_cursor,
-    _choice_observation,
     _choice_contexts,
-    _evidence_by_reference,
     _choice_limitations,
+    _choice_observation,
     _choice_rationale,
     _choice_source_label,
     _current_value_present,
+    _decode_cursor,
+    _encode_cursor,
+    _evidence_by_reference,
     _provider_comparison_notices,
     _provider_label,
     _provider_outcomes,
 )
-from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.application.review_pipeline import PipelineProgress
-from mechanical_librarian.application.review_application import (
-    ReviewApplication,
-    ReviewApplicationError,
-)
-from mechanical_librarian.interfaces.cli import main as cli_main
-from mechanical_librarian.interfaces.web.app import _CoverOmission
 from mechanical_librarian.bootstrap.composition import run_review_server
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.human_decision import (
+    HumanDecision,
+    HumanDecisionError,
+)
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -74,37 +85,41 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
 )
+from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from mechanical_librarian.domain.field_effect import FieldEffectError
-from mechanical_librarian.domain.human_decision import (
-    HumanDecision,
-    HumanDecisionError,
-)
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_OPTION_DISPOSITIONS,
 )
+from mechanical_librarian.interfaces.web.app import _CoverOmission
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
 )
-from mechanical_librarian.application.metadata_policy import PolicyTransition
-from mechanical_librarian.adapters.operational_evidence import LocalTimingStore, SupportBundle
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
-from tests.unit.test_review_case_persistence import _report
+from tests.unit.test_bibliographic_bundles import (
+    _bibliographic_report,
+)
+from tests.unit.test_bibliographic_bundles import (
+    _source as _bibliographic_source,
+)
 from tests.unit.test_cover_packets import (
     _preview as _cover_preview,
+)
+from tests.unit.test_cover_packets import (
     _report as _cover_report,
+)
+from tests.unit.test_cover_packets import (
     _source as _cover_source,
 )
 from tests.unit.test_proposal_set import (
     _claim as _proposal_claim,
+)
+from tests.unit.test_proposal_set import (
     _provider as _proposal_provider,
+)
+from tests.unit.test_proposal_set import (
     _report as _proposal_report,
 )
-from tests.unit.test_bibliographic_bundles import (
-    _bibliographic_report,
-    _source as _bibliographic_source,
-)
+from tests.unit.test_review_case_persistence import _report
 
 
 class _Repository:
@@ -112,7 +127,7 @@ class _Repository:
         self.case = case
         self.report = report
         self.browse_cases = [(case, report)]
-        self.browse_without_cases = []
+        self.browse_without_cases: list[MetadataReport] = []
         self.advice: dict[str, object] = {
             "results": [],
             "state": "not_requested",
@@ -130,7 +145,7 @@ class _Repository:
         self.policy_count_calls: list[str] = []
         builtin = MetadataPolicyProfile.builtin()
         self.active_policy_id = builtin.policy_id
-        self.policy_transition = None
+        self.policy_transition: PolicyTransition | None = None
         self.shadow_mode = "review"
         self.shadow_outcomes: tuple[tuple[str, int], ...] = ()
         self.case_ready_at = 990
@@ -177,7 +192,7 @@ class _Repository:
         return self.policy_transition
 
     def acknowledge_metadata_policy_transition(self, transition_id, acknowledged_at):
-        value = self.policy_transition
+        value = cast(PolicyTransition, self.policy_transition)
         self.policy_transition = PolicyTransition(
             value.transition_id, value.from_policy_id, value.to_policy_id,
             value.generation, value.state, value.completed, value.total,
@@ -398,7 +413,7 @@ class _Repository:
                             for field in report.target.fields
                             if field.destination is TargetDestination.AUTHORS
                             and type(field.value) is tuple
-                            for value in field.value
+                            for value in cast(tuple[str, ...], field.value)
                         ),
                         report.target.library,
                         report.target.item,
@@ -440,8 +455,11 @@ class _Repository:
         )
         total, attention_total = self.count_current_review_cases(search)
         return ReviewLibrarySnapshot(
+            # The fake deliberately emits the short five-element row that
+            # `BrowseReviewLibrary` pads with `row[n] if len(row) >= n + 1`,
+            # which is the tolerance this fixture exercises.
             rows=tuple(
-                (
+                (  # type: ignore[misc]  # reason: the short library row is the tolerance this fixture exercises; padding it would delete the coverage
                     case_document,
                     report_document,
                     (
@@ -561,7 +579,9 @@ class _ActivityApplication(ContinuousGuardedApplication):
     def start(self):
         return (0, 0, 0)
 
-    def begin_drain(self) -> None:
+    # Every production call site invokes `begin_drain()` with no argument, so
+    # this fake deliberately narrows the base signature.
+    def begin_drain(self) -> None:  # type: ignore[override]  # reason: the fake narrows the base signature; every production call site invokes it with no argument
         return None
 
     def close_admission(self) -> None:
@@ -886,30 +906,30 @@ class ReviewWebTests(unittest.TestCase):
 
                 class _FieldApplication(_ActivityApplication):
                     def start(self):
-                        calls.append("field-start")
+                        calls.append("field-start")  # noqa: B023 - closure is created and consumed within this iteration
                         return (0, 0, 0)
 
                     def close_admission(self) -> None:
-                        calls.append("field-close")
+                        calls.append("field-close")  # noqa: B023 - closure is created and consumed within this iteration
 
                     def wait_for_drain(self, deadline=None) -> None:
-                        calls.append(("field-wait", deadline))
-                        if failing_worker == "field":
+                        calls.append(("field-wait", deadline))  # noqa: B023 - closure is created and consumed within this iteration
+                        if failing_worker == "field":  # noqa: B023 - closure is created and consumed within this iteration
                             raise GuardedApplicationError("shutdown_timeout")
 
                 class _Preparation:
                     def start(self) -> None:
-                        calls.append("preparation-start")
+                        calls.append("preparation-start")  # noqa: B023 - closure is created and consumed within this iteration
 
                     def begin_drain(self) -> None:
-                        calls.append("preparation-close")
+                        calls.append("preparation-close")  # noqa: B023 - closure is created and consumed within this iteration
 
                     def stop(self, deadline=None) -> None:
-                        calls.append(("preparation-wait", deadline))
-                        if failing_worker == "preparation":
+                        calls.append(("preparation-wait", deadline))  # noqa: B023 - closure is created and consumed within this iteration
+                        if failing_worker == "preparation":  # noqa: B023 - closure is created and consumed within this iteration
                             raise ReviewPipelineError("shutdown_timeout")
 
-                self.repository.close = lambda: closed.append(True)
+                self.repository.close = lambda: closed.append(True)  # noqa: B023 - closure is created and consumed within this iteration
                 app = create_transport_test_app(
                     self.repository, configuration, close_repository=True,
                     field_application=_FieldApplication(),
@@ -1348,7 +1368,8 @@ class ReviewWebTests(unittest.TestCase):
         headers = {**self.origin, "X-CSRF-Token": login["csrf_token"]}
         payload = self.client.get("/api/v1/metadata-policy/state").json()["profile"]
         del payload["schema_version"]
-        self.repository.create_metadata_policy_draft = Mock(side_effect=RuntimeError)
+        # A deliberate patch of the fake repository's bound method.
+        self.repository.create_metadata_policy_draft = Mock(side_effect=RuntimeError)  # type: ignore[method-assign]  # reason: deliberate per-test monkeypatch of a bound method
         response = self.client.post("/api/v1/metadata-policy/drafts", headers=headers, json=payload)
         self.assertEqual(503, response.status_code)
         self.assertEqual("persistence", response.json()["error"]["code"])
@@ -1479,7 +1500,7 @@ class ReviewWebTests(unittest.TestCase):
 
     def test_choice_contexts_build_the_evidence_index_once(self) -> None:
         proposal = self.case.proposals[0]
-        result = proposal["result"]
+        result = cast(dict[str, Any], proposal["result"])
         alternatives = json.loads(json.dumps(result["alternatives"]))
         references = alternatives[0]["evidence_references"]
         alternatives[0]["evidence_references"] = references * 4
@@ -1704,7 +1725,7 @@ class ReviewWebTests(unittest.TestCase):
                     "review_case_" + "d" * 64,
                     cursor=first["next_cursor"],
                 )
-            changed_detail = {"fields": [{"provenance": []}]}
+            changed_detail: dict[str, Any] = {"fields": [{"provenance": []}]}
             with patch.object(
                 cases,
                 "_read",
@@ -1730,7 +1751,7 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(len(first["items"]), 50)
         self.assertEqual(len(second["items"]), 10)
         self.assertIsNone(second["next_cursor"])
-        items = first["items"] + second["items"]
+        items = cast(list[Any], first["items"]) + cast(list[Any], second["items"])
         self.assertEqual({item["reference"] for item in items}, references)
         rich = next(item for item in items if item["reference"] == rich_reference)
         self.assertEqual(rich["provider"], "catalogue")
@@ -1774,7 +1795,7 @@ class ReviewWebTests(unittest.TestCase):
         self.assertNotIn("set-cookie", failed.headers)
 
     def test_logout_maps_expired_and_malformed_sessions_to_unauthorized(self) -> None:
-        login = self._login()
+        self._login()
         self.now += 601
         expired = self.client.post(
             "/api/v1/session/logout",
@@ -2699,7 +2720,7 @@ class ReviewWebTests(unittest.TestCase):
             canonical_origin="https://review.test",
             owner_password_hash_file=str(self.hash_path),
         )
-        with self.assertRaises(Exception):
+        with self.assertRaises(ReviewWebError):
             create_transport_test_app(self.repository, configuration)
 
 
@@ -2936,7 +2957,8 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             _report(),
             None,
         )
-        application.serialized = lambda call: call()
+        # A deliberate patch of the bound method on a bare instance.
+        application.serialized = lambda call: call()  # type: ignore[method-assign]  # reason: deliberate per-test monkeypatch of a bound method
 
         with self.assertRaisesRegex(ReviewApplicationError, "already_decided"):
             application.retry_cover_consideration("review_case_" + "e" * 64)
@@ -2945,7 +2967,8 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
     def test_cover_observer_runs_outside_the_global_application_gate(self) -> None:
         application = object.__new__(ReviewApplication)
         application._gate = threading.RLock()
-        application.serialized = ReviewApplication.serialized.__get__(application)
+        # A deliberate patch of the bound method on a bare instance.
+        application.serialized = ReviewApplication.serialized.__get__(application)  # type: ignore[method-assign]  # reason: deliberate per-test monkeypatch of a bound method
         application._cases = Mock()
         application._cases._read.return_value = (
             {
@@ -3017,7 +3040,8 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
         application._cover_considerations.ensure.return_value = successor
         application._cover_considerations.prepare_observation.return_value = object()
         application._cover_considerations.observe.return_value = object()
-        application.serialized = lambda call: call()
+        # A deliberate patch of the bound method on a bare instance.
+        application.serialized = lambda call: call()  # type: ignore[method-assign]  # reason: deliberate per-test monkeypatch of a bound method
 
         self.assertEqual(
             successor,
@@ -3141,26 +3165,31 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                     writer = None
                     try:
                         connection = sqlite3.connect(
-                            writer_path,
+                            writer_path,  # noqa: B023 - closure is created and consumed within this iteration
                             isolation_level=None,
                         )
                         connection.execute("PRAGMA foreign_keys=ON")
                         connection.execute("PRAGMA busy_timeout=5000")
                         writer = SQLiteMetadataReportRepository(connection)
                         writer._connection.set_trace_callback(
-                            lambda statement: inserted.set()
+                            lambda statement: inserted.set()  # noqa: B023 - closure is created and consumed within this iteration
                             if statement.startswith("INSERT INTO human_decisions")
                             else None
                         )
-                        writer.record_human_decision(decision)
+                        writer.record_human_decision(decision)  # noqa: B023 - closure is created and consumed within this iteration
                     except BaseException as error:
-                        writer_errors.append(error)
+                        writer_errors.append(error)  # noqa: B023 - closure is created and consumed within this iteration
                     finally:
                         if writer is not None:
                             writer.close()
-                        finished.set()
+                        finished.set()  # noqa: B023 - closure is created and consumed within this iteration
 
                 started = False
+                # `original` and `before`/`after` each take one of three
+                # per-surface reader shapes below.
+                original: Any
+                before: Any
+                after: Any
 
                 def interleave(original, *args):
                     nonlocal started
@@ -3170,7 +3199,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                         threading.Thread(
                             target=write_decision, daemon=True
                         ).start()
-                        self.assertTrue(inserted.wait(5))
+                        self.assertTrue(inserted.wait(5))  # noqa: B023 - closure is created and consumed within this iteration
                     return result
 
                 if surface == "case":
@@ -3178,21 +3207,21 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                     patched = patch.object(
                         reader,
                         "get_review_case",
-                        side_effect=lambda *args: interleave(original, *args),
+                        side_effect=lambda *args: interleave(original, *args),  # noqa: B023 - closure is created and consumed within this iteration
                     )
                 elif surface == "library":
                     original = reader.list_current_review_case_documents
                     patched = patch.object(
                         reader,
                         "list_current_review_case_documents",
-                        side_effect=lambda *args: interleave(original, *args),
+                        side_effect=lambda *args: interleave(original, *args),  # noqa: B023 - closure is created and consumed within this iteration
                     )
                 else:
                     original = reader.list_current_attention_documents
                     patched = patch.object(
                         reader,
                         "list_current_attention_documents",
-                        side_effect=lambda *args: interleave(original, *args),
+                        side_effect=lambda *args: interleave(original, *args),  # noqa: B023 - closure is created and consumed within this iteration
                     )
 
                 with patched:
@@ -3707,7 +3736,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                 reopened.revoke_review_session("e" * 64, "f" * 64, 200),
                 "unauthorized",
             )
-            with self.assertRaises(Exception):
+            with self.assertRaises(MetadataReportError):
                 reopened.authenticate_review_session("a" * 64, 152)
             self.assertEqual(
                 reopened.rotate_review_session_csrf("a" * 64, "d" * 64, 152),

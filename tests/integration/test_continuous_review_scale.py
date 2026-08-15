@@ -13,22 +13,25 @@ import unittest
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import cast
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
 from argon2 import PasswordHasher
 
-from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import _entry as catalogue_entry
+from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+    _entry as catalogue_entry,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.batch import BatchSelection, batch_fingerprint
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
+    PipelineProgress,
     ReviewPreparationPipeline,
 )
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
-    ProviderStatus,
     TargetFacts,
     default_target_fields,
 )
@@ -412,12 +415,17 @@ class ContinuousReviewScaleQualificationTests(unittest.TestCase):
             self.assertFalse(run_next(restarted))
             clock[0] = retry_at
             while True:
-                if restarted.progress("primary", "fiction").state == "completed":
+                if cast(
+                    PipelineProgress, restarted.progress("primary", "fiction")
+                ).state == "completed":
                     break
                 advanced = run_next(restarted)
                 if not advanced:
                     self.assertEqual(
-                        restarted.progress("primary", "fiction").state,
+                        cast(
+                            PipelineProgress,
+                            restarted.progress("primary", "fiction"),
+                        ).state,
                         "completed",
                     )
 

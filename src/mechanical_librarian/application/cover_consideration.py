@@ -6,40 +6,53 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, cast
 
 from mechanical_librarian.application.cover_identity import (
     CLASSIFIER_REFERENCE,
-    SCHEMA_VERSION as IDENTITY_SCHEMA_VERSION,
     classify_cover_identity,
+)
+from mechanical_librarian.application.cover_identity import (
+    SCHEMA_VERSION as IDENTITY_SCHEMA_VERSION,
 )
 from mechanical_librarian.application.cover_observation import (
     INSTRUCTION,
     OUTPUT_SCHEMA_VERSION,
-    SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
     TAXONOMY_REFERENCE,
     observe_cover_packet,
 )
+from mechanical_librarian.application.cover_observation import (
+    SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
+)
+from mechanical_librarian.application.cover_packet_semantics import (
+    canonical_packet_json,
+)
+from mechanical_librarian.application.cover_packets import (
+    SCHEMA_VERSION as PACKET_SCHEMA_VERSION,
+)
 from mechanical_librarian.application.cover_packets import (
     PreparedCoverPacket,
-    SCHEMA_VERSION as PACKET_SCHEMA_VERSION,
     cover_source_reference,
     prepare_cover_packet,
 )
 from mechanical_librarian.application.cover_policy import (
     POLICY_SCHEMA_VERSION,
-    SCHEMA_VERSION as POLICY_REPORT_SCHEMA_VERSION,
     CoverPolicy,
     adjudicate_cover_policy,
 )
-from mechanical_librarian.application.cover_packet_semantics import canonical_packet_json
-from mechanical_librarian.domain.cover_evidence import CoverSourceKind, CoverSourceState
+from mechanical_librarian.application.cover_policy import (
+    SCHEMA_VERSION as POLICY_REPORT_SCHEMA_VERSION,
+)
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverSourceKind,
+    CoverSourceState,
+)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
     TargetFieldState,
 )
-
 
 SCHEMA_VERSION = "cover-consideration-v1"
 _IDENTITY_ELIGIBLE = frozenset(
@@ -475,13 +488,16 @@ class CoverConsiderationService:
                     raise CoverConsiderationError("incumbent_binding")
                 selected = incumbent_sources[0]
             else:
+                # ``source_by_reference`` only retains RETRIEVED sources whose
+                # artifact is not None.
                 selected = max(
                     sources,
                     key=lambda source: (
-                        source.artifact.width * source.artifact.height,
-                        source.artifact.width,
-                        source.artifact.height,
-                        source.artifact.artifact_id,
+                        cast("CoverArtifact", source.artifact).width
+                        * cast("CoverArtifact", source.artifact).height,
+                        cast("CoverArtifact", source.artifact).width,
+                        cast("CoverArtifact", source.artifact).height,
+                        cast("CoverArtifact", source.artifact).artifact_id,
                     ),
                 )
             artifact = selected.artifact
@@ -673,7 +689,8 @@ def _cover_choice_contexts(value: dict[str, object], candidates: list[dict[str, 
     bindings = {item["reference"]: item["source_bindings"] for item in packet["candidates"]}
     sources = {cover_source_reference(report.report_id, source.source_id): source for source in report.cover_sources}
     recommended = None if policy is None or policy.get("status") != "recommended" else policy.get("recommended_candidate_reference")
-    acceptable = set() if policy is None else set(policy.get("acceptable_candidate_references", []))
+    # A policy report always carries a list of acceptable candidate references.
+    acceptable = set() if policy is None else set(cast("list[object]", policy.get("acceptable_candidate_references", [])))
     def evidence(reference: str, incumbent: bool) -> list[dict[str, str]]:
         rows = []
         for binding in bindings.get(reference, []):
@@ -691,7 +708,7 @@ def _cover_choice_contexts(value: dict[str, object], candidates: list[dict[str, 
     incumbent = next((item for item in candidates if item.get("incumbent") is True), None)
     current_reference = None if incumbent is None else incumbent.get("reference")
     current_recommended = current_reference == recommended and current_reference in acceptable and incumbent is not None and incumbent.get("selectable") is True
-    contexts = [{"alternative_id": None, "selection": "current", "evidence": evidence(str(current_reference), True) if type(current_reference) is str else evidence("", True), "limitations": (["Preview unavailable for this retained cover."] if value["incumbent"].get("state") == "unavailable" else []), "rationale": "Keep the cover currently held by the local library.", "recommendation": "recommended" if current_recommended else "no_recommendation", "recommendation_reason": "Authoritative cover policy recommends this retained cover." if current_recommended else "No recommendation retained."}]
+    contexts: list[dict[str, object]] = [{"alternative_id": None, "selection": "current", "evidence": evidence(str(current_reference), True) if type(current_reference) is str else evidence("", True), "limitations": (["Preview unavailable for this retained cover."] if cast("dict[str, object]", value["incumbent"]).get("state") == "unavailable" else []), "rationale": "Keep the cover currently held by the local library.", "recommendation": "recommended" if current_recommended else "no_recommendation", "recommendation_reason": "Authoritative cover policy recommends this retained cover." if current_recommended else "No recommendation retained."}]
     for candidate in candidates:
         reference = candidate.get("reference")
         if candidate.get("incumbent") is True or candidate.get("selectable") is not True or type(reference) is not str:

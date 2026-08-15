@@ -9,9 +9,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.run_test_tier import (
+    _STALL_DIAGNOSTIC_SECONDS,
     COHORTS,
     _DiagnosticTestResult,
-    _STALL_DIAGNOSTIC_SECONDS,
     _leaf_tests,
     cohort_manifest,
     load_cohort,

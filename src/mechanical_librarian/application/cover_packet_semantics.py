@@ -10,6 +10,7 @@ import struct
 import warnings
 import zlib
 from dataclasses import dataclass
+from typing import cast
 
 from PIL import Image, UnidentifiedImageError
 
@@ -35,7 +36,7 @@ _PACKET_REFERENCE = re.compile(r"^cover_packet_[0-9a-f]{64}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 _PROVIDER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 _SOURCE_KINDS = frozenset({"abs", "epub", "hardcover", "open_library"})
-_DESIGNATION_RANK = {
+_DESIGNATION_RANK: dict[str | None, int] = {
     "exact_edition": 0,
     "related_edition": 1,
     "work": 2,
@@ -77,10 +78,12 @@ def provenance_sort_key(
     context = value["context"]
     if type(context) is not list:
         raise ValueError("cover provenance is invalid")
+    # ``_validate_provenance`` admits only string source kinds, providers, and
+    # designations before any provenance mapping reaches this sort key.
     return (
-        value["source_kind"],
-        value["provider"] or "",
-        value["designation"] or "",
+        cast("str", value["source_kind"]),
+        cast("str", value["provider"] or ""),
+        cast("str", value["designation"] or ""),
         tuple((item["field"], item["value"]) for item in context),
     )
 
@@ -501,7 +504,7 @@ def bind_cover_packet(
         raise ValueError("cover packet is invalid") from error
 
 
-def _validate_candidate(value: object) -> tuple[str, int]:
+def _validate_candidate(value: object) -> tuple[tuple[str, ...], int]:
     if (
         type(value) is not dict
         or set(value) != {
@@ -631,9 +634,11 @@ def _validate_candidate_order(
                 source_counts,
                 facts[position][0],
                 facts[position][1],
-                candidates[position]["width"],
-                candidates[position]["height"],
-                candidates[position]["reference"],
+                # ``_validate_candidate`` already proved these are bounded
+                # integers and a matched cover reference string.
+                cast("int", candidates[position]["width"]),
+                cast("int", candidates[position]["height"]),
+                cast("str", candidates[position]["reference"]),
             ),
         )
         remaining.remove(index)

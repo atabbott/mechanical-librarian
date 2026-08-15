@@ -2,27 +2,33 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Protocol, cast
 
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyError, MetadataPolicyProfile, OPTION_CATALOGUE, ResolvedMetadataPolicy, resolve_policy
-from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.domain.automatic_decision import (
-    AutomaticSafetyState,
     QUALIFIED_POLICY_OPTIONS,
+    AutomaticSafetyState,
+)
+from mechanical_librarian.domain.metadata_policy import (
+    OPTION_CATALOGUE,
+    MetadataPolicyError,
+    MetadataPolicyProfile,
+    ResolvedMetadataPolicy,
+    resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.rich_metadata_preview import (
-    RichMetadataPreview, compile_rich_metadata_preview,
+    RichMetadataPreview,
+    compile_rich_metadata_preview,
 )
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
     F20_RICH_FIELDS,
     public_summary,
 )
-
+from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 
 MAX_SHADOW_SAMPLE_RESPONSE_BYTES = 1_048_576
 
@@ -31,11 +37,25 @@ class MetadataPolicyApplicationError(RuntimeError):
     """A fixed, value-free draft policy failure."""
 
 
+class AutomaticSafetyRepository(Protocol):
+    """The narrow durable seam the owner-only safety controls depend upon."""
+
+    def automatic_safety_state(self) -> AutomaticSafetyState: ...
+
+    def set_automatic_safety_state(
+        self, state: AutomaticSafetyState, updated_at: int
+    ) -> None: ...
+
+
 class AutomaticSafetyControls:
     """Owner-only durable pause/suspension controls; recovery is explicit."""
 
     def __init__(self, repository: object) -> None:
-        self._repository = repository
+        # The public parameter stays structural: every call below is wrapped in
+        # a try/except that converts a missing or failing member into
+        # ``MetadataPolicyApplicationError``, so the cast documents the seam
+        # this class requires without narrowing what callers may pass.
+        self._repository = cast("AutomaticSafetyRepository", repository)
 
     def state(self) -> AutomaticSafetyState:
         try:

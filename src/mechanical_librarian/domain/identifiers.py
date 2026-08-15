@@ -8,7 +8,6 @@ import re
 from dataclasses import dataclass
 from typing import Any, ClassVar, Self
 
-
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 _LIBRARY = re.compile(r"^(?:[a-z][a-z0-9_-]{0,63}|[0-9][0-9a-f]{7}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$")
 _VERSION = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")

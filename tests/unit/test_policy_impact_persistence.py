@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.metadata_reports import (
-    open_repository, open_shadow_preview_repository,
+    MetadataReportError,
+    open_repository,
+    open_shadow_preview_repository,
 )
-from mechanical_librarian.domain.metadata_report import FileFacts, MetadataReport, TargetFacts
+from mechanical_librarian.domain.metadata_report import (
+    FileFacts,
+    MetadataReport,
+    TargetFacts,
+)
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
 
@@ -67,7 +74,7 @@ class PolicyImpactPersistenceTests(unittest.TestCase):
             repository._connection.commit()
             repository.close()
             before = database.read_bytes()
-            with self.assertRaises(Exception):
+            with self.assertRaises(MetadataReportError):
                 open_repository(database, create=False)
             self.assertEqual(before, database.read_bytes())
 
@@ -115,11 +122,11 @@ class PolicyImpactPersistenceTests(unittest.TestCase):
             repository.publish_proposal(proposal)
             repository.admit_review_case(proposal)
             self.assertEqual(1, repository.current_policy_impact_pairs("ebooks", 20)[0])
-            with self.assertRaises(Exception):
+            with self.assertRaises(MetadataReportError):
                 repository.current_policy_impact_pairs("ebooks", 0)
             # Persisted proposals are append-only; attempted corruption cannot
             # create a partial preview row.
-            with self.assertRaises(Exception):
+            with self.assertRaises(sqlite3.IntegrityError):
                 repository._connection.execute("UPDATE proposal_sets SET document='{}'")
             self.assertEqual(1, repository.current_policy_impact_pairs("ebooks", 20)[0])
             repository._connection.execute(
@@ -133,7 +140,7 @@ class PolicyImpactPersistenceTests(unittest.TestCase):
                 "proposal_sets BEGIN SELECT RAISE(ABORT,'immutable proposal set'); END"
             )
             repository._connection.commit()
-            with self.assertRaises(Exception):
+            with self.assertRaises(MetadataReportError):
                 repository.current_policy_impact_pairs("ebooks", 20)
             self.assertFalse(repository._connection.in_transaction)
             repository.close()

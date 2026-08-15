@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import unittest
 
+from mechanical_librarian.application.metadata_policy import (
+    bind_proposal_policy,
+    preview_policy,
+)
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
+    OPTION_CATALOGUE,
     MetadataPolicyError,
     MetadataPolicyProfile,
-    OPTION_CATALOGUE,
     ResolvedMetadataPolicy,
     resolve_policy,
 )
-from mechanical_librarian.application.metadata_policy import bind_proposal_policy, preview_policy
 
 
 class MetadataPolicyTests(unittest.TestCase):
@@ -23,7 +26,8 @@ class MetadataPolicyTests(unittest.TestCase):
         destinations = {field: "ask" if field != "explicit" else "unsupported" for field in OPTION_CATALOGUE}
         for field, choices in OPTION_CATALOGUE.items():
             for choice in choices:
-                options = dict(DEFAULT_OPTIONS); options[field] = choice
+                options = dict(DEFAULT_OPTIONS)
+                options[field] = choice
                 profile = MetadataPolicyProfile.create("Draft", options, destinations)
                 resolved = resolve_policy(profile, "library")
                 self.assertEqual(dict(resolved.options)[field], choice)
@@ -82,7 +86,9 @@ class MetadataPolicyTests(unittest.TestCase):
         class Repository:
             def __init__(self) -> None: self.calls: list[str] = []
             def current_unapplied_count(self, library: str) -> int:
-                self.calls.append(library); return {"first": 2, "second": 0}[library]
+                self.calls.append(library)
+                return {"first": 2, "second": 0}[library]
+
         repository = Repository()
         options = dict(DEFAULT_OPTIONS)
         options["date_precision"] = "full_date"
@@ -203,7 +209,10 @@ class MetadataPolicyTests(unittest.TestCase):
         )
 
     def test_preview_caps_cases_across_libraries_and_uses_pair_snapshot_counts(self) -> None:
-        from mechanical_librarian.domain.metadata_report import MetadataReport, TargetFacts
+        from mechanical_librarian.domain.metadata_report import (
+            MetadataReport,
+            TargetFacts,
+        )
         from mechanical_librarian.domain.proposal_set import evaluate_report
         from tests.unit.test_proposal_set import _report
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import posixpath
 from dataclasses import dataclass
+from typing import cast
 
 from mechanical_librarian.domain.metadata_report import canonical_json
 
@@ -58,12 +59,14 @@ def normalize_ebook_location(
     elif not is_safe_relative_path(relative):
         raise ValueError("ebook file mapping is invalid")
     elif from_path is not None:
-        canonical = _canonical_relative(item_relative, item_is_file, relative)
+        # has_relative is true on this branch, so `relative` is a non-empty str.
+        canonical = _canonical_relative(item_relative, item_is_file, cast(str, relative))
         if from_path != canonical:
             raise ValueError("ebook file mapping is invalid")
         relative = canonical
     else:
-        relative = _canonical_relative(item_relative, item_is_file, relative)
+        # has_relative is true on this branch, so `relative` is a non-empty str.
+        relative = _canonical_relative(item_relative, item_is_file, cast(str, relative))
     if not is_safe_relative_path(relative):
         raise ValueError("ebook file mapping is invalid")
     size = metadata.get("size")

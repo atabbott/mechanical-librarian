@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
 import re
+from collections.abc import Iterable
 from typing import TypeVar
-
 
 MAX_CODE_LENGTH = 64
 MAX_SHORT_TEXT_LENGTH = 256

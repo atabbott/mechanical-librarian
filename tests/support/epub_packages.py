@@ -6,14 +6,13 @@ AGPL-3.0-or-later licence. They contain no copied publication content.
 
 from __future__ import annotations
 
-import io
 import binascii
 import hashlib
+import io
 import struct
 import zipfile
 import zlib
 from collections.abc import Callable
-
 
 CONTAINER_ONE = b'''<?xml version="1.0" encoding="UTF-8"?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">

@@ -7,9 +7,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.bootstrap.composition import run_policy_preview
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.interfaces.cli import main
 
 
@@ -89,7 +92,7 @@ class PolicyPreviewCliTests(unittest.TestCase):
             before = path.read_bytes()
             output = io.StringIO()
             calls: list[dict[str, object]] = []
-            code = main(["policy-preview", "--config", str(path), "--database", str(path), "--profile", str(path)], policy_preview_runner=lambda _config, _database, value: calls.append(value) or result, stdout=output, stderr=io.StringIO())
+            code = main(["policy-preview", "--config", str(path), "--database", str(path), "--profile", str(path)], policy_preview_runner=lambda _config, _database, value: calls.append(value) or result, stdout=output, stderr=io.StringIO())  # type: ignore[func-returns-value,return-value]  # reason: the `append(...) or value` recorder idiom is deliberate; the recorded profile is a JSON document
             self.assertEqual(0, code)
             self.assertEqual([profile], calls)
             self.assertEqual(before, path.read_bytes())

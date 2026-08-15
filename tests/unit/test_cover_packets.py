@@ -2,16 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import io
-import inspect
 import json
 import struct
 import sys
-import tempfile
 import unittest
 import zlib
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest import mock
 
 from PIL import Image, ImageCms
@@ -27,11 +26,11 @@ from mechanical_librarian.domain.cover_evidence import (
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
+    ClaimScope,
     Comparison,
+    FieldState,
     FileFacts,
     IdentifierRelation,
-    FieldState,
-    ClaimScope,
     LocalClaim,
     MetadataReport,
     ProviderCandidate,
@@ -39,8 +38,8 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderLaneCandidate,
     ProviderLaneObservation,
-    ProviderQueryKind,
     ProviderObservation,
+    ProviderQueryKind,
     ProviderStatus,
     TargetFacts,
     default_target_fields,
@@ -50,42 +49,7 @@ from mechanical_librarian.domain.metadata_report import (
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
 
-from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
-    ContainedReviewRequest,
-    admit_cover_review_request,
-    canonical_json,
-)
-from mechanical_librarian.application.cover_observation import (  # noqa: E402
-    INSTRUCTION,
-    LEGACY_INSTRUCTION_SHA256,
-    OUTPUT_SCHEMA_VERSION,
-    SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
-    TAXONOMY,
-    TAXONOMY_DOCUMENT,
-    TAXONOMY_REFERENCE,
-    observe_cover_packet,
-    _observer_reference,
-    _output_schema,
-)
-from mechanical_librarian.application.cover_packets import (  # noqa: E402
-    MAX_COVER_PREVIEWS,
-    prepare_cover_packet,
-)
-from mechanical_librarian.application.cover_identity import (  # noqa: E402
-    SCHEMA_VERSION,
-    _CLASSIFIER_REFERENCE,
-    _preview_reference,
-    _classify_sources,
-    classify_cover_identity,
-)
-from mechanical_librarian.application.cover_policy import (  # noqa: E402
-    CoverPolicy,
-    adjudicate_cover_policy,
-)
-from mechanical_librarian.application import cover_packets as packet_builder  # noqa: E402
-from mechanical_librarian.bootstrap import contained_reviewer as reviewer_binding  # noqa: E402
-from mechanical_librarian.adapters.reviewers import contained_reviewer as reviewer_adapter  # noqa: E402
-from mechanical_librarian_workbench import (  # noqa: E402
+from mechanical_librarian_workbench import (  # type: ignore[import-not-found]  # noqa: E402  # reason: the workbench package is added to sys.path at import time above; the gate's mypy_path covers src/ only.
     CoverIdentityRequest,
     CoverObservationRequest,
     CoverPacketRequest,
@@ -94,6 +58,50 @@ from mechanical_librarian_workbench import (  # noqa: E402
     WorkbenchFailure,
     WorkbenchOperations,
     execute,
+)
+
+from mechanical_librarian.adapters.reviewers import (  # noqa: E402
+    contained_reviewer as reviewer_adapter,
+)
+from mechanical_librarian.application import (  # noqa: E402
+    cover_packets as packet_builder,
+)
+from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
+    ContainedReviewRequest,
+    admit_cover_review_request,
+    canonical_json,
+)
+from mechanical_librarian.application.cover_identity import (  # noqa: E402
+    _CLASSIFIER_REFERENCE,
+    SCHEMA_VERSION,
+    _classify_sources,
+    _preview_reference,
+    classify_cover_identity,
+)
+from mechanical_librarian.application.cover_observation import (  # noqa: E402
+    INSTRUCTION,
+    LEGACY_INSTRUCTION_SHA256,
+    OUTPUT_SCHEMA_VERSION,
+    TAXONOMY,
+    TAXONOMY_DOCUMENT,
+    TAXONOMY_REFERENCE,
+    _observer_reference,
+    _output_schema,
+    observe_cover_packet,
+)
+from mechanical_librarian.application.cover_observation import (  # noqa: E402
+    SCHEMA_VERSION as OBSERVATION_SCHEMA_VERSION,
+)
+from mechanical_librarian.application.cover_packets import (  # noqa: E402
+    MAX_COVER_PREVIEWS,
+    prepare_cover_packet,
+)
+from mechanical_librarian.application.cover_policy import (  # noqa: E402
+    CoverPolicy,
+    adjudicate_cover_policy,
+)
+from mechanical_librarian.bootstrap import (  # noqa: E402
+    contained_reviewer as reviewer_binding,
 )
 
 
@@ -551,7 +559,6 @@ class CoverPacketTests(unittest.TestCase):
             for value in packet.images
         )
 
-        candidate = json.loads(packet.document)["candidates"][0]
         changed = json.loads(packet.document)
         changed["candidates"][0]["source_bindings"][0]["preview_sha256"] = (
             hashlib.sha256(second_payload).hexdigest()
@@ -594,7 +601,7 @@ class CoverPacketTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(
                 ValueError, "normalization failed"
             ):
-                prepare_cover_packet(_report((source,)).to_json(), lambda *_: payload)
+                prepare_cover_packet(_report((source,)).to_json(), lambda *_: payload)  # noqa: B023 - closure is created and consumed within this iteration
 
     def test_five_candidate_scenario_binds_packet_attempt_and_image_order(self) -> None:
         payloads = [_preview(index) for index in range(5)]
@@ -621,7 +628,7 @@ class CoverPacketTests(unittest.TestCase):
             operations,
             reopen_metadata_report=lambda *_: report.to_json(),
             reopen_cover_preview=lambda _db, _artifacts, _report, artifact, _variant: by_artifact[artifact],
-            run_cover_packet_reviewer=lambda *args: observed.append(args) or '{"status":"completed"}',
+            run_cover_packet_reviewer=lambda *args: observed.append(args) or '{"status":"completed"}',  # type: ignore[func-returns-value]  # reason: the `or` deliberately records the call and yields the document; append's None is discarded.
         )
         with WorkbenchContext.temporary() as context:
             files = {
@@ -716,7 +723,7 @@ class CoverPacketTests(unittest.TestCase):
     def test_cover_retry_is_hard_capped_and_rejects_other_failures(self) -> None:
         packet, images = _packet_case()
         schema = '{"additionalProperties":false,"properties":{"summary":{"type":"string"}},"required":["summary"],"type":"object"}'
-        for code, expected_instances, expected_sleep in (
+        for code, _expected_instances, _expected_sleep in (
             ("local_cli_abort", 2, 1),
             ("runtime", 1, 0),
             ("response_format", 1, 0),
@@ -730,18 +737,18 @@ class CoverPacketTests(unittest.TestCase):
 
                 class FailingReviewer:
                     def __init__(self, _profile: object) -> None:
-                        instances.append(self)
+                        instances.append(self)  # noqa: B023 - closure is created and consumed within this iteration
 
                     def run_cover(self, _request, dispatched):
-                        dispatched(100 + len(instances), 100 + len(instances), "synthetic")
+                        dispatched(100 + len(instances), 100 + len(instances), "synthetic")  # noqa: B023 - closure is created and consumed within this iteration
                         raise reviewer_adapter.ContainedReviewerProcessError(
-                            code, count=19, digest="b" * 64
+                            code, count=19, digest="b" * 64  # noqa: B023 - closure is created and consumed within this iteration
                         )
 
                 with (
                     mock.patch.object(reviewer_binding, "load_contained_reviewer_profile_bytes", return_value=object()),
                     mock.patch.object(reviewer_binding, "ContainedReviewerAdapter", FailingReviewer),
-                    self.assertRaises(reviewer_adapter.ContainedReviewerProcessError) as caught,
+                    self.assertRaises(reviewer_adapter.ContainedReviewerProcessError),
                 ):
                     reviewer_binding.run_cover_packet_reviewer(
                         b"profile", b"Inspect.", packet.document.encode(), schema.encode(), images
@@ -958,7 +965,7 @@ class CoverPacketTests(unittest.TestCase):
             ],
             [(1, 1), (1, 1)],
         )
-        self.assertEqual(len(admitted.images), 2)  # type: ignore[attr-defined]
+        self.assertEqual(len(admitted.images), 2)
 
     def test_duplicate_group_aggregates_best_original_dimensions_canonically(self) -> None:
         duplicate_payload = _preview(31)
@@ -1398,7 +1405,7 @@ class CoverPacketTests(unittest.TestCase):
         )
         admitted = _admit_produced(packet)
         document = json.loads(packet.document)
-        self.assertEqual(len(admitted.images), 1)  # type: ignore[attr-defined]
+        self.assertEqual(len(admitted.images), 1)
         self.assertEqual(document["omissions"], [{
             "preview_sha256": document["candidates"][0]["preview_sha256"],
             "reason": "duplicate_preview",
@@ -1894,7 +1901,7 @@ class CoverIdentityTests(unittest.TestCase):
             "work-3",
             claims,
         )
-        candidates = (candidate,)
+        candidates: tuple[ProviderCandidate, ...] = (candidate,)
         lanes: tuple[ProviderLaneObservation, ...] = ()
         input_references: tuple[str, ...] = ()
         if lane_kind is not None:
@@ -1981,7 +1988,7 @@ class CoverIdentityTests(unittest.TestCase):
                 )
                 result = json.loads(
                     _classify_identity(
-                        report, packet, images, lambda *_: payload
+                        report, packet, images, lambda *_: payload  # noqa: B023 - closure is created and consumed within this iteration
                     ).document
                 )
                 self.assertEqual(result["candidates"][0]["outcome"], expected)
@@ -2006,7 +2013,7 @@ class CoverIdentityTests(unittest.TestCase):
                 )
                 value = json.loads(
                     _classify_identity(
-                        report, packet, images, lambda *_: payload
+                        report, packet, images, lambda *_: payload  # noqa: B023 - closure is created and consumed within this iteration
                     ).document
                 )
                 self.assertEqual(value["candidates"][0]["outcome"], expected)
@@ -2219,7 +2226,7 @@ class CoverIdentityTests(unittest.TestCase):
         default_source = replace(
             work_source,
             provenance=replace(
-                work_source.provenance, designation=CoverDesignation.DEFAULT
+                cast(CoverProvenance, work_source.provenance), designation=CoverDesignation.DEFAULT
             ),
         )
         self.assertEqual(
@@ -2682,7 +2689,7 @@ class CoverPolicyTests(unittest.TestCase):
             CoverPolicy(avoid_promotional_text=True).reference,
         )
         with self.assertRaises(ValueError):
-            CoverPolicy(avoid_promotional_text=1)  # type: ignore[arg-type]
+            CoverPolicy(avoid_promotional_text=1)
 
     def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence(self) -> None:
         legacy = self._adjudicate(

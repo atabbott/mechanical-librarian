@@ -12,8 +12,8 @@ library.
 from __future__ import annotations
 
 import argparse
-import io
 import hashlib
+import io
 import json
 import os
 import secrets
@@ -26,9 +26,10 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,40 +38,50 @@ IMPORT_ROOT = Path(INSTALLED_ROOT).resolve() if INSTALLED_ROOT else ROOT / "src"
 if str(IMPORT_ROOT) not in sys.path:
     sys.path.insert(0, str(IMPORT_ROOT))
 
-import httpx
-import mechanical_librarian.bootstrap.composition as composition
-from argon2 import PasswordHasher
-from PIL import Image
-from fastapi.testclient import TestClient
+# ruff: noqa: E402
+# Every import below deliberately follows the import-root selection above: this
+# qualification runs against either the installed artifact or the source tree,
+# and which one it imports is decided by the sys.path insertion. Moving these
+# imports to the top of the file would bind the wrong tree.
 
+import httpx
+from argon2 import PasswordHasher
+from fastapi.testclient import TestClient
+from PIL import Image
+
+import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.adapters.field_effect_fakes import (
-    FakeBackupReadiness, FakeDependencyCurrentness,
+    FakeBackupReadiness,
+    FakeDependencyCurrentness,
     FakeForwardReevaluation,
 )
 from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect import (
     AudiobookshelfFieldEffectCapabilities,
     AudiobookshelfFieldEffectTarget,
 )
+from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
-from mechanical_librarian.domain.cover_evidence import CoverArtifact
-from mechanical_librarian.domain.field_effect import (
-    EffectAuthority, EffectConsent, FieldEffectError, FieldEffectOperation,
-    FieldEffectPlan,
-)
-from mechanical_librarian.domain.metadata_report import MetadataReport
-from mechanical_librarian.infrastructure.security.credentials import target_client_token
-from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.bootstrap.composition import (
     compose_continuous_guarded_application,
     create_review_pipeline,
 )
+from mechanical_librarian.domain.cover_evidence import CoverArtifact
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    EffectConsent,
+    FieldEffectError,
+    FieldEffectOperation,
+    FieldEffectPlan,
+)
+from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from mechanical_librarian.infrastructure.security.credentials import target_client_token
 from mechanical_librarian.interfaces.web.app import (
     create_review_app,
     load_owner_password_verifier,
@@ -79,7 +90,6 @@ from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetLoader,
     ReactAssetRecovery,
 )
-
 
 IMAGES = {
     "2.26.0": "ghcr.io/advplyr/audiobookshelf:2.26.0@sha256:16685fbba37a21d403f5390b907d286e15b3086d26527269b4ad785f71f571e5",
@@ -147,25 +157,25 @@ def _compose_review_client(
         repository, artifact_store_path, review
     )
     application = compose_review_application(
-        state_owner=repository,  # type: ignore[arg-type]
-        session_store=repository,  # type: ignore[arg-type]
-        case_store=repository,  # type: ignore[arg-type]
-        decision_store=repository,  # type: ignore[arg-type]
-        library_store=repository,  # type: ignore[arg-type]
-        policy_store=repository,  # type: ignore[arg-type]
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
         verify_password=load_owner_password_verifier(
-            Path(review.owner_password_hash_file)  # type: ignore[attr-defined]
+            Path(review.owner_password_hash_file)
         ),
         clock=lambda: int(time.time()),
-        session_lifetime_seconds=review.session_lifetime_seconds,  # type: ignore[attr-defined]
-        graceful_shutdown_seconds=review.graceful_shutdown_seconds,  # type: ignore[attr-defined]
-        preparation=preparation,  # type: ignore[arg-type]
+        session_lifetime_seconds=review.session_lifetime_seconds,
+        graceful_shutdown_seconds=review.graceful_shutdown_seconds,
+        preparation=preparation,
         policy_libraries=policy_libraries,
-        field_application=continuous,  # type: ignore[arg-type]
+        field_application=continuous,
         cover_considerations=cover_considerations,
     )
     return TestClient(
-        create_review_app(application, review),  # type: ignore[arg-type]
+        create_review_app(application, review),
         base_url="https://review.test",
     )
 
@@ -927,7 +937,9 @@ def _installed_continuous_qualification(
             preparation,
             continuous,
             tuple(
-                (item.name, item.policy_override)
+                # `dict` is invariant, so the concrete override mapping is not a
+                # `dict[str, object]`; the callee only forwards it.
+                (item.name, cast("dict[str, object] | None", item.policy_override))
                 for item in configuration.libraries
             ),
             artifacts,
@@ -1176,17 +1188,17 @@ def _installed_continuous_qualification(
                     )
                     if decided.status_code != 200:
                         response = decided.json()
-                        detail = (
+                        failure_detail = (
                             response.get("detail")
                             if type(response) is dict
                             else None
                         )
-                        if detail is None and type(response) is dict:
-                            detail = response.get("error")
+                        if failure_detail is None and type(response) is dict:
+                            failure_detail = response.get("error")
                         code = (
-                            detail.get("code")
-                            if type(detail) is dict
-                            and type(detail.get("code")) is str
+                            failure_detail.get("code")
+                            if type(failure_detail) is dict
+                            and type(failure_detail.get("code")) is str
                             else "unknown"
                         )
                         raise QualificationError(
@@ -1368,13 +1380,13 @@ def _installed_continuous_qualification(
             )
             if consented.status_code != 200:
                 consent_value = consented.json()
-                detail = (
+                failure_detail = (
                     consent_value.get("detail")
                     if type(consent_value) is dict else None
                 )
                 code = (
-                    detail.get("code") if type(detail) is dict
-                    and type(detail.get("code")) is str else "unknown"
+                    failure_detail.get("code") if type(failure_detail) is dict
+                    and type(failure_detail.get("code")) is str else "unknown"
                 )
                 raise QualificationError(
                     f"installed_consent_failed:{consented.status_code}:{code}"
@@ -1690,11 +1702,16 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
     root_token: str | None = None
     base: str | None = None
     try:
-        library_dir = root / "library"; library_dir.mkdir(mode=0o700)
-        alpha_dir = library_dir / "alpha"; alpha_dir.mkdir(mode=0o700)
-        beta_dir = library_dir / "beta"; beta_dir.mkdir(mode=0o700)
-        config_dir = root / "config"; config_dir.mkdir(mode=0o700)
-        metadata_dir = root / "metadata"; metadata_dir.mkdir(mode=0o700)
+        library_dir = root / "library"
+        library_dir.mkdir(mode=0o700)
+        alpha_dir = library_dir / "alpha"
+        alpha_dir.mkdir(mode=0o700)
+        beta_dir = library_dir / "beta"
+        beta_dir.mkdir(mode=0o700)
+        config_dir = root / "config"
+        config_dir.mkdir(mode=0o700)
+        metadata_dir = root / "metadata"
+        metadata_dir.mkdir(mode=0o700)
         corpus_sources = _corpus_sources(corpus)
         operator_metadata: dict[str, str] = {}
         operator_authors: dict[str, str] = {}
@@ -1765,7 +1782,8 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
                 )
                 break
             time.sleep(1)
-        if not isinstance(item, str): raise RuntimeError("synthetic library did not scan")
+        if not isinstance(item, str):
+            raise RuntimeError("synthetic library did not scan")
         if not isinstance(item, str):
             raise QualificationError("synthetic_library_did_not_scan")
         if (not isinstance(items, list) or any(not isinstance(value, str) for value in items)):
@@ -1843,10 +1861,12 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         _request("PATCH", base, "/api/items/" + item + "/media", token=writer_key, payload={"tags": ["before"]})
         before_cover = _png(0, 0, 255)
         response = httpx.post(base + "/api/items/" + item + "/cover", headers={"Authorization": "Bearer " + writer_key}, files={"cover": ("before.png", before_cover, "image/png")}, timeout=20)
-        if response.status_code not in {200, 201}: raise RuntimeError("synthetic initial cover was refused")
+        if response.status_code not in {200, 201}:
+            raise RuntimeError("synthetic initial cover was refused")
         artifacts = CoverArtifactStore(root / "artifacts")
         desired_cover = _png(255, 0, 0)
-        artifact = CoverArtifact.create(desired_cover, b"preview", "image/png", 2, 2); artifacts.stage(artifact, desired_cover, b"preview")
+        artifact = CoverArtifact.create(desired_cover, b"preview", "image/png", 2, 2)
+        artifacts.stage(artifact, desired_cover, b"preview")
         writes: list[str] = []
         def client_factory() -> httpx.Client:
             client = target_client_token(base, writer_key, 20)
@@ -1970,7 +1990,8 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
                 _delete_key(base, root_token, key_id)
         if subprocess.run(("docker", "inspect", owner), capture_output=True, text=True).returncode == 0 and not _owned(owner, owner):
             raise RuntimeError("refusing cleanup of unowned Docker resource")
-        if _owned(owner, owner): _run("docker", "rm", "-f", owner)
+        if _owned(owner, owner):
+            _run("docker", "rm", "-f", owner)
         shutil.rmtree(root, ignore_errors=True)
 
 
@@ -1996,4 +2017,5 @@ def main() -> None:
     print(json.dumps({"schema": "audiobookshelf-field-effect-v2", "installed_artifact": True, "latest_stable_version": latest, "operator_corpus": arguments.corpus is not None, "results": [qualify(value, arguments.corpus) for value in values]}, sort_keys=True))
 
 
-if __name__ == "__main__": main()
+if __name__ == "__main__":
+    main()

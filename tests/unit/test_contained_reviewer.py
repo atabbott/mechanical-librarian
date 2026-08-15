@@ -23,11 +23,15 @@ from PIL import Image
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
 
-from mechanical_librarian.adapters.reviewers import contained_reviewer as adapter  # noqa: E402
-from mechanical_librarian.application import contained_reviewer_contract as contract  # noqa: E402
+from mechanical_librarian.adapters.reviewers import (  # noqa: E402
+    contained_reviewer as adapter,
+)
+from mechanical_librarian.application import (  # noqa: E402
+    contained_reviewer_contract as contract,
+)
 from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
-    ContainedReviewRequest,
     ContainedReviewerIdentity,
+    ContainedReviewRequest,
     admit_cover_review_request,
     canonical_json,
 )
@@ -127,14 +131,14 @@ class ContainedReviewerTests(unittest.TestCase):
             with self.assertRaisesRegex(Exception, "profile"):
                 reviewer.run_cover(
                     _cover_request(), lambda *values: dispatched.append(values)
-                )  # type: ignore[arg-type]
+                )
             self.assertEqual([], dispatched)
 
     @unittest.skipUnless(sys.platform == "linux", "Linux seal UAPI only")
     def test_linux_seal_constants_cover_python_builds_without_names(self) -> None:
         with patch.object(adapter, "fcntl", SimpleNamespace()):
             self.assertEqual(
-                adapter._linux_seal_constants(),  # type: ignore[attr-defined]
+                adapter._linux_seal_constants(),
                 (1033, 1034, 0x000F),
             )
 
@@ -153,13 +157,13 @@ class ContainedReviewerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
             with self.assertRaisesRegex(Exception, "response_format"):
-                reviewer.run(ImageBearingRequest(), lambda *_: None)  # type: ignore[arg-type]
+                reviewer.run(ImageBearingRequest(), lambda *_: None)
 
     def test_direct_private_request_forgery_is_readmitted_before_dispatch(self) -> None:
         admitted = _cover_request()
         forged_payload = b"\x89PNG\r\n\x1a\nforged"
         forged_digest = hashlib.sha256(forged_payload).hexdigest()
-        packet = json.loads(admitted.input_document)  # type: ignore[attr-defined]
+        packet = json.loads(admitted.input_document)
         packet["candidates"][0]["preview_bytes"] = len(forged_payload)
         packet["candidates"][0]["preview_sha256"] = forged_digest
         body = {
@@ -171,9 +175,9 @@ class ContainedReviewerTests(unittest.TestCase):
             canonical_json(body).encode()
         ).hexdigest()
         base = ContainedReviewRequest(
-            admitted.instruction,  # type: ignore[attr-defined]
+            admitted.instruction,
             canonical_json(packet),
-            admitted.output_schema,  # type: ignore[attr-defined]
+            admitted.output_schema,
         )
         forged = contract._CoverReviewRequest._admit(
             base,
@@ -262,7 +266,7 @@ class ContainedReviewerTests(unittest.TestCase):
 
     def test_cover_larger_than_child_file_limit_fails_before_dispatch(self) -> None:
         request = _cover_request()
-        image_bytes = len(request.images[0].payload)  # type: ignore[attr-defined]
+        image_bytes = len(request.images[0].payload)
         with tempfile.TemporaryDirectory() as temporary:
             profile = _profile(Path(temporary))
             profile = replace(
@@ -279,7 +283,7 @@ class ContainedReviewerTests(unittest.TestCase):
                  patch.object(adapter.os, "fork") as fork, \
                  patch.object(adapter.subprocess, "run") as process_run:
                 with self.assertRaisesRegex(Exception, "profile"):
-                    reviewer.run_cover(  # type: ignore[arg-type]
+                    reviewer.run_cover(
                         request,
                         lambda pid, pgid, token: dispatches.append(
                             (pid, pgid, token)
@@ -388,10 +392,6 @@ class ContainedReviewerTests(unittest.TestCase):
                         reviewer._run_auth([], artifact, artifact, 11)
 
     def test_fake_process_invocation_records_dispatch_before_output_and_cleans_job(self) -> None:
-        schema = json.dumps({"$schema": "https://json-schema.org/draft/2020-12/schema",
-                             "additionalProperties": False,
-                             "properties": {"summary": {"type": "string"}},
-                             "required": ["summary"], "type": "object"}, separators=(",", ":"), sort_keys=True)
         request = _cover_request()
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -457,7 +457,7 @@ class ContainedReviewerTests(unittest.TestCase):
                 result = reviewer.run_cover(
                     request,
                     persist_dispatch,
-                )  # type: ignore[arg-type]
+                )
             self.assertEqual(result.document, '{"summary":"safe"}')
             self.assertEqual(credential.read_bytes(), b'{"synthetic":true}')
             self.assertEqual(list(profile.job_root_path.iterdir()), [])
@@ -542,7 +542,7 @@ class ContainedReviewerTests(unittest.TestCase):
                 patch.object(reviewer, "_run_attempt", side_effect=timeout),
                 self.assertRaises(adapter.ContainedReviewerProcessError) as caught,
             ):
-                reviewer.run_cover(request, lambda *_: None)  # type: ignore[arg-type]
+                reviewer.run_cover(request, lambda *_: None)
 
             self.assertEqual(caught.exception.code, "timeout")
             self.assertEqual(
@@ -592,7 +592,7 @@ class ContainedReviewerTests(unittest.TestCase):
                 patch.object(adapter.time, "sleep"),
                 self.assertRaises(adapter.ContainedReviewerProcessError) as caught,
             ):
-                reviewer.run_cover(request, lambda *_: None)  # type: ignore[arg-type]
+                reviewer.run_cover(request, lambda *_: None)
             self.assertEqual(len(calls), 1)
             self.assertEqual(caught.exception.code, "auth")
             self.assertEqual(
@@ -646,7 +646,7 @@ class ContainedReviewerTests(unittest.TestCase):
                 patch.object(reviewer, "_run_attempt", side_effect=succeeds_second),
                 patch.object(adapter.time, "sleep") as sleep,
             ):
-                result = reviewer.run_cover(request, lambda *_: None)  # type: ignore[arg-type]
+                result = reviewer.run_cover(request, lambda *_: None)
             sleep.assert_called_once_with(1)
             self.assertEqual(result.attempts, (
                 contract.ContainedReviewerAttempt(True, "local_cli_abort", 17, "a" * 64),
@@ -672,7 +672,7 @@ class ContainedReviewerTests(unittest.TestCase):
                 patch.object(adapter.time, "sleep") as sleep,
                 self.assertRaises(adapter.ContainedReviewerProcessError) as caught,
             ):
-                reviewer.run_cover(request, lambda *_: None)  # type: ignore[arg-type]
+                reviewer.run_cover(request, lambda *_: None)
             self.assertEqual(attempts, 2)
             sleep.assert_called_once_with(1)
             self.assertEqual(
@@ -704,7 +704,7 @@ class ContainedReviewerTests(unittest.TestCase):
                 patch.object(adapter.time, "sleep") as sleep,
                 self.assertRaises(adapter.ContainedReviewerProcessError) as caught,
             ):
-                reviewer.run_cover(request, lambda *_: None)  # type: ignore[arg-type]
+                reviewer.run_cover(request, lambda *_: None)
             self.assertEqual((runtime_attempts, caught.exception.code), (1, "runtime"))
             sleep.assert_not_called()
             self.assertEqual(
@@ -737,7 +737,7 @@ class ContainedReviewerTests(unittest.TestCase):
                 patch.object(adapter.time, "sleep") as sleep,
                 self.assertRaises(adapter.ContainedReviewerProcessError) as caught,
             ):
-                reviewer.run_cover(request, lambda *_: None)  # type: ignore[arg-type]
+                reviewer.run_cover(request, lambda *_: None)
             self.assertEqual((mixed_attempts, caught.exception.code), (2, "runtime"))
             sleep.assert_called_once_with(1)
             self.assertEqual(
@@ -752,13 +752,13 @@ class ContainedReviewerTests(unittest.TestCase):
 
             with self.assertRaises(ValueError):
                 adapter.ContainedReviewerProcessError(
-                    "runtime", attempts=(object(),)  # type: ignore[arg-type]
+                    "runtime", attempts=(object(),)
                 )
             with self.assertRaises(contract.ContainedReviewerError):
                 contract.ContainedReviewResult(
                     document,
                     hashlib.sha256(document.encode()).hexdigest(),
-                    attempts=(object(),),  # type: ignore[arg-type]
+                    attempts=(object(),),
                 )
 
     @unittest.skipUnless(
@@ -767,10 +767,10 @@ class ContainedReviewerTests(unittest.TestCase):
     )
     def test_sealed_image_copy_resists_callback_and_same_uid_mutation(self) -> None:
         request = _cover_request()
-        with adapter._sealed_cover_images(request.images) as images:  # type: ignore[attr-defined]
+        with adapter._sealed_cover_images(request.images) as images:
             self.assertEqual(len(images), 1)
             image = images[0]
-            seal_constants = adapter._linux_seal_constants()  # type: ignore[attr-defined]
+            seal_constants = adapter._linux_seal_constants()
             self.assertIsNotNone(seal_constants)
             assert seal_constants is not None
             _add_seals, get_seals, required = seal_constants
@@ -849,14 +849,14 @@ class ContainedReviewerTests(unittest.TestCase):
     )
     def test_bubblewrap_reads_ordered_sealed_images_and_cannot_write_them(self) -> None:
         request = _cover_request()
-        first = request.images[0]  # type: ignore[attr-defined]
+        first = request.images[0]
         second_payload = first.payload[:-1] + bytes([first.payload[-1] ^ 1])
-        second = contract._CoverReviewImage(  # type: ignore[attr-defined]
+        second = contract._CoverReviewImage(
             "cover_transport_ref_" + "b" * 64,
             hashlib.sha256(second_payload).hexdigest(),
             second_payload,
         )
-        with adapter._sealed_cover_images((first, second)) as images:  # type: ignore[attr-defined]
+        with adapter._sealed_cover_images((first, second)) as images:
             with tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 codex = root / "codex"
@@ -893,10 +893,10 @@ class ContainedReviewerTests(unittest.TestCase):
                      tempfile.TemporaryFile() as stdout, \
                      tempfile.TemporaryFile() as stderr, \
                      open(credential, "rb") as credential_file:
-                    bound_codex = adapter._BoundArtifact(  # type: ignore[attr-defined]
+                    bound_codex = adapter._BoundArtifact(
                         codex_file.fileno(), f"/proc/self/fd/{codex_file.fileno()}"
                     )
-                    bound_sandbox = adapter._BoundArtifact(  # type: ignore[attr-defined]
+                    bound_sandbox = adapter._BoundArtifact(
                         sandbox_file.fileno(), f"/proc/self/fd/{sandbox_file.fileno()}"
                     )
                     command = reviewer._sandbox_command(
@@ -961,7 +961,7 @@ class ContainedReviewerTests(unittest.TestCase):
                      patch.object(adapter, "_process_start_token", return_value="9876"), \
                      patch.object(adapter, "_safe_start_token", return_value="9876"), \
                      patch.object(adapter, "_wait_for_exit", side_effect=failure), \
-                     patch.object(adapter, "_kill_and_prove_dead", side_effect=lambda pid, pgid, token: killed.append((pid, pgid, token))):
+                     patch.object(adapter, "_kill_and_prove_dead", side_effect=lambda pid, pgid, token: killed.append((pid, pgid, token))):  # noqa: B023 - closure is created and consumed within this iteration
                     with self.assertRaisesRegex(Exception, code):
                         reviewer._run_gated([], artifact, artifact, 1, 2, 3, lambda *_: None, credential_descriptor=4)
                 self.assertEqual(killed, [(4321, 4321, "9876")])

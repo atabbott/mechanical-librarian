@@ -3,12 +3,34 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Protocol
 
 from mechanical_librarian.domain.field_effect import EffectConsent, FieldEffectPlan
 
 
+class _ConsentRepository(Protocol):
+    """Persistence seam the guarded consent adapter reads."""
+
+    def current_field_effect_consent(
+        self, connection: str, library: str, destination: str,
+    ) -> EffectConsent: ...
+    def field_effect_consent_is_current(self, consent: EffectConsent) -> bool: ...
+
+
+class _DependencyRepository(Protocol):
+    """Persistence seam the guarded dependency adapter reads."""
+
+    def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool: ...
+
+
+class _BackupRepository(Protocol):
+    """Persistence seam the durable backup readiness adapter reads."""
+
+    def field_effect_backup_ready(self) -> bool: ...
+
+
 class PersistedEffectConsent:
-    def __init__(self, repository) -> None:
+    def __init__(self, repository: _ConsentRepository) -> None:
         self._repository = repository
 
     def resolve(self, *, connection: str, library: str,
@@ -22,7 +44,7 @@ class PersistedEffectConsent:
 
 
 class PersistedEffectDependencies:
-    def __init__(self, repository) -> None:
+    def __init__(self, repository: _DependencyRepository) -> None:
         self._repository = repository
 
     def current(self, digests: tuple[str, ...]) -> bool:
@@ -32,7 +54,7 @@ class PersistedEffectDependencies:
 class DurableBackupReadiness:
     """Require a consistent exact-current application checkpoint before writes."""
 
-    def __init__(self, repository) -> None:
+    def __init__(self, repository: _BackupRepository) -> None:
         self._repository = repository
 
     def ready(self, plan: FieldEffectPlan) -> bool:

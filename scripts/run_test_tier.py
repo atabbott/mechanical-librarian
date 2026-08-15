@@ -17,7 +17,6 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 
-
 _STALL_DIAGNOSTIC_SECONDS = 30
 _SAFE_TEST_ID = re.compile(r"[A-Za-z0-9_.]{1,512}")
 

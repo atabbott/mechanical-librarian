@@ -1,14 +1,25 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import unittest
 
 import httpx
 
-from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import AudiobookshelfCatalogueReader, _entry as catalogue_entry, _get
-from mechanical_librarian.application.catalogue import CatalogueError, TargetConnectionError
-from mechanical_librarian.application.configuration import LibraryConfiguration, MediaMountConfiguration
+from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+    AudiobookshelfCatalogueReader,
+    _get,
+)
+from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+    _entry as catalogue_entry,
+)
+from mechanical_librarian.application.catalogue import (
+    CatalogueError,
+    TargetConnectionError,
+)
+from mechanical_librarian.application.configuration import (
+    LibraryConfiguration,
+    MediaMountConfiguration,
+)
 from mechanical_librarian.domain.metadata_report import canonical_json
 
 
@@ -67,12 +78,13 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
 
     def test_strict_stream_json_rejects_duplicates_nonfinite_and_depth(self) -> None:
         for body in (b'{"a":1,"a":2}', b'{"a":NaN}', b"[" * 101 + b"]" * 101):
-            client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, headers={"content-type": "application/json"}, content=body)), base_url="https://abs.invalid")
+            client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, headers={"content-type": "application/json"}, content=body)), base_url="https://abs.invalid")  # noqa: B023 - closure is created and consumed within this iteration
             with client, self.assertRaises(CatalogueError):
                 _get(client, "/api/libraries", 65_536, 1)
 
     def test_missing_items_and_one_element_plural_remain_unusable(self) -> None:
-        detail = _item(); detail["isMissing"] = True
+        detail = _item()
+        detail["isMissing"] = True
         detail["media"] = {"metadata": {"title": "Title", "authors": []}, "ebookFiles": [{"ebookFormat": "epub"}]}
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/api/libraries":
@@ -99,6 +111,7 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
 
     def test_empty_plural_is_none_and_plural_values_need_attention(self) -> None:
         summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+        plural: object
         for plural, expected in (([], (False, "none")), ([{}], (True, "needs-attention")), ([{}, {}], (True, "needs-attention"))):
             detail = {**_item(), "media": {"metadata": {"title": "Title", "authors": []}, "ebookFiles": plural}}
             entry = catalogue_entry("primary", _library(), None, summary, detail)
@@ -141,6 +154,7 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
 
     def test_invalid_material_revision_retains_item_revision_fallback(self) -> None:
         summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+        invalid_revision: object
         for invalid_revision in (None, -1, "", [], {}):
             baseline = _item()
             baseline["media"]["ebookFile"]["metadata"]["mtimeMs"] = invalid_revision

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import io
 import os
 import sqlite3
 import tempfile
@@ -16,9 +15,14 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.proposal_set import evaluate_report
-from mechanical_librarian.domain.shadow_decision import ShadowDecisionSet, decide_shadow_packet
-from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
-from mechanical_librarian.interfaces.cli import main
+from mechanical_librarian.domain.shadow_decision import (
+    ShadowDecisionSet,
+    decide_shadow_packet,
+)
+from mechanical_librarian.domain.shadow_review import (
+    ShadowReviewPacket,
+    ShadowReviewValueError,
+)
 from tests.unit.test_review_case_persistence import _report
 
 
@@ -178,6 +182,44 @@ class ShadowDecisionPreviewTests(unittest.TestCase):
                 ShadowDecisionSet.from_json(serialized, packet),
             )
             self.assertEqual(before, _snapshot(directory))
+
+    def test_invalid_shadow_packet_becomes_a_report_error_on_both_previews(self) -> None:
+        """Both preview paths must name `ShadowReviewValueError` at runtime.
+
+        The `except` tuples resolve their names lazily, so a missing import
+        surfaces as `NameError` from the handler instead of the intended
+        `MetadataReportError`. This regression test exercises the handler.
+        """
+
+        def _invalid(review_case_id: str) -> ShadowReviewPacket:
+            raise ShadowReviewValueError("shadow-review packet is invalid")
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            path, case_id, _ = _database(directory)
+
+            writable = open_repository(path)
+            try:
+                writable._shadow_packet = _invalid  # type: ignore[method-assign]  # reason: the point of this test is to drive the handler, not the packet reader
+                with self.assertRaises(MetadataReportError) as writable_failure:
+                    writable.preview_shadow_packet(case_id)
+            finally:
+                writable.close()
+            self.assertIsInstance(
+                writable_failure.exception.__cause__, ShadowReviewValueError
+            )
+
+            preview = open_shadow_preview_repository(path)
+            try:
+                preview._reader._shadow_packet = _invalid  # type: ignore[method-assign]  # reason: the point of this test is to drive the handler, not the packet reader
+                with self.assertRaises(MetadataReportError) as preview_failure:
+                    preview.preview_shadow_packet(case_id)
+                self.assertFalse(preview._connection.in_transaction)
+            finally:
+                preview.close()
+            self.assertIsInstance(
+                preview_failure.exception.__cause__, ShadowReviewValueError
+            )
 
 
 if __name__ == "__main__":

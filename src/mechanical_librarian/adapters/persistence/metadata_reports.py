@@ -13,12 +13,15 @@ import sys
 from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, cast
 from urllib.parse import quote
 
-from mechanical_librarian.application.catalogue import CatalogueEntry, TargetConnectionError
-from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.catalogue import (
+    CatalogueEntry,
+    TargetConnectionError,
+)
 from mechanical_librarian.application.metadata_policy import PolicyTransition
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     PipelineProgress,
@@ -31,42 +34,31 @@ from mechanical_librarian.application.review_web import (
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
 )
-from mechanical_librarian.domain.failure_diagnostics import (
-    MAX_DIAGNOSTIC_COUNT,
-    FailureCategory,
-    FailureComponent,
-    FailureDiagnostic,
-    FailureStage,
-)
-from mechanical_librarian.domain.human_decision import (
-    HumanDecision,
-    HumanDecisionError,
+from mechanical_librarian.domain.automatic_decision import (
+    QUALIFIED_POLICY_OPTIONS,
+    AutomaticDecision,
+    AutomaticDecisionError,
+    AutomaticSafetyState,
+    qualification_manifest_sha256,
 )
 from mechanical_librarian.domain.field_effect import (
-    EffectAuthority,
-    EffectConsent,
     FIELD_EFFECT_FAILURES,
     SUPPORTED_DESTINATIONS,
+    EffectAuthority,
+    EffectConsent,
     FieldEffectError,
     FieldEffectNoChange,
     FieldEffectOperation,
     authority_to_data,
-    canonical_json as canonical_effect_json,
     field_value_version,
     project_decision_value,
 )
-from mechanical_librarian.domain.automatic_decision import (
-    AutomaticDecision,
-    AutomaticDecisionError,
-    AutomaticSafetyState,
-    QUALIFIED_POLICY_OPTIONS,
-    qualification_manifest_sha256,
+from mechanical_librarian.domain.field_effect import (
+    canonical_json as canonical_effect_json,
 )
-from mechanical_librarian.domain.metadata_report import (
-    MetadataReport,
-    ProviderStatus,
-    REPORT_SCHEMA,
-    ReportValueError,
+from mechanical_librarian.domain.human_decision import (
+    HumanDecision,
+    HumanDecisionError,
 )
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
@@ -75,6 +67,12 @@ from mechanical_librarian.domain.metadata_policy import (
     human_review_destinations,
     resolve_policy,
 )
+from mechanical_librarian.domain.metadata_report import (
+    REPORT_SCHEMA,
+    MetadataReport,
+    ProviderStatus,
+    ReportValueError,
+)
 from mechanical_librarian.domain.proposal_set import (
     POLICY_VERSION,
     ProposalSet,
@@ -82,30 +80,40 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import (
-    ReviewAdmissionResult,
     ReviewAdmissionIncompatibleError,
+    ReviewAdmissionResult,
     ReviewAdmissionStaleError,
     ReviewCase,
     ReviewCaseValueError,
     ReviewTransition,
     is_actionable,
 )
+from mechanical_librarian.domain.review_field_classification import ReviewFieldCause
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
     project_f20_automatic_decision_value,
     select_isbn_representation,
 )
-from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
 from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeError,
     ShadowOutcomeSet,
+)
+from mechanical_librarian.domain.shadow_review import (
+    ShadowReviewPacket,
+    ShadowReviewValueError,
 )
 
 if sys.platform.startswith("linux"):
     import fcntl
 else:
     fcntl = None
+
+
+# The exact column shape of the current_review_case_lineages pointer selected
+# by _validated_review_pointer.  Nullability follows the schema below:
+# review_case_id is the only nullable column of the six.
+_ReviewPointer = tuple[str, str, str | None, str, int, str]
 
 
 _REPORTS_SQL = (
@@ -1005,23 +1013,29 @@ class SQLiteMetadataReportRepository:
                 or type(envelope.get("case")) is not dict):
             raise FieldEffectError("authority_binding")
         case = ReviewCase.from_json(_canonical_json(envelope["case"]))
+        # ``value`` carries either a human selection envelope or the projected
+        # automatic envelope, so it is declared at the widest of the two.
+        value: object
         if type(decision) is HumanDecision:
             decision.validate_for(case)
             value = decision.selected_value
         else:
+            # The declared parameter union plus the exact-type test above leave
+            # only AutomaticDecision on this branch.
+            automatic = cast(AutomaticDecision, decision)
             report_row = self._connection.execute(
                 "SELECT document FROM metadata_reports WHERE report_id=?",
-                (decision.report_id,),
+                (automatic.report_id,),
             ).fetchone()
             proposal_row = self._connection.execute(
                 "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
-                (decision.proposal_set_id,),
+                (automatic.proposal_set_id,),
             ).fetchone()
             if report_row is None or proposal_row is None:
                 raise FieldEffectError("authority_binding")
             try:
                 value = _automatic_decision_value(
-                    decision, case, MetadataReport.from_json(report_row[0]),
+                    automatic, case, MetadataReport.from_json(report_row[0]),
                     ProposalSet.from_json(proposal_row[0]),
                 )
             except (
@@ -1037,7 +1051,9 @@ class SQLiteMetadataReportRepository:
         target_fields = case.target.get("fields")
         target_field = next(
             (
-                item for item in target_fields or ()
+                # ReviewCase.target is always TargetFacts.to_data(), whose
+                # "fields" key is a list of field objects.
+                item for item in cast("list[object] | None", target_fields) or ()
                 if type(item) is dict
                 and item.get("destination") == decision.destination
             ),
@@ -1053,7 +1069,7 @@ class SQLiteMetadataReportRepository:
             if target_field["state"] == "value"
             else None
         )
-        dependency_digests = (decision.target_fingerprint,)
+        dependency_digests: tuple[str, ...] = (decision.target_fingerprint,)
         if type(decision) is HumanDecision and decision.destination == "cover":
             consideration_row = self._connection.execute(
                 "SELECT consideration.document FROM current_cover_considerations current "
@@ -1121,10 +1137,12 @@ class SQLiteMetadataReportRepository:
                 return False
             record = FieldEffectNoChange.create(
                 decision_id=decision.decision_id, review_case_id=decision.review_case_id,
-                report_id=decision.report_id, connection=source["connection"],
-                library=source["library"], work_id=source["work_id"],
+                # field_effect_authority_source builds exactly the
+                # _AuthorityFields shape: these four keys are always str.
+                report_id=decision.report_id, connection=cast(str, source["connection"]),
+                library=cast(str, source["library"]), work_id=cast(str, source["work_id"]),
                 destination=decision.destination, target_fingerprint=decision.target_fingerprint,
-                target_version=source["target_version"], occurred_at=occurred_at,
+                target_version=cast(str, source["target_version"]), occurred_at=occurred_at,
             )
             inserted = self._connection.execute(
                 "INSERT OR IGNORE INTO field_effect_no_changes(decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -1161,7 +1179,8 @@ class SQLiteMetadataReportRepository:
             return True
         except (sqlite3.Error, FieldEffectError, TypeError, ValueError) as error:
             self._connection.rollback()
-            if isinstance(error, FieldEffectError): raise
+            if isinstance(error, FieldEffectError):
+                raise
             raise FieldEffectError("authority_binding") from error
 
     def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool:
@@ -2112,7 +2131,9 @@ class SQLiteMetadataReportRepository:
         # This is deliberately a read-only union over the existing immutable
         # ledgers.  It neither broadens write authority nor invents a second
         # audit store just for presentation.
-        events = """
+        # ``events`` is deliberately rebound below from the union SQL text to
+        # the projected event list; both shapes are declared here.
+        events: str | list[dict[str, object]] = """
             SELECT event.event_id, effect.connection_name, effect.destination,
                    effect.library_name, event.occurred_at,
                    COALESCE(CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END, 'unknown'),
@@ -2190,7 +2211,7 @@ class SQLiteMetadataReportRepository:
             )
             parameters.extend((like, like, like, like, like, like))
         predicate = " WHERE " + " AND ".join(where)
-        projection = "WITH activity_events(event_id,connection,destination,library,occurred_at,origin,report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,source_valid) AS (" + events + ") "
+        projection = "WITH activity_events(event_id,connection,destination,library,occurred_at,origin,report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,source_valid) AS (" + cast(str, events) + ") "
         def waiting_scalar(value: object, *, nullable: bool = False) -> str | None:
             if value is None and nullable:
                 return None
@@ -2233,6 +2254,7 @@ class SQLiteMetadataReportRepository:
             if set(report_documents) != set(report_ids):
                 raise FieldEffectError("persistence")
             events = []
+            decision: HumanDecision | AutomaticDecision
             for (
                 event_id, connection, destination, library, occurred_at, origin,
                 report_id, state, work_id, document, projected_type, title, detail, source_kind, source_document, source_parent_id, source_sequence, source_identity, source_valid,
@@ -2308,8 +2330,10 @@ class SQLiteMetadataReportRepository:
                             raise FieldEffectError("persistence")
                         record = FieldEffectNoChange.create(
                             decision_id=source_identity, review_case_id=source_parent_id,
-                            report_id=report_id, connection=connection, library=library,
-                            work_id=work_id, destination=destination,
+                            # scalar() without nullable=True raises rather than
+                            # returning None, so these are always str here.
+                            report_id=report_id, connection=connection, library=cast(str, library),
+                            work_id=cast(str, work_id), destination=cast(str, destination),
                             target_fingerprint=self._connection.execute(
                                 "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
                                 (source_identity,),
@@ -3129,7 +3153,7 @@ class SQLiteMetadataReportRepository:
             raise FieldEffectError("persistence") from error
 
     def field_effect_cleanup_pending(self, plan_id: str) -> bool:
-        row = self._connection.execute(
+        row: tuple[object, ...] | None = self._connection.execute(
             "SELECT state FROM field_effect_cleanups WHERE plan_id=?", (plan_id,)
         ).fetchone()
         return row == ("pending",)
@@ -3204,9 +3228,12 @@ class SQLiteMetadataReportRepository:
 
     def field_effect_paused(self) -> bool:
         try:
-            return self._connection.execute(
-                "SELECT paused FROM field_effect_control WHERE singleton=1"
-            ).fetchone() == (1,)
+            return cast(
+                "tuple[object, ...] | None",
+                self._connection.execute(
+                    "SELECT paused FROM field_effect_control WHERE singleton=1"
+                ).fetchone(),
+            ) == (1,)
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
@@ -3882,7 +3909,8 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("target connection condition is unavailable") from error
 
     def _target_connection_affected(self, connection: str) -> int:
-        return self._connection.execute(
+        # The projection is a sum of two COUNT(*) sub-selects, always one int.
+        return cast(int, self._connection.execute(
                 "SELECT (SELECT count(*) FROM review_preparation_scans scan "
                 "WHERE scan.connection_name=? AND scan.state IN ('queued','discovering','processing') "
                 "AND NOT EXISTS(SELECT 1 FROM review_preparation_work work "
@@ -3890,7 +3918,7 @@ class SQLiteMetadataReportRepository:
                 "(SELECT count(*) FROM review_preparation_work "
                 "WHERE connection_name=? AND state IN ('queued','running'))",
                 (connection, connection),
-            ).fetchone()[0]
+            ).fetchone()[0])
 
     def _refresh_target_connection_affected(self, connection: str) -> None:
         """Keep an existing hold truthful as newly admitted work arrives."""
@@ -4249,7 +4277,7 @@ class SQLiteMetadataReportRepository:
             "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
             (staged_at, row[1]),
         )
-        return row[0]
+        return cast(str, row[0])
 
     def provider_retry_work_id(self, report_id: str) -> str:
         try:
@@ -4262,7 +4290,7 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("provider retry staging is unavailable") from error
         if row is None:
             raise MetadataReportError("provider retry staging is stale")
-        return row[0]
+        return cast(str, row[0])
 
     def provider_retry_complete(self, report_id: str) -> bool:
         try:
@@ -4714,7 +4742,10 @@ class SQLiteMetadataReportRepository:
                     (action.connection, action.library, action.item_id, *pointer),
                 )
                 outbox_id = _provider_recovery_outbox_id(
-                    action.connection, action.library, action.item_id, *pointer,
+                    # PipelineAction.item_id is optional on the dataclass, but
+                    # the pointer lookup immediately above matched a lineage
+                    # row on exactly this connection/library/item triple.
+                    action.connection, action.library, cast(str, action.item_id), *pointer,
                 )
                 self._connection.execute(
                     "INSERT INTO provider_recovery_outbox(outbox_id,connection_name,"
@@ -5360,7 +5391,9 @@ class SQLiteMetadataReportRepository:
                 and self._connection.execute(
                     "SELECT actor FROM review_case_transitions "
                     "WHERE transition_id=?",
-                    (validated[3],),
+                    # ``prior`` is None exactly when ``validated`` is None, so
+                    # reaching here proves the pointer was found.
+                    (cast(_ReviewPointer, validated)[3],),
                 ).fetchone()
                 != ("review-preparation-v1",)
             ):
@@ -5370,10 +5403,10 @@ class SQLiteMetadataReportRepository:
                     self._connection.commit()
                 replay_status = (
                     "replayed"
-                    if validated[5] in {"admitted", "superseded"}
-                    else validated[5]
+                    if cast(_ReviewPointer, validated)[5] in {"admitted", "superseded"}
+                    else cast(_ReviewPointer, validated)[5]
                 )
-                return _admission_json(replay_status, validated[2])
+                return _admission_json(replay_status, cast(_ReviewPointer, validated)[2])
             if not is_actionable(proposal_set):
                 outcome = "retired" if prior_case_id is not None else "no_case"
                 transition = ReviewTransition(*lineage, checkpoint, proposal_set.proposal_set_id, report.report_id, outcome, prior_case_id, None, "nonactionable")
@@ -5416,9 +5449,11 @@ class SQLiteMetadataReportRepository:
             ReviewAdmissionIncompatibleError,
             ReviewAdmissionStaleError,
         ):
-            self._connection.rollback(); raise
+            self._connection.rollback()
+            raise
         except (sqlite3.Error, ProposalValueError, ReportValueError, ReviewCaseValueError) as error:
-            self._connection.rollback(); raise MetadataReportError("review admission failed") from error
+            self._connection.rollback()
+            raise MetadataReportError("review admission failed") from error
 
     def review_case_exists(self, review_case_id: str) -> bool:
         try:
@@ -5442,7 +5477,7 @@ class SQLiteMetadataReportRepository:
             case = ReviewCase.from_json(row[3])
             if (case.review_case_id, case.proposal_set_id, case.report_id) != row[:3]:
                 raise MetadataReportError("review case is invalid")
-            self._validated_review_pointer((case.target["connection"], case.target["library"], case.target["item"]))
+            self._validated_review_pointer(cast("tuple[str, str, str]", (case.target["connection"], case.target["library"], case.target["item"])))
             proposal_row = self._connection.execute(
                 "SELECT proposal_set_id,report_id,policy_version,document FROM proposal_sets WHERE proposal_set_id=?",
                 (case.proposal_set_id,),
@@ -5504,7 +5539,9 @@ class SQLiteMetadataReportRepository:
                  if proposal["destination"] == "cover"),
                 None,
             )
-            if cover is None or cover["result"]["outcome"] == "ineligible":
+            # Every ReviewCase proposal carries a "result" object; the
+            # surrounding except clause turns any drift into MetadataReportError.
+            if cover is None or cast("dict[str, object]", cover["result"])["outcome"] == "ineligible":
                 return None
             return report.to_json(), str(cover["proposal_id"]), False
         except (sqlite3.Error, ReviewCaseValueError, ReportValueError, KeyError, TypeError) as error:
@@ -5586,7 +5623,17 @@ class SQLiteMetadataReportRepository:
             rows = self.list_current_review_case_documents(
                 search, limit, offset, attention
             )
-            projected_rows = []
+            projected_rows: list[
+                tuple[
+                    str | None,
+                    str,
+                    tuple[str, ...],
+                    tuple[str, ...],
+                    tuple[str, ...],
+                    tuple[str, ...],
+                    str | None,
+                ]
+            ] = []
             for case_document, report_document in rows:
                 if case_document is None and '"schema_version":"review-terminal-work-v1"' in report_document:
                     projected_rows.append((case_document, report_document, (), (), (), (), None))
@@ -5686,7 +5733,7 @@ class SQLiteMetadataReportRepository:
 
     def _field_effect_capability_suspension_causes(
         self, review_case_id: str,
-    ) -> tuple[tuple[str, str], ...]:
+    ) -> tuple[tuple[str, ReviewFieldCause], ...]:
         rows = self._connection.execute(
             "SELECT json_extract(result.value,'$.destination'),(SELECT "
             "suspension.scope FROM field_effect_suspensions suspension "
@@ -5705,7 +5752,7 @@ class SQLiteMetadataReportRepository:
             "json_extract(result.value,'$.destination')))) ORDER BY 1",
             (review_case_id,),
         ).fetchall()
-        causes = {
+        causes: dict[str, ReviewFieldCause] = {
             "connection": "external_connection_failure",
             "destination": "external_field_failure",
         }
@@ -5721,8 +5768,17 @@ class SQLiteMetadataReportRepository:
     ) -> ReviewAttentionSnapshot:
         with self._consistent_review_read():
             snapshot = ReviewAttentionSnapshot(
-                rows=self.list_current_attention_documents(
-                    search, limit, offset
+                # ReviewAttentionSnapshot.rows is declared as a 4-tuple, but
+                # this repository has always produced (and review_web's
+                # attention() reader has always consumed, via its len(row)
+                # guards) the two extra automatic-outcome and cause columns.
+                # The declaration in application/review_web.py is the stale
+                # half of that pair; this cast records the real shape.
+                rows=cast(
+                    "tuple[tuple[str, str, str, int], ...]",
+                    self.list_current_attention_documents(
+                        search, limit, offset
+                    ),
                 ),
                 total=self.count_current_attention_fields(search),
             )
@@ -5982,7 +6038,7 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             if count is None:
                 raise MetadataReportError("review login is unavailable")
-            permitted = count[0] < maximum_failures
+            permitted: bool = count[0] < maximum_failures
             if permitted:
                 identity = hashlib.sha256(
                     f"review-login-attempt-v1:{now}:{secrets.token_hex(16)}".encode()
@@ -6009,7 +6065,7 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             if row is None or row[0] not in {"review", "preview", "automatic"}:
                 raise MetadataReportError("shadow posture is unavailable")
-            return row[0]
+            return cast(str, row[0])
         except sqlite3.Error as error:
             raise MetadataReportError("shadow posture is unavailable") from error
 
@@ -6230,7 +6286,8 @@ class SQLiteMetadataReportRepository:
     ) -> tuple[str, int]:
         if len(row) != 8:
             raise MetadataReportError("shadow outcome persistence is invalid")
-        outcome = ShadowOutcomeSet.from_json(row[7])
+        # The eight-column shadow outcome projection stores its document last.
+        outcome = ShadowOutcomeSet.from_json(cast(str, row[7]))
         if (
             type(row[6]) is not int
             or row[6] < 0
@@ -7180,7 +7237,9 @@ class SQLiteMetadataReportRepository:
                     "provider",
                 }:
                     self._restart_metadata_policy_work(
-                        work_id, work_stage, report_id, retried_at
+                        # Reaching here with work_id set means work_stage was
+                        # read from review_preparation_work.stage (NOT NULL).
+                        work_id, cast(str, work_stage), report_id, retried_at
                     )
                 self._connection.execute(
                     "UPDATE metadata_policy_transition_items SET work_id=?,state='pending',failure_code=NULL,updated_at=? WHERE transition_id=? AND connection_name=? AND library_name=? AND item_id=?",
@@ -7326,7 +7385,8 @@ class SQLiteMetadataReportRepository:
                 or type(row[2]) is not int
             ):
                 raise MetadataReportError("review session is unavailable")
-            return row
+            # The guard above proves the exact ("owner", str, int) shape.
+            return cast("tuple[str, str, int]", row)
         except sqlite3.Error as error:
             raise MetadataReportError("review session is unavailable") from error
 
@@ -8244,7 +8304,7 @@ class SQLiteMetadataReportRepository:
             raise ReviewAdmissionStaleError
 
     def _review_case_accepts_authority(self, review_case_id: str) -> bool:
-        return self._connection.execute(
+        return cast("tuple[object, ...] | None", self._connection.execute(
             "SELECT 1 FROM current_review_case_lineages staged "
             "JOIN current_review_packages published ON "
             "published.connection_name=staged.connection_name AND "
@@ -8256,7 +8316,7 @@ class SQLiteMetadataReportRepository:
             "published.checkpoint=staged.checkpoint "
             "WHERE staged.review_case_id=?",
             (review_case_id,),
-        ).fetchone() == (1,)
+        ).fetchone()) == (1,)
 
     def _policy_destinations_for(
         self, report: MetadataReport, proposal: ProposalSet
@@ -8316,8 +8376,8 @@ class SQLiteMetadataReportRepository:
             ProposalSet.from_json(_validate_proposal_row(row[9:])),
         )
 
-    def _validated_review_pointer(self, lineage: tuple[str, str, str]) -> tuple[object, ...] | None:
-        pointer = self._connection.execute("SELECT proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", lineage).fetchone()
+    def _validated_review_pointer(self, lineage: tuple[str, str, str]) -> _ReviewPointer | None:
+        pointer: _ReviewPointer | None = self._connection.execute("SELECT proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", lineage).fetchone()
         if pointer is None:
             return None
         proposal_id, report_id, case_id, transition_id, checkpoint, outcome = pointer
@@ -8406,7 +8466,8 @@ class SQLiteMetadataReportRepository:
         if outcome == "report_only":
             if proposal_id is not None or case_id is not None or checkpoint is not None:
                 raise MetadataReportError("persisted review package is invalid")
-            return row
+            # The five per-column type tests above prove the declared shape.
+            return cast("tuple[str | None, str, str | None, int | None, str]", row)
         expected_case = outcome in {"admitted", "superseded"}
         if (
             outcome not in {"admitted", "superseded", "no_case", "retired"}
@@ -8433,7 +8494,8 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("persisted review package is invalid") from error
         if valid != (1,):
             raise MetadataReportError("persisted review package is invalid")
-        return row
+        # The five per-column type tests above prove the declared shape.
+        return cast("tuple[str | None, str, str | None, int | None, str]", row)
 
     def current_review_package_report(
         self, connection: str, library: str, item: str
@@ -9401,14 +9463,16 @@ def _automatic_decision_value(
          and item["destination"] == decision.destination),
         None,
     )
-    alternatives = None if proposal is None else proposal["result"].get("alternatives")
+    # Every ReviewCase proposal carries a "result" object, and TargetFacts
+    # always serialises "fields" as a list of field objects.
+    alternatives = None if proposal is None else cast("dict[str, object]", proposal["result"]).get("alternatives")
     selected = next(
-        (item for item in alternatives or ()
+        (item for item in cast("list[dict[str, object]] | None", alternatives) or ()
          if item.get("alternative_id") == decision.candidate_id),
         None,
     )
     target_field = next(
-        (item for item in target.get("fields", ())
+        (item for item in cast("list[object]", target.get("fields", ()))
          if type(item) is dict and item.get("destination") == decision.destination),
         None,
     )
@@ -9488,7 +9552,8 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 or report.target.item != record.work_id
             ):
                 raise FieldEffectError("persistence")
-            target = next((value for value in case.target.get("fields", ())
+            # TargetFacts always serialises "fields" as a list of field objects.
+            target = next((value for value in cast("list[object]", case.target.get("fields", ()))
                            if type(value) is dict
                            and value.get("destination") == record.destination), None)
             proposal = next((value for value in case.proposals
@@ -9610,6 +9675,8 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 raise FieldEffectError("invalid_manual_hold")
 
         operations: dict[str, FieldEffectOperation] = {}
+        # Rebound below both from a parsed document and from a dict lookup.
+        operation: FieldEffectOperation | None
         for row in connection.execute(
             "SELECT plan_id,decision_id,connection_name,library_name,work_id,destination,state,attempt,updated_at,document FROM field_effects"
         ):
@@ -9759,8 +9826,11 @@ def _validate_provider_recovery_outbox_row(row: tuple[object, ...]) -> None:
         or (row[6] is not None and (type(row[6]) is not str or not row[6]))
         or (row[7] is not None and (type(row[7]) is not int or row[7] < 1))
         or type(row[9]) is not int or row[9] < 0
+        # Short-circuit evaluation: reaching this disjunct means every column
+        # test above passed, fixing each column's exact type.
         or row[0] != _provider_recovery_outbox_id(
-            row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]
+            cast(str, row[1]), cast(str, row[2]), cast(str, row[3]),
+            row[4], cast(str, row[5]), row[6], row[7], cast(str, row[8]),
         )
     ):
         raise MetadataReportError("provider recovery outbox is invalid")

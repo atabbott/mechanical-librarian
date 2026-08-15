@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import cast
 
 from argon2 import PasswordHasher
 from starlette.testclient import TestClient
@@ -20,7 +21,6 @@ from tests.browser.fidelity_cohort import (
 from tests.browser.test_review_browser import _report
 from tests.unit.review_app_fixture import create_transport_test_app
 
-
 _ORIGIN = "https://testserver"
 _PASSWORD = "rich-fixture-proof"
 
@@ -32,9 +32,9 @@ class RichFidelityCohortTests(unittest.TestCase):
         items = attention["items"]
         self.assertIsInstance(items, list)
         expected_attention = sum(
-            int(work["attention_count"])
+            int(cast(int, work["attention_count"]))
             for work in LIBRARY_WORKS[:4]
-            if int(work["attention_count"]) > 0
+            if int(cast(int, work["attention_count"])) > 0
         )
         self.assertEqual(attention["total"], expected_attention)
         self.assertEqual(len(items), expected_attention)

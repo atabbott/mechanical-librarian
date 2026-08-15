@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import hashlib
-import io
 import json
 import tempfile
 import unittest
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
+from typing import cast
 
 import httpx
 
@@ -31,20 +32,22 @@ from mechanical_librarian.application.metadata_report import (
     GenerateMetadataReport,
     InspectionResult,
     MetadataLookup,
+    MetadataProvider,
+    MetadataReportError,
     ProviderBinding,
     ProviderLaneResult,
-    TargetFile,
+    ReportRepository,
     TargetCover,
+    TargetFile,
     TargetSnapshot,
     UnsupportedMediaError,
-    MetadataReportError,
     _variant_marker,
-    metadata_lookup,
     metadata_discovery_plan,
+    metadata_lookup,
     provider_observation,
     qualify_provider_observation,
 )
-from mechanical_librarian.application.operations import StageTimer
+from mechanical_librarian.application.operations import StageTimer, StageTiming
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverDesignation,
@@ -62,6 +65,8 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_CANDIDATES,
+    MAX_DESCRIPTION_CHARACTERS,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -77,14 +82,12 @@ from mechanical_librarian.domain.metadata_report import (
     IdentifierRelation,
     LocalClaim,
     MetadataReport,
-    MAX_CANDIDATES,
-    MAX_DESCRIPTION_CHARACTERS,
-    ProviderObservation,
     ProviderCandidate,
     ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
     ProviderIdentityBinding,
+    ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
     PublicationDateRelation,
@@ -95,24 +98,22 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     canonical_json,
-    comparison_links,
     claim_scope,
+    comparison_links,
     default_target_fields,
-    derive_identifier_evidence,
     derive_field_results,
+    derive_identifier_evidence,
     finalize_candidate_comparisons,
     manifestation_publication_compatible,
     normalize_date_value,
     normalize_title,
+    provider_access_time,
     publication_date_is_voting,
     publication_date_relation,
-    provider_access_time,
-    stable_reference,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
-from mechanical_librarian.interfaces.cli import main
 
 
 class _Target:
@@ -200,7 +201,7 @@ class MetadataReportTests(unittest.TestCase):
             repository = _Repository()
             return GenerateMetadataReport(
                 target=target, inspector=_Inspector(InspectionResult("c" * 64, ())),
-                repository_factory=lambda: repository, providers=(),
+                repository_factory=lambda: cast(ReportRepository, repository), providers=(),
                 connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"),
                 library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()),
                 mount=MediaMountConfiguration("books", "/container", "/media", True), limits=ReportLimits(),
@@ -333,7 +334,7 @@ class MetadataReportTests(unittest.TestCase):
         self.assertEqual(accessed_at, reopened.providers[0].accessed_at)
         self.assertEqual(report.to_json(), reopened.to_json())
         missing = report.to_data()
-        missing["providers"][0].pop("accessed_at")  # type: ignore[index]
+        missing["providers"][0].pop("accessed_at")
         with self.assertRaises(ReportValueError):
             MetadataReport.from_json(canonical_json(missing))
         self.assertIsNone(
@@ -342,6 +343,7 @@ class MetadataReportTests(unittest.TestCase):
             ).to_data()["accessed_at"]
         )
 
+        invalid: object
         for invalid in (
             True,
             float("nan"),
@@ -350,7 +352,7 @@ class MetadataReportTests(unittest.TestCase):
         ):
             with self.subTest(clock=invalid):
                 with self.assertRaises(ReportValueError):
-                    provider_access_time(invalid)  # type: ignore[arg-type]
+                    provider_access_time(invalid)
         for invalid in (
             "",
             "2023-11-14T22:13:20Z",
@@ -841,7 +843,7 @@ class MetadataReportTests(unittest.TestCase):
             service = GenerateMetadataReport(
                 target=target,
                 inspector=inspector,
-                repository_factory=lambda: open_repository(database),
+                repository_factory=lambda: cast(ReportRepository, open_repository(database)),
                 providers=(
                     ProviderBinding(
                         "google_books",
@@ -1285,7 +1287,7 @@ class MetadataReportTests(unittest.TestCase):
         service = GenerateMetadataReport(
             target=target,
             inspector=inspector,
-            repository_factory=lambda: repository,
+            repository_factory=lambda: cast(ReportRepository, repository),
             providers=(
                 ProviderBinding(
                     "catalogue",
@@ -1569,12 +1571,15 @@ class MetadataReportTests(unittest.TestCase):
             inspector=_Inspector(
                 InspectionResult("b" * 64, (creator,))
             ),
-            repository_factory=lambda: repository,
+            repository_factory=lambda: cast(ReportRepository, repository),
             providers=tuple(
                 ProviderBinding(
                     name,
                     True,
-                    lambda name=name: Provider(name),
+                    cast(
+                        "Callable[[], MetadataProvider]",
+                        lambda name=name: Provider(name),
+                    ),
                 )
                 for name in names
             ),
@@ -1773,12 +1778,15 @@ class MetadataReportTests(unittest.TestCase):
                     (isbn, package_date) if local_present else (isbn,),
                 )
             ),
-            repository_factory=lambda: repository,
+            repository_factory=lambda: cast(ReportRepository, repository),
             providers=tuple(
                 ProviderBinding(
                     name,
                     True,
-                    lambda name=name: provider_type(name, lexical),
+                    cast(
+                        "Callable[[], MetadataProvider]",
+                        lambda name=name: provider_type(name, lexical),
+                    ),
                 )
                 for name in names
             ),
@@ -2099,7 +2107,7 @@ class MetadataReportTests(unittest.TestCase):
         repository = _Repository()
         service = GenerateMetadataReport(
             target=target, inspector=_Inspector(InspectionResult("c" * 64, ())),
-            repository_factory=lambda: repository, providers=(),
+            repository_factory=lambda: cast(ReportRepository, repository), providers=(),
             connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"),
             library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()),
             mount=MediaMountConfiguration("books", "/media", "/library", True),
@@ -2137,7 +2145,7 @@ class MetadataReportTests(unittest.TestCase):
         service = GenerateMetadataReport(
             target=target,
             inspector=_Inspector(InspectionResult("c" * 64, ())),
-            repository_factory=lambda: repository,
+            repository_factory=lambda: cast(ReportRepository, repository),
             providers=(),
             connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"),
             library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()),
@@ -2155,7 +2163,7 @@ class MetadataReportTests(unittest.TestCase):
         class BrokenInspector:
             def inspect(self, *args): raise RuntimeError("broken")
             def unchanged(self, *args): return True
-        service = GenerateMetadataReport(target=_Target([TargetSnapshot("ebook", "Title", (selected,))]), inspector=BrokenInspector(), repository_factory=lambda: repository, providers=(), connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"), library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()), mount=MediaMountConfiguration("books", "/media", "/library", True), limits=ReportLimits())
+        service = GenerateMetadataReport(target=_Target([TargetSnapshot("ebook", "Title", (selected,))]), inspector=BrokenInspector(), repository_factory=lambda: cast(ReportRepository, repository), providers=(), connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"), library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()), mount=MediaMountConfiguration("books", "/media", "/library", True), limits=ReportLimits())
         with self.assertRaises(MetadataReportError):
             service.run("item-1", 0)
         self.assertTrue(repository.closed)
@@ -2163,7 +2171,7 @@ class MetadataReportTests(unittest.TestCase):
         inspector = _Inspector(InspectionResult("c" * 64, ()))
         class MismatchedProvider:
             def observe(self, claims, *, deadline=None): return ProviderObservation("other", ProviderStatus.NO_MATCH)
-        service = GenerateMetadataReport(target=_Target([TargetSnapshot("ebook", "Title", (selected,))]), inspector=inspector, repository_factory=lambda: repository, providers=(ProviderBinding("catalogue", True, MismatchedProvider),), connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"), library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ("catalogue",)), mount=MediaMountConfiguration("books", "/media", "/library", True), limits=ReportLimits())
+        service = GenerateMetadataReport(target=_Target([TargetSnapshot("ebook", "Title", (selected,))]), inspector=inspector, repository_factory=lambda: cast(ReportRepository, repository), providers=(ProviderBinding("catalogue", True, MismatchedProvider),), connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"), library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ("catalogue",)), mount=MediaMountConfiguration("books", "/media", "/library", True), limits=ReportLimits())
         with self.assertRaises(MetadataReportError):
             service.run("item-1", 0)
         self.assertTrue(repository.closed)
@@ -2171,7 +2179,7 @@ class MetadataReportTests(unittest.TestCase):
     def test_actual_extraction_and_provider_boundaries_have_separate_timings(self) -> None:
         class Timings:
             def __init__(self) -> None:
-                self.values = []
+                self.values: list[StageTiming] = []
 
             def append(self, timing) -> None:
                 self.values.append(timing)
@@ -2473,7 +2481,7 @@ class MetadataReportTests(unittest.TestCase):
         edition = LocalClaim.create(kind=ClaimKind.TITLE, observed="Shared title", canonical="Shared title", excerpt="Shared title", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.EDITION)
         author = LocalClaim.create(kind=ClaimKind.CREATOR, observed="Ada", canonical="Ada", excerpt="Ada", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK, role="author")
         provider = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.TITLE, value="Shared title", state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable")
-        links = tuple(sorted((ComparisonLink(agree.reference, Comparison.AGREEMENT, ComparisonMethod.EXACT), ComparisonLink(disagree.reference, Comparison.DISAGREEMENT), ComparisonLink(invalid.reference, Comparison.NOT_COMPARABLE), ComparisonLink(edition.reference, Comparison.NOT_COMPARABLE)), key=lambda link: link.local_reference))
+        links = tuple(sorted((ComparisonLink(agree.reference, Comparison.AGREEMENT, ComparisonMethod.EXACT), ComparisonLink(disagree.reference, Comparison.DISAGREEMENT), ComparisonLink(invalid.reference, Comparison.NOT_COMPARABLE), ComparisonLink(edition.reference, Comparison.NOT_COMPARABLE)), key=lambda link: cast(str, link.local_reference)))
         linked = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.TITLE, value="Shared title", state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable", links=links)
         report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(agree, disagree, invalid, edition, author), local_reasons=("opening_title",), providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, candidates=(ProviderCandidate("candidate", "work-candidate", (linked,)),)),))
         changed_work = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(agree, disagree, invalid, edition, author), local_reasons=("opening_title",), providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, candidates=(ProviderCandidate("candidate", "different-work", (linked,)),)),))
@@ -4798,8 +4806,8 @@ class MetadataReportTests(unittest.TestCase):
         service = GenerateMetadataReport(
             target=target,
             inspector=inspector,
-            repository_factory=lambda: repository,
-            providers=(ProviderBinding("catalogue", True, lambda: constructions.append("one") or Provider()),),
+            repository_factory=lambda: cast(ReportRepository, repository),
+            providers=(ProviderBinding("catalogue", True, lambda: constructions.append("one") or Provider()),),  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the construction and still yields the provider.
             connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"),
             library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ("catalogue",)),
             mount=MediaMountConfiguration("books", "/media", "/library", True),
@@ -4842,7 +4850,7 @@ class MetadataReportTests(unittest.TestCase):
         service = GenerateMetadataReport(
             target=target,
             inspector=inspector,
-            repository_factory=lambda: repository,
+            repository_factory=lambda: cast(ReportRepository, repository),
             providers=(ProviderBinding("catalogue", True, Provider),),
             connection=TargetConnectionConfiguration(
                 "primary", "https://example.invalid", "/private/target"
@@ -4894,7 +4902,7 @@ class MetadataReportTests(unittest.TestCase):
         service = GenerateMetadataReport(
             target=target,
             inspector=inspector,
-            repository_factory=lambda: repository,
+            repository_factory=lambda: cast(ReportRepository, repository),
             providers=(ProviderBinding("catalogue", True, Provider),),
             connection=TargetConnectionConfiguration(
                 "primary", "https://example.invalid", "/private/target"
@@ -4982,7 +4990,7 @@ class MetadataReportTests(unittest.TestCase):
             service = GenerateMetadataReport(
                 target=target,
                 inspector=inspector,
-                repository_factory=lambda: open_repository(database),
+                repository_factory=lambda: cast(ReportRepository, open_repository(database)),
                 providers=(
                     ProviderBinding("catalogue", True, Provider),
                 ),
@@ -5059,7 +5067,7 @@ class MetadataReportTests(unittest.TestCase):
         target = _Target([TargetSnapshot("ebook", "Current title", (TargetFile("a" * 64, "one.epub", "epub"),))] * 2)
         inspector = _Inspector(InspectionResult("c" * 64, claims))
         repository = _Repository()
-        service = GenerateMetadataReport(target=target, inspector=inspector, repository_factory=lambda: repository, providers=(), connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"), library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()), mount=MediaMountConfiguration("books", "/media", "/library", True), limits=ReportLimits())
+        service = GenerateMetadataReport(target=target, inspector=inspector, repository_factory=lambda: cast(ReportRepository, repository), providers=(), connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"), library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()), mount=MediaMountConfiguration("books", "/media", "/library", True), limits=ReportLimits())
         report = MetadataReport.from_json(service.run("item-1", 0))
         self.assertEqual([claim.observed for claim in report.local_claims], ["Current title", "Second in source", "First by hash"])
 
@@ -5077,8 +5085,8 @@ class MetadataReportTests(unittest.TestCase):
         service = GenerateMetadataReport(
             target=target,
             inspector=inspector,
-            repository_factory=lambda: activity.append("repository") or repository,
-            providers=(ProviderBinding("catalogue", True, lambda: activity.append("provider")),),
+            repository_factory=lambda: activity.append("repository") or cast(ReportRepository, repository),  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the call and still yields the repository.
+            providers=(ProviderBinding("catalogue", True, lambda: activity.append("provider")),),  # type: ignore[return-value]  # reason: a sentinel factory the test proves is never invoked, so it never has to yield a provider.
             connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"),
             library=LibraryConfiguration("audio", "primary", "library-id", "audiobook", None, ("catalogue",)),
             mount=None,
@@ -5103,8 +5111,8 @@ class MetadataReportTests(unittest.TestCase):
         service = GenerateMetadataReport(
             target=target,
             inspector=inspector,
-            repository_factory=lambda: activity.append("repository") or repository,
-            providers=(ProviderBinding("catalogue", False, lambda: activity.append("provider")),),
+            repository_factory=lambda: activity.append("repository") or cast(ReportRepository, repository),  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the call and still yields the repository.
+            providers=(ProviderBinding("catalogue", False, lambda: activity.append("provider")),),  # type: ignore[return-value]  # reason: a sentinel factory the test proves is never invoked, so it never has to yield a provider.
             connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"),
             library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ("catalogue",)),
             mount=MediaMountConfiguration("books", "/media", "/library", True),
@@ -5133,7 +5141,7 @@ class MetadataReportTests(unittest.TestCase):
         service = GenerateMetadataReport(
             target=target,
             inspector=inspector,
-            repository_factory=lambda: repository,
+            repository_factory=lambda: cast(ReportRepository, repository),
             providers=(),
             connection=TargetConnectionConfiguration(
                 "primary", "https://example.invalid", "/private/target"
@@ -5182,7 +5190,7 @@ class MetadataReportTests(unittest.TestCase):
         service = GenerateMetadataReport(
             target=target,
             inspector=inspector,
-            repository_factory=lambda: repository,
+            repository_factory=lambda: cast(ReportRepository, repository),
             providers=(),
             connection=TargetConnectionConfiguration(
                 "primary", "https://example.invalid", "/private/target"

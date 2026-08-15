@@ -37,12 +37,12 @@ def generate() -> str:
             owner_password_hash_file=str(password_hash),
         )
         application = compose_review_application(
-            state_owner=repository,  # type: ignore[arg-type]
-            session_store=repository,  # type: ignore[arg-type]
-            case_store=repository,  # type: ignore[arg-type]
-            decision_store=repository,  # type: ignore[arg-type]
-            library_store=repository,  # type: ignore[arg-type]
-            policy_store=repository,  # type: ignore[arg-type]
+            state_owner=repository,
+            session_store=repository,
+            case_store=repository,
+            decision_store=repository,
+            library_store=repository,
+            policy_store=repository,
             verify_password=lambda _: False,
             clock=lambda: 0,
             session_lifetime_seconds=configuration.session_lifetime_seconds,

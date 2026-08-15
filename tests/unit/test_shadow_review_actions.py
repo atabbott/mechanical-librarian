@@ -24,19 +24,19 @@ from mechanical_librarian.domain.shadow_review import (
     ShadowReviewPacket,
 )
 from mechanical_librarian.domain.shadow_review_actions import (
+    _DESTINATION_POLICIES,
     ACTION_CATALOGUE_SCHEMA,
     ACTION_POLICY_VERSION,
-    _DESTINATION_POLICIES,
     PolicyActionCatalogue,
     PolicyActionCompilationError,
     compile_shadow_review_actions,
 )
+from tests.unit.shadow_packet_fixtures import synthetic_packet
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source,
 )
 from tests.unit.test_proposal_set import _report
-from tests.unit.shadow_packet_fixtures import synthetic_packet
 
 
 def _packet_data() -> dict[str, object]:

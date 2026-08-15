@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import gzip
-import json
 import hashlib
+import json
 import os
 import sqlite3
 import subprocess
@@ -19,28 +19,40 @@ from unittest.mock import patch
 import httpx
 
 import mechanical_librarian.adapters.persistence.metadata_reports as metadata_persistence
-
-from mechanical_librarian.adapters.library_services.audiobookshelf_item import AudiobookshelfItemReader, _raw_cover_authority
+import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
+from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
+    AudiobookshelfItemReader,
+    _raw_cover_authority,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers.hardcover_metadata import (
     HARDCOVER_URL,
     HardcoverMetadataProvider,
     HardcoverPacer,
 )
-import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
+from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
     CoverReadError,
     MetadataLookup,
     MetadataReportError,
-    TargetNotFoundError,
+    ProviderLaneResult,
     TargetCover,
+    TargetNotFoundError,
     TargetSnapshot,
     metadata_discovery_plan,
     provider_observation,
-    ProviderLaneResult,
     qualify_provider_observation,
 )
-from mechanical_librarian.application.catalogue import TargetConnectionError
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverDesignation,
+    CoverProvenance,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
+from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.metadata_report import (
     MAX_CONTRIBUTIONS,
     MAX_DESCRIPTION_CHARACTERS,
@@ -50,19 +62,15 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     Comparison,
-    ComparisonLink,
     FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
-    ProviderCandidate,
-    ProviderClaim,
     ProviderEvidenceKind,
     ProviderIdentityBinding,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
-    PublicationDateRelation,
     ReportValueError,
     TargetDestination,
     TargetFacts,
@@ -72,13 +80,10 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
     isbn_family,
 )
-from mechanical_librarian.domain.cover_evidence import (
-    CoverArtifact, CoverDesignation, CoverSource, CoverSourceKind,
-    CoverSourceState, cover_source_id,
-)
-from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.proposal_set import (
-    POLICY_VERSION, ProposalOutcome, evaluate_report,
+    POLICY_VERSION,
+    ProposalOutcome,
+    evaluate_report,
 )
 
 
@@ -848,7 +853,8 @@ class MetadataPersistenceTests(unittest.TestCase):
             document = "{}"
             connection.execute("UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?", (document, hashlib.sha256(document.encode()).hexdigest(), other.report_id))
             connection.execute(metadata_persistence._NO_UPDATE_SQL)
-            connection.commit(); connection.close()
+            connection.commit()
+            connection.close()
             repository = open_repository(path)
             self.assertEqual(repository.get(primary.report_id), primary.to_json())
             with self.assertRaises(MetadataReportError):
@@ -861,10 +867,13 @@ class MetadataPersistenceTests(unittest.TestCase):
             repository = open_repository(path)
             primary = _report()
             other = MetadataReport.create(target=TargetFacts("secondary", "ebooks", "item-2", default_target_fields("Other title")), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
-            repository.publish(primary, lambda: True); repository.publish(other, lambda: True); repository.close()
+            repository.publish(primary, lambda: True)
+            repository.publish(other, lambda: True)
+            repository.close()
             connection = sqlite3.connect(path)
             connection.execute("UPDATE current_metadata_reports SET report_id=? WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?", (other.report_id, primary.target.connection, primary.target.library, primary.target.item, primary.file.identity))
-            connection.commit(); connection.close()
+            connection.commit()
+            connection.close()
             before = path.read_bytes()
             repository = open_repository(path)
             self.assertEqual(repository.current(other.target.connection, other.target.library, other.target.item, other.file.identity), other.to_json())
@@ -894,7 +903,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             with self.assertRaises(MetadataReportError):
                 repository.publish(
                     _report(),
-                    lambda: calls.append(repository._connection.in_transaction) or False,
+                    lambda: calls.append(repository._connection.in_transaction) or False,  # type: ignore[func-returns-value]  # reason: `append(...) or False` deliberately records the transaction state and still yields the currentness verdict.
                 )
             self.assertEqual(calls, [False])
             self.assertEqual(
@@ -1185,7 +1194,9 @@ class MetadataPersistenceTests(unittest.TestCase):
             replacement_bytes = b"replacement-database"
             binding = repository._binding
             self.assertIsNotNone(binding)
-            require_current = binding.require_current
+            require_current = cast(
+                "metadata_persistence._LinuxDatabaseBinding", binding
+            ).require_current
             calls = 0
 
             def replace_parent_at_final_check() -> None:
@@ -1356,7 +1367,7 @@ class ProviderAdapterTests(unittest.TestCase):
         seen_tags: set[object] = set()
         for book in books:
             taggings: list[dict[str, object]] = []
-            for raw_tagging in book.get("taggings", []):  # type: ignore[union-attr]
+            for raw_tagging in book.get("taggings", []):
                 tagging = cast(dict[str, object], raw_tagging)
                 raw_tag = tagging.get("tag")
                 if type(raw_tag) is dict:
@@ -1506,7 +1517,7 @@ class ProviderAdapterTests(unittest.TestCase):
             [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}],
             [{"id": 1, "title": "Current title"}],
         )
-        payload["data"]["editions"][0]["image"] = {"url": "x" * 2049}  # type: ignore[index]
+        payload["data"]["editions"][0]["image"] = {"url": "x" * 2049}
         provider = HardcoverMetadataProvider(
             "catalogue",
             httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json=payload))),
@@ -1756,7 +1767,7 @@ class ProviderAdapterTests(unittest.TestCase):
                 self.assertEqual((), observation.candidates)
                 self.assertNotIn("synthetic-private-token", repr(observation))
 
-        malformed = (
+        malformed: tuple[object, ...] = (
             {"errors": []},
             {"errors": [{"message": "x" * (len(exact_message) + 1)}]},
             {
@@ -1797,7 +1808,7 @@ class ProviderAdapterTests(unittest.TestCase):
             "catalogue",
             httpx.Client(
                 transport=httpx.MockTransport(
-                    lambda request: requests.append(request)
+                    lambda request: requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
                     or httpx.Response(500)
                 )
             ),
@@ -1979,7 +1990,7 @@ class ProviderAdapterTests(unittest.TestCase):
                 return httpx.Response(
                     503,
                     headers={"content-encoding": "gzip"},
-                    stream=_HostileEncodedProviderStream(raw_body),
+                    stream=_HostileEncodedProviderStream(raw_body),  # noqa: B023 - closure is created and consumed within this iteration
                 )
 
             encoded = HardcoverMetadataProvider(
@@ -2011,7 +2022,7 @@ class ProviderAdapterTests(unittest.TestCase):
             encoded = HardcoverMetadataProvider(
                 "catalogue",
                 httpx.Client(
-                    transport=httpx.MockTransport(lambda _: response)
+                    transport=httpx.MockTransport(lambda _: response)  # noqa: B023 - closure is created and consumed within this iteration
                 ),
                 1_024,
                 sleep=lambda _: self.fail(
@@ -2063,8 +2074,8 @@ class ProviderAdapterTests(unittest.TestCase):
                 calls += 1
                 headers = (
                     {}
-                    if retry_after is None
-                    else {"retry-after": retry_after}
+                    if retry_after is None  # noqa: B023 - closure is created and consumed within this iteration
+                    else {"retry-after": retry_after}  # noqa: B023 - closure is created and consumed within this iteration
                 )
                 return httpx.Response(429, headers=headers)
 
@@ -2204,7 +2215,7 @@ class ProviderAdapterTests(unittest.TestCase):
             "catalogue",
             httpx.Client(
                 transport=httpx.MockTransport(
-                    lambda _: dispatch_times.append(now[0])
+                    lambda _: dispatch_times.append(now[0])  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the dispatch time and still yields the response.
                     or httpx.Response(
                         200,
                         headers={"content-type": "application/json"},
@@ -2501,7 +2512,7 @@ class ProviderAdapterTests(unittest.TestCase):
             [("publication_date", "2001-02-03")],
             [
                 (value.field.value, value.value)
-                for value in default_cover.provenance.context
+                for value in cast(CoverProvenance, default_cover.provenance).context
             ],
         )
 
@@ -2843,8 +2854,8 @@ class ProviderAdapterTests(unittest.TestCase):
         )
 
     def test_rich_field_boundaries_are_local_and_public_safe(self) -> None:
-        row = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": "B012345678", "title": "T" * 513, "subtitle": "Edition subtitle", "release_date": "not-a-date", "publisher": None, "language": None, "contributions": [{"id": 1, "contribution": "Author", "author": {"id": 1, "name": "Ada"}}, {"id": 2, "contribution": "/Users/private", "author": {"id": 2, "name": "Bea"}}]}
-        book = {"id": 1, "title": "/Users/private/title", "description": "D" * 16385, "contributions": [{"id": 3, "contribution": "Translator", "author": {"id": 3, "name": "Cy"}}], "book_series": [{"id": 4, "position": 1.5, "series": {"id": 4, "name": "Series"}}], "taggings": []}
+        row: dict[str, object] = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": "B012345678", "title": "T" * 513, "subtitle": "Edition subtitle", "release_date": "not-a-date", "publisher": None, "language": None, "contributions": [{"id": 1, "contribution": "Author", "author": {"id": 1, "name": "Ada"}}, {"id": 2, "contribution": "/Users/private", "author": {"id": 2, "name": "Bea"}}]}
+        book: dict[str, object] = {"id": 1, "title": "/Users/private/title", "description": "D" * 16385, "contributions": [{"id": 3, "contribution": "Translator", "author": {"id": 3, "name": "Cy"}}], "book_series": [{"id": 4, "position": 1.5, "series": {"id": 4, "name": "Series"}}], "taggings": []}
         payload = json.dumps(self._envelope([row], [book])).encode()
         claims = hardcover_metadata._parse_candidates(payload, "catalogue", (self._claim(),)).__getitem__(0).claims
         by_kind = {claim.kind: claim for claim in claims}
@@ -2903,7 +2914,6 @@ class ProviderAdapterTests(unittest.TestCase):
         )
 
     def test_response_cap_and_candidate_probe_are_terminal(self) -> None:
-        payload = self._envelope([], [])
         capped = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, content=b"{}" * 20))), 1)
         self.assertEqual(capped.observe(_isbn_lookup((self._claim(),))).status, ProviderStatus.OVERSIZED)
         rows = [{"id": index, "book_id": index, "isbn_10": None, "isbn_13": None} for index in range(1, 7)]
@@ -3050,8 +3060,8 @@ class ProviderAdapterTests(unittest.TestCase):
             contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": f"A{index}"}} for index in range(1, count + 1)]
             series = [{"id": index, "position": str(index), "series": {"id": index, "name": f"S{index}"}} for index in range(1, count + 1)]
             tags = [{"id": index, "tag": {"id": index, "tag": f"T{index}"}} for index in range(1, count + 1)]
-            row = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions if key == "edition" else []}
-            book = {"id": 1, "title": None, "contributions": contributions if key == "work" else [], "book_series": series if key == "series" else [], "taggings": tags if key == "tag" else []}
+            row: dict[str, object] = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions if key == "edition" else []}
+            book: dict[str, object] = {"id": 1, "title": None, "contributions": contributions if key == "work" else [], "book_series": series if key == "series" else [], "taggings": tags if key == "tag" else []}
             claims = hardcover_metadata._parse_candidates(json.dumps(self._envelope([row], [book])).encode(), "catalogue", ())[0].claims
             relevant = [claim for claim in claims if claim.kind is kind and claim.scope is scope]
             if count in {17, 33}:
@@ -3084,7 +3094,7 @@ class ProviderAdapterTests(unittest.TestCase):
             )
 
     def test_nullable_contribution_roles_preserve_neutral_identity_bound_creators(self) -> None:
-        contribution = {
+        contribution: dict[str, object] = {
             "id": 1,
             "contribution": None,
             "author": {"id": 1, "name": "Synthetic Contributor"},
@@ -3363,7 +3373,7 @@ class ProviderAdapterTests(unittest.TestCase):
             ("malformed-role-and-author", {}, "invalid", ClaimKind.CONTRIBUTOR),
         ):
             with self.subTest(label=label):
-                contribution = {
+                contribution: dict[str, object] = {
                     "id": 1,
                     "contribution": role,
                     "author": author,
@@ -3444,7 +3454,7 @@ class ProviderAdapterTests(unittest.TestCase):
         )
 
     def test_nested_overflow_probe_objects_are_structurally_validated(self) -> None:
-        cases = []
+        cases: list[tuple[dict[str, object], dict[str, object]]] = []
         contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": "A"}} for index in range(17)]
         contributions[16]["author"] = {"id": 17, "unexpected": "A"}
         cases.append(({"contributions": contributions}, {}))
@@ -3529,7 +3539,7 @@ class ProviderAdapterTests(unittest.TestCase):
         )
 
     def test_optional_hardcover_projection_members_are_field_local(self) -> None:
-        row = {
+        row: dict[str, object] = {
             "id": 1, "book_id": 1, "isbn_10": None,
             "isbn_13": "9780306406157", "title": "Edition",
             "release_date": "2024-02-30",
@@ -3537,7 +3547,7 @@ class ProviderAdapterTests(unittest.TestCase):
             "language": {"code2": {}, "code3": "eng"},
             "contributions": [{"id": 1, "contribution": "Author", "author": {"name": "Ada"}}],
         }
-        book = {
+        book: dict[str, object] = {
             "id": 1, "title": "Work", "release_date": "2020",
             "contributions": [{"id": 1, "contribution": "Translator", "author": {"id": 2, "name": "Bea"}}, "bad"],
             "book_series": [{"id": 1, "position": "1", "series": {"name": "Series"}}, "bad"],
@@ -3604,7 +3614,7 @@ class ProviderAdapterTests(unittest.TestCase):
                 "tag_category": {"id": 1, "category": "Mood"},
             },
         }
-        base_rows = [
+        base_rows: list[dict[str, object]] = [
             {
                 "id": 1,
                 "book_id": 1,
@@ -3634,7 +3644,7 @@ class ProviderAdapterTests(unittest.TestCase):
                 "title": "Second edition",
             },
         ]
-        base_books = [
+        base_books: list[dict[str, object]] = [
             {
                 "id": 1,
                 "title": "Work",
@@ -3655,7 +3665,7 @@ class ProviderAdapterTests(unittest.TestCase):
         ) -> ProviderObservation:
             payload = self._envelope(rows, books)
             if additive_work_key:
-                payload["data"]["books"][0]["new_optional_value"] = True  # type: ignore[index]
+                payload["data"]["books"][0]["new_optional_value"] = True
             provider = HardcoverMetadataProvider(
                 "catalogue",
                 httpx.Client(
@@ -3781,7 +3791,9 @@ class ProviderAdapterTests(unittest.TestCase):
                             {
                                 **valid_tagging,
                                 "tag": {
-                                    **valid_tagging["tag"],  # type: ignore[arg-type]
+                                    **cast(
+                                        dict[str, object], valid_tagging["tag"]
+                                    ),
                                     "tag_category": {
                                         "id": 1,
                                         "category": "Subject",
@@ -3881,10 +3893,10 @@ class ProviderAdapterTests(unittest.TestCase):
                 }
             ],
         )
-        payload["data"]["editions"][0]["contributions"] = [  # type: ignore[index]
+        payload["data"]["editions"][0]["contributions"] = [
             {**contribution, "untraversed": True}
         ] * 17
-        payload["data"]["books"][0]["book_series"] = [  # type: ignore[index]
+        payload["data"]["books"][0]["book_series"] = [
             {**series, "untraversed": True}
         ] * 17
         self.assertEqual(
@@ -4087,7 +4099,7 @@ class ProviderAdapterTests(unittest.TestCase):
 
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:
         calls: list[int] = []
-        client = httpx.Client(transport=httpx.MockTransport(lambda request: calls.append(1) or httpx.Response(200)))
+        client = httpx.Client(transport=httpx.MockTransport(lambda request: calls.append(1) or httpx.Response(200)))  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the call and still yields the response.
         provider = HardcoverMetadataProvider("catalogue", client, 65_536)
         self.assertEqual(provider.observe(_isbn_lookup(())).status, ProviderStatus.INSUFFICIENT_INPUT)
         self.assertEqual(calls, [])
@@ -4713,11 +4725,11 @@ class ProviderAdapterTests(unittest.TestCase):
             requests: list[httpx.Request] = []
 
             def handler(request: httpx.Request) -> httpx.Response:
-                requests.append(request)
+                requests.append(request)  # noqa: B023 - closure is created and consumed within this iteration
                 return httpx.Response(
                     200,
                     headers={"content-type": "application/json"},
-                    content=payload + (b" " if oversized else b""),
+                    content=payload + (b" " if oversized else b""),  # noqa: B023 - closure is created and consumed within this iteration
                 )
 
             observation = HardcoverMetadataProvider(
@@ -5002,7 +5014,7 @@ class ProviderAdapterTests(unittest.TestCase):
         )
         self.assertEqual(
             CoverDesignation.EXACT_EDITION,
-            edition_cover.provenance.designation,
+            cast(CoverProvenance, edition_cover.provenance).designation,
         )
 
         for status_code, expected in (
@@ -5014,7 +5026,7 @@ class ProviderAdapterTests(unittest.TestCase):
             calls: list[int] = []
 
             def handler(request: httpx.Request, code: int = status_code) -> httpx.Response:
-                calls.append(1)
+                calls.append(1)  # noqa: B023 - closure is created and consumed within this iteration
                 return httpx.Response(code)
 
             provider = HardcoverMetadataProvider(
@@ -5299,8 +5311,8 @@ class AudiobookshelfItemTests(unittest.TestCase):
                     transport=httpx.MockTransport(
                         lambda _request: httpx.Response(
                             200,
-                            headers={"content-type": content_type},
-                            content=body,
+                            headers={"content-type": content_type},  # noqa: B023 - closure is created and consumed within this iteration
+                            content=body,  # noqa: B023 - closure is created and consumed within this iteration
                         )
                     )
                 )
@@ -5579,7 +5591,7 @@ class AudiobookshelfItemTests(unittest.TestCase):
         )
         self.assertEqual(
             by_destination[TargetDestination.COVER].value,
-            snapshot.cover.identity,
+            cast(TargetCover, snapshot.cover).identity,
         )
         self.assertNotIn(
             "/metadata/",
@@ -5933,13 +5945,15 @@ class AudiobookshelfItemTests(unittest.TestCase):
         duplicate = b'{"id":"item-1","id":"item-1"}'
         oversized = b"x" * 1025
         for payload, maximum in ((duplicate, 65_536), (oversized, 1024)):
-            client_factory = lambda value=payload: httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda request, body=value: httpx.Response(
-                        200, headers={"content-type": "application/json"}, content=body
+            def client_factory(value: bytes = payload) -> httpx.Client:
+                return httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda request, body=value: httpx.Response(
+                            200, headers={"content-type": "application/json"}, content=body
+                        )
                     )
                 )
-            )
+
             reader = AudiobookshelfItemReader(
                 client_factory=client_factory,
                 endpoint="https://example.invalid",
@@ -6150,7 +6164,7 @@ class AudiobookshelfItemTests(unittest.TestCase):
                         lambda request: httpx.Response(
                             200,
                             headers={"content-type": "application/json"},
-                            json=payload,
+                            json=payload,  # noqa: B023 - closure is created and consumed within this iteration
                         )
                     )
                 ),

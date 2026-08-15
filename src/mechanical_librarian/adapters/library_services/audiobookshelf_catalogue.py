@@ -5,11 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 from urllib.parse import quote
 
 import httpx
 
+from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
+    normalize_ebook_location,
+)
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
     CatalogueError,
@@ -22,9 +25,6 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.domain.metadata_report import (
     canonical_json,
     validate_observed_title,
-)
-from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
-    normalize_ebook_location,
 )
 
 
@@ -86,7 +86,7 @@ class AudiobookshelfCatalogueReader:
             # httpx keeps certificate verification enabled in the configured
             # target client.  Classifying the outcome must not weaken it.
             raise TargetConnectionError(target_connection_code(error)) from None
-        except (httpx.HTTPError, OSError, UnicodeError, ValueError, TypeError) as error:
+        except (httpx.HTTPError, OSError, UnicodeError, ValueError, TypeError):
             raise TargetConnectionError("unavailable") from None
 
     def probe_connection(
@@ -164,7 +164,9 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
     metadata_file = None
     has_audio = type(media.get("audioFiles")) is list
     if ebook is None and (plural is None or plural == []):
-        classification = "none"; file_identity = service_path = format_value = mount_name = None; has_ebook = False
+        classification = "none"
+        file_identity = service_path = format_value = mount_name = None
+        has_ebook = False
     elif type(ebook) is dict and plural is None:
         has_ebook = True
         metadata_file = ebook.get("metadata")
@@ -175,10 +177,12 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
                 item=detail,
             )
         except ValueError:
-            classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None
+            classification = "needs-attention"
+            file_identity = service_path = format_value = mount_name = None
         else:
             if location.format != "epub":
-                classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None
+                classification = "needs-attention"
+                file_identity = service_path = format_value = mount_name = None
             else:
                 classification = "singular-supported"
                 file_identity = location.identity
@@ -186,7 +190,9 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
                 format_value = location.format
                 mount_name = None if mount is None else mount.name
     else:
-        classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None; has_ebook = True
+        classification = "needs-attention"
+        file_identity = service_path = format_value = mount_name = None
+        has_ebook = True
     reviewed_fields = {
         name: {"present": name in metadata, "value": metadata.get(name)}
         for name in (
@@ -247,7 +253,8 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
             }
         ).encode("utf-8")
     ).hexdigest()
-    return CatalogueEntry(connection, library.name, library.library_id, item_id, detail["updatedAt"], title, names, has_ebook, has_audio, classification, file_identity, service_path, format_value, mount_name, source_fingerprint)
+    # `names` was rejected above unless every element is a 1..256 character str.
+    return CatalogueEntry(connection, library.name, library.library_id, item_id, detail["updatedAt"], title, cast("tuple[str, ...]", names), has_ebook, has_audio, classification, file_identity, service_path, format_value, mount_name, source_fingerprint)
 
 
 def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:

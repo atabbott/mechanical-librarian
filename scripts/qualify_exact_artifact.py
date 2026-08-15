@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import argparse
-import configparser
 import base64
+import configparser
 import csv
 import hashlib
 import io
@@ -24,8 +24,7 @@ from dataclasses import asdict, dataclass
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Protocol
-from zipfile import ZIP_DEFLATED, ZIP_STORED, BadZipFile, ZipFile, ZipInfo
-
+from zipfile import BadZipFile, ZipFile, ZipInfo
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _SOURCE_SHA = re.compile(r"^[0-9a-f]{40}$")
@@ -1152,7 +1151,9 @@ def _verify_installed_record(
         console_record = os.path.relpath(console, purelib).replace(os.sep, "/")
         entry_points = purelib / manifest.dist_info / "entry_points.txt"
         parser = configparser.ConfigParser(interpolation=None, strict=True)
-        parser.optionxform = str
+        # configparser's documented way to keep entry-point keys
+        # case-sensitive; typeshed models optionxform as a method.
+        parser.optionxform = str  # type: ignore[method-assign,assignment]  # reason: configparser's documented way to keep entry-point keys case-sensitive; typeshed models optionxform as a method
         parser.read_string(
             _read_bounded_file(entry_points, _MAX_METADATA_BYTES).decode("utf-8", "strict")
         )

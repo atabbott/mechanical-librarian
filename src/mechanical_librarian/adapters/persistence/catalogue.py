@@ -8,16 +8,19 @@ import sqlite3
 import stat
 import sys
 from pathlib import Path
+from typing import cast
 from urllib.parse import quote
 
-from mechanical_librarian.adapters.persistence.metadata_reports import _LinuxDirectoryChain
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    _LinuxDirectoryChain,
+)
+from mechanical_librarian.application.batch import CatalogueSnapshot
 from mechanical_librarian.application.catalogue import (
     CatalogueBusyError,
     CatalogueEntry,
     CatalogueError,
     CatalogueStaleError,
 )
-from mechanical_librarian.application.batch import CatalogueSnapshot
 
 _SCHEMA = "catalogue-v2"
 _SQL = (
@@ -123,8 +126,10 @@ class SQLiteCatalogueRepository:
             ("table", "catalogue_generations", _SQL[1]),
             ("table", "catalogue_schema", _SQL[0]),
         ))
-        canonical = lambda value: " ".join(value.replace(";", "").split()).lower()
-        if len(rows) != len(expected) or any(actual[:2] != expected_item[:2] or (actual[2] is None) != (expected_item[2] is None) or actual[2] is not None and canonical(actual[2]) != canonical(expected_item[2]) for actual, expected_item in zip(rows, expected, strict=True)) or connection.execute("SELECT version FROM catalogue_schema").fetchall() != [(_SCHEMA,)] or connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)] or connection.execute("PRAGMA foreign_key_check").fetchall():
+        def canonical(value: str) -> str:
+            return " ".join(value.replace(";", "").split()).lower()
+
+        if len(rows) != len(expected) or any(actual[:2] != expected_item[:2] or (actual[2] is None) != (expected_item[2] is None) or actual[2] is not None and canonical(actual[2]) != canonical(cast(str, expected_item[2])) for actual, expected_item in zip(rows, expected, strict=True)) or connection.execute("SELECT version FROM catalogue_schema").fetchall() != [(_SCHEMA,)] or connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)] or connection.execute("PRAGMA foreign_key_check").fetchall():
             raise CatalogueError("catalogue schema is unsupported")
 
     def acquire_refresh(self) -> None:
@@ -137,7 +142,7 @@ class SQLiteCatalogueRepository:
     def publish(self, fingerprint: str, entries: tuple[CatalogueEntry, ...]) -> int:
         try:
             self._require_bound_name(self._identity)
-            generation = self._connection.execute("SELECT COALESCE(MAX(generation),0)+1 FROM catalogue_generations").fetchone()[0]
+            generation: int = self._connection.execute("SELECT COALESCE(MAX(generation),0)+1 FROM catalogue_generations").fetchone()[0]
             self._connection.execute("UPDATE catalogue_generations SET current=0 WHERE current=1")
             self._connection.execute("INSERT INTO catalogue_generations(generation,fingerprint,current) VALUES(?,?,1)", (generation, fingerprint))
             self._connection.executemany(
@@ -187,14 +192,17 @@ class SQLiteCatalogueRepository:
         self._connection.execute("BEGIN")
         try:
             row = self._connection.execute("SELECT generation FROM catalogue_generations WHERE current=1 AND generation=? AND fingerprint=?", (generation, fingerprint)).fetchone()
-            if row is None: raise CatalogueStaleError("catalogue requires refresh")
+            if row is None:
+                raise CatalogueStaleError("catalogue requires refresh")
             entries = self._connection.execute("SELECT connection,library,library_id,item_id,updated_at,title,authors,has_ebook,has_audio,classification,file_identity,service_path,format,mount,source_fingerprint FROM catalogue_entries WHERE generation=? AND connection=? AND library=? AND library_id=? AND item_id=?", (generation, *key)).fetchall()
             self._connection.execute("COMMIT")
-            if len(entries) != 1: return None
+            if len(entries) != 1:
+                return None
             value = entries[0]
             return CatalogueEntry(value[0], value[1], value[2], value[3], value[4], value[5], tuple(json.loads(value[6])), bool(value[7]), bool(value[8]), value[9], value[10], value[11], value[12], value[13], value[14])
         except Exception:
-            if self._connection.in_transaction: self._connection.execute("ROLLBACK")
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
             raise
 
     def latest_entry(

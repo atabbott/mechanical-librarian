@@ -16,7 +16,6 @@ import warnings
 
 from PIL import Image, ImageOps, UnidentifiedImageError, features
 
-
 _MAX_ORIGINAL_BYTES = 8 * 1024 * 1024
 _MAX_PREVIEW_BYTES = 1024 * 1024
 _MAX_PIXELS = 16_777_216
@@ -38,7 +37,7 @@ def _deny_network(*_: object, **__: object) -> object:
 
 
 def _no_network() -> None:
-    socket.socket = _deny_network  # type: ignore[assignment]
+    socket.socket = _deny_network  # type: ignore[assignment,misc]  # reason: deliberate monkeypatch of the socket type to deny network use in this one-shot child
     socket.create_connection = _deny_network  # type: ignore[assignment]
     socket.getaddrinfo = _deny_network  # type: ignore[assignment]
 

@@ -6,16 +6,21 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from typing import cast
 
 from mechanical_librarian.domain.metadata_policy import (
     OPTION_CATALOGUE,
     ResolvedMetadataPolicy,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+)
 from mechanical_librarian.domain.proposal_set import (
     MAX_BIBLIOGRAPHIC_COMBINATIONS,
     ProposalSet,
 )
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichFieldPreview,
     compile_rich_metadata_preview,
@@ -23,14 +28,12 @@ from mechanical_librarian.domain.rich_metadata_preview import (
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_QUALIFICATION_CANDIDATE_SHA256,
 )
-from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_decision import (
     DECISION_POLICY_SHA256,
     DECISION_POLICY_VERSION,
     ShadowDecisionSet,
 )
 from mechanical_librarian.domain.shadow_review import MAX_CITATIONS
-
 
 SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v3"
 MAX_SHADOW_OUTCOME_BYTES = 1_048_576
@@ -400,8 +403,11 @@ class ShadowOutcomeSet:
             value.field: value
             for value in compile_rich_metadata_preview(policy, report, proposal).fields
         }
+        # `ReviewCase.proposals` builds every entry itself, so "proposal_id" is
+        # always the `"review_proposal_" + sha256` string it composed.
         proposals = {
-            value["destination"]: value["proposal_id"] for value in case.proposals
+            value["destination"]: cast("str", value["proposal_id"])
+            for value in case.proposals
         }
         for category, destination in (
             ("series", "series"),

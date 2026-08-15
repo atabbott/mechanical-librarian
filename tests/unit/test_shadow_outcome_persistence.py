@@ -1,21 +1,19 @@
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import sqlite3
 import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
-from mechanical_librarian.adapters.persistence.metadata_reports import MetadataReportError, open_repository
-from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
-from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.field_effect_fakes import (
     FakeBackupReadiness,
     FakeCapabilityObserver,
@@ -23,22 +21,43 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     FakeForwardReevaluation,
     FakeTargetService,
 )
-from mechanical_librarian.application.field_effects import GuardedFieldApplication
-from mechanical_librarian.application.continuous_field_effects import (
-    ContinuousGuardedApplication,
+from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
+from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    MetadataReportError,
+    open_repository,
 )
-from mechanical_librarian.application.metadata_policy import (
-    MAX_SHADOW_SAMPLE_RESPONSE_BYTES,
-    PolicyNotebook,
-)
+from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
     ReviewWebConfiguration,
     TargetConnectionConfiguration,
 )
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
+from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.metadata_policy import (
+    MAX_SHADOW_SAMPLE_RESPONSE_BYTES,
+    PolicyNotebook,
+)
+from mechanical_librarian.application.review_pipeline import (
+    PipelineAction,
+    ReviewPreparationPipeline,
+)
+from mechanical_librarian.application.review_web import (
+    BrowseReviewLibrary,
+    InspectCurrentReviewCase,
+)
 from mechanical_librarian.bootstrap import composition
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.automatic_decision import (
+    AutomaticDecision,
+    AutomaticDecisionError,
+    AutomaticSafetyState,
+)
+from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,
@@ -52,42 +71,38 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
     TargetDestination,
+    TargetFacts,
     TargetField,
     TargetFieldState,
-    TargetFacts,
 )
-from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
-from mechanical_librarian.domain.automatic_decision import (
-    AutomaticDecision,
-    AutomaticDecisionError,
-    AutomaticSafetyState,
-)
-from mechanical_librarian.domain.field_effect import FieldEffectError
-from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
+from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
-from mechanical_librarian.application.review_web import BrowseReviewLibrary, InspectCurrentReviewCase
-from mechanical_librarian.application.catalogue import CatalogueEntry
-from mechanical_librarian.application.review_pipeline import (
-    PipelineAction,
-    ReviewPreparationPipeline,
-)
+from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source,
+)
+from tests.unit.test_cover_packets import (
+    _observer_result as _cover_observer_result,
+)
+from tests.unit.test_cover_packets import (
+    _preview as _cover_preview,
+)
+from tests.unit.test_cover_packets import (
+    _report as _cover_report,
+)
+from tests.unit.test_cover_packets import (
+    _source as _cover_source,
 )
 from tests.unit.test_proposal_set import (
     _claim,
     _fields,
     _provider,
+)
+from tests.unit.test_proposal_set import (
     _report as _proposal_report,
 )
 from tests.unit.test_review_case_persistence import _report
-from tests.unit.test_cover_packets import (
-    _observer_result as _cover_observer_result,
-    _preview as _cover_preview,
-    _report as _cover_report,
-    _source as _cover_source,
-)
 
 
 def _case(repository):
@@ -160,7 +175,8 @@ def _staged_projection_action(repository, work_id: str) -> PipelineAction:
     ).fetchone()
     assert generation is not None
     return PipelineAction(
-        *row, lineage_checkpoint=checkpoint[0], policy_generation=generation[0]
+        *cast("tuple[str, str, str, int, str, str, str, str, int | None, str | None, str | None, str | None, int | None, str | None, str | None, str | None, str | None]", row),
+        lineage_checkpoint=checkpoint[0], policy_generation=generation[0],
     )
 
 
@@ -738,7 +754,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                     raise AssertionError("equal decision reached authority")
 
             scheduler = ContinuousGuardedApplication(
-                repository, {("primary", "ebooks"): SimpleNamespace()},
+                repository, {("primary", "ebooks"): cast(GuardedFieldApplication, SimpleNamespace())},
                 {("primary", "ebooks"): SimpleNamespace()}, UnexpectedAuthority(),
                 (("primary", "ebooks"),), lambda: 10, lambda *_: None,
             )
@@ -1392,8 +1408,8 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 calls: list[object] = []
 
                 def dispatch(*args):
-                    calls.append(args)
-                    return reviewer(*args)
+                    calls.append(args)  # noqa: B023 - closure is created and consumed within this iteration
+                    return reviewer(*args)  # noqa: B023 - closure is created and consumed within this iteration
 
                 with patch.object(composition, "read_contained_reviewer_profile", return_value=b"profile"), patch.object(composition, "run_cover_packet_reviewer", side_effect=dispatch):
                     supervisor = composition.create_review_pipeline(
@@ -2308,7 +2324,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 self.assertIn("title", tuple(row[2] for row in attention.rows))
                 self.assertEqual(
                     "automatic_safety_suspended",
-                    next(row[5] for row in attention.rows if row[2] == "title"),
+                    next(row[5] for row in cast("tuple[tuple[str, str, str, int, str, str], ...]", attention.rows) if row[2] == "title"),
                 )
                 projected = BrowseReviewLibrary(repository).attention(
                     search=None, limit=50, cursor=None,

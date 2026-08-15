@@ -4,24 +4,44 @@ from __future__ import annotations
 
 import unittest
 
-from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
+)
 from mechanical_librarian.domain.metadata_report import (
-    ClaimKind, ClaimScope, LocalClaim, MetadataReport, ProviderEvidence,
-    ProviderEvidenceKind, TargetFacts, TargetField, TargetFieldState,
+    ClaimKind,
+    ClaimScope,
+    LocalClaim,
+    MetadataReport,
+    ProviderEvidence,
+    ProviderEvidenceKind,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+    TargetSeries,
 )
 from mechanical_librarian.domain.proposal_set import (
-    BibliographicCombination, BibliographicSelection,
-    ProposalAlternative, ProposalAssessment, ProposalOutcome, ProposalResult,
-    ProposalScope, ProposalSet, ProposalValue, ProposalValueError,
-    ProposalValueKind, evaluate_report,
+    BibliographicCombination,
+    BibliographicSelection,
+    ProposalAlternative,
+    ProposalAssessment,
+    ProposalOutcome,
+    ProposalResult,
+    ProposalScope,
+    ProposalSet,
+    ProposalValue,
+    ProposalValueError,
+    ProposalValueKind,
+    evaluate_report,
 )
-from mechanical_librarian.domain.metadata_report import TargetDestination, TargetSeries
 from mechanical_librarian.domain.rich_metadata_preview import (
-    RichMetadataPreviewError, compile_rich_metadata_preview,
+    RichMetadataPreviewError,
+    compile_rich_metadata_preview,
     project_f20_automatic_decision_value,
 )
-from tests.unit.test_proposal_set import _claim, _fields, _provider, _report
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
+from tests.unit.test_proposal_set import _claim, _fields, _provider, _report
 
 
 class RichMetadataPreviewTests(unittest.TestCase):
@@ -80,7 +100,8 @@ class RichMetadataPreviewTests(unittest.TestCase):
         report = MetadataReport.create(
             target=TargetFacts(source.target.connection, source.target.library, source.target.item, tuple(TargetField(value.destination, state, current) if value.destination is destination else value for value in source.target.fields)), file=source.file, local_claims=source.local_claims, local_reasons=source.local_reasons, providers=source.providers, cover_sources=source.cover_sources,
         )
-        profile_options = dict(MetadataPolicyProfile.builtin().options); profile_options[field] = option
+        profile_options = dict(MetadataPolicyProfile.builtin().options)
+        profile_options[field] = option
         profile = MetadataPolicyProfile.create("Lists", profile_options, dict(MetadataPolicyProfile.builtin().destinations))
         policy = resolve_policy(profile, report.target.library)
         base = evaluate_report(report)
@@ -106,7 +127,6 @@ class RichMetadataPreviewTests(unittest.TestCase):
     def test_binding_mismatch_fails_closed(self) -> None:
         report = _report()
         proposal = evaluate_report(report)
-        policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
         with self.assertRaises(RichMetadataPreviewError):
             compile_rich_metadata_preview(
                 resolve_policy(MetadataPolicyProfile.builtin(), "other"), report, proposal
@@ -141,7 +161,8 @@ class RichMetadataPreviewTests(unittest.TestCase):
             "explicit": ("unsupported",),
         }.items():
             for option in options:
-                choices = dict(base.options); choices[field] = option
+                choices = dict(base.options)
+                choices[field] = option
                 profile = MetadataPolicyProfile.create("Matrix", choices, dict(base.destinations))
                 policy = resolve_policy(profile, report.target.library)
                 proposal = evaluate_report(report)
@@ -173,7 +194,8 @@ class RichMetadataPreviewTests(unittest.TestCase):
         report = _report()
         base = MetadataPolicyProfile.builtin()
         for field, destination, reason in (("genres", "ignore", "policy_ignored"), ("genres", "automatic", "no_candidate"), ("tags", "ask", "policy_off")):
-            choices = dict(base.destinations); choices[field] = destination
+            choices = dict(base.destinations)
+            choices[field] = destination
             profile = MetadataPolicyProfile.create("Destination", dict(base.options), choices)
             policy = resolve_policy(profile, report.target.library)
             proposal = evaluate_report(report)
@@ -290,7 +312,8 @@ class RichMetadataPreviewTests(unittest.TestCase):
         report = _bibliographic_report(current_title="Secret History: A Mistborn Novella", providers=(_source("catalogue", "edition-1", titles=("Secret History",), subtitle="A Mistborn Novella"),))
         base = evaluate_report(report)
         self.assertTrue(base.bibliographic_combinations)
-        options = dict(MetadataPolicyProfile.builtin().options); options["subtitle"] = "corroborated_split"
+        options = dict(MetadataPolicyProfile.builtin().options)
+        options["subtitle"] = "corroborated_split"
         policy = resolve_policy(MetadataPolicyProfile.create("Split", options, dict(MetadataPolicyProfile.builtin().destinations)), report.target.library)
         proposal = base.create(report_id=base.report_id, target_fingerprint=base.target_fingerprint, results=base.results, resolved_policy_id=policy.resolved_id, bibliographic_combinations=base.bibliographic_combinations)
         selected = next(value for value in compile_rich_metadata_preview(policy, report, proposal).fields if value.field == "subtitle")
@@ -331,7 +354,8 @@ class RichMetadataPreviewTests(unittest.TestCase):
         report = _report()
         base = evaluate_report(report)
         for option in ("primary_narrative", "source_order", "all_qualified"):
-            options = dict(MetadataPolicyProfile.builtin().options); options["series"] = option
+            options = dict(MetadataPolicyProfile.builtin().options)
+            options["series"] = option
             policy = resolve_policy(MetadataPolicyProfile.create("Series", options, dict(MetadataPolicyProfile.builtin().destinations)), report.target.library)
             proposal = base.create(report_id=base.report_id, target_fingerprint=base.target_fingerprint, results=base.results, resolved_policy_id=policy.resolved_id, bibliographic_combinations=base.bibliographic_combinations)
             field = next(value for value in compile_rich_metadata_preview(policy, report, proposal).fields if value.field == "series")
@@ -347,7 +371,8 @@ class RichMetadataPreviewTests(unittest.TestCase):
         result = ProposalResult(TargetDestination.SERIES, ProposalOutcome.PROPOSE_CHANGE, (alt,), alt.alternative_id, ("unique_typed_candidate",), next(value.dependencies for value in base.results if value.destination is TargetDestination.SERIES))
         combo = BibliographicCombination.create((BibliographicSelection.preserve(targets[TargetDestination.TITLE]), BibliographicSelection.preserve(targets[TargetDestination.SUBTITLE]), BibliographicSelection.candidate(TargetDestination.SERIES, alt.alternative_id)), ("representation_" + "a" * 64,))
         for option in ("primary_narrative", "source_order", "all_qualified"):
-            options = dict(MetadataPolicyProfile.builtin().options); options["series"] = option
+            options = dict(MetadataPolicyProfile.builtin().options)
+            options["series"] = option
             policy = resolve_policy(MetadataPolicyProfile.create("Series fixture", options, dict(MetadataPolicyProfile.builtin().destinations)), report.target.library)
             proposal = ProposalSet.create(report_id=base.report_id, target_fingerprint=base.target_fingerprint, results=tuple(result if value.destination is TargetDestination.SERIES else value for value in base.results), resolved_policy_id=policy.resolved_id, bibliographic_combinations=(combo,))
             field = next(value for value in compile_rich_metadata_preview(policy, report, proposal).fields if value.field == "series")
@@ -394,7 +419,8 @@ class RichMetadataPreviewTests(unittest.TestCase):
         alternative = ProposalAlternative.create(ProposalValue(ProposalValueKind.SERIES, current), ProposalAssessment.PRESERVES_TARGET, ("provider_" + "a" * 64,), ("correlation_" + "a" * 64,), ProposalScope.WORK)
         result = ProposalResult(TargetDestination.SERIES, ProposalOutcome.KEEP, (alternative,), None, ("positive_preservation_evidence",), next(value.dependencies for value in base_proposal.results if value.destination is TargetDestination.SERIES))
         for option in ("source_order", "all_qualified"):
-            options = dict(MetadataPolicyProfile.builtin().options); options["series"] = option
+            options = dict(MetadataPolicyProfile.builtin().options)
+            options["series"] = option
             policy = resolve_policy(MetadataPolicyProfile.create("Keep", options, dict(MetadataPolicyProfile.builtin().destinations)), report.target.library)
             proposal = ProposalSet.create(report_id=base_proposal.report_id, target_fingerprint=base_proposal.target_fingerprint, results=tuple(result if value.destination is TargetDestination.SERIES else value for value in base_proposal.results), resolved_policy_id=policy.resolved_id, bibliographic_combinations=base_proposal.bibliographic_combinations)
             field = next(value for value in compile_rich_metadata_preview(policy, report, proposal).fields if value.field == "series")

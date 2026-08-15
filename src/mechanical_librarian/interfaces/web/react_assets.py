@@ -10,7 +10,6 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Protocol
 
-
 _BUILD_IDENTITY = re.compile(r"^[0-9a-f]{64}$")
 _CSRF_TOKEN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 _ASSET_PATH = re.compile(
@@ -30,8 +29,12 @@ class ReactAssetError(RuntimeError):
         self.code = code
 
 
+class _AssetFile(Protocol):
+    def read_bytes(self) -> bytes: ...
+
+
 class _AssetRoot(Protocol):
-    def joinpath(self, *descendants: str): ...
+    def joinpath(self, *descendants: str) -> _AssetFile: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,7 +216,7 @@ def load_react_asset_bundle(
 
 def _installed_build_identity() -> str:
     try:
-        from mechanical_librarian.interfaces.web.react_asset_identity import (
+        from mechanical_librarian.interfaces.web.react_asset_identity import (  # type: ignore[import-not-found]  # reason: module is generated at package build time by setup.py and is absent from the source tree.
             EXPECTED_REACT_BUILD_IDENTITY,
         )
     except ImportError as error:

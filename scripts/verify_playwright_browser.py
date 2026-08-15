@@ -12,7 +12,6 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
-
 _EXPECTED_TREE_SHA256 = {
     "darwin-arm64": "ad7a45dccec74e1ceec66d023122a03d2c0351d25c169dfe18c9c4aec49a48b3",
     "linux-x86_64": "8165f22c947b69d93b32288b8d00acde78f11e287da8084906c632c90b55781c",

@@ -5,21 +5,24 @@ import json
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 from mechanical_librarian.domain import shadow_decision as shadow_decision_module
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    FieldState,
+    LocalClaim,
+)
+from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_decision import (
     DECISION_POLICY_SHA256,
     DECISION_POLICY_VERSION,
     ShadowDecisionError,
     ShadowDecisionSet,
     decide_shadow_packet,
-)
-from mechanical_librarian.domain.metadata_report import (
-    ClaimKind,
-    ClaimScope,
-    FieldState,
-    LocalClaim,
 )
 from mechanical_librarian.domain.shadow_review import (
     ShadowReviewPacket,
@@ -34,10 +37,8 @@ from mechanical_librarian.domain.shadow_review_actions import (
     _exclude,
     compile_shadow_review_actions,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
-from mechanical_librarian.domain.review_case import ReviewCase
-from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
 from tests.unit.shadow_packet_fixtures import synthetic_packet
+from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
 
 
 def _packet(
@@ -240,7 +241,7 @@ def _combination_seam(
     return (
         seam_packet,
         SimpleNamespace(actions=actions),
-        {title_proposal["proposal_id"]: title_actions},
+        {cast(str, title_proposal["proposal_id"]): title_actions},
     )
 
 

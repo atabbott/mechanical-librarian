@@ -12,7 +12,6 @@ import sys
 import tempfile
 from pathlib import Path
 
-
 NODE_VERSION = "v24.19.0"
 NPM_VERSION = "11.17.0"
 

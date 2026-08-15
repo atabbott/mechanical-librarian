@@ -7,8 +7,8 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationError,
     CoverConsiderationService,
 )
-from mechanical_librarian.application.review_web import _needs_attention
 from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.review_web import _needs_attention
 from tests.unit.test_cover_packets import _preview, _report, _source
 
 

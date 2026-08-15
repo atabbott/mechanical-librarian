@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Self
 
-
 MAX_DIAGNOSTIC_COUNT = 2_147_483_647
 
 

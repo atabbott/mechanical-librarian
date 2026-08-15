@@ -10,9 +10,9 @@ from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
     TargetDestination,
+    TargetFacts,
     TargetField,
     TargetFieldState,
-    TargetFacts,
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report

@@ -1,11 +1,10 @@
 import copy
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-
+from pathlib import Path
 
 ROOT = Path(__file__).parents[2]
 SPEC = importlib.util.spec_from_file_location(
@@ -50,7 +49,6 @@ class RecoverabilityEvaluatorTests(unittest.TestCase):
 
     def test_stage_tuples_reject_every_cross_stage_contradiction(self):
         document = self.load()
-        valid = document["rows"][0]
         for key, value in {
             "inspection": "failure", "source": "present", "extraction": "found",
             "projection": "projected", "comparison": "complete",

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import io
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -13,13 +13,13 @@ from pathlib import Path
 from unittest import mock
 
 from mechanical_librarian.application.configuration import ConfigurationError
-from mechanical_librarian.interfaces.cli import main
 from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.interfaces.cli import main
 
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
 
-from mechanical_librarian_workbench import (  # noqa: E402
+from mechanical_librarian_workbench import (  # type: ignore[import-not-found]  # noqa: E402  # reason: the workbench package is added to sys.path at import time above; the gate's mypy_path covers src/ only.
     CAPABILITIES,
     BatchRequest,
     CatalogueRequest,
@@ -37,14 +37,15 @@ from mechanical_librarian_workbench import (  # noqa: E402
     WorkbenchOperations,
     WorkbenchResult,
     execute,
+    scenarios,  # noqa: E402
 )
+
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (  # noqa: E402
     ContainedReviewerProcessError,
 )
 from mechanical_librarian.application.contained_reviewer_contract import (  # noqa: E402
     ContainedReviewerAttempt,
 )
-from mechanical_librarian_workbench import scenarios  # noqa: E402
 
 
 def _operation(*_args: object) -> str:
@@ -323,12 +324,12 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                 )
                 return '{"ok":true}'
 
-            context.require_network = bind_then_replace  # type: ignore[method-assign]
+            context.require_network = bind_then_replace
             operations = replace(_operations(), run_contained_reviewer=invoke)
             with mock.patch(
                 "mechanical_librarian_workbench.context.os.fsync",
                 side_effect=lambda descriptor: (
-                    fsync_calls.append(descriptor), real_fsync(descriptor)
+                    fsync_calls.append(descriptor), real_fsync(descriptor)  # type: ignore[func-returns-value]  # reason: the tuple deliberately records the call and yields element [1]; append's None is discarded.
                 )[1],
             ):
                 execute(context, request, operations)
@@ -373,31 +374,31 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                     private_tail: int = 0,
                     first_payload: bytes | None = None,
                 ) -> tuple[bytes, ...]:
-                    bound = original_require_network(
+                    bound = original_require_network(  # noqa: B023 - closure is created and consumed within this iteration
                         *paths,
                         private_first=private_first,
                         private_tail=private_tail,
                         first_payload=first_payload,
                     )
-                    config.write_bytes(b'{"connections":[{"endpoint":"https://live.invalid"}]}')
-                    secret.write_bytes(b"replacement credential")
+                    config.write_bytes(b'{"connections":[{"endpoint":"https://live.invalid"}]}')  # noqa: B023 - closure is created and consumed within this iteration
+                    secret.write_bytes(b"replacement credential")  # noqa: B023 - closure is created and consumed within this iteration
                     return bound
 
                 def operation(config_path: Path, *_args: object) -> str:
-                    self.assertNotEqual(config_path, config)
+                    self.assertNotEqual(config_path, config)  # noqa: B023 - closure is created and consumed within this iteration
                     execution = json.loads(config_path.read_text(encoding="utf-8"))
                     connection = execution["connections"][0]
                     self.assertEqual(
                         connection["endpoint"], "http://127.0.0.1:8765"
                     )
                     execution_secret = Path(connection["secret_file"])
-                    self.assertNotEqual(execution_secret, secret)
+                    self.assertNotEqual(execution_secret, secret)  # noqa: B023 - closure is created and consumed within this iteration
                     self.assertEqual(
                         execution_secret.read_bytes(), b"admitted credential"
                     )
                     return '{"ok":true}'
 
-                context.require_network = bind_then_replace  # type: ignore[method-assign]
+                context.require_network = bind_then_replace
                 execute(
                     context,
                     request,
@@ -463,7 +464,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                 )
                 return True
 
-            context.require_network = bind_batch_then_replace  # type: ignore[method-assign]
+            context.require_network = bind_batch_then_replace
             execute(
                 context,
                 BatchRequest("run", manifest_id="a" * 64),
@@ -507,7 +508,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             CatalogueRequest("refresh")
         with self.assertRaises(ValueError):
-            ProposalRequest("inspect", None)  # type: ignore[arg-type]
+            ProposalRequest("inspect", None)
         exact = {
             "connection": "primary",
             "library": "books",
@@ -517,7 +518,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
         for missing in exact:
             values = {**exact, missing: None}
             with self.subTest(missing=missing), self.assertRaises(ValueError):
-                CatalogueRequest("get", **values)  # type: ignore[arg-type]
+                CatalogueRequest("get", **values)
 
     def test_proposal_and_case_currentness_require_network_authority(self) -> None:
         for request in (
@@ -566,7 +567,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
         self.assertEqual(caught.exception.attempts, attempts)
         self.assertNotIn("local_cli_abort", str(caught.exception))
         with self.assertRaises(ValueError):
-            WorkbenchFailure("failed", attempts=(object(),))  # type: ignore[arg-type]
+            WorkbenchFailure("failed", attempts=(object(),))
 
     def test_operation_contract_json_preserves_application_field_order(self) -> None:
         raw = '[{"connection":"primary","item":"item","eligible":true}]'

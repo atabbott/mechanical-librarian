@@ -6,10 +6,14 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import RLock
-from typing import Literal, Protocol, TypeVar
+from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, cast
 
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
+)
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationError,
+    CoverConsiderationService,
 )
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.metadata_policy import (
@@ -38,16 +42,22 @@ from mechanical_librarian.application.review_web import (
     ReviewSessionStore,
     SessionTokens,
 )
-from mechanical_librarian.application.cover_consideration import (
-    CoverConsiderationError,
-    CoverConsiderationService,
-)
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
 from mechanical_librarian.domain.field_effect import SUPPORTED_DESTINATIONS
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 
+if TYPE_CHECKING:
+    from mechanical_librarian.application.cover_consideration import (
+        _ObservationRequest,
+    )
 
 _Result = TypeVar("_Result")
+
+
+class SerializedGate(Protocol):
+    """One serializing call gate that preserves its operation's return type."""
+
+    def __call__(self, call: Callable[[], _Result]) -> _Result: ...
 
 
 class ReviewApplicationError(RuntimeError):
@@ -82,12 +92,18 @@ class CaseDetailView:
     @classmethod
     def from_data(cls, value: dict[str, object]) -> "CaseDetailView":
         return cls(
-            tuple(str(item) for item in value["comparison_notices"]),  # type: ignore[arg-type]
+            tuple(
+                str(item)
+                for item in cast("list[object]", value["comparison_notices"])
+            ),
             bool(value["current"]),
-            tuple(dict(item) for item in value["fields"]),  # type: ignore[arg-type]
+            tuple(
+                dict(item)
+                for item in cast("list[dict[str, object]]", value["fields"])
+            ),
             str(value["review_case_id"]),
             str(value["schema_version"]),
-            dict(value["target"]),  # type: ignore[arg-type]
+            dict(cast("dict[str, object]", value["target"])),
         )
 
     def to_data(self) -> dict[str, object]:
@@ -153,7 +169,7 @@ class AttentionView:
             value["next_cursor"] if isinstance(value["next_cursor"], str) else None,
             value["query"] if isinstance(value["query"], str) else None,
             str(value["schema_version"]),
-            int(value["total"]),
+            int(cast(int, value["total"])),
         )
 
     def to_data(self) -> dict[str, object]:
@@ -189,7 +205,7 @@ class PreparationView:
 class PolicyOperations:
     """Serialized named policy operations; transport never receives its store."""
 
-    def __init__(self, notebook: PolicyNotebook, gate: Callable[[Callable[[], _Result]], _Result]) -> None:
+    def __init__(self, notebook: PolicyNotebook, gate: SerializedGate) -> None:
         self._notebook = notebook
         self._gate = gate
 
@@ -255,7 +271,7 @@ class AutomaticSafetyOperations:
     def __init__(
         self,
         controls: AutomaticSafetyControls,
-        gate: Callable[[Callable[[], _Result]], _Result],
+        gate: SerializedGate,
     ) -> None:
         self._controls = controls
         self._gate = gate
@@ -264,13 +280,25 @@ class AutomaticSafetyOperations:
         return self._gate(self._controls.state)
 
     def pause(self, paused: object, changed_at: object) -> None:
-        self._gate(lambda: self._controls.pause(paused, changed_at))
+        self._gate(
+            lambda: self._controls.pause(
+                cast(bool, paused), cast(int, changed_at)
+            )
+        )
 
     def recover(self, changed_at: object, category: object = None) -> None:
-        self._gate(lambda: self._controls.recover(changed_at, category))
+        self._gate(
+            lambda: self._controls.recover(
+                cast(int, changed_at), cast("str | None", category)
+            )
+        )
 
     def suspend(self, reason: object, changed_at: object, category: object = None) -> None:
-        self._gate(lambda: self._controls.suspend(reason, changed_at, category))
+        self._gate(
+            lambda: self._controls.suspend(
+                cast(str, reason), cast(int, changed_at), cast("str | None", category)
+            )
+        )
 
 
 class ReviewApplication:
@@ -432,7 +460,7 @@ class ReviewApplication:
             detail = self._cases.run(review_case_id)
             target = detail["target"]
             assert isinstance(target, dict)
-            for field in detail["fields"]:
+            for field in cast("list[object]", detail["fields"]):
                 assert isinstance(field, dict)
                 if isinstance(self._field_application, ContinuousGuardedApplication):
                     suspension = self._state_owner.field_effect_capability_suspension(
@@ -530,9 +558,9 @@ class ReviewApplication:
             raise ReviewApplicationError("unavailable")
         try:
             return self.serialized(
-                lambda: self._cover_considerations.image(
-                    review_case_id, consideration_id, reference
-                )
+                lambda: cast(
+                    CoverConsiderationService, self._cover_considerations
+                ).image(review_case_id, consideration_id, reference)
             )
         except CoverConsiderationError as error:
             raise ReviewApplicationError(error.code) from error
@@ -633,7 +661,12 @@ class ReviewApplication:
     def _set_field_effect_paused(self, paused: bool) -> None:
         if self._field_application is None:
             raise ReviewApplicationError("unavailable")
-        self.serialized(lambda: self._field_application.set_paused(paused))
+        self.serialized(
+            lambda: cast(
+                "GuardedFieldApplication | ContinuousGuardedApplication",
+                self._field_application,
+            ).set_paused(paused)
+        )
 
     def preparation(self) -> PreparationView:
         if self._preparation is None:
@@ -642,7 +675,7 @@ class ReviewApplication:
         conditions = self.serialized(self._preparation.connection_conditions)
         if len(progress_values) != len(self._preparation.libraries):
             raise ReviewApplicationError("persistence")
-        libraries = tuple(
+        libraries: tuple[dict[str, object], ...] = tuple(
             {
                 "scan_id": None if progress is None else progress.scan_id,
                 "connection": connection,
@@ -725,7 +758,11 @@ class ReviewApplication:
     def _set_preparation_paused(self, paused: bool) -> PreparationView:
         if self._preparation is None:
             raise ReviewApplicationError("unavailable")
-        self.serialized(lambda: self._preparation.set_paused(paused))
+        self.serialized(
+            lambda: cast(
+                ReviewPreparationSupervisor, self._preparation
+            ).set_paused(paused)
+        )
         return self.preparation()
 
     def _continuous_application(self) -> ContinuousGuardedApplication:
@@ -739,10 +776,10 @@ def prepare_cover_consideration(
     cover_considerations: CoverConsiderationService | None,
     review_case_id: str,
     *,
-    serialized: Callable[[Callable[[], _Result]], _Result],
+    serialized: SerializedGate,
     retry: bool = False,
     snapshot: Callable[[], tuple[str, str, bool] | None] | None = None,
-    finalize: Callable[[Callable[[], _Result]], _Result] | None = None,
+    finalize: SerializedGate | None = None,
 ) -> dict[str, object]:
     """Prepare one exact-current advisory cover consideration.
 
@@ -753,13 +790,17 @@ def prepare_cover_consideration(
         raise ReviewApplicationError("unavailable")
 
     def capture() -> tuple[
-        dict[str, object] | None, str, str, str | None, object | None
+        dict[str, object] | None, str, str, str | None, "_ObservationRequest | None"
     ]:
         if snapshot is None:
             if cases is None:
                 raise ReviewApplicationError("unavailable")
             detail, report, _ = cases._read(review_case_id)
-            cover = next(field for field in detail["fields"] if field["destination"] == "cover")
+            cover = next(
+                field
+                for field in cast("list[dict[str, object]]", detail["fields"])
+                if field["destination"] == "cover"
+            )
             report_document, proposal_id, has_human_decision = report.to_json(), str(cover["proposal_id"]), cover["human_decision"] is not None
         else:
             staged = snapshot()
@@ -798,7 +839,11 @@ def prepare_cover_consideration(
                 if cases is None:
                     raise ReviewApplicationError("unavailable")
                 detail, current_report, _ = cases._read(review_case_id)
-                cover = next(field for field in detail["fields"] if field["destination"] == "cover")
+                cover = next(
+                    field
+                    for field in cast("list[dict[str, object]]", detail["fields"])
+                    if field["destination"] == "cover"
+                )
                 current_report_document, current_proposal_id, has_human_decision = current_report.to_json(), str(cover["proposal_id"]), cover["human_decision"] is not None
             else:
                 staged = snapshot()
@@ -889,7 +934,7 @@ def compose_review_application(
             tuple(name for name, _ in policy_libraries),
             overrides,
         ),
-        automatic_safety=AutomaticSafetyControls(policy_store),  # type: ignore[arg-type]
+        automatic_safety=AutomaticSafetyControls(policy_store),
         clock=clock,
         graceful_shutdown_seconds=graceful_shutdown_seconds,
         close_state_owner=close_state_owner,
