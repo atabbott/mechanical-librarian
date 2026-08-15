@@ -1454,19 +1454,22 @@ def _target_backed_lookup_contains(
         and (
             (
                 lane.kind is ProviderQueryKind.ISBN
-                and all(
-                    (claim := local_claims.get(reference)) is not None
-                    and claim.kind is ClaimKind.ISBN
-                    and claim.state is FieldState.VALID
-                    and isbn_family(claim.canonical) == lane.matched_family
-                    for reference in lane.input_references
+                and lane.input_references == tuple(
+                    sorted(
+                        claim.reference
+                        for claim in _isbn_family_claims(
+                            report, lane.matched_family,
+                        )
+                    )
                 )
                 and lane.identity == _discovery_lane_identity(
                     {
                         "canonical_isbns": sorted(
                             {
-                                local_claims[reference].canonical
-                                for reference in lane.input_references
+                                claim.canonical
+                                for claim in _isbn_family_claims(
+                                    report, lane.matched_family,
+                                )
                             }
                         ),
                         "input_references": list(lane.input_references),
@@ -1481,6 +1484,9 @@ def _target_backed_lookup_contains(
                 and expected_authors
                 and lane.input_references == target_title_references
                 and target_titles_are_exact
+                and _candidate_replays_work_qualification(
+                    candidate, expected_title, expected_authors,
+                )
                 and lane.identity == _discovery_lane_identity(
                     {
                         "authors": list(expected_authors),
@@ -1497,6 +1503,93 @@ def _target_backed_lookup_contains(
 
 def _discovery_lane_identity(payload: dict[str, object]) -> str:
     return "lane_" + hashlib.sha256(canonical_json(payload).encode()).hexdigest()
+
+
+def _isbn_family_claims(
+    report: MetadataReport, family: str | None,
+) -> tuple[LocalClaim, ...]:
+    return tuple(
+        claim
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.ISBN
+        and claim.state is FieldState.VALID
+        and claim.canonical is not None
+        and isbn_family(claim.canonical) == family
+    )
+
+
+def _candidate_replays_work_qualification(
+    candidate: ProviderCandidate,
+    expected_title: str,
+    expected_authors: tuple[str, ...],
+) -> bool:
+    """Replay the closed WORK candidate test before granting lane authority."""
+    titles = tuple(
+        normalize_title(claim.value).casefold()
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK
+        and claim.kind is ClaimKind.TITLE
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+    )
+    creators = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
+    )
+    if (
+        titles != (expected_title.casefold(),)
+        or not creators
+        or any(
+            claim.state is not FieldState.VALID or claim.value is None
+            for claim in creators
+        )
+        or any(
+            claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.CONTRIBUTOR
+            and claim.role in {"abridger", "adapter", "translator"}
+            for claim in candidate.claims
+        )
+        or any(
+            _variant_marker(claim.value)
+            for claim in candidate.claims
+            if claim.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}
+            and claim.state is FieldState.VALID
+            and claim.value is not None
+        )
+    ):
+        return False
+    creator_names = tuple(
+        normalize_title(claim.value).casefold() for claim in creators
+    )
+    expected = tuple(value.casefold() for value in expected_authors)
+    if all(claim.role == "author" for claim in creators):
+        return creator_names == expected
+    if not all(claim.role is None for claim in creators):
+        return False
+    return (
+        creator_names == expected
+        and complete_creator_identity_bindings(candidate, creators) is not None
+    )
+
+
+def _variant_marker(value: str) -> bool:
+    tokens = {
+        "".join(character for character in token if character.isalnum())
+        for token in normalize_title(value).casefold().split()
+    }
+    return bool(
+        tokens
+        & {
+            "abridgement",
+            "abridgment",
+            "abridged",
+            "adaptation",
+            "adapted",
+            "translation",
+            "translated",
+        }
+    )
 
 
 def _creator_sets_match(

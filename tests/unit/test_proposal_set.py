@@ -1047,6 +1047,84 @@ class ProposalSetTests(unittest.TestCase):
             )
         )
 
+        isbn_10 = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="0306406152",
+            canonical="0306406152",
+            excerpt="0306406152",
+            applicability="unknown",
+            checksum="valid_isbn_10",
+            applicability_basis="unlabelled",
+            scope=ClaimScope.EDITION,
+        )
+        complete_lane = metadata_discovery_plan(
+            TargetSnapshot("ebook", "Real Tigers", (), fields=fields),
+            (isbn, isbn_10),
+        ).lanes[0]
+        complete_source = provider_observation(
+            "hardcover-connection",
+            (ProviderLaneResult(
+                complete_lane, ProviderStatus.CANDIDATES, (neutral,),
+            ),),
+            authority="hardcover",
+        )
+        complete_report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", fields),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(isbn, isbn_10),
+            local_reasons=("opening_matter_isbn",),
+            providers=(complete_source,),
+        )
+        self.assertTrue(
+            _target_backed_lookup_contains(
+                complete_report, complete_source, neutral,
+            )
+        )
+        subset_identity = "lane_" + hashlib.sha256(
+            canonical_json(
+                {
+                    "canonical_isbns": [isbn.canonical],
+                    "input_references": [isbn.reference],
+                    "kind": ProviderQueryKind.ISBN.value,
+                    "matched_family": complete_lane.matched_family,
+                }
+            ).encode()
+        ).hexdigest()
+        subset_lane = replace(
+            complete_source.lanes[0],
+            identity=subset_identity,
+            input_references=(isbn.reference,),
+            candidates=(
+                ProviderLaneCandidate(
+                    provider_lane_candidate_reference(
+                        "hardcover-connection", subset_identity,
+                        neutral.identity, neutral.work_identity,
+                    ),
+                    neutral.identity,
+                    neutral.work_identity,
+                ),
+            ),
+        )
+        subset_source = replace(
+            complete_source,
+            input_references=(isbn.reference,),
+            lanes=(subset_lane,),
+        )
+        subset_report = MetadataReport.from_json(
+            MetadataReport.create(
+                target=TargetFacts("primary", "ebooks", "item-1", fields),
+                file=FileFacts(0, "a" * 64, "b" * 64),
+                local_claims=(isbn, isbn_10),
+                local_reasons=("opening_matter_isbn",),
+                providers=(subset_source,),
+            ).to_json()
+        )
+        self.assertFalse(
+            _target_backed_lookup_contains(
+                subset_report, subset_report.providers[0], neutral,
+            )
+        )
+
     def test_work_lane_corroboration_rejects_replayed_target_binding_tampering(
         self,
     ) -> None:
@@ -1090,6 +1168,14 @@ class ProposalSetTests(unittest.TestCase):
             (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, (candidate,)),),
             authority="open_library",
         )
+        baseline = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", fields),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(title,),
+            local_reasons=("opening_matter_isbn",),
+            providers=(source,),
+        )
+        self.assertTrue(_target_backed_lookup_contains(baseline, source, candidate))
         creator = _local_creator("Mick Herron")
         wrong_title = LocalClaim.create(
             kind=ClaimKind.TITLE,
@@ -1155,6 +1241,116 @@ class ProposalSetTests(unittest.TestCase):
                         replayed, replayed.providers[0], replayed.providers[0].candidates[0],
                     )
                 )
+
+        wrong_title_candidate = replace(
+            candidate,
+            claims=(
+                _claim(
+                    "open-connection", "edition", ClaimKind.TITLE, "Other Tigers",
+                    scope=ClaimScope.WORK,
+                ),
+                claim,
+            ),
+        )
+        wrong_authors_candidate = replace(
+            candidate,
+            claims=(
+                candidate.claims[0],
+                _claim(
+                    "open-connection", "edition", ClaimKind.CREATOR,
+                    "Completely Different", scope=ClaimScope.WORK, role="author",
+                ),
+            ),
+        )
+        variant_candidate = replace(
+            candidate,
+            claims=(
+                *candidate.claims,
+                _claim(
+                    "open-connection", "edition", ClaimKind.SUBTITLE, "Abridged",
+                    scope=ClaimScope.WORK,
+                ),
+            ),
+        )
+        contributor_candidate = replace(
+            candidate,
+            claims=(
+                *candidate.claims,
+                _claim(
+                    "open-connection", "edition", ClaimKind.CONTRIBUTOR, "Adapter",
+                    scope=ClaimScope.WORK, role="adapter",
+                ),
+            ),
+        )
+        for label, rejected_candidate in (
+            ("wrong title", wrong_title_candidate),
+            ("wrong authors", wrong_authors_candidate),
+            ("variant", variant_candidate),
+            ("disqualifying contributor", contributor_candidate),
+        ):
+            with self.subTest(label=label):
+                rejected_source = provider_observation(
+                    "open-connection",
+                    (ProviderLaneResult(
+                        lane, ProviderStatus.CANDIDATES, (rejected_candidate,),
+                    ),),
+                    authority="open_library",
+                )
+                replayed = MetadataReport.from_json(
+                    MetadataReport.create(
+                        target=TargetFacts("primary", "ebooks", "item-1", fields),
+                        file=FileFacts(0, "a" * 64, "b" * 64),
+                        local_claims=(title,),
+                        local_reasons=("opening_matter_isbn",),
+                        providers=(rejected_source,),
+                    ).to_json()
+                )
+                self.assertFalse(
+                    _target_backed_lookup_contains(
+                        replayed, replayed.providers[0], rejected_candidate,
+                    )
+                )
+
+        second_wrong_title_candidate = ProviderCandidate(
+            "hardcover-edition", "hardcover-work",
+            (
+                _claim(
+                    "hardcover-connection", "hardcover-edition", ClaimKind.TITLE,
+                    "Other Tigers", scope=ClaimScope.WORK,
+                ),
+                _claim(
+                    "hardcover-connection", "hardcover-edition", ClaimKind.CREATOR,
+                    "Mick Herron", scope=ClaimScope.WORK, role="author",
+                ),
+            ),
+        )
+        both_wrong = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", fields),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(title,),
+            local_reasons=("opening_matter_isbn",),
+            providers=(
+                provider_observation(
+                    "hardcover-connection",
+                    (ProviderLaneResult(
+                        lane, ProviderStatus.CANDIDATES,
+                        (second_wrong_title_candidate,),
+                    ),),
+                    authority="hardcover",
+                ),
+                provider_observation(
+                    "open-connection",
+                    (ProviderLaneResult(
+                        lane, ProviderStatus.CANDIDATES, (wrong_authors_candidate,),
+                    ),),
+                    authority="open_library",
+                ),
+            ),
+        )
+        self.assertNotIn(
+            "explicit_author_corroborates_untyped_creator",
+            _result(evaluate_report(both_wrong), TargetDestination.AUTHORS).reasons,
+        )
 
     def test_reused_creator_identity_binding_fails_closed_for_corroboration(
         self,
