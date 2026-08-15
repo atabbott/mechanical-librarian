@@ -212,3 +212,33 @@ jobs:
       # qualifier stays a documented maintainer-manual step.
       - name: Build the shipped container image
         run: docker build --pull --tag mechanical-librarian:gate .
+
+  dependency-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      # `uv.lock` is the complete resolved closure -- runtime and development
+      # alike -- so this audits both what ships and what CI installs. The
+      # scanner is pinned by image digest rather than through
+      # `google/osv-scanner-action`, which resolves a mutable image tag
+      # internally and documents that its behaviour may change in a patch
+      # release; the digest below is `ghcr.io/google/osv-scanner:v2.5.0`.
+      # Advisory data is fetched from OSV at run time, so a pinned scanner
+      # still sees current advisories. `--config` is explicit so a deleted or
+      # renamed acceptance register fails the job instead of silently
+      # disabling every acceptance's expiry.
+      - name: Audit the locked Python dependency closure
+        run: >-
+          docker run --rm
+          --volume "$PWD:/src:ro"
+          --workdir /src
+          ghcr.io/google/osv-scanner@sha256:5b8b38e45bb2c5c4976f0f1f07860551ea6e1f235f642cf215f74d266fec2c1b
+          scan source
+          --lockfile=uv.lock
+          --config=osv-scanner.toml
