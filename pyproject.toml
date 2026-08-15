@@ -32,7 +32,9 @@ dependencies = [
 [dependency-groups]
 dev = [
   "hypothesis==6.165.2",
+  "mypy==2.3.1",
   "playwright==1.61.0",
+  "ruff==0.16.3",
   "setuptools==83.0.0",
 ]
 
@@ -60,3 +62,31 @@ where = ["src"]
 
 [tool.uv]
 package = true
+
+[tool.ruff]
+# The gate lints the backend source, its tests, and its scripts.
+src = ["src"]
+target-version = "py313"
+
+[tool.ruff.lint]
+# pyflakes (F), pycodestyle (E, W), bugbear (B), and import ordering (I).
+select = ["F", "E", "W", "B", "I"]
+ignore = [
+  # E501 (line-too-long) is deliberately not enforced. 5,673 backend lines
+  # exceed the default limit, so enforcing it would require a whole-tree
+  # backend reformat -- exactly the "reformatting-only churn" this gate's
+  # ticket (#652) excludes. Backend formatting is separate future work, in the
+  # manner the frontend took under #657; the remaining pycodestyle rules are
+  # enforced normally.
+  "E501",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["mechanical_librarian"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+# Report suppressions that no longer suppress anything so the gate cannot rot.
+warn_unused_ignores = true
+warn_unused_configs = true
