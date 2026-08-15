@@ -18,8 +18,8 @@ from mechanical_librarian.domain.provider_recovery import ProviderRecovery, Prov
 
 class ProviderRecoveryStore(Protocol):
     def enqueue_jobs(self, jobs: tuple[ProviderRecoveryJob, ...]) -> int: ...
-    def claim_one(self, *, generation: int, now: int, token: str) -> ProviderRecovery | None: ...
-    def claim_job(self, *, recovery: ProviderRecovery, token: str, now: int) -> ProviderRecoveryJob | None: ...
+    def claim_one(self, *, generation: int, now: int, token: str, blocked_targets: frozenset[str]) -> ProviderRecovery | None: ...
+    def claim_job(self, *, recovery: ProviderRecovery, token: str, now: int, blocked_targets: frozenset[str]) -> ProviderRecoveryJob | None: ...
     def renew_job(self, *, job: ProviderRecoveryJob, token: str, now: int) -> None: ...
     def complete_job(self, *, job: ProviderRecoveryJob, token: str, now: int, success: bool) -> None: ...
     def complete_stale_job(self, *, job: ProviderRecoveryJob, token: str, now: int) -> None: ...
@@ -29,7 +29,7 @@ class ProviderRecoveryStore(Protocol):
     def authorize_fanout(self, *, job: ProviderRecoveryJob, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
     def finish_fanout(self, *, recovery: ProviderRecovery, token: str, now: int) -> ProviderRecovery: ...
     def interrupt_fanout(self, *, job: ProviderRecoveryJob, token: str, recovery: ProviderRecovery, now: int, failure: str, retry_after: int | None) -> ProviderRecovery: ...
-    def resume_fanout(self, *, generation: int, now: int, token: str) -> ProviderRecovery | None: ...
+    def resume_fanout(self, *, generation: int, now: int, token: str, blocked_targets: frozenset[str]) -> ProviderRecovery | None: ...
     def fanout_pending(self, *, recovery: ProviderRecovery) -> bool: ...
     def complete_success(self, *, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
     def complete_missing_jobs(self, *, token: str, recovery: ProviderRecovery, now: int) -> ProviderRecovery: ...
@@ -63,10 +63,11 @@ class ScopedProviderRecoveryRunner:
         classify_failure: Callable[[Exception], tuple[str, int | None]],
         clock: Callable[[], int] | None = None,
         cancelled: Callable[[], bool] = lambda: False,
+        blocked_targets: Callable[[], frozenset[str]] = lambda: frozenset(),
     ) -> None:
         self._store, self._generation = store, generation
         self._retry, self._classify_failure = retry, classify_failure
-        self._clock, self._cancelled = clock, cancelled
+        self._clock, self._cancelled, self._blocked_targets = clock, cancelled, blocked_targets
 
     def _current(self, floor: int) -> int:
         return floor if self._clock is None else max(floor, self._clock())
@@ -78,11 +79,12 @@ class ScopedProviderRecoveryRunner:
     def run_one(self, *, now: int, token: str | None = None) -> RecoveryRun:
         token = token or uuid4().hex
         current = self._current(now)
+        blocked = self._blocked_targets()
         fanout_state = self._store.resume_fanout(
-            generation=self._generation, now=current, token=token,
+            generation=self._generation, now=current, token=token, blocked_targets=blocked,
         )
         claimed = None if fanout_state is not None else self._store.claim_one(
-            generation=self._generation, now=current, token=token,
+            generation=self._generation, now=current, token=token, blocked_targets=blocked,
         )
         if fanout_state is None and claimed is None:
             return RecoveryRun("idle")
@@ -90,7 +92,7 @@ class ScopedProviderRecoveryRunner:
             canary = None
         else:
             assert claimed is not None
-            canary = self._store.claim_job(recovery=claimed, token=token, now=current)
+            canary = self._store.claim_job(recovery=claimed, token=token, now=current, blocked_targets=self._blocked_targets())
         if fanout_state is not None:
             pass
         elif canary is None:
@@ -127,7 +129,7 @@ class ScopedProviderRecoveryRunner:
                             job=canary, token=token, now=current,
                         )
                         canary = self._store.claim_job(
-                            recovery=claimed, token=token, now=current,
+                            recovery=claimed, token=token, now=current, blocked_targets=self._blocked_targets(),
                         )
                         continue
                     if failure not in {"transient", "rate_limited", "authentication", "authorization", "configuration"}:
@@ -155,7 +157,7 @@ class ScopedProviderRecoveryRunner:
         while not self._cancelled():
             current = self._current(current)
             member = self._store.claim_job(
-                recovery=fanout_state, token=token, now=current,
+                recovery=fanout_state, token=token, now=current, blocked_targets=self._blocked_targets(),
             )
             if member is None:
                 break

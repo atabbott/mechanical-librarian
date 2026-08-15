@@ -158,7 +158,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       if (inner !== null) cancelAnimationFrame(inner)
     }
   }, [focusRequest, search.eventType, search.page, search.pageSize, search.q, search.rangeDays])
-  useRouteReadyFocus('activity')
+  const routeIdentity = 'activity'
+  useRouteReadyFocus(routeIdentity)
   const query = useQuery({
     queryKey: ['activity', search.q ?? null, search.eventType, search.rangeDays, search.page, search.pageSize],
     queryFn: ({ signal }) => http.getActivity(search, signal), initialData: initial,
@@ -241,7 +242,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
 
   return <div className="cm-activity-route" onFocusCapture={() => { ++focusVersion.current }}>
     <header className="cm-page-heading" tabIndex={-1} data-route-focus><div><h1>Activity and recovery</h1><p>See what needs attention now and inspect the durable record of reviews, policy changes, safeguards, and verified updates.</p></div><span className="cm-activity-calm">{connection?.state === 'checking' ? 'Connection checking' : connection?.state === 'paused' ? 'Connection paused' : connection?.state === 'recovered' ? 'Connection recovered' : recoveryCount ? 'Recovery available' : data.paused ? 'New work paused' : 'No action required'}</span></header>
-    <PreparationNotice/>
+    <PreparationNotice routeIdentity={routeIdentity}/>
     <section className="cm-activity-status" aria-labelledby="activity-status-title">
       <div className="cm-activity-status-copy"><h2 id="activity-status-title">{connection?.state === 'checking' ? 'Checking library connection' : connection?.state === 'paused' ? 'Library connection is paused' : connection?.state === 'recovered' ? 'Library connection recovered' : recoveryCount ? 'Recovery needs attention' : data.paused ? 'New work is paused' : 'No intervention needed'}</h2><p>{connection?.state === 'checking' ? 'Preparation remains safely paused while the authoritative connection check settles.' : connection?.state === 'paused' ? `${String(connection.affected)} preparation ${connection.affected === 1 ? 'work remains' : 'works remain'} safely paused for an owner connection check.` : connection?.state === 'recovered' ? 'Preparation is resuming from its retained checkpoint. No work needs recovery from this connection.' : dormantRecovery ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.` : recoveryCount ? 'Affected work remains held until its current state can be reconciled safely.' : data.paused ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.' : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}</p></div>
       <dl><div><dt>Writes in progress</dt><dd>{writes}</dd></div><div><dt>Waiting safely</dt><dd>{waiting}</dd></div><div><dt>Recovery needed</dt><dd>{recoveryCount}</dd></div></dl>

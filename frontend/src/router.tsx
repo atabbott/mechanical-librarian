@@ -79,10 +79,10 @@ export const ConnectionNotice = ({ data, checking, onCheck, error }: { data: Pre
       : `${connectionCopy(condition.code)} ${String(paused)} preparation ${paused === 1 ? 'work is' : 'works are'} safely paused. Completed reviews remain available.`
   const canCheck = condition.state === 'paused' && !checking
   const action = condition.state === 'paused' ? 'Check connection again' : condition.state === 'recovered' ? 'Recovered' : 'Checking connection…'
-  return <section className={`connection-notice is-${condition.state}`} aria-live="polite" aria-label="Shared library connection status"><div><strong>{title}</strong><span>{copy}</span></div><dl><div><dt>Ready</dt><dd>{String(ready)}</dd></div><div><dt>Safely paused</dt><dd>{String(paused)}</dd></div></dl><button disabled={!canCheck} aria-busy={checking || undefined} onClick={() => { if (canCheck) onCheck(condition.connection) }}>{action}</button>{error ? <p role="alert">Connection checking could not be completed. Preparation remains safely paused.</p> : null}</section>
+  return <section className={`connection-notice is-${condition.state}`} aria-live="polite" aria-label="Shared library connection status"><div><strong>{title}</strong><span>{copy}</span></div><dl><div><dt>Ready</dt><dd>{String(ready)}</dd></div><div><dt>Safely paused</dt><dd>{String(paused)}</dd></div></dl><button type="button" aria-disabled={!canCheck} aria-busy={checking || undefined} onClick={() => { if (canCheck) onCheck(condition.connection) }}>{action}</button>{error ? <p role="alert">Connection checking could not be completed. Preparation remains safely paused.</p> : null}</section>
 }
 
-export const PreparationNotice = () => {
+export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) => {
   const { data, queryClient, http } = usePreparation()
   const action = useMutation({
     mutationFn: (path: string) => http.preparationAction(path),
@@ -118,7 +118,11 @@ export const PreparationNotice = () => {
       ])
     },
   })
-  return <ConnectionNotice data={data} checking={action.isPending} error={action.isError} onCheck={(connection) => action.mutate(`${encodeURIComponent(connection)}/check-connection`)}/>
+  return <ConnectionNotice data={data} checking={action.isPending} error={action.isError} onCheck={(connection) => {
+    const main = document.getElementById('main-content')
+    if (main) main.dataset.routeFocusIdentity = `${window.location.pathname}:${routeIdentity}`
+    action.mutate(`${encodeURIComponent(connection)}/check-connection`)
+  }}/>
 }
 
 export const PreparationActivity = () => {

@@ -144,6 +144,67 @@ class ProviderRecoveryTests(unittest.TestCase):
             self.assertEqual(("waiting", 2, 14_401), (current.state, current.attempt, current.next_eligible_at))
             store.close()
 
+    def test_target_hold_canary_restores_exact_health_job_and_event_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            store.record(ProviderRecovery.failed(connection="google", adapter="google_books", scope="books", generation=1, failure="transient", now=0, retry_after=1), occurred_at=0)
+            store.enqueue_jobs((self._job("canary"),))
+            before = tuple(store._connection.execute("SELECT * FROM provider_recovery_health")), tuple(store._connection.execute("SELECT * FROM provider_recovery_jobs")), tuple(store._connection.execute("SELECT * FROM provider_recovery_events"))
+            runner = ScopedProviderRecoveryRunner(
+                store=store, generation=1,
+                retry=lambda *_: (_ for _ in ()).throw(RuntimeError("target held")),
+                classify_failure=lambda _: ("target_held", None),
+            )
+            self.assertEqual("target_held", runner.run_one(now=1, token="owner").state)
+            after = tuple(store._connection.execute("SELECT * FROM provider_recovery_health")), tuple(store._connection.execute("SELECT * FROM provider_recovery_jobs")), tuple(store._connection.execute("SELECT * FROM provider_recovery_events"))
+            self.assertEqual(before, after)
+            store.close()
+
+    def test_target_hold_fanout_restores_exact_health_job_and_event_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            store.record(ProviderRecovery.failed(connection="google", adapter="google_books", scope="books", generation=1, failure="transient", now=0, retry_after=1), occurred_at=0)
+            store.enqueue_jobs((self._job("canary"), self._job("sibling")))
+            claimed = store.claim_one(generation=1, now=1, token="owner")
+            assert claimed is not None
+            canary = store.claim_job(recovery=claimed, token="owner", now=1)
+            assert canary is not None
+            store.authorize_fanout(job=canary, token="owner", recovery=claimed, now=1)
+            store._connection.execute("UPDATE provider_recovery_health SET claim_token='expired',claim_expires_at=1")
+            before = tuple(store._connection.execute("SELECT * FROM provider_recovery_health")), tuple(store._connection.execute("SELECT * FROM provider_recovery_jobs")), tuple(store._connection.execute("SELECT * FROM provider_recovery_events"))
+            runner = ScopedProviderRecoveryRunner(
+                store=store, generation=1,
+                retry=lambda *_: (_ for _ in ()).throw(RuntimeError("target held")),
+                classify_failure=lambda _: ("target_held", None),
+            )
+            self.assertEqual("target_held", runner.run_one(now=2, token="owner").state)
+            after = tuple(store._connection.execute("SELECT * FROM provider_recovery_health")), tuple(store._connection.execute("SELECT * FROM provider_recovery_jobs")), tuple(store._connection.execute("SELECT * FROM provider_recovery_events"))
+            self.assertEqual(before, after)
+            store.close()
+
+    def test_blocked_target_emits_nothing_then_recovers_on_a_later_tick(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+            store.record(ProviderRecovery.failed(connection="google", adapter="google_books", scope="books", generation=1, failure="transient", now=0, retry_after=1), occurred_at=0)
+            store.enqueue_jobs((self._job("canary"),))
+            blocked = frozenset(("primary",))
+            calls: list[str] = []
+            runner = ScopedProviderRecoveryRunner(
+                store=store, generation=1,
+                retry=lambda _, job, __: calls.append(job.member_id),
+                classify_failure=lambda _: ("transient", None),
+                blocked_targets=lambda: blocked,
+            )
+            before = tuple(store._connection.execute("SELECT * FROM provider_recovery_health")), tuple(store._connection.execute("SELECT * FROM provider_recovery_jobs")), tuple(store._connection.execute("SELECT * FROM provider_recovery_events"))
+            self.assertEqual("idle", runner.run_one(now=1, token="blocked").state)
+            after = tuple(store._connection.execute("SELECT * FROM provider_recovery_health")), tuple(store._connection.execute("SELECT * FROM provider_recovery_jobs")), tuple(store._connection.execute("SELECT * FROM provider_recovery_events"))
+            self.assertEqual(before, after)
+            self.assertEqual([], calls)
+            blocked = frozenset()
+            self.assertEqual("recovered", runner.run_one(now=2, token="recovered").state)
+            self.assertEqual(["canary"], calls)
+            store.close()
+
     def test_attempt_five_job_is_never_persisted_as_attempt_six(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")

@@ -1274,6 +1274,10 @@ def create_review_pipeline(
         store=provider_recovery, generation=configuration.provider_recovery_generation,
         retry=retry_member, classify_failure=_classify_provider_recovery_failure,
         clock=lambda: int(time.time()), cancelled=recovery_cancel.is_set,
+        blocked_targets=lambda: frozenset(
+            condition.connection for condition in pipeline_holder["pipeline"].connection_conditions()
+            if condition.state in {"paused", "checking"}
+        ),
     )
 
     def drain_provider_recovery_outbox(repository=None) -> None:

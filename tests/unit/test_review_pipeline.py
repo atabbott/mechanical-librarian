@@ -429,6 +429,38 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertTrue(pipeline.check_connection("primary"))
         self.assertEqual(pipeline.connection_conditions()[0].state, "recovered")
 
+    def test_checking_condition_allows_admission_replay_and_rejects_stale_finish_epoch(self) -> None:
+        repository = open_repository(self.path)
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+        action = repository.claim_review_pipeline_action(2)
+        assert action is not None
+        repository.defer_for_target_connection(action, "unavailable", 3)
+        first = repository.begin_target_connection_check("primary", 4)
+        assert first is not None
+        self.assertEqual("checking", first.state)
+        repository.close()
+
+        concurrent = open_repository(self.path)
+        concurrent.request_review_scan("primary", "history", "lib-2", _PRODUCER, 5)
+        concurrent.request_review_scan("primary", "history", "lib-2", _PRODUCER, 5)
+        self.assertEqual("checking", concurrent.target_connection_conditions()[0].state)
+        self.assertTrue(concurrent.finish_target_connection_check("primary", first.epoch, "unavailable", 6))
+        paused = concurrent.target_connection_conditions()[0]
+        self.assertEqual(("paused", 2), (paused.state, paused.affected))
+        second = concurrent.begin_target_connection_check("primary", 7)
+        assert second is not None
+        self.assertFalse(concurrent.finish_target_connection_check("primary", first.epoch, None, 8))
+        self.assertEqual(("checking", second.epoch), (
+            concurrent.target_connection_conditions()[0].state,
+            concurrent.target_connection_conditions()[0].epoch,
+        ))
+        self.assertTrue(concurrent.finish_target_connection_check("primary", second.epoch, "unavailable", 9))
+        self.assertEqual(("paused", 2), (
+            concurrent.target_connection_conditions()[0].state,
+            concurrent.target_connection_conditions()[0].affected,
+        ))
+        concurrent.close()
+
     def test_status_reads_all_latest_library_progress_and_pause_in_one_snapshot(self) -> None:
         repository = open_repository(self.path)
         first = repository.request_review_scan(

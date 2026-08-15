@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import threading
 import unittest
 
 from mechanical_librarian.application.review_application import (
@@ -119,6 +120,52 @@ class ReviewApplicationTests(unittest.TestCase):
         self.assertNotIn("ReviewWebRepository", source)
         self.assertNotIn("_SerializedReviewRepository", source)
         self.assertNotIn("repository.", source)
+
+    def test_connection_probe_does_not_hold_the_global_application_gate(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+        browse_finished = threading.Event()
+
+        class BlockingPreparation:
+            libraries: tuple[tuple[str, str, str], ...] = ()
+
+            def check_connection(self, _connection: str) -> bool:
+                started.set()
+                self.assertTrue(release.wait(2))
+                return True
+
+            def status(self):
+                return (), False
+
+            def connection_conditions(self):
+                return ()
+
+        preparation = BlockingPreparation()
+        # Bind the assertion to the test rather than the tiny fake supervisor.
+        preparation.assertTrue = self.assertTrue  # type: ignore[attr-defined]
+        application = compose_review_application(
+            state_owner=self.repository, session_store=self.repository,
+            case_store=self.repository, decision_store=self.repository,
+            library_store=self.repository, policy_store=self.repository,
+            verify_password=lambda _: True, clock=lambda: self.now,
+            session_lifetime_seconds=600, graceful_shutdown_seconds=30,
+            preparation=preparation,  # type: ignore[arg-type]
+        )
+        probe = threading.Thread(
+            target=lambda: application.check_review_preparation_connection("primary")
+        )
+        probe.start()
+        self.assertTrue(started.wait(1))
+        browse = threading.Thread(
+            target=lambda: (application.library(lens="all", search=None, limit=20, cursor=None), browse_finished.set())
+        )
+        browse.start()
+        self.assertTrue(browse_finished.wait(1))
+        release.set()
+        probe.join(1)
+        browse.join(1)
+        self.assertFalse(probe.is_alive())
+        self.assertFalse(browse.is_alive())
 
 
 if __name__ == "__main__":

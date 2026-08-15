@@ -1716,11 +1716,11 @@ describe('typed review routes', () => {
     const { router } = renderRoute('/library?lens=needs_attention&q=A%20Book', http)
     expect((await screen.findAllByText(title)).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
     expect(screen.getByText('Ready')).toBeVisible()
-    expect(screen.getByRole('button', { name: action }).hasAttribute('disabled')).toBe(disabled)
+    expect(screen.getByRole('button', { name: action })).toHaveAttribute('aria-disabled', String(disabled))
     expect(screen.getByDisplayValue('A Book')).toBeVisible()
     await router.navigate({ to: '/review/$reviewCaseId', params: { reviewCaseId: 'case-1' }, search: { field: 'title', subview: 'review' } })
     expect((await screen.findAllByText(title)).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
-    expect(screen.getByRole('heading', { name: 'Current review case' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Current review case' })).toBeVisible()
     await router.navigate({ to: '/activity', search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 } })
     await screen.findByRole('heading', { name: 'Activity and recovery' })
     expect((await screen.findAllByText(title)).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
@@ -1784,11 +1784,40 @@ describe('typed review routes', () => {
     expect(screen.getByDisplayValue('A Book')).toBeVisible()
 
     await router.navigate({ to: '/review/$reviewCaseId', params: { reviewCaseId: 'case-1' }, search: { field: 'title', subview: 'review' } })
-    expect(screen.getByRole('heading', { name: 'Current review case' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Current review case' })).toBeVisible()
     current = recovered
     settle?.(recovered)
     expect((await screen.findAllByText('Library connection recovered')).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
-    expect(screen.getByRole('heading', { name: 'Current review case' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Current review case' })).toBeVisible()
+  })
+
+  it.each(['pointer', 'keyboard'] as const)('keeps the focused connection control stable for %s activation', async (activation) => {
+    const user = userEvent.setup()
+    const connection = { connection: 'primary', code: 'unavailable' as const, state: 'paused' as const, affected: 2, updated_at: 1 }
+    const paused: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [], connections: [connection] }
+    let settle: ((value: PreparationView) => void) | undefined
+    const http: ReviewHttp = {
+      ...createHttp(), getPreparation: vi.fn(async () => paused),
+      preparationAction: vi.fn(() => new Promise<PreparationView>((resolve) => { settle = resolve })),
+    }
+    renderRoute('/library?lens=all', http)
+
+    const heading = await screen.findByRole('heading', { name: 'Every work, with exceptions first' })
+    await waitFor(() => expect(heading.parentElement?.parentElement).toHaveFocus())
+    const check = await screen.findByRole('button', { name: 'Check connection again' })
+    check.focus()
+    expect(check).toHaveFocus()
+    if (activation === 'pointer') await user.click(check)
+    else await user.keyboard('{Enter}')
+
+    expect(http.preparationAction).toHaveBeenCalledOnce()
+    expect(document.getElementById('main-content')).toHaveAttribute('data-route-focus-identity', '/:all:::::')
+    const checking = screen.getByRole('button', { name: 'Checking connection…' })
+    expect(checking).toBe(check)
+    expect(checking).toHaveFocus()
+    expect(checking).toHaveAttribute('aria-disabled', 'true')
+    expect(checking).toHaveAttribute('aria-busy', 'true')
+    settle?.(paused)
   })
 
   it('restores the actionable paused connection notice when mutation and refetch fail', async () => {

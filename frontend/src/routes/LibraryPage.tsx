@@ -206,7 +206,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     onStale: async () => { await navigate({ search: { lens: 'needs_attention' } }) },
   })
 
-  useRouteReadyFocus(`${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.preview ?? ''}:${search.field ?? ''}:${search.attention ?? ''}`)
+  const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.preview ?? ''}:${search.field ?? ''}:${search.attention ?? ''}`
+  useRouteReadyFocus(routeIdentity)
   useEffect(() => { currentSearch.current = search }, [search])
   useEffect(() => { if (controller.canRetry) retryButton.current?.focus() }, [controller.canRetry])
   useEffect(() => { if (complete?.id === selectedReviewCaseId && completionInspection === null) completionRegion.current?.focus({ preventScroll: true }) }, [complete, completionInspection, selectedReviewCaseId])
@@ -297,7 +298,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         return next
       } })}>Attention <strong>{data.counts.attention}</strong></button>
     </header>
-    <PreparationNotice/>
+    <PreparationNotice routeIdentity={routeIdentity}/>
     <div className={`library-workspace${search.preview ? ' has-selection' : ''}${search.attention === 'open' ? ' attention-open' : ''}`}>
       <section className="library-works" aria-labelledby="library-works-title">
         <div className="library-works-heading"><h2 id="library-works-title">Works</h2><span>{data.counts.all} total</span></div>
