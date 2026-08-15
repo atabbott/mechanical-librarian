@@ -2380,23 +2380,31 @@ describe('typed review routes', () => {
     renderRoute('/activity', http)
 
     await screen.findByRole('heading', { name: 'Activity and recovery' })
-    await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)) })
+    await waitFor(() => expect(document.getElementById('main-content')).toHaveAttribute('data-route-focus-identity'))
     const search = screen.getByRole('searchbox', { name: 'Search activity' })
     await user.click(search)
-    await user.type(search, 'ab')
-    await waitFor(() => expect(search).toHaveValue('ab'))
-    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
-      expect.objectContaining({ q: 'ab', page: 1 }), expect.anything(),
-    ))
-    await waitFor(() => expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveFocus())
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(search, { target: { value: 'a' } })
+      fireEvent.change(search, { target: { value: 'ab' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(250) })
+      expect(search).toHaveValue('ab')
+      expect(http.getActivity).toHaveBeenLastCalledWith(
+        expect.objectContaining({ q: 'ab', page: 1 }), expect.anything(),
+      )
+      expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveFocus()
 
-    await user.clear(search)
-    await user.type(search, 'desktop')
-    await waitFor(() => expect(http.getActivity).toHaveBeenLastCalledWith(
-      expect.objectContaining({ q: 'desktop', page: 1 }), expect.anything(),
-    ))
-    expect(search).toHaveValue('desktop')
-    expect(search).toHaveFocus()
+      fireEvent.change(search, { target: { value: '' } })
+      fireEvent.change(search, { target: { value: 'desktop' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(250) })
+      expect(http.getActivity).toHaveBeenLastCalledWith(
+        expect.objectContaining({ q: 'desktop', page: 1 }), expect.anything(),
+      )
+      expect(search).toHaveValue('desktop')
+      expect(search).toHaveFocus()
+    } finally {
+      vi.useRealTimers()
+    }
 
     const next = screen.getByRole('button', { name: 'Next' })
     await user.click(next)
