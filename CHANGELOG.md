@@ -7,6 +7,23 @@
 
 ## Unreleased
 
+- Fail closed on two malformed inputs the boundaries that own them were meant
+  to reject. A shadow-review packet now proves that every member of a correlation's
+  `candidate_ids` and `proposal_ids` is a string, the way the packet's other
+  identity lists already do. A correlation whose identities were all of one
+  non-string type was accepted outright, and one with mixed types left the
+  packet constructor as a `TypeError` instead of the packet's own
+  `ShadowReviewValueError`; decoding a packet with `from_json` already
+  translated that `TypeError`, so only direct construction saw the wrong type.
+  Both malformed shapes now raise the existing "shadow-review packet is
+  invalid" error, and no packet that validates today is rejected. The
+  `provider-recovery` command now refuses an absent review configuration with
+  the same `review configuration is unavailable` configuration error the
+  `cover-review` and `review-activity` commands already raise, instead of
+  composing the review pipeline and failing with an `AttributeError` on the
+  absent configuration. No new error identity or message was introduced and no
+  other caller of the pipeline changed. (#669)
+
 - Report a failed field-effect claim as what it was, so `claim_conflict` again
   means an actual concurrency conflict. Claiming a plan can fail because the
   control table is paused, the capability is suspended, the authority or

@@ -9,7 +9,11 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.bootstrap.composition import run_review_activity
+from mechanical_librarian.application.configuration import ConfigurationError
+from mechanical_librarian.bootstrap.composition import (
+    run_provider_recovery_once,
+    run_review_activity,
+)
 from mechanical_librarian.interfaces.cli import main
 
 
@@ -145,6 +149,34 @@ class CoverReviewCliTests(unittest.TestCase):
 
         runner.assert_not_called()
         self.assertEqual(errors.getvalue(), "Review server failed: invalid invocation.\n")
+
+    def test_provider_recovery_refuses_absent_review_configuration(self) -> None:
+        with (
+            patch(
+                "mechanical_librarian.bootstrap.composition.load_configuration_file",
+                return_value=SimpleNamespace(review=None),
+            ),
+            patch(
+                "mechanical_librarian.bootstrap.composition.SQLiteProviderRecoveryStore.open",
+                side_effect=AssertionError("recovery store opened"),
+            ) as store,
+            patch(
+                "mechanical_librarian.bootstrap.composition.create_review_pipeline",
+                side_effect=AssertionError("review pipeline composed"),
+            ) as pipeline,
+            self.assertRaisesRegex(
+                ConfigurationError, "review configuration is unavailable"
+            ),
+        ):
+            run_provider_recovery_once(
+                Path("/config.json"),
+                Path("/database.sqlite3"),
+                Path("/catalogue.sqlite3"),
+                Path("/artifacts"),
+            )
+
+        store.assert_not_called()
+        pipeline.assert_not_called()
 
     def test_show_and_select_delegate_closed_values(self) -> None:
         runner = Mock(return_value={"schema_version": "cover-consideration-v1"})

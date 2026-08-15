@@ -443,18 +443,27 @@ class ShadowReviewPacket:
                 type(correlation) is not dict
                 or set(correlation)
                 != {"candidate_ids", "correlation_id", "proposal_ids"}
-                or type(correlation.get("correlation_id")) is not str
-                or type(correlation.get("candidate_ids")) is not list
-                or type(correlation.get("proposal_ids")) is not list
-                # The type(...) is not list guards above proved both keys hold
-                # lists; the packet contract fills them with identity strings.
+                or type(correlation["correlation_id"]) is not str
+                or type(correlation["candidate_ids"]) is not list
+                or type(correlation["proposal_ids"]) is not list
+                or any(
+                    type(value) is not str
+                    for value in correlation["candidate_ids"]
+                )
+                or any(
+                    type(value) is not str
+                    for value in correlation["proposal_ids"]
+                )
+                # The short-circuiting any(...) guards above proved both
+                # identity lists hold only str, so these comparisons order
+                # strings against strings.
                 or correlation["candidate_ids"]
-                != sorted(set(cast("list[str]", correlation["candidate_ids"])))
+                != sorted(set(correlation["candidate_ids"]))
                 or correlation["proposal_ids"]
-                != sorted(set(cast("list[str]", correlation["proposal_ids"])))
+                != sorted(set(correlation["proposal_ids"]))
             ):
                 raise ShadowReviewValueError("shadow-review packet is invalid")
-            correlation_ids.append(correlation["correlation_id"])  # type: ignore[arg-type]
+            correlation_ids.append(correlation["correlation_id"])
         if correlation_ids != sorted(set(correlation_ids)):
             raise ShadowReviewValueError("shadow-review packet is invalid")
         if len(self.to_json().encode("utf-8")) > MAX_PACKET_BYTES:
