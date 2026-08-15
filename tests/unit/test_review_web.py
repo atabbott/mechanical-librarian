@@ -3784,7 +3784,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             self.assertEqual(reopened.count_current_review_cases("NOVELS"), (1, 0))
             reopened.close()
 
-    def test_sqlite_attention_includes_coherent_manual_bibliographic_siblings(
+    def test_sqlite_attention_keeps_manual_bibliographic_membership_field_local(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3805,27 +3805,29 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             repository.publish_proposal(proposal)
             repository.admit_review_case(proposal)
             first = repository.list_current_attention_documents(None, 1, 0)
-            second = repository.list_current_attention_documents(None, 1, 1)
             self.assertEqual(len(first), 1)
-            self.assertEqual(len(second), 1)
-            self.assertGreater(first[0][3], 1)
-            self.assertEqual(first[0][3], second[0][3])
+            self.assertEqual(first[0][3], 1)
             rows = repository.list_current_attention_documents(None, 10, 0)
             self.assertEqual(
                 [row[2] for row in rows],
-                ["series", "subtitle", "title"],
+                ["series"],
             )
-            self.assertEqual(repository.count_current_attention_fields(None), 3)
+            self.assertEqual(repository.count_current_attention_fields(None), 1)
             self.assertEqual(repository.count_current_review_cases(None), (1, 1))
             repository.suspend_field_effect_capability(
                 scope="destination", connection="primary", destination="series",
                 reason="field_unavailable", changed_at=1,
             )
+            suspended = InspectCurrentReviewCase(repository).run(
+                json.loads(repository.admit_review_case(proposal))["review_case_id"]
+            )
+            field = next(value for value in suspended["fields"] if value["destination"] == "series")
+            self.assertEqual("This field is waiting for an external service recovery.", field["classification_reason"])
             self.assertEqual(
                 [row[2] for row in repository.list_current_attention_documents(None, 1, 0)],
-                ["subtitle"],
+                [],
             )
-            self.assertEqual(repository.count_current_attention_fields(None), 2)
+            self.assertEqual(repository.count_current_attention_fields(None), 0)
             repository.clear_field_effect_capability_suspension(
                 scope="destination", connection="primary", destination="series",
                 reason="field_unavailable", observed_at=2,

@@ -802,6 +802,28 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 )
                 recorded.update(value.disposition for value in outcome.outcomes)
                 self.assertEqual("none", outcome.authority)
+                abstentions = [
+                    value for value in outcome.outcomes
+                    if value.disposition == "abstention"
+                ]
+                for abstention in abstentions:
+                    detail = InspectCurrentReviewCase(repository).run(
+                        admitted["review_case_id"]
+                    )
+                    field = next(
+                        value for value in detail["fields"]
+                        if value["destination"] == abstention.destination
+                    )
+                    self.assertEqual("manual_fallback", field["classification"])
+                    self.assertTrue(field["needs_attention"])
+                    self.assertEqual(1, repository.count_current_attention_fields(None))
+                    self.assertEqual((1, 1), repository.count_current_review_cases(None))
+                    attention = repository.read_review_attention(None, 50, 0)
+                    self.assertEqual(1, attention.total)
+                    self.assertEqual(
+                        [abstention.destination],
+                        [row[2] for row in attention.rows],
+                    )
                 repository.close()
         with tempfile.TemporaryDirectory() as temporary:
             repository = open_repository(Path(temporary) / "reports.sqlite")

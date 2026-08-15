@@ -217,7 +217,7 @@ class _CoverConsiderationResponse(_ClosedModel):
 
 
 class _ReviewField(_ClosedModel):
-    classification: str
+    classification: Literal["needs_attention", "manual_fallback", "automatic_recorded", "human_recorded", "unsupported"]
     classification_reason: str
     current: _TargetField
     deterministic_disposition: str
@@ -229,7 +229,7 @@ class _ReviewField(_ClosedModel):
     manual_hold: bool
     manual_required: bool
     needs_attention: bool
-    navigation_role: str
+    navigation_role: Literal["attention", "inspect"]
     notices: list[str]
     proposed_values: list[_ProposedValue]
     provenance: list[str]

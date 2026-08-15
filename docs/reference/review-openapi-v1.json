@@ -3154,6 +3154,13 @@
             ]
           },
           "classification": {
+            "enum": [
+              "needs_attention",
+              "manual_fallback",
+              "automatic_recorded",
+              "human_recorded",
+              "unsupported"
+            ],
             "title": "Classification",
             "type": "string"
           },
@@ -3216,6 +3223,10 @@
             "type": "boolean"
           },
           "navigation_role": {
+            "enum": [
+              "attention",
+              "inspect"
+            ],
             "title": "Navigation Role",
             "type": "string"
           },

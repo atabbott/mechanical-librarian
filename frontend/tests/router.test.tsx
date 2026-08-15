@@ -2239,6 +2239,45 @@ describe('typed review routes', () => {
     ))
   })
 
+  it('does not let an unmounted Activity focus callback target a fresh Activity route', async () => {
+    const frames = new Map<number, FrameRequestCallback>()
+    let nextFrame = 1
+    const requestFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      const frame = nextFrame++
+      frames.set(frame, callback)
+      return frame
+    })
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((frame) => { frames.delete(frame) })
+    try {
+      const getActivity = vi.fn(async (search: ActivitySearch) => activity({
+        ledger: { event_type: search.eventType, page: search.page, page_count: 3, page_size: search.pageSize, query: search.q ?? null, range_days: search.rangeDays, total: 75 },
+      }))
+      const { router } = renderRoute('/activity', { ...createHttp(), getActivity })
+      await screen.findByRole('heading', { name: 'Activity and recovery' })
+
+      fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+      await waitFor(() => expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(2))
+      const outer = [...frames.entries()].at(-1)
+      expect(outer).toBeDefined()
+      await act(async () => { outer?.[1](0) })
+      const staleInner = [...frames.entries()].at(-1)
+      expect(staleInner).toBeDefined()
+
+      await act(async () => { await router.navigate({ to: '/library', search: { lens: 'all' } }) })
+      await screen.findByRole('heading', { name: 'Every work, with exceptions first' })
+      await act(async () => { await router.navigate({ to: '/activity', search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 } }) })
+      await screen.findByRole('heading', { name: 'Activity and recovery' })
+      const freshSearch = screen.getByRole('searchbox', { name: 'Search activity' })
+      freshSearch.focus()
+
+      await act(async () => { staleInner?.[1](0) })
+      expect(freshSearch).toHaveFocus()
+    } finally {
+      requestFrame.mockRestore()
+      cancelFrame.mockRestore()
+    }
+  })
+
   it('commits the next page edit once after an Escape cancellation', async () => {
     const user = userEvent.setup()
     const getActivity = vi.fn(async (search: ActivitySearch) => activity({

@@ -8,6 +8,7 @@ import type { CaseDetailView, DecisionCommand, EvidenceView, LibraryView, Librar
 import { useRouteReadyFocus } from '../focus'
 import { detailQuery, libraryRoute, useReviewContext } from '../router'
 import { actionable, useReviewDecisionController } from '../reviewDecisionController'
+import { automaticChoiceSelected } from '../reviewAutomaticSelection'
 
 type ReviewField = CaseDetailView['fields'][number]
 type EvidenceItem = EvidenceView['items'][number]
@@ -78,9 +79,7 @@ const completionOutcome = (field: ReviewField) => field.humanDecision?.outcome =
       : 'Recorded outcome'
 const sameSelectedValue = (left: DecisionCommand['selectedValue'], right: DecisionCommand['selectedValue']) => left == null || right == null ? left === right : left.kind === right.kind && JSON.stringify(left.value) === JSON.stringify(right.value)
 const commandSelected = (command: DecisionCommand | null, destination: string, outcome: DecisionCommand['outcome'], selectedValue: DecisionCommand['selectedValue'] = null) => command?.destination === destination && command.outcome === outcome && sameSelectedValue(command.selectedValue, selectedValue)
-const recordedSelected = (field: ReviewField, outcome: DecisionCommand['outcome'], selectedValue: DecisionCommand['selectedValue'] = null) => field.automaticDecision !== null
-  && ((outcome === 'keep_current' && field.automaticDecision.selected_value === null)
-    || (outcome === 'accept' && sameSelectedValue(field.automaticDecision.selected_value, selectedValue)))
+const recordedSelected = (field: ReviewField, outcome: DecisionCommand['outcome'], selectedValue: DecisionCommand['selectedValue'] = null) => field.automaticDecision !== null && outcome !== 'reject' && automaticChoiceSelected(field.automaticDecision, outcome, selectedValue)
 const choiceSelected = (field: ReviewField, pending: DecisionCommand | null, outcome: DecisionCommand['outcome'], selectedValue: DecisionCommand['selectedValue'] = null) => commandSelected(pending, field.destination, outcome, selectedValue) || recordedSelected(field, outcome, selectedValue)
 const ownerChoiceCount = (field: ReviewField) => {
   const consideration = field.coverConsideration

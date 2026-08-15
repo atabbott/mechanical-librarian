@@ -123,13 +123,21 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   }, [resolvedLocation, search.page, search.q])
   useEffect(() => {
     if (focusVersion.current !== focusRequest?.version) return
-    const outer = requestAnimationFrame(() => {
-      const inner = requestAnimationFrame(() => {
-        if (focusVersion.current === focusRequest.version) document.querySelector<HTMLElement>(`[data-activity-focus="${focusRequest.key}"]`)?.focus({ preventScroll: true })
+    let outer: number | null = null
+    let inner: number | null = null
+    let active = true
+    outer = requestAnimationFrame(() => {
+      outer = null
+      inner = requestAnimationFrame(() => {
+        inner = null
+        if (active && focusVersion.current === focusRequest.version) document.querySelector<HTMLElement>(`[data-activity-focus="${focusRequest.key}"]`)?.focus({ preventScroll: true })
       })
-      return () => cancelAnimationFrame(inner)
     })
-    return () => cancelAnimationFrame(outer)
+    return () => {
+      active = false
+      if (outer !== null) cancelAnimationFrame(outer)
+      if (inner !== null) cancelAnimationFrame(inner)
+    }
   }, [focusRequest, search.eventType, search.page, search.pageSize, search.q, search.rangeDays])
   useRouteReadyFocus('activity')
   const query = useQuery({

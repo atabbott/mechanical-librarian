@@ -17,6 +17,7 @@ from mechanical_librarian.domain.human_decision import (
 from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import (
+    ReviewFieldCause,
     classify_review_field,
 )
 from mechanical_librarian.application.operations import StageTimer
@@ -45,7 +46,9 @@ class CurrentReviewCaseSnapshot:
     decision_documents: tuple[str, ...]
     history: tuple[dict[str, object], ...]
     automatic_attention_destinations: tuple[str, ...] = ()
+    shadow_abstention_destinations: tuple[str, ...] = ()
     suspended_destinations: tuple[str, ...] = ()
+    suspension_causes: tuple[tuple[str, ReviewFieldCause], ...] = ()
     cover_consideration_document: str | None = None
     cover_history: tuple[dict[str, object], ...] = ()
 
@@ -278,6 +281,7 @@ class InspectCurrentReviewCase:
             # but it no longer resolves the current owner interaction.
             decisions.pop("cover", None)
         fields = []
+        suspension_causes = dict(snapshot.suspension_causes)
         for proposal in case.proposals:
             result = proposal["result"]
             assert type(result) is dict
@@ -313,11 +317,13 @@ class InspectCurrentReviewCase:
                     proposal, snapshot.automatic_attention_destinations,
                 ),
                 automatic_outcome=(
-                    None if automatic_decision is None
-                    else str(automatic_decision["outcome"])
+                    ("abstention" if destination in snapshot.shadow_abstention_destinations
+                     else None if automatic_decision is None
+                     else str(automatic_decision["outcome"]))
                 ),
                 has_human_decision=decision is not None,
                 suspended=destination in snapshot.suspended_destinations,
+                cause=suspension_causes.get(destination),
                 current_value=target_fields[destination]["value"],
                 proposed_values=tuple(
                     alternative["value"] for alternative in alternatives
@@ -664,6 +670,7 @@ class BrowseReviewLibrary:
             # pages to replace it, never turning one stale row into a 503.
             scan_offset = offset
             consumed = 0
+            omitted = 0
             items: list[dict[str, object]] = []
             has_more = False
             snapshot: ReviewAttentionSnapshot | None = None
@@ -688,6 +695,8 @@ class BrowseReviewLibrary:
                     )
                     if item is not None:
                         items.append(item)
+                    else:
+                        omitted += 1
                 if has_more or len(raw_rows) <= bounded_limit:
                     break
                 if batch == 1:
@@ -715,7 +724,10 @@ class BrowseReviewLibrary:
             ),
             "query": normalized,
             "schema_version": "review-attention-v1",
-            "total": snapshot.total,
+            # SQL membership is field-local and snapshot-consistent.  A row can
+            # still race a durable decision after that snapshot; never report
+            # one of the rows we just omitted as visible attention.
+            "total": max(0, snapshot.total - omitted),
         }
 
 def _digest(value: str) -> str:

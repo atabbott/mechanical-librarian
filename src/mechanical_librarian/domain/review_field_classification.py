@@ -3,6 +3,21 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal, Mapping
+
+ReviewFieldState = Literal[
+    "needs_attention", "manual_fallback", "automatic_recorded",
+    "human_recorded", "unsupported",
+]
+ReviewNavigationRole = Literal["attention", "inspect"]
+ReviewFieldCause = Literal["unsupported", "automatic_safety_suspended", "external_field_failure", "external_connection_failure", "external_recovered"]
+_CAUSE_GUIDANCE: dict[ReviewFieldCause, str] = {
+    "unsupported": "This field is unavailable for the current service capability.",
+    "automatic_safety_suspended": "Automatic handling is suspended pending a safety recovery.",
+    "external_field_failure": "This field is waiting for an external service recovery.",
+    "external_connection_failure": "This connection is waiting for an external service recovery.",
+    "external_recovered": "External recovery completed; this field can be reviewed again.",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,12 +29,12 @@ class ReviewFieldClassification:
     sources of truth; callers supply their already-validated facts.
     """
 
-    state: str
+    state: ReviewFieldState
     reason: str
     needs_attention: bool
     editable: bool
     recorded: bool
-    navigation_role: str
+    navigation_role: ReviewNavigationRole
     preservation_only: bool
 
 
@@ -29,21 +44,27 @@ def classify_review_field(
     automatic_outcome: str | None,
     has_human_decision: bool,
     suspended: bool,
+    cause: ReviewFieldCause | None = None,
     current_value: object,
     proposed_values: tuple[object, ...],
 ) -> ReviewFieldClassification:
     """Classify a field consistently for queue, detail, and navigation use."""
     preservation_only = bool(proposed_values) and all(
-        value == current_value for value in proposed_values
+        _canonical_value(value) == _canonical_value(current_value)
+        for value in proposed_values
     )
     if has_human_decision:
         return ReviewFieldClassification(
             "human_recorded", "Your recorded decision is retained.", False,
             False, True, "inspect", preservation_only,
         )
+    if cause == "unsupported":
+        return ReviewFieldClassification(
+            "unsupported", _CAUSE_GUIDANCE[cause], False, False, False, "inspect", preservation_only,
+        )
     if suspended:
         return ReviewFieldClassification(
-            "unsupported", "Automatic handling is suspended pending a safety or external recovery.",
+            "unsupported", _CAUSE_GUIDANCE[cause or "automatic_safety_suspended"],
             False, False, False, "inspect", preservation_only,
         )
     if automatic_outcome == "abstention":
@@ -67,4 +88,11 @@ def classify_review_field(
     )
 
 
-__all__ = ["ReviewFieldClassification", "classify_review_field"]
+def _canonical_value(value: object) -> object:
+    """Compare the domain value, not the API proposal wrapper."""
+    if isinstance(value, Mapping) and set(value) == {"kind", "value"}:
+        return value["value"]
+    return value
+
+
+__all__ = ["ReviewFieldClassification", "ReviewFieldState", "ReviewNavigationRole", "ReviewFieldCause", "classify_review_field"]

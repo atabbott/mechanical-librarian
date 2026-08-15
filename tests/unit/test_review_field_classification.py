@@ -34,6 +34,30 @@ class ReviewFieldClassificationTests(unittest.TestCase):
                 self.assertEqual(value.editable, editable)
                 self.assertTrue(value.preservation_only)
 
+    def test_owner_guidance_is_distinct_for_each_typed_unavailable_cause(self) -> None:
+        expected = {
+            "unsupported": "This field is unavailable for the current service capability.",
+            "automatic_safety_suspended": "Automatic handling is suspended pending a safety recovery.",
+            "external_field_failure": "This field is waiting for an external service recovery.",
+            "external_connection_failure": "This connection is waiting for an external service recovery.",
+            "external_recovered": "External recovery completed; this field can be reviewed again.",
+        }
+        for cause, guidance in expected.items():
+            value = classify_review_field(attention_candidate=False, automatic_outcome=None, has_human_decision=False, suspended=cause != "unsupported", cause=cause, current_value=None, proposed_values=())
+            self.assertEqual(value.reason, guidance)
+
+    def test_canonical_proposal_values_compare_the_underlying_scalar_and_structure(self) -> None:
+        for current, proposed in (
+            ("Title", ({"kind": "text", "value": "Title"},)),
+            ({"name": "Atlas", "sequence": "2"}, ({"kind": "series", "value": {"name": "Atlas", "sequence": "2"}},)),
+        ):
+            value = classify_review_field(
+                attention_candidate=True, automatic_outcome=None,
+                has_human_decision=False, suspended=False,
+                current_value=current, proposed_values=proposed,
+            )
+            self.assertTrue(value.preservation_only)
+
     def test_attention_continues_after_two_contradictory_batches(self) -> None:
         class Repository:
             def __init__(self) -> None:
@@ -87,6 +111,22 @@ class ReviewFieldClassificationTests(unittest.TestCase):
             page = browse.attention(search=None, limit=1, cursor=None)
         self.assertEqual(page["items"], [{"destination": "valid"}])
         self.assertIsNone(page["next_cursor"])
+
+    def test_attention_last_valid_raw_row_has_no_cursor_and_no_stale_total(self) -> None:
+        rows = (("case", "report", "stale", 1), ("case", "report", "valid", 1))
+
+        class Repository:
+            def read_review_attention(self, search, limit, offset):
+                return ReviewAttentionSnapshot(rows[offset:offset + limit], len(rows))
+
+        with patch(
+            "mechanical_librarian.application.review_web._attention_item",
+            side_effect=lambda case, report, destination, count: None if destination == "stale" else {"destination": destination},
+        ):
+            page = BrowseReviewLibrary(Repository()).attention(search=None, limit=1, cursor=None)  # type: ignore[arg-type]
+        self.assertEqual(page["items"], [{"destination": "valid"}])
+        self.assertIsNone(page["next_cursor"])
+        self.assertEqual(page["total"], 1)
 
 
 if __name__ == "__main__":

@@ -93,7 +93,7 @@ def _report():
 @contextmanager
 def _server(
     *, database: Path, hash_path: Path, certificate: Path, key: Path, port: int,
-    cover: bool = False,
+    cover: bool = False, automatic_fixture: bool = False,
 ):
     repository = open_repository(database, create=True, cross_thread=True)
     cover_considerations = None
@@ -126,7 +126,12 @@ def _server(
             file=base.file,
             local_claims=base.local_claims,
             local_reasons=base.local_reasons,
-            providers=base.providers,
+            providers=(
+                _bibliographic_source(
+                    "catalogue", "edition-1", titles=("Synthetic title revised",),
+                    series="Mistborn",
+                ),
+            ) if automatic_fixture else base.providers,
             cover_sources=base.cover_sources,
         )
         artifacts = CoverArtifactStore(database.parent / "cover-artifacts")
@@ -644,16 +649,162 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     key=key,
                     port=_unused_port(),
                     cover=True,
+                    automatic_fixture=True,
                 ) as (origin, case_id), _closing_context(context):
                     _login(page, origin)
                     page.get_by_role(
                         "heading", name="Every work, with exceptions first"
                     ).wait_for()
+                    # This is a closed presentation fixture, not a new automatic
+                    # authority path: its projections retain the exact candidate
+                    # values already supplied by the current case.  It protects
+                    # restoration of recorded automatic choices, including cover
+                    # values, without widening the qualified-policy envelope.
+                    def automatic_projection(route) -> None:
+                        response = route.fetch()
+                        payload = response.json()
+                        fields = payload["fields"]
+                        outcomes = {
+                            "title": "candidate",
+                            "series": "keep_current",
+                            "tags": "ignore",
+                            "cover": "candidate",
+                        }
+                        for index, field in enumerate(fields, 1):
+                            outcome = outcomes.get(field["destination"])
+                            if outcome is None:
+                                continue
+                            if (
+                                field["destination"] == "cover"
+                                and field["cover_consideration"] is None
+                            ):
+                                continue
+                            selected = None
+                            if outcome == "candidate":
+                                selected = (
+                                    next(
+                                        {
+                                            "kind": "cover",
+                                            "value": candidate["artifact_id"],
+                                        }
+                                        for candidate in field["cover_consideration"]["candidates"]
+                                        if candidate["selectable"]
+                                    )
+                                    if field["destination"] == "cover"
+                                    else field["proposed_values"][0]
+                                )
+                            field.update(
+                                automatic_decision={
+                                    "candidate_id": (
+                                        None
+                                        if outcome != "candidate"
+                                        else "alternative_" + f"{index:064x}"
+                                    ),
+                                    "decision_id": "automatic_decision_"
+                                    + f"{index:064x}",
+                                    "destination": field["destination"],
+                                    "occurred_at": 1_000,
+                                    "outcome": outcome,
+                                    "proposal_id": field["proposal_id"],
+                                    "review_case_id": payload["review_case_id"],
+                                    "selected_value": selected,
+                                    "target_fingerprint": field["target_fingerprint"],
+                                },
+                                classification="automatic_recorded",
+                                classification_reason=(
+                                    "Automatic handling recorded this field; "
+                                    "you may inspect or override it."
+                                ),
+                                editable=True,
+                                needs_attention=False,
+                                navigation_role="inspect",
+                            )
+                        route.fulfill(status=response.status, json=payload)
+
+                    page.route(
+                        f"**/api/v1/review-cases/{case_id}", automatic_projection
+                    )
+                    page.goto(f"{origin}/review/{case_id}?field=title&subview=review")
+                    title_current = page.get_by_role(
+                        "button", name="Choose current value:", exact=False
+                    )
+                    title_candidate = page.get_by_role(
+                        "button", name="Choose proposed value", exact=False
+                    )
+                    expect(title_candidate).to_have_attribute("aria-pressed", "true")
+                    self.assertTrue(
+                        title_candidate.evaluate(
+                            "node => node.classList.contains('is-selected')"
+                        )
+                    )
+                    expect(title_current).to_have_attribute("aria-pressed", "false")
+                    self.assertFalse(
+                        title_current.evaluate(
+                            "node => node.classList.contains('is-selected')"
+                        )
+                    )
+                    page.reload()
+                    expect(title_candidate).to_have_attribute("aria-pressed", "true")
+                    self.assertTrue(
+                        title_candidate.evaluate(
+                            "node => node.classList.contains('is-selected')"
+                        )
+                    )
+                    with page.expect_response(
+                        lambda response: response.url.endswith("/decisions")
+                    ) as override_response:
+                        title_current.focus()
+                        page.keyboard.press("Enter")
+                    self.assertEqual(200, override_response.value.status)
+                    page.get_by_text(
+                        "Human decision: keep current by owner", exact=False
+                    ).wait_for()
+                    page.goto(f"{origin}/review/{case_id}?field=series&subview=review")
+                    series_current = page.get_by_role(
+                        "button", name="Choose current value:", exact=False
+                    )
+                    expect(series_current).to_have_attribute("aria-pressed", "true")
+                    self.assertTrue(
+                        series_current.evaluate(
+                            "node => node.classList.contains('is-selected')"
+                        )
+                    )
+                    page.goto(f"{origin}/review/{case_id}?field=tags&subview=review")
+                    ignored_current = page.get_by_role(
+                        "button", name="Choose current value:", exact=False
+                    )
+                    expect(ignored_current).to_have_attribute("aria-pressed", "false")
+                    self.assertFalse(
+                        ignored_current.evaluate(
+                            "node => node.classList.contains('is-selected')"
+                        )
+                    )
                     page.goto(f"{origin}/review/{case_id}?field=cover&subview=review")
                     page.get_by_role("button", name="Prepare cover comparison").click()
                     page.get_by_role("heading", name="Available").first.wait_for()
                     expect(page.get_by_alt_text("Current library cover")).to_be_visible()
                     expect(page.get_by_alt_text("Alternative 1 cover")).to_be_visible()
+                    current_cover = page.get_by_role("button", name="Keep current cover")
+                    automatic_cover = page.get_by_role("button", name="Choose this cover")
+                    expect(automatic_cover).to_have_attribute("aria-pressed", "true")
+                    self.assertTrue(
+                        automatic_cover.evaluate(
+                            "node => node.classList.contains('is-selected')"
+                        )
+                    )
+                    expect(current_cover).to_have_attribute("aria-pressed", "false")
+                    self.assertFalse(
+                        current_cover.evaluate(
+                            "node => node.classList.contains('is-selected')"
+                        )
+                    )
+                    page.reload()
+                    expect(page.get_by_role("button", name="Choose this cover")).to_have_attribute("aria-pressed", "true")
+                    self.assertTrue(
+                        page.get_by_role("button", name="Choose this cover").evaluate(
+                            "node => node.classList.contains('is-selected')"
+                        )
+                    )
                     self.assertIn("Policy preferences", page.locator("body").inner_text())
                     self.assertIn(
                         "No optional visual preferences enabled",
