@@ -1216,6 +1216,7 @@
         },
         "required": [
           "candidates",
+          "choice_contexts",
           "consideration_id",
           "current",
           "incumbent",

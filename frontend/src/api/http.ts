@@ -63,6 +63,8 @@ export interface CoverCandidateView {
   width: number
 }
 export interface CoverConsiderationView {
+  /** Present on wire responses; optional only for hand-authored UI fixtures. */
+  choiceContexts?: readonly ChoiceContextView[]
   id: string
   current: boolean
   candidates: readonly CoverCandidateView[]
@@ -398,16 +400,30 @@ const mapCoverConsideration = (value: unknown): CoverConsiderationView | null =>
   if (!['absent', 'available', 'unavailable'].includes(incumbentState)) throw new ApiError(502, 'invalid_cover_incumbent_state')
   const preferences = value.policy_preferences
   if (typeof preferences.avoid_promotional_text !== 'boolean' || typeof preferences.avoid_tie_in_branding !== 'boolean' || typeof preferences.prefer_minimal_composition !== 'boolean') throw new ApiError(502, 'invalid_cover_policy_preferences')
+  const candidates = value.candidates.map((candidate, index) => {
+    if (!record(candidate) || !record(candidate.identity) || (candidate.observation !== null && !record(candidate.observation))) throw new ApiError(502, `invalid_cover_candidate_${String(index)}`)
+    return { artifactId: stringValue(candidate.artifact_id, 'cover_artifact_id'), height: integerValue(candidate.height, 'cover_height'), identity: candidate.identity, incumbent: candidate.incumbent === true, observation: candidate.observation, originalSha256: stringValue(candidate.original_sha256, 'cover_original_digest'), ordinal: integerValue(candidate.ordinal, 'cover_ordinal'), previewSha256: stringValue(candidate.preview_sha256, 'cover_preview_digest'), reference: stringValue(candidate.reference, 'cover_reference'), selectable: candidate.selectable === true, sourceKinds: stringArray(candidate.source_kinds, 'cover_source_kinds'), state: stringValue(candidate.state, 'cover_state'), width: integerValue(candidate.width, 'cover_width') }
+  })
+  const proposedReferences = candidates.filter((candidate) => candidate.selectable && !candidate.incumbent).map((candidate) => candidate.reference)
+  const choiceContexts = mapChoiceContexts(value.choice_contexts, proposedReferences.length)
+  if (choiceContexts.slice(1).some((context, index) => context.alternativeId !== proposedReferences[index])) throw new ApiError(502, 'misaligned_cover_choice_contexts')
+  const policy = value.policy === null ? null : record(value.policy) ? value.policy : (() => { throw new ApiError(502, 'invalid_cover_policy') })()
+  const policyStatus = policy === null ? null : stringValue(policy.status, 'cover_policy_status')
+  const recommendedReference = policy === null || policy.recommended_candidate_reference === null ? null : stringValue(policy.recommended_candidate_reference, 'cover_recommended_reference')
+  const acceptable = policy === null ? [] : stringArray(policy.acceptable_candidate_references, 'cover_acceptable_references')
+  const recommendedContexts = choiceContexts.filter((context) => context.recommendation === 'recommended')
+  const currentReference = candidates.find((candidate) => candidate.incumbent)?.reference ?? null
+  const expectedReference = policyStatus === 'recommended' && recommendedReference !== null && acceptable.includes(recommendedReference) && candidates.some((candidate) => candidate.reference === recommendedReference && candidate.selectable) ? recommendedReference : null
+  const expectedContext = expectedReference === currentReference ? choiceContexts[0] : choiceContexts.find((context) => context.alternativeId === expectedReference)
+  if ((expectedContext === undefined && recommendedContexts.length !== 0) || (expectedContext !== undefined && (recommendedContexts.length !== 1 || recommendedContexts[0] !== expectedContext))) throw new ApiError(502, 'contradictory_cover_recommendation')
   return {
     id: stringValue(value.consideration_id, 'cover_consideration_id'),
     current: value.current === true,
-    candidates: value.candidates.map((candidate, index) => {
-      if (!record(candidate) || !record(candidate.identity) || (candidate.observation !== null && !record(candidate.observation))) throw new ApiError(502, `invalid_cover_candidate_${String(index)}`)
-      return { artifactId: stringValue(candidate.artifact_id, 'cover_artifact_id'), height: integerValue(candidate.height, 'cover_height'), identity: candidate.identity, incumbent: candidate.incumbent === true, observation: candidate.observation, originalSha256: stringValue(candidate.original_sha256, 'cover_original_digest'), ordinal: integerValue(candidate.ordinal, 'cover_ordinal'), previewSha256: stringValue(candidate.preview_sha256, 'cover_preview_digest'), reference: stringValue(candidate.reference, 'cover_reference'), selectable: candidate.selectable === true, sourceKinds: stringArray(candidate.source_kinds, 'cover_source_kinds'), state: stringValue(candidate.state, 'cover_state'), width: integerValue(candidate.width, 'cover_width') }
-    }),
+    candidates,
+    choiceContexts,
     incumbent: { reference: value.incumbent.reference === null ? null : stringValue(value.incumbent.reference, 'cover_incumbent_reference'), state: incumbentState as 'absent' | 'available' | 'unavailable' },
     omissions: value.omissions.map((item, index) => { if (!record(item)) throw new ApiError(502, `invalid_cover_omission_${String(index)}`); return item }),
-    policy: value.policy === null ? null : record(value.policy) ? value.policy : (() => { throw new ApiError(502, 'invalid_cover_policy') })(),
+    policy,
     policyPreferences: { avoidPromotionalText: preferences.avoid_promotional_text, avoidTieInBranding: preferences.avoid_tie_in_branding, preferMinimalComposition: preferences.prefer_minimal_composition },
     policyReference: stringValue(value.policy_reference, 'cover_policy_reference'),
     reviewerStatus: stringValue(value.reviewer_status, 'cover_reviewer_status'),
