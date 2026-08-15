@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tempfile
 import tomllib
 import unittest
 from collections.abc import Mapping, Sequence
@@ -10,6 +11,23 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
 PUBLIC_GATE = WORKFLOWS / "public-gate.yml"
 ACCEPTANCE_REGISTER = ROOT / "osv-scanner.toml"
+
+# GitHub reads both extensions from `.github/workflows`. The hardening sweep
+# below exists to constrain workflows added later, so it must walk both: a
+# sweep that silently skips half the namespace reads as coverage while
+# providing none.
+WORKFLOW_SUFFIXES = frozenset({".yml", ".yaml"})
+
+# Write scopes a workflow may hold, keyed by (workflow file, scope) and valued
+# by the reason. Every other `write` value fails the sweep, so this is the one
+# place a write scope can be granted -- named, reasoned, and narrow, the same
+# discipline `osv-scanner.toml` applies to an advisory.
+#
+# Empty today: no workflow in this repository needs write authority of any
+# kind. Issue #674 adds `security-events: write` for its CodeQL job, which
+# cannot upload results to code scanning without it, and records that reason
+# here when it lands.
+PERMITTED_WRITE_SCOPES: Mapping[tuple[str, str], str] = {}
 
 # An acceptance is a deadline, not a decision to live with an advisory. Ninety
 # days is long enough to wait out an upstream release and short enough that the
@@ -157,45 +175,215 @@ class DependencyAuditContractTests(unittest.TestCase):
         self.assertTrue(all(value in "0123456789abcdef" for value in digest))
 
 
-class ScanningWorkflowHardeningTests(unittest.TestCase):
-    def test_every_workflow_pins_every_action_to_a_commit(self) -> None:
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
-            source = workflow.read_text(encoding="utf-8")
-            references = [
-                line.strip().removeprefix("uses:").strip()
-                for line in source.splitlines()
-                if line.strip().startswith("uses:")
-            ]
-            for reference in references:
-                with self.subTest(workflow=workflow.name, reference=reference):
-                    _, separator, revision = reference.partition("@")
-                    self.assertEqual(separator, "@")
-                    pinned = revision.split()[0]
-                    self.assertEqual(len(pinned), 40)
-                    self.assertTrue(all(value in "0123456789abcdef" for value in pinned))
-                    self.assertIn("#", revision, "a pin carries its version comment")
+def workflow_sources(directory: Path) -> tuple[tuple[str, str], ...]:
+    """Every workflow in one directory, under either accepted extension."""
 
-    def test_no_workflow_checkout_persists_credentials(self) -> None:
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
-            source = workflow.read_text(encoding="utf-8")
-            with self.subTest(workflow=workflow.name):
+    paths = sorted(
+        (path for path in directory.iterdir() if path.suffix in WORKFLOW_SUFFIXES),
+        key=lambda path: path.name,
+    )
+    return tuple((path.name, path.read_text(encoding="utf-8")) for path in paths)
+
+
+def _without_comment(text: str) -> str:
+    # Every scalar these workflows declare is unquoted, so `#` starts a comment.
+    return text.split("#", 1)[0].strip()
+
+
+def _inline_permissions(inline: str) -> tuple[tuple[str, str], ...]:
+    if inline.startswith("{"):
+        body = inline.strip("{}").strip()
+        pairs: list[tuple[str, str]] = []
+        for part in body.split(","):
+            scope, separator, value = part.partition(":")
+            if separator:
+                pairs.append((scope.strip(), value.strip()))
+        return tuple(pairs)
+    # `read-all` and `write-all` set every scope at once; `all` names that.
+    return (("all", inline.removesuffix("-all")),)
+
+
+def declared_permissions(source: str) -> tuple[tuple[int, str, str], ...]:
+    """Every (indent, scope, value) a workflow declares, at any level."""
+
+    declared: list[tuple[int, str, str]] = []
+    lines = source.splitlines()
+    for position, line in enumerate(lines):
+        if not line.strip().startswith("permissions:"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        inline = _without_comment(line.strip().removeprefix("permissions:"))
+        if inline:
+            declared.extend((indent, scope, value) for scope, value in _inline_permissions(inline))
+            continue
+        for following in lines[position + 1 :]:
+            if not following.strip():
+                continue
+            if len(following) - len(following.lstrip()) <= indent:
+                break
+            scope, separator, value = _without_comment(following).partition(":")
+            if separator:
+                declared.append((indent, scope.strip(), value.strip()))
+    return tuple(declared)
+
+
+def action_pin_failures(name: str, source: str) -> tuple[str, ...]:
+    failures: list[str] = []
+    for line in source.splitlines():
+        # A step may write `uses:` on its own line or as the list item itself.
+        stripped = line.strip().removeprefix("-").strip()
+        if not stripped.startswith("uses:"):
+            continue
+        reference = stripped.removeprefix("uses:").strip()
+        _, separator, revision = reference.partition("@")
+        pinned = revision.split()[0] if separator and revision.split() else ""
+        if len(pinned) != 40 or any(value not in "0123456789abcdef" for value in pinned):
+            failures.append(f"{name}: {reference} is not pinned to a commit")
+        elif "#" not in revision:
+            failures.append(f"{name}: {reference} carries no version comment")
+    return tuple(failures)
+
+
+def checkout_credential_failures(name: str, source: str) -> tuple[str, ...]:
+    checkouts = source.count("actions/checkout@")
+    withheld = source.count("persist-credentials: false")
+    if checkouts != withheld:
+        return (f"{name}: {checkouts} checkouts but {withheld} withhold credentials",)
+    return ()
+
+
+def default_permission_failures(name: str, source: str) -> tuple[str, ...]:
+    top = tuple((scope, value) for indent, scope, value in declared_permissions(source) if indent == 0)
+    if top != (("contents", "read"),):
+        return (f"{name}: workflow permissions must be exactly contents: read",)
+    return ()
+
+
+def write_permission_failures(
+    name: str,
+    source: str,
+    permitted: Mapping[tuple[str, str], str] = PERMITTED_WRITE_SCOPES,
+) -> tuple[str, ...]:
+    """Reject every `write` value rather than enumerating known scopes."""
+
+    failures: list[str] = []
+    for indent, scope, value in declared_permissions(source):
+        if value != "write" or permitted.get((name, scope)):
+            continue
+        level = "workflow" if indent == 0 else "job"
+        failures.append(f"{name}: {level} permissions grant {scope}: write")
+    return tuple(failures)
+
+
+class WorkflowHardeningSweepTests(unittest.TestCase):
+    """The sweep constrains workflows added later, so it is proven to bite."""
+
+    def _probe(self, name: str, body: str) -> tuple[str, str]:
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (directory / name).write_text(body, encoding="utf-8")
+        found = workflow_sources(directory)
+        self.assertEqual(len(found), 1)
+        return found[0]
+
+    def test_the_sweep_discovers_both_workflow_extensions(self) -> None:
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (directory / "first.yml").write_text("name: first\n", encoding="utf-8")
+        (directory / "second.yaml").write_text("name: second\n", encoding="utf-8")
+        (directory / "notes.md").write_text("ignored\n", encoding="utf-8")
+        self.assertEqual(
+            [name for name, _ in workflow_sources(directory)],
+            ["first.yml", "second.yaml"],
+        )
+
+    def test_a_yaml_workflow_with_a_mutable_action_reference_is_flagged(self) -> None:
+        name, source = self._probe(
+            "mutable.yaml", "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n"
+        )
+        self.assertEqual(len(action_pin_failures(name, source)), 1)
+
+    def test_a_pin_without_its_version_comment_is_flagged(self) -> None:
+        pinned = "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"
+        name, source = self._probe("bare.yaml", f"jobs:\n  a:\n    steps:\n      - uses: {pinned}\n")
+        self.assertEqual(len(action_pin_failures(name, source)), 1)
+
+    def test_a_yaml_workflow_that_persists_checkout_credentials_is_flagged(self) -> None:
+        name, source = self._probe(
+            "persisting.yaml",
+            "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n",
+        )
+        self.assertEqual(len(checkout_credential_failures(name, source)), 1)
+
+    def test_every_write_scope_is_rejected_not_only_the_familiar_ones(self) -> None:
+        for scope in (
+            "issues",
+            "checks",
+            "packages",
+            "id-token",
+            "pages",
+            "deployments",
+            "security-events",
+            "contents",
+        ):
+            with self.subTest(scope=scope):
+                name, source = self._probe(
+                    "scoped.yaml",
+                    f"permissions:\n  contents: read\n\njobs:\n  a:\n    permissions:\n      {scope}: write\n",
+                )
                 self.assertEqual(
-                    source.count("persist-credentials: false"),
-                    source.count("actions/checkout@"),
+                    write_permission_failures(name, source),
+                    (f"scoped.yaml: job permissions grant {scope}: write",),
                 )
 
-    def test_every_workflow_defaults_to_read_only_contents(self) -> None:
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
-            source = workflow.read_text(encoding="utf-8")
-            with self.subTest(workflow=workflow.name):
-                self.assertIn("\npermissions:\n  contents: read\n\n", source)
+    def test_the_write_all_shorthand_is_rejected(self) -> None:
+        name, source = self._probe("shorthand.yaml", "permissions: write-all\n")
+        self.assertEqual(
+            write_permission_failures(name, source),
+            ("shorthand.yaml: workflow permissions grant all: write",),
+        )
 
-    def test_no_workflow_grants_write_authority_over_the_repository(self) -> None:
-        for workflow in sorted(WORKFLOWS.glob("*.yml")):
-            source = workflow.read_text(encoding="utf-8")
-            for scope in ("contents: write", "pull-requests: write", "id-token: write"):
-                with self.subTest(workflow=workflow.name, scope=scope):
-                    self.assertNotIn(scope, source)
+    def test_the_read_all_shorthand_is_accepted(self) -> None:
+        name, source = self._probe("shorthand.yaml", "permissions: read-all\n")
+        self.assertEqual(write_permission_failures(name, source), ())
+
+    def test_a_named_allow_list_entry_admits_exactly_its_own_scope(self) -> None:
+        name, source = self._probe(
+            "future.yaml",
+            "permissions:\n  contents: read\n\njobs:\n  a:\n    permissions:\n      security-events: write\n      issues: write\n",
+        )
+        permitted = {("future.yaml", "security-events"): "CodeQL uploads results."}
+        self.assertEqual(
+            write_permission_failures(name, source, permitted),
+            ("future.yaml: job permissions grant issues: write",),
+        )
+
+    def test_a_workflow_without_read_only_defaults_is_flagged(self) -> None:
+        name, source = self._probe("open.yaml", "permissions:\n  contents: write\n")
+        self.assertEqual(len(default_permission_failures(name, source)), 1)
+
+
+class CommittedWorkflowHardeningTests(unittest.TestCase):
+    def test_the_sweep_covers_the_repository_workflows(self) -> None:
+        self.assertEqual(
+            [name for name, _ in workflow_sources(WORKFLOWS)], ["public-gate.yml"]
+        )
+
+    def test_every_workflow_satisfies_the_hardening_floor(self) -> None:
+        for name, source in workflow_sources(WORKFLOWS):
+            for check in (
+                action_pin_failures,
+                checkout_credential_failures,
+                default_permission_failures,
+                write_permission_failures,
+            ):
+                with self.subTest(workflow=name, check=check.__name__):
+                    self.assertEqual(check(name, source), ())
+
+    def test_every_permitted_write_scope_names_a_workflow_scope_and_reason(self) -> None:
+        # Empty today. An entry may only ever be added with its reason stated.
+        for (workflow, scope), reason in PERMITTED_WRITE_SCOPES.items():
+            with self.subTest(workflow=workflow, scope=scope):
+                self.assertTrue(workflow.strip() and scope.strip())
+                self.assertGreaterEqual(len(reason.strip()), MIN_REASON_CHARACTERS)
 
 
 if __name__ == "__main__":
