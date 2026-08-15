@@ -201,10 +201,10 @@ class AudiobookshelfFieldEffectQualificationTests(unittest.TestCase):
         events = []
         repository = SimpleNamespace(
             field_effect_manual_hold_context=(
-                lambda *_: events.append("hold") or None
+                lambda *_: events.append("hold") or None  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - `append` returning `None` is what lets the following value be the fake's result while the call order is recorded.
             ),
             review_pipeline_progress=(
-                lambda *_: events.append("progress") or SimpleNamespace(
+                lambda *_: events.append("progress") or SimpleNamespace(  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - `append` returning `None` is what lets the following value be the fake's result while the call order is recorded.
                     state="completed"
                 )
             ),

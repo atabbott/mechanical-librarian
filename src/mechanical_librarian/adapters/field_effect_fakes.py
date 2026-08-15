@@ -44,8 +44,8 @@ class FakeTargetService:
         self.fail_read_after_apply_for: set[str] = set()
         self.ambiguous_next: str | None = None
         self.suspension_scope_next: Literal["connection", "destination"] | None = None
-        self.before_apply: Callable[[FieldEffectPlan], None] | None = None
-        self.after_apply: Callable[[FieldEffectPlan], None] | None = None
+        self.before_apply: Callable[[FieldEffectPlan], object] | None = None
+        self.after_apply: Callable[[FieldEffectPlan], object] | None = None
 
     def seed(self, plan: FieldEffectPlan) -> None:
         with self._lock:
@@ -192,7 +192,7 @@ class FakeDependencyCurrentness:
 
 class FakePreclaimHook:
     def __init__(self) -> None:
-        self.callback: Callable[[FieldEffectPlan], None] | None = None
+        self.callback: Callable[[FieldEffectPlan], object] | None = None
 
     def __call__(self, plan: FieldEffectPlan) -> None:
         if self.callback is not None:

@@ -1124,7 +1124,7 @@ class GoogleBooksMetadataTests(unittest.TestCase):
             "google_books",
             httpx.Client(
                 transport=httpx.MockTransport(
-                    lambda request: requests.append(request)
+                    lambda request: requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
                     or httpx.Response(200, json={})
                 )
             ),

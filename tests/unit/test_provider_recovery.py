@@ -7,6 +7,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 import mechanical_librarian.adapters.persistence.provider_recovery as recovery_persistence
@@ -50,11 +51,11 @@ class ProviderRecoveryTests(unittest.TestCase):
         ):
             with self.subTest(package=package):
                 self.assertEqual(package, (
-                    ProviderRecoveryJob(*common, *package, '["work"]').package_proposal_id,
-                    ProviderRecoveryJob(*common, *package, '["work"]').package_report_id,
-                    ProviderRecoveryJob(*common, *package, '["work"]').package_case_id,
-                    ProviderRecoveryJob(*common, *package, '["work"]').package_checkpoint,
-                    ProviderRecoveryJob(*common, *package, '["work"]').package_outcome,
+                    ProviderRecoveryJob(*common, *cast(tuple[str | None, str, str | None, int | None, str], package), '["work"]').package_proposal_id,
+                    ProviderRecoveryJob(*common, *cast(tuple[str | None, str, str | None, int | None, str], package), '["work"]').package_report_id,
+                    ProviderRecoveryJob(*common, *cast(tuple[str | None, str, str | None, int | None, str], package), '["work"]').package_case_id,
+                    ProviderRecoveryJob(*common, *cast(tuple[str | None, str, str | None, int | None, str], package), '["work"]').package_checkpoint,
+                    ProviderRecoveryJob(*common, *cast(tuple[str | None, str, str | None, int | None, str], package), '["work"]').package_outcome,
                 ))
         with self.assertRaises(ProviderRecoveryError):
             ProviderRecoveryJob(*common, None, "report", "case", 1, "report_only", '["work"]')
@@ -789,7 +790,7 @@ class ProviderRecoveryTests(unittest.TestCase):
             claimed = store.claim_one(generation=1, now=2, token="owner")
             self.assertIsNotNone(claimed)
             with self.assertRaises(TypeError):
-                store.record(ProviderRecovery("primary", "hardcover", "books", 1, "waiting", 2, 6), occurred_at=2, owner_token="owner")
+                store.record(ProviderRecovery("primary", "hardcover", "books", 1, "waiting", 2, 6), occurred_at=2, owner_token="owner")  # type: ignore[call-arg]  # reason: the test proves `record` rejects an unknown `owner_token` keyword at runtime with TypeError.
             with self.assertRaises(ProviderRecoveryStoreError):
                 store.record(ProviderRecovery("primary", "hardcover", "books", 1, "waiting", 2, 6), occurred_at=2)
             waiting = ProviderRecovery("primary", "hardcover", "books", 1, "waiting", 2, 6)

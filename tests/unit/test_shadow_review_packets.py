@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import unittest
+from typing import cast
 
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
@@ -274,7 +275,7 @@ class ShadowReviewPacketTests(unittest.TestCase):
         self.assertEqual('edition-1', citation['candidate'])
         self.assertEqual('work-1', citation['work_identity'])
         self.assertEqual('B000000001', asin.value)
-        expected_identifier_facts = sorted([{'applicability': 'ebook', 'kind': 'isbn', 'raw_order': 0, 'reference': identifier.reference, 'scope': 'edition', 'value': '9780061120084'}, {'applicability': 'ebook', 'kind': 'asin', 'raw_order': 1, 'reference': asin.reference, 'scope': 'edition', 'value': 'B000000001'}], key=lambda fact: fact['reference'])
+        expected_identifier_facts = sorted([{'applicability': 'ebook', 'kind': 'isbn', 'raw_order': 0, 'reference': identifier.reference, 'scope': 'edition', 'value': '9780061120084'}, {'applicability': 'ebook', 'kind': 'asin', 'raw_order': 1, 'reference': asin.reference, 'scope': 'edition', 'value': 'B000000001'}], key=lambda fact: cast(str, fact['reference']))
         self.assertEqual([fact['reference'] for fact in expected_identifier_facts], citation['linkage']['identifier_references'])
         self.assertEqual(expected_identifier_facts, citation['linkage']['identifier_facts'])
         self.assertEqual('ebook', citation['linkage']['format_facts'][0]['value'])
@@ -385,7 +386,7 @@ class ShadowReviewPacketTests(unittest.TestCase):
         case = ReviewCase.create(proposal, report)
         packet = ShadowReviewPacket.create(case, proposal, report)
         replayed = ShadowReviewPacket.from_json(packet.to_json(), report)
-        rich = next((citation['fact'] for citation in replayed.citations if 'evidence' in citation['fact'] and citation['fact']['evidence']['kind'] == 'first_publication_date'))
+        rich = next((citation['fact'] for citation in replayed.citations if 'evidence' in cast(dict[str, object], citation['fact']) and citation['fact']['evidence']['kind'] == 'first_publication_date'))
         self.assertEqual([identifier.reference], rich['linkage']['identifier_references'])
         self.assertEqual('event_incompatible', rich['evidence']['links'][0]['publication_date_relation'])
         self.assertEqual(0, rich['linkage']['identifier_facts'][0]['raw_order'])

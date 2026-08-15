@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import cast
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.domain.metadata_report import (
@@ -415,7 +416,7 @@ class BibliographicBundleTests(unittest.TestCase):
         self.assertEqual({'evidence_sufficiency': 'manual', 'target_only_preservation': 1}, title_packet['decision_summary'])
         self.assertTrue(all((value['outcome'] == ProposalOutcome.UNRESOLVED_CHOICE.value and value['reasons'] == ['no_safe_bibliographic_combination'] for value in packet.proposals)))
         catalogue = compile_shadow_review_actions(packet)
-        affected_proposal_ids = {value['proposal_id'] for value in packet.proposals if 'no_safe_bibliographic_combination' in value['reasons']}
+        affected_proposal_ids = {value['proposal_id'] for value in packet.proposals if 'no_safe_bibliographic_combination' in cast(list[str], value['reasons'])}
         self.assertFalse(any((action.proposal_id in affected_proposal_ids and action.recommendation != 'manual' for action in catalogue.actions)))
         self.assertTrue(all(('no_safe_bibliographic_combination' in exclusion.reasons for exclusion in catalogue.exclusions if exclusion.proposal_id in affected_proposal_ids)))
 

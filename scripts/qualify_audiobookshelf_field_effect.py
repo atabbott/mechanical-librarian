@@ -29,6 +29,7 @@ import uuid
 import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -156,25 +157,25 @@ def _compose_review_client(
         repository, artifact_store_path, review
     )
     application = compose_review_application(
-        state_owner=repository,  # type: ignore[arg-type]
-        session_store=repository,  # type: ignore[arg-type]
-        case_store=repository,  # type: ignore[arg-type]
-        decision_store=repository,  # type: ignore[arg-type]
-        library_store=repository,  # type: ignore[arg-type]
-        policy_store=repository,  # type: ignore[arg-type]
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
         verify_password=load_owner_password_verifier(
-            Path(review.owner_password_hash_file)  # type: ignore[attr-defined]
+            Path(review.owner_password_hash_file)
         ),
         clock=lambda: int(time.time()),
-        session_lifetime_seconds=review.session_lifetime_seconds,  # type: ignore[attr-defined]
-        graceful_shutdown_seconds=review.graceful_shutdown_seconds,  # type: ignore[attr-defined]
-        preparation=preparation,  # type: ignore[arg-type]
+        session_lifetime_seconds=review.session_lifetime_seconds,
+        graceful_shutdown_seconds=review.graceful_shutdown_seconds,
+        preparation=preparation,
         policy_libraries=policy_libraries,
-        field_application=continuous,  # type: ignore[arg-type]
+        field_application=continuous,
         cover_considerations=cover_considerations,
     )
     return TestClient(
-        create_review_app(application, review),  # type: ignore[arg-type]
+        create_review_app(application, review),
         base_url="https://review.test",
     )
 
@@ -936,7 +937,9 @@ def _installed_continuous_qualification(
             preparation,
             continuous,
             tuple(
-                (item.name, item.policy_override)
+                # `dict` is invariant, so the concrete override mapping is not a
+                # `dict[str, object]`; the callee only forwards it.
+                (item.name, cast("dict[str, object] | None", item.policy_override))
                 for item in configuration.libraries
             ),
             artifacts,
@@ -1185,17 +1188,17 @@ def _installed_continuous_qualification(
                     )
                     if decided.status_code != 200:
                         response = decided.json()
-                        detail = (
+                        failure_detail = (
                             response.get("detail")
                             if type(response) is dict
                             else None
                         )
-                        if detail is None and type(response) is dict:
-                            detail = response.get("error")
+                        if failure_detail is None and type(response) is dict:
+                            failure_detail = response.get("error")
                         code = (
-                            detail.get("code")
-                            if type(detail) is dict
-                            and type(detail.get("code")) is str
+                            failure_detail.get("code")
+                            if type(failure_detail) is dict
+                            and type(failure_detail.get("code")) is str
                             else "unknown"
                         )
                         raise QualificationError(
@@ -1377,13 +1380,13 @@ def _installed_continuous_qualification(
             )
             if consented.status_code != 200:
                 consent_value = consented.json()
-                detail = (
+                failure_detail = (
                     consent_value.get("detail")
                     if type(consent_value) is dict else None
                 )
                 code = (
-                    detail.get("code") if type(detail) is dict
-                    and type(detail.get("code")) is str else "unknown"
+                    failure_detail.get("code") if type(failure_detail) is dict
+                    and type(failure_detail.get("code")) is str else "unknown"
                 )
                 raise QualificationError(
                     f"installed_consent_failed:{consented.status_code}:{code}"

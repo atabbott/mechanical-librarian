@@ -7,6 +7,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
@@ -25,6 +26,7 @@ from mechanical_librarian.domain.metadata_policy import (
     OPTION_CATALOGUE,
     QUALIFIED_AUTOMATIC,
     MetadataPolicyProfile,
+    ResolvedMetadataPolicy,
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -99,7 +101,7 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         self.assertEqual("preview", repository.shadow_posture())
         self.assertEqual(
             "automatic",
-            dict(repository.current_resolved_metadata_policy("ebooks").destinations)[
+            dict(cast(ResolvedMetadataPolicy, repository.current_resolved_metadata_policy("ebooks")).destinations)[
                 "title_layout"
             ],
         )

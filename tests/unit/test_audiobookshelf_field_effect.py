@@ -5,6 +5,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 import httpx
@@ -34,6 +35,10 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectPlan,
     field_value_version,
 )
+
+if TYPE_CHECKING:
+    # Imported for the `cast` below only, which is a runtime no-op.
+    from collections.abc import Callable
 
 _PNG = b"\x89PNG\r\n\x1a\nsynthetic-cover"
 
@@ -166,7 +171,7 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         original = self.artifacts.read_original_digest
         with patch.object(
             self.artifacts, "read_original_digest",
-            side_effect=lambda digest: self.events.append("artifact") or original(digest),
+            side_effect=lambda digest: self.events.append("artifact") or original(digest),  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - `append` returning `None` is what lets the real call's result be the side effect's result.
         ):
             self.assertEqual(self.target.apply(plan).outcome, "accepted")
         self.assertEqual(self.events[0], "artifact")
@@ -406,11 +411,11 @@ class AudiobookshelfFieldEffectTargetTests(unittest.TestCase):
         for status, disposition in expected.items():
             with self.subTest(status=status):
                 target = AudiobookshelfFieldEffectTarget(
-                    client_factory=lambda status=status: httpx.Client(
+                    client_factory=cast("Callable[[], httpx.Client]", lambda status=status: httpx.Client(
                         transport=httpx.MockTransport(
                             lambda request: httpx.Response(status)
                         )
-                    ),
+                    )),
                     endpoint="https://abs.example.invalid", library_id="library-1",
                     artifacts=self.artifacts,
                 )

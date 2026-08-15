@@ -9,7 +9,7 @@ import threading
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 from argon2 import PasswordHasher
@@ -70,6 +70,11 @@ from tests.unit.review_app_fixture import (
     create_transport_test_app,
 )
 
+if TYPE_CHECKING:
+    # Annotation-only: `TimingCollector` stands in for `TimingRepository`, whose
+    # `append` takes exactly this record.
+    from mechanical_librarian.application.operations import StageTiming
+
 CAPABILITY = "c" * 64
 DEPENDENCY = "d" * 64
 
@@ -84,7 +89,7 @@ class Clock:
 
 class TimingCollector:
     def __init__(self) -> None:
-        self.values = []
+        self.values: list[StageTiming] = []
 
     def append(self, timing) -> None:
         self.values.append(timing)
@@ -356,7 +361,7 @@ class FieldEffectTests(unittest.TestCase):
 
     def test_activity_summary_reads_no_legacy_events_or_report_documents(self) -> None:
         self.plan(suffix="e")
-        statements = []
+        statements: list[str] = []
         self.repository._connection.set_trace_callback(statements.append)
         try:
             summary = self.repository.field_effect_activity_summary()
@@ -882,7 +887,7 @@ class FieldEffectTests(unittest.TestCase):
                     target_version="version-1",
                     dependency_digests=(DEPENDENCY,), capability_digest=CAPABILITY,
                 )
-                self.assertEqual(result.plan.destination, destination)
+                self.assertEqual(result.plan.destination, destination)  # type: ignore[union-attr]  # reason: `plan` returns `None` only when the desired value matches the current one, which is not this case; a `None` here still fails the test loudly.
         same = decision("title", envelope("title", "same"), "f")
         self.authorize(same, work_id="same-book")
         self.assertIsNone(self.service.plan(

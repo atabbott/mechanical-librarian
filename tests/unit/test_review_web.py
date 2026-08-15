@@ -12,6 +12,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import Mock, patch
 
 from argon2 import PasswordHasher
@@ -126,7 +127,7 @@ class _Repository:
         self.case = case
         self.report = report
         self.browse_cases = [(case, report)]
-        self.browse_without_cases = []
+        self.browse_without_cases: list[MetadataReport] = []
         self.advice: dict[str, object] = {
             "results": [],
             "state": "not_requested",
@@ -144,7 +145,7 @@ class _Repository:
         self.policy_count_calls: list[str] = []
         builtin = MetadataPolicyProfile.builtin()
         self.active_policy_id = builtin.policy_id
-        self.policy_transition = None
+        self.policy_transition: PolicyTransition | None = None
         self.shadow_mode = "review"
         self.shadow_outcomes: tuple[tuple[str, int], ...] = ()
         self.case_ready_at = 990
@@ -191,7 +192,7 @@ class _Repository:
         return self.policy_transition
 
     def acknowledge_metadata_policy_transition(self, transition_id, acknowledged_at):
-        value = self.policy_transition
+        value = cast(PolicyTransition, self.policy_transition)
         self.policy_transition = PolicyTransition(
             value.transition_id, value.from_policy_id, value.to_policy_id,
             value.generation, value.state, value.completed, value.total,
@@ -412,7 +413,7 @@ class _Repository:
                             for field in report.target.fields
                             if field.destination is TargetDestination.AUTHORS
                             and type(field.value) is tuple
-                            for value in field.value
+                            for value in cast(tuple[str, ...], field.value)
                         ),
                         report.target.library,
                         report.target.item,
@@ -454,8 +455,11 @@ class _Repository:
         )
         total, attention_total = self.count_current_review_cases(search)
         return ReviewLibrarySnapshot(
+            # The fake deliberately emits the short five-element row that
+            # `BrowseReviewLibrary` pads with `row[n] if len(row) >= n + 1`,
+            # which is the tolerance this fixture exercises.
             rows=tuple(
-                (
+                (  # type: ignore[misc]
                     case_document,
                     report_document,
                     (
@@ -575,7 +579,9 @@ class _ActivityApplication(ContinuousGuardedApplication):
     def start(self):
         return (0, 0, 0)
 
-    def begin_drain(self) -> None:
+    # Every production call site invokes `begin_drain()` with no argument, so
+    # this fake deliberately narrows the base signature.
+    def begin_drain(self) -> None:  # type: ignore[override]
         return None
 
     def close_admission(self) -> None:
@@ -1362,7 +1368,8 @@ class ReviewWebTests(unittest.TestCase):
         headers = {**self.origin, "X-CSRF-Token": login["csrf_token"]}
         payload = self.client.get("/api/v1/metadata-policy/state").json()["profile"]
         del payload["schema_version"]
-        self.repository.create_metadata_policy_draft = Mock(side_effect=RuntimeError)
+        # A deliberate patch of the fake repository's bound method.
+        self.repository.create_metadata_policy_draft = Mock(side_effect=RuntimeError)  # type: ignore[method-assign]
         response = self.client.post("/api/v1/metadata-policy/drafts", headers=headers, json=payload)
         self.assertEqual(503, response.status_code)
         self.assertEqual("persistence", response.json()["error"]["code"])
@@ -1493,7 +1500,7 @@ class ReviewWebTests(unittest.TestCase):
 
     def test_choice_contexts_build_the_evidence_index_once(self) -> None:
         proposal = self.case.proposals[0]
-        result = proposal["result"]
+        result = cast(dict[str, Any], proposal["result"])
         alternatives = json.loads(json.dumps(result["alternatives"]))
         references = alternatives[0]["evidence_references"]
         alternatives[0]["evidence_references"] = references * 4
@@ -1718,7 +1725,7 @@ class ReviewWebTests(unittest.TestCase):
                     "review_case_" + "d" * 64,
                     cursor=first["next_cursor"],
                 )
-            changed_detail = {"fields": [{"provenance": []}]}
+            changed_detail: dict[str, Any] = {"fields": [{"provenance": []}]}
             with patch.object(
                 cases,
                 "_read",
@@ -1744,7 +1751,7 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(len(first["items"]), 50)
         self.assertEqual(len(second["items"]), 10)
         self.assertIsNone(second["next_cursor"])
-        items = first["items"] + second["items"]
+        items = cast(list[Any], first["items"]) + cast(list[Any], second["items"])
         self.assertEqual({item["reference"] for item in items}, references)
         rich = next(item for item in items if item["reference"] == rich_reference)
         self.assertEqual(rich["provider"], "catalogue")
@@ -2950,7 +2957,8 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             _report(),
             None,
         )
-        application.serialized = lambda call: call()
+        # A deliberate patch of the bound method on a bare instance.
+        application.serialized = lambda call: call()  # type: ignore[method-assign]
 
         with self.assertRaisesRegex(ReviewApplicationError, "already_decided"):
             application.retry_cover_consideration("review_case_" + "e" * 64)
@@ -2959,7 +2967,8 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
     def test_cover_observer_runs_outside_the_global_application_gate(self) -> None:
         application = object.__new__(ReviewApplication)
         application._gate = threading.RLock()
-        application.serialized = ReviewApplication.serialized.__get__(application)
+        # A deliberate patch of the bound method on a bare instance.
+        application.serialized = ReviewApplication.serialized.__get__(application)  # type: ignore[method-assign]
         application._cases = Mock()
         application._cases._read.return_value = (
             {
@@ -3031,7 +3040,8 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
         application._cover_considerations.ensure.return_value = successor
         application._cover_considerations.prepare_observation.return_value = object()
         application._cover_considerations.observe.return_value = object()
-        application.serialized = lambda call: call()
+        # A deliberate patch of the bound method on a bare instance.
+        application.serialized = lambda call: call()  # type: ignore[method-assign]
 
         self.assertEqual(
             successor,
@@ -3175,6 +3185,11 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
                         finished.set()  # noqa: B023 - closure is created and consumed within this iteration
 
                 started = False
+                # `original` and `before`/`after` each take one of three
+                # per-surface reader shapes below.
+                original: Any
+                before: Any
+                after: Any
 
                 def interleave(original, *args):
                     nonlocal started

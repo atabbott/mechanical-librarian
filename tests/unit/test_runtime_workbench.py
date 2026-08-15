@@ -19,7 +19,7 @@ from mechanical_librarian.interfaces.cli import main
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
 
-from mechanical_librarian_workbench import (  # noqa: E402
+from mechanical_librarian_workbench import (  # type: ignore[import-not-found]  # noqa: E402  # reason: the workbench package is added to sys.path at import time above; the gate's mypy_path covers src/ only.
     CAPABILITIES,
     BatchRequest,
     CatalogueRequest,
@@ -324,12 +324,12 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                 )
                 return '{"ok":true}'
 
-            context.require_network = bind_then_replace  # type: ignore[method-assign]
+            context.require_network = bind_then_replace
             operations = replace(_operations(), run_contained_reviewer=invoke)
             with mock.patch(
                 "mechanical_librarian_workbench.context.os.fsync",
                 side_effect=lambda descriptor: (
-                    fsync_calls.append(descriptor), real_fsync(descriptor)
+                    fsync_calls.append(descriptor), real_fsync(descriptor)  # type: ignore[func-returns-value]  # reason: the tuple deliberately records the call and yields element [1]; append's None is discarded.
                 )[1],
             ):
                 execute(context, request, operations)
@@ -398,7 +398,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                     )
                     return '{"ok":true}'
 
-                context.require_network = bind_then_replace  # type: ignore[method-assign]
+                context.require_network = bind_then_replace
                 execute(
                     context,
                     request,
@@ -464,7 +464,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
                 )
                 return True
 
-            context.require_network = bind_batch_then_replace  # type: ignore[method-assign]
+            context.require_network = bind_batch_then_replace
             execute(
                 context,
                 BatchRequest("run", manifest_id="a" * 64),
@@ -508,7 +508,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             CatalogueRequest("refresh")
         with self.assertRaises(ValueError):
-            ProposalRequest("inspect", None)  # type: ignore[arg-type]
+            ProposalRequest("inspect", None)
         exact = {
             "connection": "primary",
             "library": "books",
@@ -518,7 +518,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
         for missing in exact:
             values = {**exact, missing: None}
             with self.subTest(missing=missing), self.assertRaises(ValueError):
-                CatalogueRequest("get", **values)  # type: ignore[arg-type]
+                CatalogueRequest("get", **values)
 
     def test_proposal_and_case_currentness_require_network_authority(self) -> None:
         for request in (
@@ -567,7 +567,7 @@ class RuntimeWorkbenchTests(unittest.TestCase):
         self.assertEqual(caught.exception.attempts, attempts)
         self.assertNotIn("local_cli_abort", str(caught.exception))
         with self.assertRaises(ValueError):
-            WorkbenchFailure("failed", attempts=(object(),))  # type: ignore[arg-type]
+            WorkbenchFailure("failed", attempts=(object(),))
 
     def test_operation_contract_json_preserves_application_field_order(self) -> None:
         raw = '[{"connection":"primary","item":"item","eligible":true}]'

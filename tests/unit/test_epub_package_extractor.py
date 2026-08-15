@@ -93,7 +93,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
 
         self.assertEqual(first.outcome, EpubInspectionOutcome.SUCCESS)
         self.assertEqual(first, second)
-        self.assertEqual(first.source_fingerprint.digest, hashlib.sha256(value).hexdigest())
+        self.assertEqual(first.source_fingerprint.digest, hashlib.sha256(value).hexdigest())  # type: ignore[union-attr]  # reason: the test has just asserted `SUCCESS`, and a successful report always carries a source fingerprint; a `None` here would still fail this assertion loudly.
         self.assertTrue({EpubPackageField.TITLE, EpubPackageField.CREATOR, EpubPackageField.PACKAGE_IDENTIFIER, EpubPackageField.COVER}.issubset({item.field for item in first.observations}))
         self.assertEqual(sum(item.kind is EpubPackageDeclarationKind.NAVIGATION for item in first.declarations), 1)
         self.assertEqual(sum(item.kind is EpubPackageDeclarationKind.MANIFEST_ITEM for item in first.declarations), 3)
@@ -659,11 +659,11 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 self.assertEqual(len(duplicate_warnings), 1)
                 self.assertIsNotNone(duplicate_warnings[0].citation)
                 self.assertEqual(
-                    duplicate_warnings[0].citation.source_ordinal,
+                    duplicate_warnings[0].citation.source_ordinal,  # type: ignore[union-attr]  # reason: the preceding `assertIsNotNone` establishes the citation, which mypy does not narrow through.
                     duplicate_ordinal,
                 )
                 self.assertEqual(
-                    duplicate_warnings[0].citation.section,
+                    duplicate_warnings[0].citation.section,  # type: ignore[union-attr]  # reason: the preceding `assertIsNotNone` establishes the citation, which mypy does not narrow through.
                     EpubPackageCitationSection.SPINE,
                 )
 
@@ -743,11 +743,11 @@ class EpubPackageExtractorTests(unittest.TestCase):
                     self.assertEqual(len(invalid_warnings), 1)
                     self.assertIsNotNone(invalid_warnings[0].citation)
                     self.assertEqual(
-                        invalid_warnings[0].citation.section,
+                        invalid_warnings[0].citation.section,  # type: ignore[union-attr]  # reason: the preceding `assertIsNotNone` establishes the citation, which mypy does not narrow through.
                         EpubPackageCitationSection.SPINE,
                     )
                     self.assertLess(
-                        invalid_warnings[0].citation.source_ordinal,
+                        invalid_warnings[0].citation.source_ordinal,  # type: ignore[union-attr]  # reason: the preceding `assertIsNotNone` establishes the citation, which mypy does not narrow through.
                         spine_items[0].source_ordinal,
                     )
                     self.assertEqual(
@@ -1245,7 +1245,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 )
                 self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertTrue(
-                    warning.citation.expanded_name.startswith("{urn:sha256:")
+                    warning.citation.expanded_name.startswith("{urn:sha256:")  # type: ignore[union-attr]  # reason: the `next(...)` filter above selects only warnings whose citation is not `None`, which mypy does not narrow through.
                 )
 
         for foreign in (
@@ -1266,7 +1266,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
                 )
                 self.assertEqual(report.outcome, EpubInspectionOutcome.SUCCESS)
                 self.assertTrue(
-                    warning.citation.expanded_name.startswith("{urn:sha256:")
+                    warning.citation.expanded_name.startswith("{urn:sha256:")  # type: ignore[union-attr]  # reason: the `next(...)` filter above selects only warnings whose citation is not `None`, which mypy does not narrow through.
                 )
 
     def test_metadata_value_projection_preserves_exact_limit_and_hashes_above(self) -> None:
@@ -1961,7 +1961,7 @@ class EpubPackageExtractorTests(unittest.TestCase):
         self.assertEqual(declaration_report.outcome, EpubInspectionOutcome.RESOURCE_LIMIT)
 
         large = "x" * 1_021
-        additions = []
+        additions: list[str] = []
         for local, count in (
             ("publisher", 32),
             ("subject", 32),

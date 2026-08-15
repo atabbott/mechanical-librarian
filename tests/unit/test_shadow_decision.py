@@ -5,6 +5,7 @@ import json
 import unittest
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 from mechanical_librarian.domain import shadow_decision as shadow_decision_module
@@ -240,7 +241,7 @@ def _combination_seam(
     return (
         seam_packet,
         SimpleNamespace(actions=actions),
-        {title_proposal["proposal_id"]: title_actions},
+        {cast(str, title_proposal["proposal_id"]): title_actions},
     )
 
 

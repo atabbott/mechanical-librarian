@@ -8,6 +8,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import patch
 
 from mechanical_librarian.adapters.field_effect_authority import (
@@ -174,7 +175,8 @@ def _staged_projection_action(repository, work_id: str) -> PipelineAction:
     ).fetchone()
     assert generation is not None
     return PipelineAction(
-        *row, lineage_checkpoint=checkpoint[0], policy_generation=generation[0]
+        *cast("tuple[str, str, str, int, str, str, str, str, int | None, str | None, str | None, str | None, int | None, str | None, str | None, str | None, str | None]", row),
+        lineage_checkpoint=checkpoint[0], policy_generation=generation[0],
     )
 
 
@@ -752,7 +754,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                     raise AssertionError("equal decision reached authority")
 
             scheduler = ContinuousGuardedApplication(
-                repository, {("primary", "ebooks"): SimpleNamespace()},
+                repository, {("primary", "ebooks"): cast(GuardedFieldApplication, SimpleNamespace())},
                 {("primary", "ebooks"): SimpleNamespace()}, UnexpectedAuthority(),
                 (("primary", "ebooks"),), lambda: 10, lambda *_: None,
             )
@@ -2322,7 +2324,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 self.assertIn("title", tuple(row[2] for row in attention.rows))
                 self.assertEqual(
                     "automatic_safety_suspended",
-                    next(row[5] for row in attention.rows if row[2] == "title"),
+                    next(row[5] for row in cast("tuple[tuple[str, str, str, int, str, str], ...]", attention.rows) if row[2] == "title"),
                 )
                 projected = BrowseReviewLibrary(repository).attention(
                     search=None, limit=50, cursor=None,

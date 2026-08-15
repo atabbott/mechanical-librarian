@@ -111,6 +111,7 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
 
     def test_empty_plural_is_none_and_plural_values_need_attention(self) -> None:
         summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+        plural: object
         for plural, expected in (([], (False, "none")), ([{}], (True, "needs-attention")), ([{}, {}], (True, "needs-attention"))):
             detail = {**_item(), "media": {"metadata": {"title": "Title", "authors": []}, "ebookFiles": plural}}
             entry = catalogue_entry("primary", _library(), None, summary, detail)
@@ -153,6 +154,7 @@ class AudiobookshelfCatalogueTests(unittest.TestCase):
 
     def test_invalid_material_revision_retains_item_revision_fallback(self) -> None:
         summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+        invalid_revision: object
         for invalid_revision in (None, -1, "", [], {}):
             baseline = _item()
             baseline["media"]["ebookFile"]["metadata"]["mtimeMs"] = invalid_revision

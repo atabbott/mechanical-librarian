@@ -52,7 +52,7 @@ def _report(
     *,
     actionable: bool = True,
 ) -> MetadataReport:
-    claims = ()
+    claims: tuple[LocalClaim, ...] = ()
     reasons = ("no_opening_claims",)
     if actionable:
         claims = (
@@ -167,13 +167,13 @@ class ReviewCasePersistenceTests(unittest.TestCase):
 
         case.target["item"] = "mutated"
         case.results[0]["outcome"] = "mutated"
-        case.target["fields"].append("mutated")  # type: ignore[union-attr]
+        case.target["fields"].append("mutated")
 
         data = case.to_data()
-        data["target"]["item"] = "mutated"  # type: ignore[index]
-        data["results"][0]["outcome"] = "mutated"  # type: ignore[index]
+        data["target"]["item"] = "mutated"
+        data["results"][0]["outcome"] = "mutated"
         proposals = case.proposals
-        proposals[0]["result"]["outcome"] = "mutated"  # type: ignore[index]
+        proposals[0]["result"]["outcome"] = "mutated"
         actionable = case.actionable
         actionable[0]["outcome"] = "mutated"
 
@@ -521,8 +521,10 @@ class ReviewCasePersistenceTests(unittest.TestCase):
                     local.close()
 
             threads = [threading.Thread(target=admit) for _ in range(2)]
-            [thread.start() for thread in threads]
-            [thread.join() for thread in threads]
+            # The comprehensions are used for their effect; the collected `None`
+            # results are discarded.
+            [thread.start() for thread in threads]  # type: ignore[func-returns-value]
+            [thread.join() for thread in threads]  # type: ignore[func-returns-value]
             self.assertEqual(2, len(results))
             self.assertEqual(1, len({value["review_case_id"] for value in results}))
 

@@ -6,9 +6,10 @@ import re
 import sys
 import unittest
 from pathlib import Path
+from typing import cast
 from urllib.parse import urlsplit
 
-from playwright.sync_api import Route, expect, sync_playwright
+from playwright.sync_api import Response, Route, expect, sync_playwright
 
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetBundle,
@@ -190,7 +191,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 before_entry = documents
                 response = page.goto(f"https://react-platform.invalid{path}")
                 self.assertIsNotNone(response)
-                self.assertEqual(response.status, 200)
+                self.assertEqual(cast(Response, response).status, 200)
                 page.get_by_role("heading", name=heading).wait_for()
                 if path in {
                     "/library?lens=all",
@@ -608,7 +609,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                     "?field=title&subview=review"
                 )
                 self.assertIsNotNone(response)
-                self.assertEqual(response.status, 200)
+                self.assertEqual(cast(Response, response).status, 200)
                 page.get_by_role(
                     "heading", name="This workspace could not be loaded."
                 ).wait_for()

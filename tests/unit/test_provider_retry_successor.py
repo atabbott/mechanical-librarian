@@ -5,6 +5,7 @@ import unittest
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers import hardcover_metadata
@@ -17,6 +18,7 @@ from mechanical_librarian.application.metadata_report import (
     CredentialError,
     ProviderBinding,
     ProviderLaneResult,
+    ReportRepository,
     TargetFile,
     TargetSnapshot,
     metadata_discovery_plan,
@@ -67,7 +69,7 @@ class _Repository:
     def __init__(self, report):
         self.values = {report.report_id: report.to_json()}
         self.current_id = report.report_id
-        self.package = (None, report.report_id, None, None, "report_only")
+        self.package: tuple[str | None, str, str | None, int | None, str] = (None, report.report_id, None, None, "report_only")
 
     def get(self, report_id): return self.values[report_id]
     def current_optional(self, *_args): return self.values[self.current_id]
@@ -115,7 +117,7 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
     def service(self, configured, *, inspector=None, after_publication=lambda *_args: None, resolver=None):
         return GenerateProviderRetrySuccessor(
             target=_Target(self.snapshot), inspector=_Inspector() if inspector is None else inspector,
-            repository_factory=lambda: self.repository,
+            repository_factory=lambda: cast(ReportRepository, self.repository),
             provider_resolver=(lambda *_args: configured) if resolver is None else resolver,
             mount=MediaMountConfiguration("books", "/container", "/service", True),
             limits=ReportLimits(), after_publication=after_publication,
@@ -233,7 +235,7 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
 
         service = GenerateProviderRetrySuccessor(
             target=DriftingTarget(), inspector=_Inspector(),
-            repository_factory=lambda: self.repository,
+            repository_factory=lambda: cast(ReportRepository, self.repository),
             provider_resolver=lambda *_args: ConfiguredProviderRetry(
                 ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2
             ),
@@ -258,7 +260,7 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
 
         service = GenerateProviderRetrySuccessor(
             target=AdvancingTarget(), inspector=_Inspector(),
-            repository_factory=lambda: self.repository,
+            repository_factory=lambda: cast(ReportRepository, self.repository),
             provider_resolver=lambda *_args: ConfiguredProviderRetry(
                 ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2
             ),
@@ -279,7 +281,7 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
         repository = MalformedPackageRepository(self.report)
         service = GenerateProviderRetrySuccessor(
             target=_Target(self.snapshot), inspector=_Inspector(),
-            repository_factory=lambda: repository,
+            repository_factory=lambda: cast(ReportRepository, repository),
             provider_resolver=lambda *_args: ConfiguredProviderRetry(
                 ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2
             ),
@@ -448,7 +450,7 @@ class ProviderRetrySuccessorTests(unittest.TestCase):
                 source_repository.close()
             service = GenerateProviderRetrySuccessor(
                 target=_Target(self.snapshot), inspector=_Inspector(),
-                repository_factory=lambda: open_repository(path),
+                repository_factory=lambda: cast(ReportRepository, open_repository(path)),
                 provider_resolver=lambda *_args: ConfiguredProviderRetry(
                     ProviderBinding("catalogue", True, lambda: provider, "open_library"),
                     "open_library", 2,

@@ -57,7 +57,7 @@ class BatchCompositionTests(unittest.TestCase):
         service = unittest.mock.Mock()
         service.run.return_value = "report"
         constructed = []
-        with patch.object(composition, "CoverArtifactStore"), patch.object(composition, "AudiobookshelfItemReader"), patch.object(composition, "google_books_client", side_effect=(object(), object())) as clients, patch.object(composition, "read_secret", return_value="private-key") as secret, patch.object(composition, "GoogleBooksMetadataProvider", side_effect=lambda *args, **kwargs: constructed.append((args, kwargs)) or object()), patch.object(composition, "GenerateMetadataReport", return_value=service) as generate:
+        with patch.object(composition, "CoverArtifactStore"), patch.object(composition, "AudiobookshelfItemReader"), patch.object(composition, "google_books_client", side_effect=(object(), object())) as clients, patch.object(composition, "read_secret", return_value="private-key") as secret, patch.object(composition, "GoogleBooksMetadataProvider", side_effect=lambda *args, **kwargs: constructed.append((args, kwargs)) or object()), patch.object(composition, "GenerateMetadataReport", return_value=service) as generate:  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
             self.assertEqual("report", composition.run_metadata_report_loaded(config, Path("/reports"), Path("/artifacts"), "primary", "books", "item", 0))
             bindings = generate.call_args.kwargs["providers"]
             self.assertEqual((False, True, True), tuple(binding.enabled for binding in bindings))
@@ -95,7 +95,7 @@ class BatchCompositionTests(unittest.TestCase):
         constructed = []
         service = unittest.mock.Mock()
         service.run.return_value = "report"
-        with patch.object(composition, "CoverArtifactStore"), patch.object(composition, "AudiobookshelfItemReader"), patch.object(composition, "OpenLibraryPacer", return_value=shared) as pacer, patch.object(composition, "open_library_client", side_effect=(object(), object())), patch.object(composition, "OpenLibraryMetadataProvider", side_effect=lambda *args, **kwargs: constructed.append(kwargs["pacer"]) or object()), patch.object(composition, "GenerateMetadataReport", return_value=service) as generate:
+        with patch.object(composition, "CoverArtifactStore"), patch.object(composition, "AudiobookshelfItemReader"), patch.object(composition, "OpenLibraryPacer", return_value=shared) as pacer, patch.object(composition, "open_library_client", side_effect=(object(), object())), patch.object(composition, "OpenLibraryMetadataProvider", side_effect=lambda *args, **kwargs: constructed.append(kwargs["pacer"]) or object()), patch.object(composition, "GenerateMetadataReport", return_value=service) as generate:  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
             self.assertEqual("report", composition.run_metadata_report_loaded(config, Path("/reports"), Path("/artifacts"), "primary", "books", "item", 0))
             bindings = generate.call_args.kwargs["providers"]
             for binding in bindings:
@@ -147,7 +147,7 @@ class BatchCompositionTests(unittest.TestCase):
         constructed = []
         service = unittest.mock.Mock()
         service.run.return_value = "report"
-        with patch.object(composition, "CoverArtifactStore"), patch.object(composition, "AudiobookshelfItemReader"), patch.object(composition, "HardcoverPacer", return_value=shared) as pacer, patch.object(composition, "hardcover_client", side_effect=(object(), object())), patch.object(composition, "HardcoverMetadataProvider", side_effect=lambda *args, **kwargs: constructed.append(kwargs["pacer"]) or object()), patch.object(composition, "GenerateMetadataReport", return_value=service) as generate:
+        with patch.object(composition, "CoverArtifactStore"), patch.object(composition, "AudiobookshelfItemReader"), patch.object(composition, "HardcoverPacer", return_value=shared) as pacer, patch.object(composition, "hardcover_client", side_effect=(object(), object())), patch.object(composition, "HardcoverMetadataProvider", side_effect=lambda *args, **kwargs: constructed.append(kwargs["pacer"]) or object()), patch.object(composition, "GenerateMetadataReport", return_value=service) as generate:  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
             self.assertEqual("report", composition.run_metadata_report_loaded(config, Path("/reports"), Path("/artifacts"), "primary", "books", "item", 0))
             bindings = generate.call_args.kwargs["providers"]
             for binding in bindings:

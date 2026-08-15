@@ -1330,7 +1330,7 @@ class EpubOpeningTests(unittest.TestCase):
     def test_synthetic_indicia_aggregate_has_exact_role_and_date_recovery(
         self,
     ) -> None:
-        role_cases = (
+        role_cases: tuple[tuple[str, set[tuple[str, str]]], ...] = (
             ("Translated by A Translator", {("A Translator", "translator")}),
             ("Illustrations by B Artist", {("B Artist", "illustrator")}),
             ("Edited by C Editor", {("C Editor", "editor")}),
@@ -1349,7 +1349,7 @@ class EpubOpeningTests(unittest.TestCase):
             ("Retailer: Example Shop", set()),
             ("ordinary prose by nobody in particular", set()),
         )
-        date_cases = (
+        date_cases: tuple[tuple[str, set[tuple[str, DatePrecision]]], ...] = (
             (
                 "This ebook edition published 2024",
                 {("2024", DatePrecision.YEAR)},

@@ -30,7 +30,11 @@ from mechanical_librarian.adapters.evidence_extractors.epub_opening import (
 from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     EpubPackageExtractor,
     _Rejected,
-    _SourceIO,
+)
+from mechanical_librarian.adapters.evidence_extractors.epub_package import (
+    # Re-exported explicitly: the child qualification reaches this binding
+    # through this module, and an implicit re-export is typed as an error.
+    _SourceIO as _SourceIO,
 )
 from mechanical_librarian.adapters.evidence_extractors.epub_package_model import (
     EpubPackageCancellation,

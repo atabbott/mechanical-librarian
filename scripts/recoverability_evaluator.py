@@ -7,7 +7,7 @@ import argparse
 import json
 from collections import Counter
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 INPUT_SCHEMA = "recoverability-evaluator-v4"
 OUTPUT_SCHEMA = "recoverability-aggregate-v4"
@@ -375,7 +375,9 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
         matrices[target][field][category] += 1
         if category == "inspection_failure":
             failure_subtypes["whole_item" if row["inspection"] == "failure" else "extraction_stage"] += 1
-    expected_fields = profile["fields"]
+    # PROFILES entries are heterogeneous literals, so mypy widens each value
+    # to object; "fields" is the field-bound mapping _view declares.
+    expected_fields = cast("dict[str, tuple[int, int]]", profile["fields"])
     if not set(field_totals) <= set(expected_fields):
         raise ValueError("unexpected profile field")
     supported = _view("supported", SUPPORTED, matrices["supported"], field_totals, expected_fields)

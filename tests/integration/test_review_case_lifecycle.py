@@ -30,7 +30,7 @@ def _report(
     *,
     actionable: bool = True,
 ) -> MetadataReport:
-    claims = ()
+    claims: tuple[LocalClaim, ...] = ()
     reasons = ("no_opening_claims",)
     if actionable:
         claims = (
@@ -115,8 +115,10 @@ class ReviewCaseLifecycleTests(unittest.TestCase):
                     local.close()
 
             workers = [threading.Thread(target=admit) for _ in range(2)]
-            [worker.start() for worker in workers]
-            [worker.join() for worker in workers]
+            # The comprehensions are used for their effect; the collected `None`
+            # results are discarded.
+            [worker.start() for worker in workers]  # type: ignore[func-returns-value]
+            [worker.join() for worker in workers]  # type: ignore[func-returns-value]
             self.assertEqual(1, len({value["review_case_id"] for value in outcomes}))
 
 

@@ -11,6 +11,7 @@ import unittest
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import uvicorn
@@ -349,7 +350,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         "listbox", name="Genres representation"
                     )
                     expect(menu_box).to_have_css("scale", "none")
-                    menu_box = menu_box.bounding_box()
+                    menu_box = menu_box.bounding_box()  # type: ignore[assignment]  # reason: the name is deliberately rebound from the Locator to its measured bounding box, which the next lines assert on.
                     self.assertIsNotNone(menu_box)
                     assert menu_box is not None
                     self.assertGreaterEqual(menu_box["x"], 8)
@@ -495,7 +496,7 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                     light_mode.click()
                     page.get_by_role("button", name="Use dark mode").wait_for()
                     activity_requests = 0
-                    held_page_size_response = []
+                    held_page_size_response: list[tuple[Any, Any, Any]] = []
 
                     def activity_poll(route) -> None:
                         nonlocal activity_requests

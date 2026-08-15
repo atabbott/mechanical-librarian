@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from typing import cast
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -607,9 +608,9 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
     needle = query.get("q", [""])[0].casefold().strip()
     works = list(LIBRARY_WORKS)
     if lens == "needs_attention":
-        works = [item for item in works if int(item["attention_count"]) > 0]
+        works = [item for item in works if int(cast(int, item["attention_count"])) > 0]
     elif lens == "no_attention_needed":
-        works = [item for item in works if int(item["attention_count"]) == 0]
+        works = [item for item in works if int(cast(int, item["attention_count"])) == 0]
     if needle:
         works = [
             item
@@ -635,11 +636,11 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
         "next_cursor": f"page-{page + 1}" if len(works) > end else None,
         "counts": {
             "needs_attention": sum(
-                int(item["attention_count"]) > 0 for item in LIBRARY_WORKS
+                int(cast(int, item["attention_count"])) > 0 for item in LIBRARY_WORKS
             ),
             "all": len(LIBRARY_WORKS),
             "no_attention_needed": sum(
-                int(item["attention_count"]) == 0 for item in LIBRARY_WORKS
+                int(cast(int, item["attention_count"])) == 0 for item in LIBRARY_WORKS
             ),
         },
         "items": deepcopy(works[start:end]),
@@ -649,7 +650,7 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
 def _attention() -> dict[str, object]:
     items = []
     for work in LIBRARY_WORKS[:4]:
-        destinations = ("title", "authors") if int(work["attention_count"]) > 1 else ("title",)
+        destinations = ("title", "authors") if int(cast(int, work["attention_count"])) > 1 else ("title",)
         for destination in destinations:
             items.append(
                 {

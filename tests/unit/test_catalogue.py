@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from multiprocessing import Event, Process
+from multiprocessing.synchronize import Event as EventType
 from pathlib import Path
 from unittest.mock import patch
 
@@ -35,7 +36,7 @@ def _entry(item: str = "item-1", *, title: str = "Title", author: str = "Author"
 
 
 class _BlockingReader:
-    def __init__(self, ready: Event, release: Event) -> None:
+    def __init__(self, ready: EventType, release: EventType) -> None:
         self._ready = ready
         self._release = release
 
@@ -65,7 +66,7 @@ def _two_library_configuration() -> ApplicationConfiguration:
     )
 
 
-def _hold_refresh_lock(path: str, ready: Event, release: Event) -> None:
+def _hold_refresh_lock(path: str, ready: EventType, release: EventType) -> None:
     repository = open_catalogue(Path(path), create=True)
     try:
         RefreshCurrentCatalogue(_BlockingReader(ready, release), repository).refresh(_configuration())

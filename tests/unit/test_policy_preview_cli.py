@@ -92,7 +92,7 @@ class PolicyPreviewCliTests(unittest.TestCase):
             before = path.read_bytes()
             output = io.StringIO()
             calls: list[dict[str, object]] = []
-            code = main(["policy-preview", "--config", str(path), "--database", str(path), "--profile", str(path)], policy_preview_runner=lambda _config, _database, value: calls.append(value) or result, stdout=output, stderr=io.StringIO())
+            code = main(["policy-preview", "--config", str(path), "--database", str(path), "--profile", str(path)], policy_preview_runner=lambda _config, _database, value: calls.append(value) or result, stdout=output, stderr=io.StringIO())  # type: ignore[func-returns-value,return-value]  # reason: the `append(...) or value` recorder idiom is deliberate; the recorded profile is a JSON document
             self.assertEqual(0, code)
             self.assertEqual([profile], calls)
             self.assertEqual(before, path.read_bytes())

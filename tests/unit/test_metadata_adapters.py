@@ -46,6 +46,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain.cover_evidence import (
     CoverArtifact,
     CoverDesignation,
+    CoverProvenance,
     CoverSource,
     CoverSourceKind,
     CoverSourceState,
@@ -902,7 +903,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             with self.assertRaises(MetadataReportError):
                 repository.publish(
                     _report(),
-                    lambda: calls.append(repository._connection.in_transaction) or False,
+                    lambda: calls.append(repository._connection.in_transaction) or False,  # type: ignore[func-returns-value]  # reason: `append(...) or False` deliberately records the transaction state and still yields the currentness verdict.
                 )
             self.assertEqual(calls, [False])
             self.assertEqual(
@@ -1193,7 +1194,9 @@ class MetadataPersistenceTests(unittest.TestCase):
             replacement_bytes = b"replacement-database"
             binding = repository._binding
             self.assertIsNotNone(binding)
-            require_current = binding.require_current
+            require_current = cast(
+                "metadata_persistence._LinuxDatabaseBinding", binding
+            ).require_current
             calls = 0
 
             def replace_parent_at_final_check() -> None:
@@ -1364,7 +1367,7 @@ class ProviderAdapterTests(unittest.TestCase):
         seen_tags: set[object] = set()
         for book in books:
             taggings: list[dict[str, object]] = []
-            for raw_tagging in book.get("taggings", []):  # type: ignore[union-attr]
+            for raw_tagging in book.get("taggings", []):
                 tagging = cast(dict[str, object], raw_tagging)
                 raw_tag = tagging.get("tag")
                 if type(raw_tag) is dict:
@@ -1514,7 +1517,7 @@ class ProviderAdapterTests(unittest.TestCase):
             [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}],
             [{"id": 1, "title": "Current title"}],
         )
-        payload["data"]["editions"][0]["image"] = {"url": "x" * 2049}  # type: ignore[index]
+        payload["data"]["editions"][0]["image"] = {"url": "x" * 2049}
         provider = HardcoverMetadataProvider(
             "catalogue",
             httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json=payload))),
@@ -1764,7 +1767,7 @@ class ProviderAdapterTests(unittest.TestCase):
                 self.assertEqual((), observation.candidates)
                 self.assertNotIn("synthetic-private-token", repr(observation))
 
-        malformed = (
+        malformed: tuple[object, ...] = (
             {"errors": []},
             {"errors": [{"message": "x" * (len(exact_message) + 1)}]},
             {
@@ -1805,7 +1808,7 @@ class ProviderAdapterTests(unittest.TestCase):
             "catalogue",
             httpx.Client(
                 transport=httpx.MockTransport(
-                    lambda request: requests.append(request)
+                    lambda request: requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
                     or httpx.Response(500)
                 )
             ),
@@ -2212,7 +2215,7 @@ class ProviderAdapterTests(unittest.TestCase):
             "catalogue",
             httpx.Client(
                 transport=httpx.MockTransport(
-                    lambda _: dispatch_times.append(now[0])
+                    lambda _: dispatch_times.append(now[0])  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the dispatch time and still yields the response.
                     or httpx.Response(
                         200,
                         headers={"content-type": "application/json"},
@@ -2509,7 +2512,7 @@ class ProviderAdapterTests(unittest.TestCase):
             [("publication_date", "2001-02-03")],
             [
                 (value.field.value, value.value)
-                for value in default_cover.provenance.context
+                for value in cast(CoverProvenance, default_cover.provenance).context
             ],
         )
 
@@ -2851,8 +2854,8 @@ class ProviderAdapterTests(unittest.TestCase):
         )
 
     def test_rich_field_boundaries_are_local_and_public_safe(self) -> None:
-        row = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": "B012345678", "title": "T" * 513, "subtitle": "Edition subtitle", "release_date": "not-a-date", "publisher": None, "language": None, "contributions": [{"id": 1, "contribution": "Author", "author": {"id": 1, "name": "Ada"}}, {"id": 2, "contribution": "/Users/private", "author": {"id": 2, "name": "Bea"}}]}
-        book = {"id": 1, "title": "/Users/private/title", "description": "D" * 16385, "contributions": [{"id": 3, "contribution": "Translator", "author": {"id": 3, "name": "Cy"}}], "book_series": [{"id": 4, "position": 1.5, "series": {"id": 4, "name": "Series"}}], "taggings": []}
+        row: dict[str, object] = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": "B012345678", "title": "T" * 513, "subtitle": "Edition subtitle", "release_date": "not-a-date", "publisher": None, "language": None, "contributions": [{"id": 1, "contribution": "Author", "author": {"id": 1, "name": "Ada"}}, {"id": 2, "contribution": "/Users/private", "author": {"id": 2, "name": "Bea"}}]}
+        book: dict[str, object] = {"id": 1, "title": "/Users/private/title", "description": "D" * 16385, "contributions": [{"id": 3, "contribution": "Translator", "author": {"id": 3, "name": "Cy"}}], "book_series": [{"id": 4, "position": 1.5, "series": {"id": 4, "name": "Series"}}], "taggings": []}
         payload = json.dumps(self._envelope([row], [book])).encode()
         claims = hardcover_metadata._parse_candidates(payload, "catalogue", (self._claim(),)).__getitem__(0).claims
         by_kind = {claim.kind: claim for claim in claims}
@@ -3057,8 +3060,8 @@ class ProviderAdapterTests(unittest.TestCase):
             contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": f"A{index}"}} for index in range(1, count + 1)]
             series = [{"id": index, "position": str(index), "series": {"id": index, "name": f"S{index}"}} for index in range(1, count + 1)]
             tags = [{"id": index, "tag": {"id": index, "tag": f"T{index}"}} for index in range(1, count + 1)]
-            row = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions if key == "edition" else []}
-            book = {"id": 1, "title": None, "contributions": contributions if key == "work" else [], "book_series": series if key == "series" else [], "taggings": tags if key == "tag" else []}
+            row: dict[str, object] = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions if key == "edition" else []}
+            book: dict[str, object] = {"id": 1, "title": None, "contributions": contributions if key == "work" else [], "book_series": series if key == "series" else [], "taggings": tags if key == "tag" else []}
             claims = hardcover_metadata._parse_candidates(json.dumps(self._envelope([row], [book])).encode(), "catalogue", ())[0].claims
             relevant = [claim for claim in claims if claim.kind is kind and claim.scope is scope]
             if count in {17, 33}:
@@ -3091,7 +3094,7 @@ class ProviderAdapterTests(unittest.TestCase):
             )
 
     def test_nullable_contribution_roles_preserve_neutral_identity_bound_creators(self) -> None:
-        contribution = {
+        contribution: dict[str, object] = {
             "id": 1,
             "contribution": None,
             "author": {"id": 1, "name": "Synthetic Contributor"},
@@ -3370,7 +3373,7 @@ class ProviderAdapterTests(unittest.TestCase):
             ("malformed-role-and-author", {}, "invalid", ClaimKind.CONTRIBUTOR),
         ):
             with self.subTest(label=label):
-                contribution = {
+                contribution: dict[str, object] = {
                     "id": 1,
                     "contribution": role,
                     "author": author,
@@ -3451,7 +3454,7 @@ class ProviderAdapterTests(unittest.TestCase):
         )
 
     def test_nested_overflow_probe_objects_are_structurally_validated(self) -> None:
-        cases = []
+        cases: list[tuple[dict[str, object], dict[str, object]]] = []
         contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": "A"}} for index in range(17)]
         contributions[16]["author"] = {"id": 17, "unexpected": "A"}
         cases.append(({"contributions": contributions}, {}))
@@ -3536,7 +3539,7 @@ class ProviderAdapterTests(unittest.TestCase):
         )
 
     def test_optional_hardcover_projection_members_are_field_local(self) -> None:
-        row = {
+        row: dict[str, object] = {
             "id": 1, "book_id": 1, "isbn_10": None,
             "isbn_13": "9780306406157", "title": "Edition",
             "release_date": "2024-02-30",
@@ -3544,7 +3547,7 @@ class ProviderAdapterTests(unittest.TestCase):
             "language": {"code2": {}, "code3": "eng"},
             "contributions": [{"id": 1, "contribution": "Author", "author": {"name": "Ada"}}],
         }
-        book = {
+        book: dict[str, object] = {
             "id": 1, "title": "Work", "release_date": "2020",
             "contributions": [{"id": 1, "contribution": "Translator", "author": {"id": 2, "name": "Bea"}}, "bad"],
             "book_series": [{"id": 1, "position": "1", "series": {"name": "Series"}}, "bad"],
@@ -3611,7 +3614,7 @@ class ProviderAdapterTests(unittest.TestCase):
                 "tag_category": {"id": 1, "category": "Mood"},
             },
         }
-        base_rows = [
+        base_rows: list[dict[str, object]] = [
             {
                 "id": 1,
                 "book_id": 1,
@@ -3641,7 +3644,7 @@ class ProviderAdapterTests(unittest.TestCase):
                 "title": "Second edition",
             },
         ]
-        base_books = [
+        base_books: list[dict[str, object]] = [
             {
                 "id": 1,
                 "title": "Work",
@@ -3662,7 +3665,7 @@ class ProviderAdapterTests(unittest.TestCase):
         ) -> ProviderObservation:
             payload = self._envelope(rows, books)
             if additive_work_key:
-                payload["data"]["books"][0]["new_optional_value"] = True  # type: ignore[index]
+                payload["data"]["books"][0]["new_optional_value"] = True
             provider = HardcoverMetadataProvider(
                 "catalogue",
                 httpx.Client(
@@ -3788,7 +3791,9 @@ class ProviderAdapterTests(unittest.TestCase):
                             {
                                 **valid_tagging,
                                 "tag": {
-                                    **valid_tagging["tag"],  # type: ignore[arg-type]
+                                    **cast(
+                                        dict[str, object], valid_tagging["tag"]
+                                    ),
                                     "tag_category": {
                                         "id": 1,
                                         "category": "Subject",
@@ -3888,10 +3893,10 @@ class ProviderAdapterTests(unittest.TestCase):
                 }
             ],
         )
-        payload["data"]["editions"][0]["contributions"] = [  # type: ignore[index]
+        payload["data"]["editions"][0]["contributions"] = [
             {**contribution, "untraversed": True}
         ] * 17
-        payload["data"]["books"][0]["book_series"] = [  # type: ignore[index]
+        payload["data"]["books"][0]["book_series"] = [
             {**series, "untraversed": True}
         ] * 17
         self.assertEqual(
@@ -4094,7 +4099,7 @@ class ProviderAdapterTests(unittest.TestCase):
 
     def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing(self) -> None:
         calls: list[int] = []
-        client = httpx.Client(transport=httpx.MockTransport(lambda request: calls.append(1) or httpx.Response(200)))
+        client = httpx.Client(transport=httpx.MockTransport(lambda request: calls.append(1) or httpx.Response(200)))  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the call and still yields the response.
         provider = HardcoverMetadataProvider("catalogue", client, 65_536)
         self.assertEqual(provider.observe(_isbn_lookup(())).status, ProviderStatus.INSUFFICIENT_INPUT)
         self.assertEqual(calls, [])
@@ -5009,7 +5014,7 @@ class ProviderAdapterTests(unittest.TestCase):
         )
         self.assertEqual(
             CoverDesignation.EXACT_EDITION,
-            edition_cover.provenance.designation,
+            cast(CoverProvenance, edition_cover.provenance).designation,
         )
 
         for status_code, expected in (
@@ -5586,7 +5591,7 @@ class AudiobookshelfItemTests(unittest.TestCase):
         )
         self.assertEqual(
             by_destination[TargetDestination.COVER].value,
-            snapshot.cover.identity,
+            cast(TargetCover, snapshot.cover).identity,
         )
         self.assertNotIn(
             "/metadata/",

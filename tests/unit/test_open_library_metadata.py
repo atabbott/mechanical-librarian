@@ -8,6 +8,7 @@ import unittest
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 
 import httpx
 
@@ -27,6 +28,7 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
+    CoverProvenance,
     CoverSourceKind,
     CoverSourceState,
     cover_source_id,
@@ -316,7 +318,15 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         )
 
     def test_series_aggregate_states_do_not_mix_valid_and_unsupported(self) -> None:
-        cases = (
+        cases: tuple[
+            tuple[
+                str,
+                list[object],
+                list[str],
+                tuple[tuple[ClaimKind, FieldState, str | None], ...],
+            ],
+            ...,
+        ] = (
             (
                 "full",
                 ["Cycle"],
@@ -720,7 +730,18 @@ class OpenLibraryMetadataTests(unittest.TestCase):
     def test_optional_provenance_failures_are_local_diagnosed_and_replayable(
         self,
     ) -> None:
-        cases = (
+        cases: tuple[
+            tuple[
+                str,
+                str,
+                str,
+                object,
+                ProviderEvidenceKind,
+                ClaimScope,
+                ProviderEvidenceKind,
+            ],
+            ...,
+        ] = (
             (
                 "edition revision object",
                 "edition",
@@ -854,7 +875,9 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         self,
     ) -> None:
         missing = object()
-        cases = (
+        cases: tuple[
+            tuple[str, str, object, object, str | None, int, bool], ...
+        ] = (
             (
                 "edition malformed revision with valid latest",
                 "edition",
@@ -1019,7 +1042,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
 
     def test_nested_work_author_evidence_persists_with_exact_source_semantics(self) -> None:
         search = _search("/books/OL1M")
-        search["docs"][0].update(  # type: ignore[index]
+        search["docs"][0].update(
             {
                 "publisher": ["Search Press"],
                 "publish_date": ["2026"],
@@ -1390,6 +1413,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
 
             def handler(request: httpx.Request) -> httpx.Response:
                 requests.append(request.url.path)  # noqa: B023 - closure is created and consumed within this iteration
+                value: dict[str, object]
                 if request.url.path == "/search.json":
                     value = {
                         "docs": [
@@ -1706,7 +1730,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 "open_library",
                 httpx.Client(
                     transport=httpx.MockTransport(
-                        lambda request: requests.append(request)  # noqa: B023 - closure is created and consumed within this iteration
+                        lambda request: requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.  # noqa: B023 - closure is created and consumed within this iteration
                         or httpx.Response(500)
                     )
                 ),
@@ -1831,6 +1855,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
 
         def handler(request: httpx.Request) -> httpx.Response:
             nonlocal search_count, shared_work_count
+            value: dict[str, object]
             if request.url.path == "/search.json":
                 search_count += 1
                 family = request.url.params["q"].removeprefix("isbn:")
@@ -1951,7 +1976,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 family_query = request.url.params.get("q")
                 if family_query is not None:
                     search = _search("/books/OL1M")
-                    search["docs"][0]["editions"]["docs"][0]["isbn"] = [  # type: ignore[index]
+                    search["docs"][0]["editions"]["docs"][0]["isbn"] = [
                         family_query.removeprefix("isbn:")
                     ]
                     publishers = (
@@ -1971,7 +1996,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                             "bad\x00publisher",
                         ]
                     )
-                    search["docs"][0]["publisher"] = publishers  # type: ignore[index]
+                    search["docs"][0]["publisher"] = publishers
                     value = search
                 else:
                     value = {
@@ -2231,7 +2256,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         )
         self.assertEqual(
             CoverDesignation.EXACT_EDITION,
-            edition_cover.provenance.designation,
+            cast(CoverProvenance, edition_cover.provenance).designation,
         )
 
     def test_isbn_10_and_13_of_one_family_share_one_exact_search(self) -> None:
@@ -2370,7 +2395,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                 "/books/OL1M",
                 "/books/OL2M",
             )
-            value["docs"][0]["editions"]["docs"][0]["isbn"] = [  # type: ignore[index]
+            value["docs"][0]["editions"]["docs"][0]["isbn"] = [
                 "9780140328721"
             ]
             return httpx.Response(
@@ -2396,7 +2421,7 @@ class OpenLibraryMetadataTests(unittest.TestCase):
     def test_nonmatching_search_rows_are_ignored_without_detail_requests(self) -> None:
         requests: list[httpx.Request] = []
         search = _search("/books/OL1M")
-        search["docs"][0]["editions"]["docs"][0]["isbn"] = ["9780140328721"]  # type: ignore[index]
+        search["docs"][0]["editions"]["docs"][0]["isbn"] = ["9780140328721"]
 
         def handler(request: httpx.Request) -> httpx.Response:
             requests.append(request)
@@ -3204,7 +3229,10 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         edition_descriptor = provider.cover_descriptors[0]
         self.assertIsNone(edition_descriptor.terminal_state)
         self.assertIsNotNone(edition_descriptor.provenance)
-        self.assertEqual(16, len(edition_descriptor.provenance.context))
+        self.assertEqual(
+            16,
+            len(cast(CoverProvenance, edition_descriptor.provenance).context),
+        )
 
     def test_cover_context_overflow_retains_metadata_with_oversized_cover(self) -> None:
         context_isbns = [
@@ -3257,7 +3285,9 @@ class OpenLibraryMetadataTests(unittest.TestCase):
         edition_descriptor = provider.cover_descriptors[0]
         self.assertEqual(CoverSourceState.OVERSIZED, edition_descriptor.terminal_state)
         self.assertIsNotNone(edition_descriptor.provenance)
-        self.assertEqual((), edition_descriptor.provenance.context)
+        self.assertEqual(
+            (), cast(CoverProvenance, edition_descriptor.provenance).context
+        )
 
     def test_cover_context_scalar_bound_preserves_metadata(self) -> None:
         for length, terminal_state in (
@@ -3301,11 +3331,18 @@ class OpenLibraryMetadataTests(unittest.TestCase):
                         "C" * length,
                         {
                             value.value
-                            for value in edition_descriptor.provenance.context
+                            for value in cast(
+                                CoverProvenance, edition_descriptor.provenance
+                            ).context
                         },
                     )
                 else:
-                    self.assertEqual((), edition_descriptor.provenance.context)
+                    self.assertEqual(
+                        (),
+                        cast(
+                            CoverProvenance, edition_descriptor.provenance
+                        ).context,
+                    )
 
     def test_malformed_cover_ids_precede_oversized_context(self) -> None:
         values = {
@@ -3572,7 +3609,7 @@ class OpenLibraryDiagnosticBoundaryTests(unittest.TestCase):
         self.assertEqual(0, diagnostic({"key": "/works/OL1W", "covers": [1, 2]}))
         self.assertEqual(1, diagnostic({"key": "/works/OL1W", "covers": ["1"]}))
         scalars = ("edition_name", "edition_statement", "translation_of", "description", "copyright_date", "number_of_pages")
-        malformed = {key: 1 for key in scalars if key != "number_of_pages"}
+        malformed: dict[str, object] = {key: 1 for key in scalars if key != "number_of_pages"}
         malformed["number_of_pages"] = "1"
         self.assertEqual(
             len(scalars),

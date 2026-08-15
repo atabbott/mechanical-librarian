@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from typing import cast
 
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetError,
@@ -124,8 +125,11 @@ class ReactAssetTests(unittest.TestCase):
 
             self.assertIs(first, second)
             self.assertIsInstance(first, ReactAssetRecovery)
-            self.assertFalse(first.reload)
-            self.assertEqual(first.retry, "owner_requested_restart_after_rebuild")
+            self.assertFalse(cast(ReactAssetRecovery, first).reload)
+            self.assertEqual(
+                cast(ReactAssetRecovery, first).retry,
+                "owner_requested_restart_after_rebuild",
+            )
 
     def test_deep_manifest_recursion_is_cached_as_stable_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

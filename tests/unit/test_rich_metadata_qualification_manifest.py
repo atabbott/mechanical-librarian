@@ -309,7 +309,7 @@ class RichMetadataQualificationManifestTests(unittest.TestCase):
             {entry["disposition"] for entry in summary},
         )
         with self.assertRaises(TypeError):
-            F20_OPTION_DISPOSITIONS["genres:add"] = "passing_automatic"  # type: ignore[index]
+            F20_OPTION_DISPOSITIONS["genres:add"] = "passing_automatic"
         self.assertEqual("passing_automatic", F20_OPTION_DISPOSITIONS["genres:add"])
 
 

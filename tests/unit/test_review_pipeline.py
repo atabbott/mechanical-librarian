@@ -8,6 +8,7 @@ import unittest
 from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 import httpx
@@ -38,6 +39,7 @@ from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     PipelineProgress,
     ReviewPipelineError,
+    ReviewPipelineRepository,
     ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
 )
@@ -308,7 +310,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                     source_fingerprint="c" * 64, **identifiers,
                 )
                 pipeline = ReviewPreparationPipeline(
-                    repository_factory=lambda: repository,  # noqa: B023 - closure is created and consumed within this iteration
+                    repository_factory=lambda: cast(ReviewPipelineRepository, repository),  # noqa: B023 - closure is created and consumed within this iteration
                     libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
                     discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
                     extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
@@ -366,7 +368,7 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         repository.recover_review_pipeline((("primary", "fiction", "lib-1", _PRODUCER),))
         first = repository.claim_review_pipeline_action(3)
         self.assertIsNotNone(first)
-        self.assertEqual(first.connection, "primary")
+        self.assertEqual(cast(PipelineAction, first).connection, "primary")
         self.assertIsNone(repository.claim_review_pipeline_action(4))
         retired = repository._connection.execute(
             "SELECT state FROM review_preparation_scans WHERE connection_name='removed'"
@@ -794,7 +796,13 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         )
         one = repository.claim_review_pipeline_action(14)
         two = repository.claim_review_pipeline_action(14)
-        self.assertEqual({one.item_id, two.item_id}, {"slow", "fast"})
+        self.assertEqual(
+            {
+                cast(PipelineAction, one).item_id,
+                cast(PipelineAction, two).item_id,
+            },
+            {"slow", "fast"},
+        )
         repository.close()
 
         reopened = open_repository(self.path)
@@ -802,8 +810,8 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             (("primary", "fiction", "lib-1", _PRODUCER),)
         )
         recovered = {
-            reopened.claim_review_pipeline_action(15).item_id,
-            reopened.claim_review_pipeline_action(15).item_id,
+            cast(PipelineAction, reopened.claim_review_pipeline_action(15)).item_id,
+            cast(PipelineAction, reopened.claim_review_pipeline_action(15)).item_id,
         }
         self.assertEqual(recovered, {"slow", "fast"})
         progress = reopened.request_review_scan(
@@ -1502,7 +1510,9 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         ]
         report = _report()
 
-        def publish_report(repository, __: PipelineAction, ___: bool) -> str:
+        def publish_report(
+            repository, __: PipelineAction, ___: bool
+        ) -> tuple[str, bool]:
             extracted.append(report.report_id)
             repository.publish(report, lambda: True)
             return report.report_id, False
@@ -1534,7 +1544,8 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             ),
             extract=publish_report,
             providers=lambda *_: provider_statuses.pop(0),
-            propose=lambda _, report_id: proposed.append(report_id) or "unreachable",
+            # `append` returns `None`, so the `or` always yields the proposal id.
+            propose=lambda _, report_id: proposed.append(report_id) or "unreachable",  # type: ignore[func-returns-value]
             admit=lambda *_: ("no_case", None),
             project=lambda *_: True,
             clock=lambda: clock[0],
@@ -1583,7 +1594,8 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
             ),
             extract=publish_report,
             providers=unavailable,
-            propose=lambda _, report_id: proposed.append(report_id) or "proposal-set",
+            # `append` returns `None`, so the `or` always yields the proposal id.
+            propose=lambda _, report_id: proposed.append(report_id) or "proposal-set",  # type: ignore[func-returns-value]
             admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
             project=lambda *_: True,
             clock=lambda: clock[0],
@@ -2376,8 +2388,8 @@ class _ScheduledPipeline:
     )
 
     def __init__(self) -> None:
-        self.progresses = {}
-        self.requests = []
+        self.progresses: dict[tuple[str, str], PipelineProgress] = {}
+        self.requests: list[tuple[str, str]] = []
         self.is_paused = False
         self.status_calls = 0
 
@@ -2630,7 +2642,7 @@ class ReviewPipelineSchedulingTests(unittest.TestCase):
             supervisor._stop.set()
             return True
 
-        pipeline.run_next = run_next  # type: ignore[attr-defined]
+        pipeline.run_next = run_next
         supervisor._wake.set()
         supervisor._run(0)
         self.assertEqual(
@@ -2648,7 +2660,7 @@ class ReviewPipelineSchedulingTests(unittest.TestCase):
         def run_next() -> bool:
             supervisor._stop.set()
             return False
-        pipeline.run_next = run_next  # type: ignore[attr-defined]
+        pipeline.run_next = run_next
         supervisor._wake.set()
         supervisor._run(0)
         self.assertEqual([41], woken)
@@ -2676,7 +2688,7 @@ class ReviewPipelineSchedulingTests(unittest.TestCase):
             supervisor._stop.set()
             return False
 
-        pipeline.run_next = run_next  # type: ignore[attr-defined]
+        pipeline.run_next = run_next
         supervisor._wake.set()
         supervisor._run(0)
         self.assertEqual([41, 41], wakes)
@@ -2739,7 +2751,7 @@ class ReviewPipelineConcurrencyTests(unittest.TestCase):
         ticks = iter(range(0, 100_000_000, 1_000_000))
         repository = _ConcurrentRepository([])
         pipeline = ReviewPreparationPipeline(
-            repository_factory=lambda: repository,
+            repository_factory=lambda: cast(ReviewPipelineRepository, repository),
             libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
             discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
             extract=lambda *_: ("report_" + "1" * 64, False),
@@ -2789,7 +2801,7 @@ class ReviewPipelineConcurrencyTests(unittest.TestCase):
         )
         repository = _ConcurrentRepository([action])
         pipeline = ReviewPreparationPipeline(
-            repository_factory=lambda: repository,
+            repository_factory=lambda: cast(ReviewPipelineRepository, repository),
             libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
             discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
             extract=lambda *_: ("report_" + "1" * 64, False),
@@ -2849,7 +2861,7 @@ class ReviewPipelineConcurrencyTests(unittest.TestCase):
             return "report_" + "3" * 64, False
 
         pipeline = ReviewPreparationPipeline(
-            repository_factory=lambda: repository,
+            repository_factory=lambda: cast(ReviewPipelineRepository, repository),
             libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
             discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
             extract=extract,
@@ -2885,7 +2897,7 @@ class ReviewPipelineConcurrencyTests(unittest.TestCase):
             return "report_" + "3" * 64, False
 
         pipeline = ReviewPreparationPipeline(
-            repository_factory=lambda: repository,
+            repository_factory=lambda: cast(ReviewPipelineRepository, repository),
             libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
             discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
             extract=extract, providers=lambda *_: (),

@@ -142,14 +142,14 @@ class ReviewApplicationTests(unittest.TestCase):
 
         preparation = BlockingPreparation()
         # Bind the assertion to the test rather than the tiny fake supervisor.
-        preparation.assertTrue = self.assertTrue  # type: ignore[attr-defined]
+        preparation.assertTrue = self.assertTrue
         application = compose_review_application(
             state_owner=self.repository, session_store=self.repository,
             case_store=self.repository, decision_store=self.repository,
             library_store=self.repository, policy_store=self.repository,
             verify_password=lambda _: True, clock=lambda: self.now,
             session_lifetime_seconds=600, graceful_shutdown_seconds=30,
-            preparation=preparation,  # type: ignore[arg-type]
+            preparation=preparation,
         )
         probe = threading.Thread(
             target=lambda: application.check_review_preparation_connection("primary")
@@ -157,7 +157,9 @@ class ReviewApplicationTests(unittest.TestCase):
         probe.start()
         self.assertTrue(started.wait(1))
         browse = threading.Thread(
-            target=lambda: (application.library(lens="all", search=None, limit=20, cursor=None), browse_finished.set())
+            # The tuple sequences the browse call and the `set()` signal inside one
+            # lambda, so the discarded `None` element is the point, not a mistake.
+            target=lambda: (application.library(lens="all", search=None, limit=20, cursor=None), browse_finished.set())  # type: ignore[func-returns-value]
         )
         browse.start()
         self.assertTrue(browse_finished.wait(1))

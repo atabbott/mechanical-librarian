@@ -10,6 +10,7 @@ import zlib
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest import mock
 
 from PIL import Image, ImageCms
@@ -48,7 +49,7 @@ from mechanical_librarian.domain.metadata_report import (
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
 
-from mechanical_librarian_workbench import (  # noqa: E402
+from mechanical_librarian_workbench import (  # type: ignore[import-not-found]  # noqa: E402  # reason: the workbench package is added to sys.path at import time above; the gate's mypy_path covers src/ only.
     CoverIdentityRequest,
     CoverObservationRequest,
     CoverPacketRequest,
@@ -627,7 +628,7 @@ class CoverPacketTests(unittest.TestCase):
             operations,
             reopen_metadata_report=lambda *_: report.to_json(),
             reopen_cover_preview=lambda _db, _artifacts, _report, artifact, _variant: by_artifact[artifact],
-            run_cover_packet_reviewer=lambda *args: observed.append(args) or '{"status":"completed"}',
+            run_cover_packet_reviewer=lambda *args: observed.append(args) or '{"status":"completed"}',  # type: ignore[func-returns-value]  # reason: the `or` deliberately records the call and yields the document; append's None is discarded.
         )
         with WorkbenchContext.temporary() as context:
             files = {
@@ -964,7 +965,7 @@ class CoverPacketTests(unittest.TestCase):
             ],
             [(1, 1), (1, 1)],
         )
-        self.assertEqual(len(admitted.images), 2)  # type: ignore[attr-defined]
+        self.assertEqual(len(admitted.images), 2)
 
     def test_duplicate_group_aggregates_best_original_dimensions_canonically(self) -> None:
         duplicate_payload = _preview(31)
@@ -1404,7 +1405,7 @@ class CoverPacketTests(unittest.TestCase):
         )
         admitted = _admit_produced(packet)
         document = json.loads(packet.document)
-        self.assertEqual(len(admitted.images), 1)  # type: ignore[attr-defined]
+        self.assertEqual(len(admitted.images), 1)
         self.assertEqual(document["omissions"], [{
             "preview_sha256": document["candidates"][0]["preview_sha256"],
             "reason": "duplicate_preview",
@@ -1900,7 +1901,7 @@ class CoverIdentityTests(unittest.TestCase):
             "work-3",
             claims,
         )
-        candidates = (candidate,)
+        candidates: tuple[ProviderCandidate, ...] = (candidate,)
         lanes: tuple[ProviderLaneObservation, ...] = ()
         input_references: tuple[str, ...] = ()
         if lane_kind is not None:
@@ -2225,7 +2226,7 @@ class CoverIdentityTests(unittest.TestCase):
         default_source = replace(
             work_source,
             provenance=replace(
-                work_source.provenance, designation=CoverDesignation.DEFAULT
+                cast(CoverProvenance, work_source.provenance), designation=CoverDesignation.DEFAULT
             ),
         )
         self.assertEqual(
@@ -2688,7 +2689,7 @@ class CoverPolicyTests(unittest.TestCase):
             CoverPolicy(avoid_promotional_text=True).reference,
         )
         with self.assertRaises(ValueError):
-            CoverPolicy(avoid_promotional_text=1)  # type: ignore[arg-type]
+            CoverPolicy(avoid_promotional_text=1)
 
     def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence(self) -> None:
         legacy = self._adjudicate(

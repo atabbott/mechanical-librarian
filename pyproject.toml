@@ -165,3 +165,28 @@ disable_error_code = ["arg-type", "no-untyped-call"]
 module = "mechanical_librarian.adapters.library_services.audiobookshelf_field_effect"
 # reason: byte-frozen by the F20 qualification manifest; see the note above.
 disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*", "scripts.*"]
+# reason: `tests/` and `scripts/` are checked, but not held to strict mode's
+# annotation requirements. #652 scopes strict to `src/`, which is what ships
+# with `py.typed`; a test's job is to prove behaviour, and requiring a full
+# signature on every fixture and fake would be a 70k-line annotation project
+# rather than this gate. Bodies are still checked, and 18 of the 21 error
+# classes these trees produce are enforced.
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_untyped_calls = false
+disallow_untyped_decorators = false
+disallow_any_generics = false
+disallow_subclassing_any = false
+warn_return_any = false
+# reason: these three are the classes a test suite provokes by design. Tests
+# pass deliberately narrow fakes and partial doubles where production types are
+# declared (`arg-type`), reach for members that only a double defines
+# (`attr-defined`), and index the JSON-shaped documents the code under test
+# returns (`index`). Enforcing them would mean annotating the fixtures rather
+# than finding defects. They account for 999 of the 1,300 findings in these two
+# trees; the remaining 301 are fixed, and every other class stays enforced so a
+# new kind of finding here still fails the gate.
+disable_error_code = ["arg-type", "attr-defined", "index"]

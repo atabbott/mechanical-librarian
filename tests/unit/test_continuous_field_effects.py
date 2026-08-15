@@ -5,6 +5,7 @@ import json
 import threading
 import unittest
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 from unittest.mock import patch
 
 from mechanical_librarian.application.continuous_field_effects import (
@@ -20,6 +21,16 @@ from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_QUALIFICATION_CANDIDATE_SHA256,
 )
+
+if TYPE_CHECKING:
+    # Imported for the `cast` calls below only. The doubles in this module
+    # stand in for the concrete `GuardedFieldApplication` and for the
+    # `CapabilityObserver` protocol; each `cast` is a runtime no-op that
+    # records which collaborator the double is playing.
+    from mechanical_librarian.application.field_effects import (
+        CapabilityObserver,
+        GuardedFieldApplication,
+    )
 
 
 class _Repository:
@@ -53,7 +64,7 @@ class _Repository:
 class _Application:
     def __init__(self, shared) -> None:
         self.shared = shared
-        self.applied = []
+        self.applied: list[str] = []
 
     def apply(self, plan_id):
         with self.shared["guard"]:
@@ -123,7 +134,7 @@ class _RecoveryApplication:
 class _PagedRepository:
     def __init__(self, decisions) -> None:
         self.decisions = decisions
-        self.suspensions = {}
+        self.suspensions: dict[tuple[str, str, str], tuple[str, int]] = {}
 
     def pending_field_effect_decision_documents(self, limit, after=None):
         values = self.decisions
@@ -133,7 +144,7 @@ class _PagedRepository:
         return tuple(value.to_json() for value in values[:limit])
 
     def pending_field_effect_decision_counts(self):
-        counts = {}
+        counts: dict[str, int] = {}
         for value in self.decisions:
             library = "beta" if value.occurred_at == 101 else "alpha"
             counts[library] = counts.get(library, 0) + 1
@@ -191,9 +202,9 @@ class _PagedRepository:
 class _HoldRepository(_Repository):
     def __init__(self) -> None:
         super().__init__()
-        self.hold = ("primary", "alpha")
+        self.hold: tuple[str, str] | None = ("primary", "alpha")
         self.token = "first-hold"
-        self.pending = None
+        self.pending: tuple[object, ...] | None = None
 
     def field_effect_manual_hold_context(self, review_case_id, destination):
         return self.hold
@@ -239,7 +250,7 @@ class _Authority:
 
 class _Planner:
     def __init__(self) -> None:
-        self.planned = []
+        self.planned: list[str] = []
 
     def plan(self, decision, **values):
         self.planned.append(decision.decision_id)
@@ -316,7 +327,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         repository = Repository([decision])
         service = ContinuousGuardedApplication(
             repository,
-            {("primary", "beta"): _Planner()},
+            cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "beta"): _Planner()}),
             {("primary", "beta"): _AllowedCapability()},
             DriftedAuthority(),
             (("primary", "beta"),),
@@ -394,7 +405,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         repository = Repository([decision])
         service = ContinuousGuardedApplication(
             repository,
-            {("primary", "alpha"): _Planner()},
+            cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
             {("primary", "alpha"): _AllowedCapability()},
             _Authority(),
             (("primary", "alpha"),),
@@ -415,10 +426,10 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
             updated_at=10,
         )
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): _Planner()},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
             {("primary", "alpha"): _AllowedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1,
-            lambda *context: (scans.append(context) or progress),
+            lambda *context: (scans.append(context) or progress),  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - the recorded call is the point and `append` returning `None` is what lets `progress` be the result.
             scan_progress=lambda *_: progress,
         )
         service.return_to_automatic("review_case", "title")
@@ -439,7 +450,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         )
         configured = (("primary", "alpha"),)
         first = ContinuousGuardedApplication(
-            repository, {configured[0]: _Planner()},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {configured[0]: _Planner()}),
             {configured[0]: _AllowedCapability()}, _Authority(), configured,
             lambda: 1, lambda *_: progress, scan_progress=lambda *_: progress,
         )
@@ -447,7 +458,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         progress.state = "completed"
         progress.updated_at = 11
         restarted = ContinuousGuardedApplication(
-            repository, {configured[0]: _Planner()},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {configured[0]: _Planner()}),
             {configured[0]: _AllowedCapability()}, _Authority(), configured,
             lambda: 2, lambda *_: progress, scan_progress=lambda *_: progress,
         )
@@ -477,17 +488,17 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
                 )
             return selected[:limit]
 
-        repository.pending_field_effect_manual_returns = pending
-        repository.clear_field_effect_manual_hold = (
+        repository.pending_field_effect_manual_returns = pending  # type: ignore[method-assign]  # reason: deliberate per-instance stub of the double's method for this case.
+        repository.clear_field_effect_manual_hold = (  # type: ignore[method-assign]  # reason: deliberate per-instance stub of the double's method for this case.
             lambda review_case_id, destination, changed_at, token=None:
-            cleared.append(review_case_id) or ("primary", "alpha")
+            cleared.append(review_case_id) or ("primary", "alpha")  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - the recorded call is the point and `append` returning `None` is what lets the context tuple be the result.
         )
         progress = SimpleNamespace(
             scan_id="review_scan", state="processing", rescan_requested=False,
             updated_at=10,
         )
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): _Planner()},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
             {("primary", "alpha"): _AllowedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 200, lambda *_: progress,
             scan_progress=lambda *_: progress,
@@ -508,7 +519,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         )
         reads = []
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): _Planner()},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
             {("primary", "alpha"): _AllowedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 20,
             lambda *_: SimpleNamespace(),
@@ -527,7 +538,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
             rescan_requested=False, updated_at=10,
         )
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): _Planner()},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
             {("primary", "alpha"): _AllowedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1, lambda *_: progress,
             scan_progress=lambda *_: progress,
@@ -548,7 +559,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
             updated_at=10,
         )
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): _Planner()},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
             {("primary", "alpha"): _AllowedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1, lambda *_: progress,
             scan_progress=lambda *_: progress,
@@ -567,7 +578,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
             raise RuntimeError("private failure")
 
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): _Planner()},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
             {("primary", "alpha"): _AllowedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1, failed_request,
         )
@@ -587,7 +598,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
             return progress
 
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): _Planner()},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
             {("primary", "alpha"): _AllowedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1, lambda *_: progress,
             scan_progress=read_progress,
@@ -606,7 +617,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         decision = self._decisions(1)[0]
         repository = _PagedRepository([decision])
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): _Planner()},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
             {("primary", "alpha"): _DeniedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1, lambda *_: None,
         )
@@ -632,7 +643,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
 
         repository = Repository()
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): _Planner()},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
             {("primary", "alpha"): _MixedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1, lambda *_: None,
         )
@@ -654,7 +665,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
 
         repository = Repository()
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): _Planner()},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
             {("primary", "alpha"): _MixedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1, lambda *_: None,
         )
@@ -684,7 +695,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
 
         repository = Repository([decision])
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): _Planner()},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
             {("primary", "alpha"): _MixedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1, lambda *_: None,
         )
@@ -791,7 +802,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
 
         def service(cleanup):
             return ContinuousGuardedApplication(
-                Repository(cleanup), {("primary", "alpha"): _Planner()},
+                Repository(cleanup), cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
                 {("primary", "alpha"): _AllowedCapability()}, _Authority(),
                 (("primary", "alpha"),), lambda: 1, lambda *_: None,
             )
@@ -827,7 +838,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
                 }
 
         service = ContinuousGuardedApplication(
-            Repository([decision]), {("primary", "alpha"): _Planner()},
+            Repository([decision]), cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
             {("primary", "alpha"): _AllowedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1, lambda *_: None,
         )
@@ -861,7 +872,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
             reason="unexpected_effect_behavior", changed_at=1,
         )
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): _Planner()},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
             {("primary", "alpha"): _AllowedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 2, lambda *_: None,
         )
@@ -887,7 +898,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         ):
             repository = _PagedRepository([decision])
             service = ContinuousGuardedApplication(
-                repository, {("primary", "alpha"): _Planner()},
+                repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
                 {("primary", "alpha"): capability}, _Authority(),
                 (("primary", "alpha"),), lambda: 1, lambda *_: None,
             )
@@ -948,8 +959,8 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         repository = _RecoveryRepository()
         application = _RecoveryApplication(repository)
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): application},
-            {("primary", "alpha"): object()}, object(),
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): application}),
+            cast("dict[tuple[str, str], CapabilityObserver]", {("primary", "alpha"): object()}), object(),
             (("primary", "alpha"),), lambda: 1, lambda *_: None,
         )
         recovered, actions, cleanups = service.start()
@@ -970,7 +981,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
             ("primary", "beta"): _Application(shared),
         }
         service = ContinuousGuardedApplication(
-            repository, applications, {key: object() for key in applications},
+            repository, applications, cast("dict[tuple[str, str], CapabilityObserver]", {key: object() for key in applications}),
             object(), tuple(applications), lambda: 1, lambda *_: None,
         )
         shared["release"].set()
@@ -1000,7 +1011,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         }
         application = _Application(shared)
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): application},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): application}),
             {("primary", "alpha"): _AllowedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1, lambda *_: None,
             graceful_shutdown_seconds=1,
@@ -1021,7 +1032,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         }
         application = _Application(shared)
         service = ContinuousGuardedApplication(
-            repository, {("primary", "alpha"): application},
+            repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): application}),
             {("primary", "alpha"): _AllowedCapability()}, _Authority(),
             (("primary", "alpha"),), lambda: 1, lambda *_: None,
             graceful_shutdown_seconds=1,
