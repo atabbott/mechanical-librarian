@@ -713,12 +713,13 @@ class ReviewApplication:
 
 
 def prepare_cover_consideration(
-    cases: InspectCurrentReviewCase,
+    cases: InspectCurrentReviewCase | None,
     cover_considerations: CoverConsiderationService | None,
     review_case_id: str,
     *,
     serialized: Callable[[Callable[[], _Result]], _Result],
     retry: bool = False,
+    snapshot: Callable[[], tuple[str, str, bool]] | None = None,
 ) -> dict[str, object]:
     """Prepare one exact-current advisory cover consideration.
 
@@ -731,14 +732,17 @@ def prepare_cover_consideration(
     def capture() -> tuple[
         dict[str, object] | None, str, str, str | None, object | None
     ]:
-        detail, report, _ = cases._read(review_case_id)
-        cover = next(
-            field for field in detail["fields"] if field["destination"] == "cover"
-        )
+        if snapshot is None:
+            if cases is None:
+                raise ReviewApplicationError("unavailable")
+            detail, report, _ = cases._read(review_case_id)
+            cover = next(field for field in detail["fields"] if field["destination"] == "cover")
+            report_document, proposal_id, has_human_decision = report.to_json(), str(cover["proposal_id"]), cover["human_decision"] is not None
+        else:
+            report_document, proposal_id, has_human_decision = snapshot()
         current = cover_considerations.current(review_case_id)
-        if retry and cover["human_decision"] is not None and current is not None:
+        if retry and has_human_decision and current is not None:
             raise ReviewApplicationError("already_decided")
-        report_document = report.to_json()
         existing = (
             None
             if retry
@@ -750,7 +754,7 @@ def prepare_cover_consideration(
             else cover_considerations.prepare_observation(review_case_id, report_document)
         )
         return (
-            existing, report_document, str(cover["proposal_id"]),
+            existing, report_document, proposal_id,
             cover_considerations.latest_id(review_case_id), request,
         )
 
@@ -764,19 +768,21 @@ def prepare_cover_consideration(
         evidence = cover_considerations.observe(request)
 
         def persist() -> dict[str, object]:
-            detail, current_report, _ = cases._read(review_case_id)
-            cover = next(
-                field
-                for field in detail["fields"]
-                if field["destination"] == "cover"
-            )
+            if snapshot is None:
+                if cases is None:
+                    raise ReviewApplicationError("unavailable")
+                detail, current_report, _ = cases._read(review_case_id)
+                cover = next(field for field in detail["fields"] if field["destination"] == "cover")
+                current_report_document, current_proposal_id, has_human_decision = current_report.to_json(), str(cover["proposal_id"]), cover["human_decision"] is not None
+            else:
+                current_report_document, current_proposal_id, has_human_decision = snapshot()
             if (
-                current_report.to_json() != report_document
-                or str(cover["proposal_id"]) != proposal_id
+                current_report_document != report_document
+                or current_proposal_id != proposal_id
             ):
                 raise ReviewApplicationError("stale")
             current = cover_considerations.current(review_case_id)
-            if retry and cover["human_decision"] is not None and current is not None:
+            if retry and has_human_decision and current is not None:
                 raise ReviewApplicationError("already_decided")
             if not retry:
                 reopened = cover_considerations.existing(

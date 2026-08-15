@@ -136,14 +136,16 @@ from mechanical_librarian.application.review_application import (
     compose_review_application,
     prepare_cover_consideration,
 )
-from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.application.cover_consideration import CoverConsiderationService
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile, resolve_policy
 from mechanical_librarian.domain.proposal_set import ProposalSet
-from mechanical_librarian.domain.review_case import ReviewAdmissionResult
+from mechanical_librarian.domain.review_case import (
+    ReviewAdmissionResult,
+    ReviewAdmissionStaleError,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -1439,11 +1441,16 @@ def create_review_pipeline(
                 pipeline_repository, artifact_store_path, configuration.review
             )
             prepare_cover_consideration(
-                InspectCurrentReviewCase(pipeline_repository, considerations),
+                None,
                 considerations,
                 action.review_case_id,
                 serialized=lambda call: call(),
+                snapshot=lambda: pipeline_repository.read_staged_cover_preparation(
+                    action
+                ),
             )
+        except ReviewAdmissionStaleError as error:
+            raise ReviewPipelineError("stale") from error
         except ReviewApplicationError as error:
             raise ReviewPipelineError(error.code) from error
         except Exception as error:

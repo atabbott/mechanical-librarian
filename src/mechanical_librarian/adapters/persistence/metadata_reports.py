@@ -5160,6 +5160,34 @@ class SQLiteMetadataReportRepository:
         except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
             raise MetadataReportError("review case is unavailable") from error
 
+    def read_staged_cover_preparation(
+        self, action: PipelineAction
+    ) -> tuple[str, str, bool]:
+        """Read only the claimed staged cover facts before F22 package cutover."""
+        if action.review_case_id is None:
+            raise MetadataReportError("review case is unavailable")
+        try:
+            self._require_staged_shadow_projection_current(action.review_case_id, action)
+            row = self._connection.execute(
+                "SELECT review.document,report.document FROM review_cases review "
+                "JOIN metadata_reports report ON report.report_id=review.report_id "
+                "WHERE review.review_case_id=? AND review.report_id=?",
+                (action.review_case_id, action.report_id),
+            ).fetchone()
+            if row is None or len(row) != 2:
+                raise MetadataReportError("review case is unavailable")
+            case = ReviewCase.from_json(row[0])
+            report = MetadataReport.from_json(row[1])
+            if case.review_case_id != action.review_case_id or case.report_id != report.report_id:
+                raise MetadataReportError("review case is unavailable")
+            cover = next(
+                proposal for proposal in case.proposals
+                if proposal["destination"] == "cover"
+            )
+            return report.to_json(), str(cover["proposal_id"]), False
+        except (sqlite3.Error, ReviewCaseValueError, ReportValueError, KeyError, TypeError) as error:
+            raise MetadataReportError("review case is unavailable") from error
+
     def get_review_case_report(self, review_case_id: str) -> str:
         try:
             return self._source_report_for_review_case(review_case_id).to_json()

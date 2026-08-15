@@ -50,9 +50,11 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     LocalClaim,
+    MetadataReport,
     TargetDestination,
     TargetField,
     TargetFieldState,
+    TargetFacts,
 )
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.domain.automatic_decision import (
@@ -63,7 +65,11 @@ from mechanical_librarian.domain.automatic_decision import (
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
 from mechanical_librarian.application.review_web import BrowseReviewLibrary, InspectCurrentReviewCase
-from mechanical_librarian.application.review_pipeline import PipelineAction
+from mechanical_librarian.application.catalogue import CatalogueEntry
+from mechanical_librarian.application.review_pipeline import (
+    PipelineAction,
+    ReviewPreparationPipeline,
+)
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source,
@@ -934,17 +940,20 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 _cover_source(1, payloads[0], incumbent=True),
                 _cover_source(2, payloads[1], embedded=True),
             )
-            report = _cover_report(sources)
+            base = _cover_report(sources)
+            report = MetadataReport.create(
+                target=TargetFacts("primary", "ebooks", "item-1", base.target.fields),
+                file=base.file,
+                local_claims=base.local_claims,
+                local_reasons=base.local_reasons,
+                providers=base.providers,
+                cover_sources=base.cover_sources,
+            )
             artifacts = CoverArtifactStore(root / "artifacts")
             for index, (source, payload) in enumerate(zip(sources, payloads, strict=True), 1):
                 assert source.artifact is not None
                 artifacts.stage(source.artifact, f"original-{index}".encode(), payload)
-            repository.publish(report, lambda: True)
             proposal = evaluate_report(report)
-            repository.publish_proposal(proposal)
-            case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
-            assert case_id is not None
-            action = SimpleNamespace(review_case_id=case_id)
             recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
             calls: list[object] = []
 
@@ -961,13 +970,49 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                     database_authority=repository.authority,
                     provider_recovery=recovery,
                 )
-                supervisor._pipeline._before_projection(repository, action)
+                def extract(bound, action, claim_next):
+                    bound.publish(report, lambda: True, after_publication=lambda current, published: current.complete_review_extraction_publication(action, published.report_id, 10, 0, None, claim_next, None))
+                    return report.report_id, True
+
+                def project(bound, action):
+                    self.assertEqual((0,), bound._connection.execute("SELECT count(*) FROM current_review_packages").fetchone())
+                    document = bound.current_cover_consideration_document(action.review_case_id or "")
+                    self.assertIsNotNone(document)
+                    assert document is not None
+                    self.assertEqual("completed", json.loads(document)["reviewer_status"])
+                    outcome = bound.persist_shadow_outcome(action.review_case_id or "", 10, staged_action=action)
+                    return "stale" if outcome == "stale" else "complete"
+
+                pipeline = ReviewPreparationPipeline(
+                    repository_factory=lambda: open_repository(database, authority=repository.authority),
+                    libraries=(("primary", "ebooks", "lib-1", "f" * 64),),
+                    discover=lambda *_: (1, report.file.content_digest, (CatalogueEntry("primary", "ebooks", "lib-1", "item-1", 1, "Synthetic cover", (), True, False, "singular-supported", report.file.identity, "/item-1.epub", "epub", "books"),)),
+                    extract=extract,
+                    providers=lambda *_: (),
+                    propose=lambda bound, _: (bound.publish_proposal(proposal), proposal.proposal_set_id)[1],
+                    admit=lambda bound, _: (lambda value: (value["status"], value.get("review_case_id")))(json.loads(bound.admit_review_case(proposal))),
+                    project=project,
+                    before_projection=supervisor._pipeline._before_projection,
+                    after_advance=supervisor._pipeline._after_advance,
+                    clock=lambda: 10,
+                )
+                pipeline.request("primary", "ebooks")
+                advanced = [pipeline.run_next(1) for _ in range(6)]
+                self.assertEqual(
+                    [True, True, True, True, True, False],
+                    advanced,
+                    repository._connection.execute(
+                        "SELECT stage,state,failure_code FROM review_preparation_work"
+                    ).fetchone(),
+                )
+                case_id = repository._connection.execute("SELECT review_case_id FROM current_review_packages").fetchone()[0]
                 first = repository.current_cover_consideration_document(case_id)
                 self.assertIsNotNone(first)
-                self.assertEqual(1, len(calls))
+                self.assertEqual((1,), repository._connection.execute("SELECT count(*) FROM current_review_packages").fetchone())
+                self.assertEqual((1,), repository._connection.execute("SELECT count(*) FROM provider_recovery_outbox").fetchone())
                 self.assertEqual("completed", json.loads(first)["reviewer_status"])
-                self.assertEqual("complete", supervisor._pipeline._project(repository, case_id))
-                supervisor._pipeline._before_projection(repository, action)
+                self.assertEqual(1, len(calls))
+                self.assertFalse(pipeline.run_next(1))
                 self.assertEqual(first, repository.current_cover_consideration_document(case_id))
                 self.assertEqual(1, len(calls))
                 self.assertEqual(0, repository._connection.execute("SELECT count(*) FROM field_effects").fetchone()[0])
