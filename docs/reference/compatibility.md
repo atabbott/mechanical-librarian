@@ -9,10 +9,10 @@ proof.
 The current installed contract is intentionally narrow:
 
 - Python 3.13 or 3.14;
-- `config-v5` only;
+- `config-v6` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v23` plus `proposal-set-v4` under
-  `fixed-conservative-v7`, or the separate `catalogue-v2` schema;
+  `metadata-report-v26` plus `proposal-set-v4` under
+  `fixed-conservative-v8`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v6`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v5`,
@@ -76,10 +76,12 @@ performs no network or provider/model dispatch and persists nothing.
 
 The runtime does not support generic model advice, model-selected writes,
 reviewer queues, bulk or reversal effects, destructive operations, media writes,
-arbitrary target requests, or a generic plugin/provider interface. Audiobookshelf ebook detail responses may
-express `ebookFile.metadata.relPath` relative to the top-level item `relPath`
-when the absolute service path proves the same final library-relative file;
-disagreement, noncanonical paths, and traversal fail closed.
+arbitrary target requests, or a generic plugin/provider interface.
+Audiobookshelf ebook detail responses may express `ebookFile.metadata.relPath`
+relative to a directory item's top-level `relPath`. Flat `isFile` items instead
+repeat their one service-relative file location. Optional item and file absolute
+paths must agree with those coordinates whenever supplied; disagreement,
+noncanonical paths, and traversal fail closed.
 
 Audiobookshelf `publishedDate` target reads remain exact ISO calendar days.
 Shared `YYYY-MM` proposal candidates are qualification-only and report-only;

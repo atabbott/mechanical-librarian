@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import unittest
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -23,6 +24,27 @@ from tests.browser.fidelity_cohort import (
 
 class ReactPlatformArtifactTests(unittest.TestCase):
     def test_exact_built_shell_supports_every_direct_route_and_client_navigation(self) -> None:
+        self._browser_stage = "test-setup"
+        try:
+            self._exercise_exact_built_shell_supports_every_direct_route_and_client_navigation()
+        except Exception:
+            print(
+                json.dumps(
+                    {
+                        "schema": "protected-browser-failure-stage-v1",
+                        "stage": self._browser_stage,
+                    },
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            raise
+
+    def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigation(
+        self,
+    ) -> None:
         root_value = os.environ.get("ML_REACT_ASSET_DIR")
         self.assertIsNotNone(root_value, "ML_REACT_ASSET_DIR is required")
         bundle = load_react_asset_bundle(Path(root_value or ""))
@@ -106,6 +128,38 @@ class ReactPlatformArtifactTests(unittest.TestCase):
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             page = browser.new_page(viewport={"width": 390, "height": 844})
+            capture_directory = os.environ.get("ML_VISUAL_CAPTURE_DIR")
+
+            def capture_visual_proof(name: str) -> None:
+                if capture_directory is None:
+                    return
+                output = Path(capture_directory)
+                output.mkdir(parents=True, exist_ok=True)
+                viewport = page.viewport_size
+                try:
+                    for scheme in ("light", "dark"):
+                        control = "Use dark mode" if scheme == "dark" else "Use light mode"
+                        if page.get_by_role("button", name=control).count():
+                            page.get_by_role("button", name=control).click()
+                        page.emulate_media(reduced_motion="reduce")
+                        for width, height, size in (
+                            (1440, 900, "desktop"),
+                            (390, 844, "compact"),
+                        ):
+                            page.set_viewport_size({"width": width, "height": height})
+                            page.screenshot(
+                                path=str(output / f"{name}-{size}-{scheme}.png"),
+                                full_page=True,
+                            )
+                finally:
+                    page.emulate_media(
+                        color_scheme="light", reduced_motion="no-preference"
+                    )
+                    if page.get_by_role("button", name="Use light mode").count():
+                        page.get_by_role("button", name="Use light mode").click()
+                    if viewport is not None:
+                        page.set_viewport_size(viewport)
+
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.on("console", lambda message: errors.append(message.text) if message.type == "error" else None)
             page.on(
@@ -123,15 +177,65 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 ("/policy?section=publication", "Library policy"),
                 ("/policy?section=curation", "Library policy"),
                 ("/policy?section=unsupported", "Library policy"),
-                ("/activity", "Activity"),
+                ("/activity", "Activity and recovery"),
             )
             for path, heading in routes:
+                self._browser_stage = f"direct-route:{path}"
                 fail_activity_once = path == "/activity"
                 before_entry = documents
                 response = page.goto(f"https://react-platform.invalid{path}")
                 self.assertIsNotNone(response)
                 self.assertEqual(response.status, 200)
                 page.get_by_role("heading", name=heading).wait_for()
+                if path in {
+                    "/library?lens=all",
+                    "/review/case-1?field=title&subview=review",
+                    "/activity",
+                }:
+                    page.get_by_text(
+                        "Library connection needs attention", exact=True
+                    ).first.wait_for()
+                    notice = page.get_by_label("Shared library connection status")
+                    check = notice.get_by_role("button", name="Check connection again")
+                    expect(check).to_be_visible()
+                    self.assertNotIn("primary", notice.inner_text())
+                    self.assertNotIn("http", notice.inner_text())
+                    for width, expected_columns in (
+                        (1440, 3),
+                        (1044, 2),
+                        (800, 1),
+                        (390, 1),
+                    ):
+                        page.set_viewport_size({"width": width, "height": 844})
+                        self.assertEqual(
+                            expected_columns,
+                            len(
+                                notice.evaluate(
+                                    "node => getComputedStyle(node).gridTemplateColumns.split(' ')"
+                                )
+                            ),
+                        )
+                        self.assertLessEqual(
+                            page.evaluate("() => document.documentElement.scrollWidth"),
+                            width,
+                        )
+                        self.assertTrue(
+                            check.evaluate(
+                                "node => { const box = node.getBoundingClientRect(); "
+                                "const top = document.elementFromPoint(box.x + box.width / 2, "
+                                "box.y + box.height / 2); return top === node || node.contains(top); }"
+                            )
+                        )
+                if path == "/attention":
+                    page.get_by_text(
+                        "This field needs your review.", exact=True
+                    ).first.wait_for()
+                    self.assertEqual(
+                        0,
+                        page.get_by_text(
+                            "Conflicting retained evidence", exact=True
+                        ).count(),
+                    )
                 if path.startswith("/policy"):
                     section = path.rsplit("=", 1)[-1]
                     expect(page.locator(f"#policy-{section}")).to_be_focused()
@@ -144,36 +248,309 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 self.assertEqual(page.locator("img, script:not([src])").count(), 0)
                 self.assertIsNone(page.evaluate("() => window.__metadataExecuted"))
                 if path == "/activity":
+                    self._browser_stage = "activity:compact-initial-geometry"
+                    expect(page.locator(".cm-page-heading")).to_be_focused()
+                    recovery = page.get_by_role("region", name="Provider recovery")
+                    expected_recovery = {
+                        "Waiting for a safe retry": "2 affected scopes",
+                        "Checking provider health": "1 affected scope",
+                        "Retrying affected work": "3 affected works",
+                        "Recovered": "1 affected scope",
+                        "Needs a configuration change": "2 affected scopes",
+                        "No further retry scheduled": "1 affected scope",
+                    }
+                    for label, units in expected_recovery.items():
+                        row = recovery.get_by_text(label, exact=True).locator("..")
+                        expect(row).to_contain_text(units)
+                    recovery_text = recovery.inner_text().lower()
+                    for forbidden in (
+                        "provider_", "query=", "authorization:", "bearer ",
+                        "payload", "/private/", "x-api-key",
+                    ):
+                        self.assertNotIn(forbidden, recovery_text)
+                    self.assertEqual(
+                        recovery.get_by_role("button", name="Retry", exact=False).count(),
+                        0,
+                    )
+                    activity_ledger = page.locator(".cm-activity-ledger")
+                    for work, label in (
+                        ("Synthetic completed cover advice", "Cover advice completed"),
+                        ("Synthetic unavailable cover advice", "Cover advice unavailable"),
+                        ("Synthetic failed cover advice", "Cover advice failed safely"),
+                        ("Synthetic stale cover advice", "Stale"),
+                        ("Synthetic superseded cover advice", "Superseded"),
+                    ):
+                        row = activity_ledger.get_by_text(
+                            work, exact=True
+                        ).locator("xpath=ancestor::article")
+                        expect(row).to_have_count(1)
+                        expect(row.get_by_text(label, exact=True)).to_have_count(1)
+                    capture_visual_proof("activity-labels")
+                    self.assertTrue(
+                        page.locator(".cm-activity-ledger").evaluate(
+                            "node => node.previousElementSibling?.classList.contains('cm-activity-status')"
+                        )
+                    )
+                    long_activity_title = page.locator(
+                        ".cm-activity-outcome > strong"
+                    ).filter(has_text=LONG_TITLE)
+                    self.assertEqual(long_activity_title.get_attribute("title"), LONG_TITLE)
+                    self.assertEqual(
+                        long_activity_title.evaluate(
+                            "node => getComputedStyle(node).webkitLineClamp"
+                        ),
+                        "2",
+                    )
+                    title_box = long_activity_title.bounding_box()
+                    row_box = long_activity_title.locator(
+                        "xpath=ancestor::article"
+                    ).bounding_box()
+                    self.assertIsNotNone(title_box)
+                    self.assertIsNotNone(row_box)
+                    compact_geometry = {
+                        "title_height": title_box["height"],
+                        "row_height": row_box["height"],
+                    }
+                    compact_row = long_activity_title.locator(
+                        "xpath=ancestor::article"
+                    )
+                    self.assertEqual(
+                        compact_row.evaluate(
+                            "node => getComputedStyle(node).gridTemplateColumns"
+                        ).split(" ", 1)[0],
+                        "44px",
+                    )
+                    self.assertEqual(
+                        compact_row.locator("b").evaluate(
+                            "node => getComputedStyle(node).gridRow"
+                        ),
+                        "3",
+                    )
+                    self.assertEqual(
+                        compact_row.get_by_role("button", name="Inspect").evaluate(
+                            "node => getComputedStyle(node).gridRow"
+                        ),
+                        "4",
+                    )
+                    self.assertLessEqual(title_box["height"], 36, compact_geometry)
+                    self.assertLessEqual(
+                        row_box["height"],
+                        182,
+                        compact_geometry,
+                    )
+                    page.set_viewport_size({"width": 1440, "height": 900})
+                    inspect = page.get_by_role("button", name="Inspect").first
+                    self._browser_stage = "activity:desktop-media-state"
+                    page.wait_for_function(
+                        """() => {
+                            const inspect = document.querySelector('.cm-activity-events article > button');
+                            const title = document.querySelector('.cm-activity-outcome > strong');
+                            return window.matchMedia('(min-width: 761px)').matches
+                                && inspect instanceof HTMLElement
+                                && title instanceof HTMLElement
+                                && getComputedStyle(inspect).whiteSpace === 'nowrap'
+                                && getComputedStyle(title).whiteSpace === 'nowrap';
+                        }"""
+                    )
+                    self._browser_stage = "activity:desktop-geometry"
+                    inspect_box = inspect.bounding_box()
+                    row_box = inspect.locator("xpath=ancestor::article").bounding_box()
+                    self.assertIsNotNone(inspect_box)
+                    self.assertIsNotNone(row_box)
+                    self.assertEqual(inspect.evaluate("node => getComputedStyle(node).whiteSpace"), "nowrap")
+                    self.assertLessEqual(row_box["height"], 72)
+                    self.assertEqual(
+                        inspect.evaluate("node => getComputedStyle(node).minHeight"),
+                        "40px",
+                    )
+                    self.assertLessEqual(inspect_box["height"], 40.5)
+                    page.set_viewport_size({"width": 390, "height": 844})
+                    self._browser_stage = "activity:compact-media-state"
+                    page.wait_for_function(
+                        """() => {
+                            const title = document.querySelector('.cm-activity-outcome > strong');
+                            return window.matchMedia('(max-width: 760px)').matches
+                                && title instanceof HTMLElement
+                                && getComputedStyle(title).webkitLineClamp === '2';
+                        }"""
+                    )
+                    self._browser_stage = "activity:authority-and-recovery"
+                    theme_backgrounds: dict[str, str] = {}
+                    for scheme in ("light", "dark"):
+                        page.emulate_media(reduced_motion="reduce")
+                        wanted_control = "Use dark mode" if scheme == "dark" else "Use light mode"
+                        if page.get_by_role("button", name=wanted_control).count():
+                            page.get_by_role("button", name=wanted_control).click()
+                        for width in (1440, 1024, 390):
+                            page.set_viewport_size({"width": width, "height": 900})
+                            expect(recovery).to_be_visible()
+                            self.assertLessEqual(
+                                page.evaluate("() => document.documentElement.scrollWidth"),
+                                width,
+                            )
+                            for control in page.locator(
+                                ".cm-activity-filters button, .cm-activity-pagination button"
+                            ).all():
+                                self.assertGreaterEqual(control.bounding_box()["height"], 40)
+                            for control in page.locator(
+                                ".masthead nav a, .shell-actions button"
+                            ).all():
+                                self.assertGreaterEqual(control.bounding_box()["height"], 44)
+                        theme_backgrounds[scheme] = page.locator("body").evaluate(
+                            "node => getComputedStyle(node).backgroundColor"
+                        )
+                    self.assertNotEqual(
+                        theme_backgrounds["light"], theme_backgrounds["dark"]
+                    )
+                    self.assertTrue(
+                        page.evaluate(
+                            "() => matchMedia('(prefers-reduced-motion: reduce)').matches"
+                        )
+                    )
+                    self.assertEqual(
+                        recovery.evaluate("node => getComputedStyle(node).animationName"),
+                        "none",
+                    )
+                    page.get_by_role("button", name="Use light mode").click()
+                    page.emulate_media(reduced_motion="no-preference")
+                    page.set_viewport_size({"width": 390, "height": 844})
+                    page.get_by_text("Authority and recovery", exact=True).click()
                     page.get_by_role(
-                        "button", name="Open write-permission details"
+                        "button", name="Review write permissions"
                     ).click()
-                    page.get_by_label("Household ebooks destination consent").get_by_text(
-                        "Subtitle: Excluded · A field is unavailable"
+                    page.get_by_role("heading", name="Enable guarded writes").wait_for()
+                    page.locator(".activity-consent-library").filter(
+                        has_text="Household ebooks"
+                    ).get_by_text("5 prepared · Some destinations are ready").wait_for()
+                    page.get_by_role("heading", name="Activity ledger").wait_for()
+                    page.get_by_label("Search activity").wait_for()
+                    for width, height in ((1440, 900), (390, 844)):
+                        self._browser_stage = f"activity:escape-dropdown-focus:{width}"
+                        page.set_viewport_size({"width": width, "height": height})
+                        page_number = page.get_by_label("Activity page number")
+                        page_url = page.url
+                        page_number.focus()
+                        page_number.fill("2")
+                        page.keyboard.press("Escape")
+                        self.assertEqual("1", page_number.input_value())
+                        self.assertEqual(page_url, page.url)
+                        expect(page_number).to_be_focused()
+                        date_range = page.get_by_role(
+                            "combobox", name="Activity date range"
+                        )
+                        date_range.click()
+                        page.get_by_role("option", name="Last 90 days").click()
+                        expect(date_range).to_be_focused()
+                        page_number = page.get_by_label("Activity page number")
+                        page_url = page.url
+                        page_number.focus()
+                        page_number.fill("2")
+                        page.keyboard.press("Escape")
+                        self.assertEqual("1", page_number.input_value())
+                        self.assertEqual(page_url, page.url)
+                        expect(page_number).to_be_focused()
+                        page_size = page.get_by_role(
+                            "combobox", name="Rows per activity page"
+                        )
+                        page_size.click()
+                        page.get_by_role("option", name="50 per page").click()
+                        expect(page_size).to_be_focused()
+                    page.get_by_role("button", name="Reviews").click()
+                    page.get_by_role("button", name="All").click()
+                    inspect_control = page.get_by_role("button", name="Inspect").first
+                    inspect_control.wait_for()
+                    expect(inspect_control).to_be_visible()
+                    inspect_control.focus()
+                    page.keyboard.press("Enter")
+                    page.get_by_text("Durable evidence").wait_for()
+                    self.assertEqual(
+                        page.locator(".cm-activity-evidence").evaluate(
+                            "node => getComputedStyle(node).gridRow"
+                        ),
+                        "5",
+                    )
+                    page.get_by_text("Recorded origin").wait_for()
+                    page.locator(".cm-activity-evidence").get_by_text(
+                        "Outcome", exact=True
                     ).wait_for()
-                    page.get_by_text(
-                        "Qualified automatic decision", exact=False
-                    ).first.wait_for()
-                    page.get_by_text("Human decision", exact=False).first.wait_for()
-                    page.get_by_text(
-                        "The result is being checked", exact=False
-                    ).first.wait_for()
-                    page.get_by_text("Affected destinations: Authors, Title").wait_for()
-                    page.get_by_text("Recorded decision", exact=False).wait_for()
                     self.assertNotIn(
                         "future_provider_origin",
-                        page.locator(".activity-ledger").inner_text(),
+                        page.locator(".cm-activity-ledger").inner_text(),
                     )
-                    page.get_by_role(
-                        "checkbox", name="Spoken stories · 2 prepared"
-                    ).check()
+                    page.locator(".activity-consent-library").filter(
+                        has_text="Spoken stories"
+                    ).get_by_role("checkbox").check()
+                    self._browser_stage = "activity:consent-refresh"
                     page.get_by_role("button", name="Enable selected libraries").click()
                     page.get_by_text(
                         "Activity state refreshed from the authoritative server."
                     ).wait_for()
+                self._browser_stage = f"direct-route:{path}:document-count"
                 self.assertEqual(
                     documents,
                     before_entry + (2 if path == "/activity" else 1),
                 )
+
+            for case_id, status, retry in (
+                ("case-1", "Advisory visual review complete", False),
+                ("case-2", "Manual comparison available", True),
+                ("case-3", "Manual comparison available", True),
+            ):
+                self._browser_stage = f"cover-detail:{case_id}"
+                page.goto(
+                    f"https://react-platform.invalid/review/{case_id}"
+                    "?field=cover&subview=review"
+                )
+                page.get_by_text(status, exact=True).wait_for()
+                expect(page.get_by_role("button", name="Keep current cover")).to_have_attribute(
+                    "aria-pressed", "false"
+                )
+                expect(page.get_by_role("button", name="Choose this cover")).to_have_attribute(
+                    "aria-pressed", "false"
+                )
+                expect(page.get_by_role("button", name="Take no action")).to_have_attribute(
+                    "aria-pressed", "false"
+                )
+                self.assertEqual(
+                    1 if retry else 0,
+                    page.get_by_role("button", name="Retry advisory review").count(),
+                )
+                if case_id in {"case-1", "case-2"}:
+                    capture_visual_proof(
+                        "detail-completed" if case_id == "case-1" else "detail-failed"
+                    )
+
+            for case_id, label, retry in (
+                ("case-1", "Advisory visual review complete", False),
+                ("case-2", "Advisory review unavailable", True),
+                ("case-3", "Advisory review unavailable", True),
+            ):
+                self._browser_stage = f"cover-library:{case_id}"
+                page.goto(
+                    "https://react-platform.invalid/library?lens=all"
+                    f"&preview={case_id}&field=cover"
+                )
+                comparison = page.get_by_role("region", name="Choose a cover")
+                comparison.get_by_text(label, exact=True).wait_for()
+                self.assertIn(
+                    "advice only" if not retry else "comparison remains manual",
+                    comparison.inner_text(),
+                )
+                for choice in comparison.get_by_role("button").all():
+                    if choice.inner_text() == "Retry advisory review":
+                        continue
+                    expect(choice).to_be_enabled()
+                    expect(choice).to_have_attribute("aria-pressed", "false")
+                self.assertEqual(
+                    1 if retry else 0,
+                    comparison.get_by_role(
+                        "button", name="Retry advisory review"
+                    ).count(),
+                )
+                if case_id in {"case-1", "case-2"}:
+                    capture_visual_proof(
+                        "library-completed" if case_id == "case-1" else "library-failed"
+                    )
 
             missing_case_error_start = len(errors)
             for _ in range(2):
@@ -214,10 +591,14 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 0,
             )
             expect(page.locator(".workspace-detail .direct-choice-grid .value-choice")).to_have_count(4)
+            expect(page.locator(".workspace-detail .direct-choice button")).to_have_count(5)
             expect(page.locator(".library-works")).to_be_visible()
             expect(page.locator(".workspace-detail")).to_be_visible()
-            expect(page.locator(".field-filmstrip button")).to_have_count(2)
+            # #598 keeps automatic, unsupported, and recorded siblings in the
+            # primary strip; only server-classified attention advances normally.
+            expect(page.locator(".field-filmstrip button")).to_have_count(5)
             self.assertIn("Title", page.locator(".field-filmstrip").inner_text())
+            self.assertIn("Cover", page.locator(".field-filmstrip").inner_text())
             self.assertFalse(page.locator(".automatic-resolution-details").evaluate("node => node.open"))
             self.assertFalse(page.locator(".source-ledger").evaluate("node => node.open"))
             self.assertLess(
@@ -248,6 +629,15 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.locator(".attention-toggle").click()
             expect(page).to_have_url("https://react-platform.invalid/library?lens=all&preview=case-1&attention=open")
             expect(page.locator(".attention-rail")).to_be_visible()
+            expect(
+                page.locator(".attention-rail .attention-queue-copy b").first
+            ).to_have_text("Title · This field needs your review.")
+            self.assertEqual(
+                0,
+                page.locator(".attention-rail").get_by_text(
+                    "Conflicting retained evidence", exact=True
+                ).count(),
+            )
             expect(page.locator(".library-works")).to_be_visible()
             expect(page.locator(".workspace-detail")).to_be_visible()
             self.assertEqual(
@@ -268,6 +658,11 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             no_case_row = page.locator(".library-work-row").filter(has_text="Catalogue-only work")
             self.assertEqual(no_case_row.get_by_role("link").count(), 0)
             self.assertEqual(no_case_row.locator(".work-select").count(), 0)
+            no_case_row.get_by_text("Preparation needs owner recovery").click()
+            self.assertIn("Authentication at Provider", no_case_row.inner_text())
+            self.assertIn("hardcover-main · Work · Authentication", no_case_row.inner_text())
+            self.assertIn("1 bounded provider request", no_case_row.inner_text())
+            self.assertIn("Retry review preparation", no_case_row.inner_text())
             page.get_by_role("link", name="Needs attention", exact=True).click()
             expect(page.locator(".library-work-row")).to_have_count(5)
             page.get_by_role("link", name="No attention needed", exact=True).click()
@@ -323,7 +718,10 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 long_title.evaluate("node => getComputedStyle(node.parentElement).overflow"),
                 "visible",
             )
-            page.evaluate("() => document.activeElement.blur()")
+            page.goto("https://react-platform.invalid/library?lens=all")
+            page.get_by_text("Catalogue-only work", exact=True).wait_for()
+            page.evaluate("() => { document.body.tabIndex = -1; document.body.focus(); }")
+            self.assertTrue(page.evaluate("() => document.activeElement === document.body"))
             for _ in range(20):
                 page.keyboard.press("Tab")
                 if page.evaluate("() => document.activeElement.matches('.lenses a')"):
@@ -448,8 +846,9 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.locator(".attention-queue-item").first.click()
             expect(page.locator(".workspace-detail")).to_be_visible()
             expect(page.locator(".library-works")).to_be_hidden()
-            expect(page.locator(".field-filmstrip button")).to_have_count(2)
+            expect(page.locator(".field-filmstrip button")).to_have_count(5)
             self.assertIn("Title", page.locator(".field-filmstrip").inner_text())
+            self.assertIn("Cover", page.locator(".field-filmstrip").inner_text())
             self.assertFalse(page.locator(".automatic-resolution-details").evaluate("node => node.open"))
             self.assertFalse(page.locator(".source-ledger").evaluate("node => node.open"))
             self.assertLess(
@@ -520,10 +919,23 @@ class ReactPlatformArtifactTests(unittest.TestCase):
                 page.locator("#field-authors .direct-choice-grid .value-choice").count(),
                 3,
             )
+            author_notices = page.locator("#field-authors .field-notices")
+            expect(author_notices).to_be_visible()
+            expect(author_notices).to_contain_text("Corroborated creator sources")
+            expect(author_notices).to_contain_text("Hardcover · Open Library")
+            self.assertNotIn("provider_", author_notices.inner_text())
             page.get_by_role("button", name="subtitle", exact=True).click()
-            page.get_by_text("No eligible proposed values.", exact=True).wait_for()
+            subtitle = page.locator("#field-subtitle")
+            subtitle.get_by_text(
+                "This field is unavailable for the current service capability.", exact=True
+            ).wait_for()
+            self.assertIn("Unavailable", subtitle.inner_text())
+            self.assertEqual(subtitle.locator(".direct-choice-grid").count(), 0)
+            self.assertEqual(subtitle.get_by_text("Not set", exact=True).count(), 0)
+            self.assertEqual(page.get_by_role("button", name="subtitle", exact=True).count(), 1)
             page.get_by_role("button", name="Evidence", exact=True).click()
             page.get_by_role("heading", name="Evidence and source ledger").wait_for()
+            page.locator(".evidence-item").first.wait_for()
             self.assertEqual(page.locator(".evidence-item").count(), 3)
             page.get_by_role("button", name="Load more evidence").click()
             expect(page.locator(".evidence-item")).to_have_count(6)
@@ -548,12 +960,54 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             for destination in ("title", "authors", "subtitle", "series"):
                 page.get_by_role("button", name=destination, exact=True).click()
                 page.locator(f"#field-{destination}").get_by_text(
-                    "No eligible proposed values.", exact=True
+                    "There is no owner decision available for this field.", exact=True
                 ).wait_for()
                 self.assertEqual(
                     page.locator(f"#field-{destination} .direct-choice-grid").count(),
                     0,
                 )
+                self.assertIn(
+                    "Current value", page.locator(f"#field-{destination}").inner_text()
+                )
+
+            page.goto(
+                "https://react-platform.invalid/review/case-5?field=authors&subview=review"
+            )
+            page.get_by_role("heading", name="Current review case").wait_for()
+            automatic_rail = page.locator(".detail-layout > .field-navigation")
+            expect(automatic_rail.get_by_role("button")).to_have_count(4)
+            page.get_by_role("button", name="title", exact=True).click()
+            automatic_title = page.locator("#field-title")
+            expect(automatic_title.locator(".direct-choice-grid .value-choice")).to_have_count(4)
+            expect(automatic_title.locator(".current-value")).to_have_attribute("aria-pressed", "true")
+            self.assertIn(
+                "is-selected", automatic_title.locator(".current-value").get_attribute("class")
+            )
+            page.get_by_role("button", name="authors", exact=True).click()
+            automatic_authors = page.locator("#field-authors")
+            expect(automatic_authors.locator(".direct-choice-grid .value-choice")).to_have_count(3)
+            expect(automatic_authors.locator(".current-value")).to_have_attribute("aria-pressed", "true")
+            automatic_authors.locator(".proposed-value").first.focus()
+            page.keyboard.press("Space")
+            page.get_by_text(
+                "The response was lost. The current case was reloaded before any retry.",
+                exact=True,
+            ).wait_for()
+            self.assertEqual(ambiguous_decisions, 2)
+
+            page.goto(
+                "https://react-platform.invalid/review/case-equal?field=title&subview=review"
+            )
+            page.get_by_role("heading", name="Current review case").wait_for()
+            equal_title = page.locator("#field-title")
+            self.assertIn(
+                "preservation-only",
+                equal_title.locator(".direct-choice-grid").get_attribute("class"),
+            )
+            expect(equal_title.locator(".direct-choice-grid .value-choice")).to_have_count(1)
+            expect(equal_title.locator(".direct-choice button")).to_have_count(2)
+            self.assertEqual(equal_title.locator(".proposed-value").count(), 0)
+            self.assertIn("Current <script> title", equal_title.locator(".current-value").inner_text())
             page.goto(
                 "https://react-platform.invalid/review/case-4"
                 "?field=title&subview=review"
@@ -647,6 +1101,32 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertEqual(documents, before_navigation)
             page.get_by_role("link", name="Policy", exact=True).click()
             page.get_by_role("heading", name="Library policy").wait_for()
+            page.get_by_role("navigation", name="Policy chapters").get_by_role(
+                "button", name="Curation"
+            ).click()
+            expect(page.locator("#policy-curation")).to_be_focused()
+            cover_policy = page.get_by_role("region", name="Cover")
+            cover_policy.get_by_text(
+                "Cover review uses the fixed supported source order.", exact=True
+            ).wait_for()
+            expect(
+                cover_policy.get_by_role("button", name="Automatic")
+            ).to_be_disabled()
+            expect(
+                cover_policy.get_by_role("button", name="Ask me")
+            ).to_have_attribute("aria-pressed", "true")
+            cover_representation = cover_policy.get_by_role(
+                "combobox", name="Cover representation"
+            )
+            expect(cover_representation).to_be_disabled()
+            expect(cover_representation).to_have_text("Fixed supported source order")
+            self.assertIn("Manual review only", cover_policy.inner_text())
+            self.assertNotIn("Automatic writes", cover_policy.inner_text())
+            capture_visual_proof("policy-cover")
+            page.get_by_role("navigation", name="Policy chapters").get_by_role(
+                "button", name="Identity"
+            ).click()
+            expect(page.locator("#policy-identity")).to_be_focused()
             page.locator(".cm-policy-finish").get_by_text(
                 "Draft matches the active policy", exact=True
             ).wait_for()
@@ -664,11 +1144,28 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.get_by_text("1 draft change", exact=True).wait_for()
             page.get_by_role("button", name="Validate and preview").click()
             page.get_by_text("Impact preview is current.", exact=False).wait_for()
+            page.get_by_text(
+                "· fills the empty field with A bounded subtitle", exact=True
+            ).wait_for()
             page.get_by_text("Safe visible description <3", exact=False).wait_for()
             page.get_by_text('[{"name":"Old order","sequence":"1"}]', exact=False).wait_for()
             page.get_by_text('["Fantasy"] → ["Fantasy","Epic"]', exact=False).wait_for()
+            page.get_by_text(
+                "· remains empty — this policy leaves the field unchanged", exact=True
+            ).wait_for()
             page.get_by_text("Plus 2 more exact field outcomes", exact=False).wait_for()
             self.assertEqual(page.locator(".cm-policy-preview-list > div").count(), 6)
+            impact_labels = page.locator(".cm-policy-impact > b").all_text_contents()
+            self.assertEqual(
+                impact_labels,
+                ["Change", "Change", "Change", "No change", "Change", "Change"],
+            )
+            for detail in page.locator(".cm-policy-impact > small").all_text_contents():
+                if "→" in detail:
+                    self.assertNotIn("remains", detail)
+                    self.assertNotIn("empty", detail)
+            for label in impact_labels:
+                self.assertNotIn(label, {"projected", "abstain", "missing", "policy_off"})
             page.get_by_role("button", name="Sign out").click()
             page.get_by_text("Writes are blocked", exact=False).wait_for()
             fail_policy_persistently = True
@@ -703,28 +1200,24 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             )
             self.assertEqual(
                 expected_ambiguous_errors,
-                ["Failed to load resource: net::ERR_FAILED"],
+                ["Failed to load resource: net::ERR_FAILED"] * ambiguous_decisions,
             )
             decision_request_failures = [
                 failure
                 for failure in failed_requests
                 if failure[2] == "net::ERR_FAILED"
             ]
-            self.assertEqual(len(decision_request_failures), 1, failed_requests)
-            failed_method, failed_url, failed_reason = decision_request_failures[0]
-            self.assertEqual(
-                (
-                    failed_method,
+            self.assertEqual(len(decision_request_failures), ambiguous_decisions, failed_requests)
+            for failed_method, failed_url, failed_reason in decision_request_failures:
+                self.assertEqual(failed_method, "POST")
+                self.assertTrue(
+                    failed_url.startswith(
+                        "https://react-platform.invalid/api/v1/review-cases/"
+                    )
+                    and failed_url.endswith("/decisions"),
                     failed_url,
-                    failed_reason,
-                ),
-                (
-                    "POST",
-                    "https://react-platform.invalid/api/v1/review-cases/"
-                    "case-1/decisions",
-                    "net::ERR_FAILED",
-                ),
-            )
+                )
+                self.assertEqual(failed_reason, "net::ERR_FAILED")
             self.assertEqual(
                 [
                     failure

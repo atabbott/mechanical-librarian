@@ -112,12 +112,34 @@
             "type": "string"
           },
           "destination": {
+            "maxLength": 512,
             "title": "Destination",
             "type": "string"
+          },
+          "event_id": {
+            "default": "recorded-event",
+            "maxLength": 128,
+            "title": "Event Id",
+            "type": "string"
+          },
+          "event_type": {
+            "default": "unknown",
+            "maxLength": 32,
+            "title": "Event Type",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityEvidence"
+            },
+            "maxItems": 8,
+            "title": "Evidence",
+            "type": "array"
           },
           "failure": {
             "anyOf": [
               {
+                "maxLength": 512,
                 "type": "string"
               },
               {
@@ -127,6 +149,7 @@
             "title": "Failure"
           },
           "library": {
+            "maxLength": 512,
             "title": "Library",
             "type": "string"
           },
@@ -142,14 +165,17 @@
             "title": "Occurred At"
           },
           "origin": {
+            "maxLength": 512,
             "title": "Origin",
             "type": "string"
           },
           "state": {
+            "maxLength": 512,
             "title": "State",
             "type": "string"
           },
           "work_id": {
+            "maxLength": 512,
             "title": "Work Id",
             "type": "string"
           },
@@ -168,6 +194,27 @@
           "work_id"
         ],
         "title": "_ActivityEvent",
+        "type": "object"
+      },
+      "_ActivityEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "maxLength": 64,
+            "title": "Label",
+            "type": "string"
+          },
+          "value": {
+            "maxLength": 512,
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label",
+          "value"
+        ],
+        "title": "_ActivityEvidence",
         "type": "object"
       },
       "_ActivityExample": {
@@ -200,6 +247,80 @@
           "work_id"
         ],
         "title": "_ActivityExample",
+        "type": "object"
+      },
+      "_ActivityLedger": {
+        "additionalProperties": false,
+        "properties": {
+          "event_type": {
+            "enum": [
+              "all",
+              "review",
+              "policy",
+              "metadata",
+              "safety",
+              "unknown"
+            ],
+            "title": "Event Type",
+            "type": "string"
+          },
+          "page": {
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_count": {
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Page Count",
+            "type": "integer"
+          },
+          "page_size": {
+            "enum": [
+              25,
+              50,
+              100
+            ],
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "range_days": {
+            "enum": [
+              7,
+              30,
+              90
+            ],
+            "title": "Range Days",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "event_type",
+          "page",
+          "page_count",
+          "page_size",
+          "range_days",
+          "total"
+        ],
+        "title": "_ActivityLedger",
         "type": "object"
       },
       "_ActivityLibrary": {
@@ -290,6 +411,16 @@
             "title": "Counts",
             "type": "object"
           },
+          "current_waiting": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ActivityWaiting"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "enabled_libraries": {
             "items": {
               "$ref": "#/components/schemas/_ActivityLibrary"
@@ -325,6 +456,9 @@
             ],
             "title": "Last Failure"
           },
+          "ledger": {
+            "$ref": "#/components/schemas/_ActivityLedger"
+          },
           "paused": {
             "title": "Paused",
             "type": "boolean"
@@ -332,8 +466,16 @@
           "prepared": {
             "$ref": "#/components/schemas/_ActivityPrepared"
           },
+          "provider_recovery": {
+            "items": {
+              "$ref": "#/components/schemas/_ProviderRecoveryActivity"
+            },
+            "maxItems": 100,
+            "title": "Provider Recovery",
+            "type": "array"
+          },
           "schema_version": {
-            "const": "continuous-field-activity-v1",
+            "const": "continuous-field-activity-v2",
             "title": "Schema Version",
             "type": "string"
           },
@@ -355,6 +497,8 @@
           "events",
           "example",
           "last_failure",
+          "ledger",
+          "current_waiting",
           "paused",
           "prepared",
           "schema_version",
@@ -402,6 +546,45 @@
           "updated_at"
         ],
         "title": "_ActivitySuspension",
+        "type": "object"
+      },
+      "_ActivityWaiting": {
+        "additionalProperties": false,
+        "properties": {
+          "destination": {
+            "maxLength": 512,
+            "title": "Destination",
+            "type": "string"
+          },
+          "library": {
+            "maxLength": 512,
+            "title": "Library",
+            "type": "string"
+          },
+          "state": {
+            "maxLength": 512,
+            "title": "State",
+            "type": "string"
+          },
+          "work_id": {
+            "maxLength": 512,
+            "title": "Work Id",
+            "type": "string"
+          },
+          "work_label": {
+            "maxLength": 512,
+            "title": "Work Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "destination",
+          "library",
+          "state",
+          "work_id",
+          "work_label"
+        ],
+        "title": "_ActivityWaiting",
         "type": "object"
       },
       "_AsinQualification": {
@@ -456,6 +639,10 @@
             "title": "Authors",
             "type": "array"
           },
+          "classification_reason": {
+            "title": "Classification Reason",
+            "type": "string"
+          },
           "destination": {
             "title": "Destination",
             "type": "string"
@@ -505,6 +692,7 @@
         },
         "required": [
           "authors",
+          "classification_reason",
           "destination",
           "detail_url",
           "item",
@@ -1783,7 +1971,8 @@
           },
           "kind": {
             "enum": [
-              "considered",
+              "automatic_prepared",
+              "owner_retry_prepared",
               "superseded",
               "selected",
               "kept_incumbent",
@@ -2167,6 +2356,23 @@
             "title": "Media Kind",
             "type": "string"
           },
+          "preparation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_PreparationFailure"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preparation_outcomes": {
+            "items": {
+              "$ref": "#/components/schemas/_ProviderOutcome"
+            },
+            "title": "Preparation Outcomes",
+            "type": "array"
+          },
           "review_case_id": {
             "anyOf": [
               {
@@ -2198,7 +2404,8 @@
           "media_kind",
           "review_case_id",
           "title",
-          "work_id"
+          "work_id",
+          "preparation_outcomes"
         ],
         "title": "_LibraryWork",
         "type": "object"
@@ -2653,6 +2860,97 @@
         "title": "_PolicyTransitionResponse",
         "type": "object"
       },
+      "_PreparationConnection": {
+        "additionalProperties": false,
+        "properties": {
+          "affected": {
+            "minimum": 0.0,
+            "title": "Affected",
+            "type": "integer"
+          },
+          "code": {
+            "enum": [
+              "tls",
+              "authentication",
+              "authorization",
+              "unavailable"
+            ],
+            "title": "Code",
+            "type": "string"
+          },
+          "connection": {
+            "title": "Connection",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "paused",
+              "checking",
+              "recovered"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "updated_at": {
+            "minimum": 0.0,
+            "title": "Updated At",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "connection",
+          "code",
+          "state",
+          "affected",
+          "updated_at"
+        ],
+        "title": "_PreparationConnection",
+        "type": "object"
+      },
+      "_PreparationFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "recovery": {
+            "title": "Recovery",
+            "type": "string"
+          },
+          "recovery_attempt": {
+            "title": "Recovery Attempt",
+            "type": "integer"
+          },
+          "stage": {
+            "title": "Stage",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "attempt",
+          "provider",
+          "reason",
+          "recovery",
+          "recovery_attempt",
+          "stage",
+          "status"
+        ],
+        "title": "_PreparationFailure",
+        "type": "object"
+      },
       "_PreparationProgress": {
         "additionalProperties": false,
         "properties": {
@@ -2732,6 +3030,13 @@
             "title": "Active",
             "type": "boolean"
           },
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/_PreparationConnection"
+            },
+            "title": "Connections",
+            "type": "array"
+          },
           "libraries": {
             "items": {
               "$ref": "#/components/schemas/_PreparationProgress"
@@ -2795,6 +3100,82 @@
         "title": "_ProposedValue",
         "type": "object"
       },
+      "_ProviderOutcome": {
+        "additionalProperties": false,
+        "properties": {
+          "lane_kind": {
+            "title": "Lane Kind",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "provider_requests": {
+            "title": "Provider Requests",
+            "type": "integer"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider_requests",
+          "lane_kind",
+          "provider",
+          "reason",
+          "status"
+        ],
+        "title": "_ProviderOutcome",
+        "type": "object"
+      },
+      "_ProviderRecoveryActivity": {
+        "additionalProperties": false,
+        "properties": {
+          "affected_count": {
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Affected Count",
+            "type": "integer"
+          },
+          "next_eligible_at": {
+            "anyOf": [
+              {
+                "maximum": 8640000000000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Eligible At"
+          },
+          "state": {
+            "enum": [
+              "waiting",
+              "checking",
+              "dormant",
+              "recovered",
+              "fanout",
+              "exhausted"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "affected_count",
+          "state"
+        ],
+        "title": "_ProviderRecoveryActivity",
+        "type": "object"
+      },
       "_ReviewCounts": {
         "additionalProperties": false,
         "properties": {
@@ -2832,6 +3213,28 @@
               }
             ]
           },
+          "classification": {
+            "enum": [
+              "needs_attention",
+              "manual_fallback",
+              "automatic_recorded",
+              "human_recorded",
+              "unsupported"
+            ],
+            "title": "Classification",
+            "type": "string"
+          },
+          "classification_reason": {
+            "title": "Classification Reason",
+            "type": "string"
+          },
+          "corroboration_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Corroboration Sources",
+            "type": "array"
+          },
           "cover_consideration": {
             "anyOf": [
               {
@@ -2852,6 +3255,10 @@
           "deterministic_disposition": {
             "title": "Deterministic Disposition",
             "type": "string"
+          },
+          "editable": {
+            "title": "Editable",
+            "type": "boolean"
           },
           "effect_capability": {
             "title": "Effect Capability",
@@ -2875,6 +3282,14 @@
             "title": "Manual Required",
             "type": "boolean"
           },
+          "navigation_role": {
+            "enum": [
+              "attention",
+              "inspect"
+            ],
+            "title": "Navigation Role",
+            "type": "string"
+          },
           "needs_attention": {
             "title": "Needs Attention",
             "type": "boolean"
@@ -2885,6 +3300,10 @@
             },
             "title": "Notices",
             "type": "array"
+          },
+          "preservation_only": {
+            "title": "Preservation Only",
+            "type": "boolean"
           },
           "proposal_id": {
             "title": "Proposal Id",
@@ -2917,18 +3336,24 @@
           }
         },
         "required": [
+          "classification",
+          "classification_reason",
           "current",
           "deterministic_disposition",
           "destination",
+          "editable",
           "effect_capability",
           "human_decision",
           "automatic_decision",
           "manual_hold",
           "manual_required",
           "needs_attention",
+          "navigation_role",
           "notices",
           "proposed_values",
           "provenance",
+          "preservation_only",
+          "corroboration_sources",
           "proposal_id",
           "target_fingerprint",
           "uncertainty"
@@ -3778,6 +4203,84 @@
     "/api/v1/activity": {
       "get": {
         "operationId": "activity_status_api_v1_activity_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "event_type",
+            "required": false,
+            "schema": {
+              "default": "all",
+              "enum": [
+                "all",
+                "review",
+                "policy",
+                "metadata",
+                "safety",
+                "unknown"
+              ],
+              "title": "Event Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "range_days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "enum": [
+                7,
+                30,
+                90
+              ],
+              "title": "Range Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 1000000,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "enum": [
+                25,
+                50,
+                100
+              ],
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -3798,6 +4301,16 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
           },
           "503": {
             "content": {
@@ -7456,6 +7969,119 @@
           }
         ],
         "summary": "Resume Review Preparation"
+      }
+    },
+    "/api/v1/review-preparation/{connection}/check-connection": {
+      "post": {
+        "operationId": "check_review_preparation_connection_api_v1_review_preparation__connection__check_connection_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "connection",
+            "required": true,
+            "schema": {
+              "title": "Connection",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_PreparationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Check Review Preparation Connection"
       }
     },
     "/api/v1/review-preparation/{connection}/{library_name}/retry": {

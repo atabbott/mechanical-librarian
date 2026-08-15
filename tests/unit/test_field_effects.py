@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import hashlib
 import json
 import sqlite3
 import tempfile
@@ -40,6 +41,7 @@ from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
     FieldEffectError,
+    FieldEffectNoChange,
     FieldEffectOperation,
     FieldEffectPlan,
     SUPPORTED_DESTINATIONS,
@@ -203,6 +205,12 @@ class FieldEffectTests(unittest.TestCase):
 
         self.assertEqual(activity["consented_libraries"], [])
         self.assertEqual(activity["consented_destinations"], [])
+        policy = self.repository.field_effect_activity_page(
+            search=None, event_type="policy", occurred_after=0, page=1, page_size=25,
+        )
+        self.assertEqual(policy["events"][0]["evidence"][0], {
+            "label": "Recorded policy transition", "value": "completed",
+        })
 
     def test_activity_fetches_one_current_report_document_for_repeated_events(self) -> None:
         report = metadata_report("Readable work", "a", "b", item_id="book-1")
@@ -221,6 +229,205 @@ class FieldEffectTests(unittest.TestCase):
             {report.report_id},
         )
         self.assertTrue(all("report_document" not in event for event in activity["events"]))
+        page = self.repository.field_effect_activity_page(
+            search="readable work", event_type="all", occurred_after=0, page=1, page_size=25,
+        )
+        self.assertEqual(page["total"], 2)
+        self.assertTrue(all(event["work_label"] == "Readable work" for event in page["events"]))
+        self.assertTrue(all(
+            event["evidence"][0]["label"] == "Recorded field effect"
+            for event in page["events"]
+        ))
+
+    def test_activity_page_bounds_filters_and_clamps_the_append_only_ledger(self) -> None:
+        for index in range(101):
+            identity = f"{index:064x}"
+            plan_id = "effect_plan_" + identity
+            occurred_at = 1_000_000 + index
+            event_core = {
+                "attempt": 0, "decision_id": "human_decision_" + "a" * 64,
+                "desired_value": "new", "destination": "title", "failure": None,
+                "kind": "planned", "occurred_at": occurred_at, "origin": "human",
+                "plan_id": plan_id, "pre_value": "old",
+                "schema_version": "field-effect-event-v1", "sequence": 1,
+                "state": "planned",
+            }
+            event_id = "effect_event_" + hashlib.sha256(
+                json.dumps(event_core, separators=(",", ":"), sort_keys=True).encode()
+            ).hexdigest()
+            event_document = json.dumps(
+                {**event_core, "event_id": event_id},
+                separators=(",", ":"), sort_keys=True,
+            )
+            self.repository._connection.execute(
+                "INSERT INTO field_effects(plan_id,decision_id,connection_name,library_name,work_id,"
+                "destination,state,attempt,updated_at,document) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (plan_id, "human_decision_" + "a" * 64, "primary", "books",
+                 f"book-{index}", "title", "planned", 0, occurred_at, "{}"),
+            )
+            self.repository._connection.execute(
+                "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,document) "
+                "VALUES(?,?,?,?,?,?)",
+                (event_id, plan_id, 1, "planned", occurred_at, event_document),
+            )
+        self.repository._connection.commit()
+        first = self.repository.field_effect_activity_page(
+            search="book-", event_type="review", occurred_after=0, page=1, page_size=25,
+        )
+        self.assertEqual(first["total"], 101)
+        self.assertEqual(len(first["events"]), 25)
+        self.assertEqual(first["page"], 1)
+        self.assertEqual(first["page_size"], 25)
+        self.assertEqual(first["current_waiting"]["state"], "planned")
+        self.assertEqual(
+            [event["occurred_at"] for event in first["events"]],
+            sorted((event["occurred_at"] for event in first["events"]), reverse=True),
+        )
+        for page_size, expected in ((50, 50), (100, 100)):
+            page = self.repository.field_effect_activity_page(
+                search="book-", event_type="review", occurred_after=0, page=1, page_size=page_size,
+            )
+            self.assertEqual(len(page["events"]), expected)
+        twenty_six = self.repository.field_effect_activity_page(
+            search="book-", event_type="review", occurred_after=0, page=2, page_size=25,
+        )
+        self.assertEqual(len(twenty_six["events"]), 25)
+        last = self.repository.field_effect_activity_page(
+            search="book-1", event_type="review", occurred_after=0, page=1_000_000, page_size=25,
+        )
+        self.assertEqual(last["page"], last["page_count"])
+        self.assertLessEqual(len(last["events"]), 25)
+        self.assertTrue(all(event["event_type"] == "review" for event in last["events"]))
+        self.assertTrue(all("book-1" in event["work_id"] for event in last["events"]))
+        empty = self.repository.field_effect_activity_page(
+            search=None, event_type="all", occurred_after=2_000_000, page=1, page_size=25,
+        )
+        self.assertEqual((empty["total"], empty["page"], empty["page_count"], empty["events"]), (0, 1, 1, []))
+        self.assertEqual(empty["current_waiting"]["state"], "planned")
+        with self.assertRaisesRegex(FieldEffectError, "invalid_activity_query"):
+            self.repository.field_effect_activity_page(
+                search="%", event_type="hostile", occurred_after=-1, page=0, page_size=26,
+            )
+
+    def test_activity_page_fails_closed_for_corrupt_or_oversized_durable_rows(self) -> None:
+        plan = self.plan(suffix="c")
+        self.repository._connection.execute(
+            "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,document) VALUES(?,?,?,?,?,?)",
+            ("effect_event_" + "c" * 64, plan.plan.plan_id, 2, "verified", 2, "{not-json"),
+        )
+        self.repository._connection.commit()
+        with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
+            self.repository.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=0, page=1, page_size=25,
+            )
+
+    def test_activity_page_fails_closed_for_oversized_durable_row(self) -> None:
+        plan = self.plan(suffix="d")
+        self.repository._connection.execute("PRAGMA ignore_check_constraints=ON")
+        self.repository._connection.execute(
+            "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,document) VALUES(?,?,?,?,?,?)",
+            ("effect_event_" + "d" * 64, plan.plan.plan_id, 2, "verified", 2,
+             "{" + '"x":"' + "x" * 2_097_153 + '"}'),
+        )
+        self.repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
+        self.repository._connection.commit()
+        with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
+            self.repository.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=0, page=1, page_size=25,
+            )
+
+    def test_activity_page_rolls_back_for_deeply_nested_selected_json(self) -> None:
+        plan = self.plan(suffix="2")
+        nested = "[" * 10_000 + "0" + "]" * 10_000
+        self.repository._connection.execute(
+            "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,document) VALUES(?,?,?,?,?,?)",
+            ("effect_event_" + "2" * 64, plan.plan.plan_id, 2, "verified", 2, nested),
+        )
+        self.repository._connection.commit()
+
+        with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
+            self.repository.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=0, page=1,
+                page_size=25,
+            )
+        self.assertFalse(self.repository._connection.in_transaction)
+
+    def test_activity_summary_reads_no_legacy_events_or_report_documents(self) -> None:
+        self.plan(suffix="e")
+        statements = []
+        self.repository._connection.set_trace_callback(statements.append)
+        try:
+            summary = self.repository.field_effect_activity_summary()
+        finally:
+            self.repository._connection.set_trace_callback(None)
+
+        self.assertEqual(summary["events"], [])
+        self.assertEqual(summary["report_documents"], {})
+        sql = "\n".join(statements).casefold()
+        self.assertNotIn("from field_effect_events event", sql)
+        self.assertNotIn("from metadata_reports where report_id", sql)
+
+    def test_activity_page_rejects_a_selected_report_digest_mismatch(self) -> None:
+        report = metadata_report("Readable work", "5", "6", item_id="book-1")
+        self.repository.publish(report, lambda: True)
+        self.plan(suffix="f")
+        self.repository._connection.execute("PRAGMA ignore_check_constraints=ON")
+        self.repository._connection.execute("DROP TRIGGER metadata_reports_no_update")
+        self.repository._connection.execute(
+            "UPDATE metadata_reports SET document_digest=? WHERE report_id=?",
+            ("0" * 64, report.report_id),
+        )
+        self.repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
+        self.repository._connection.commit()
+
+        with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
+            self.repository.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=2_000_000,
+                page=1, page_size=25,
+            )
+        self.assertFalse(self.repository._connection.in_transaction)
+
+    def test_activity_page_rejects_an_oversized_current_waiting_report(self) -> None:
+        report = metadata_report("Readable work", "7", "8", item_id="book-1")
+        self.repository.publish(report, lambda: True)
+        self.plan(suffix="3")
+        oversized = "{" + '"x":"' + "x" * 2_097_153 + '"}'
+        self.repository._connection.execute("PRAGMA ignore_check_constraints=ON")
+        self.repository._connection.execute("DROP TRIGGER metadata_reports_no_update")
+        self.repository._connection.execute(
+            "UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?",
+            (oversized, hashlib.sha256(oversized.encode()).hexdigest(), report.report_id),
+        )
+        self.repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
+        self.repository._connection.commit()
+
+        with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
+            self.repository.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=2_000_000,
+                page=1, page_size=25,
+            )
+        self.assertFalse(self.repository._connection.in_transaction)
+
+    def test_activity_page_rejects_a_valid_field_event_that_disagrees_with_columns(self) -> None:
+        plan = self.plan(suffix="1")
+        row = self.repository._connection.execute(
+            "SELECT event_id,document FROM field_effect_events WHERE plan_id=?",
+            (plan.plan.plan_id,),
+        ).fetchone()
+        raw = json.loads(row[1])
+        raw["destination"] = "authors"
+        self.repository._connection.execute("PRAGMA recursive_triggers=OFF")
+        self.repository._connection.execute("DROP TRIGGER field_effect_events_no_update")
+        self.repository._connection.execute(
+            "UPDATE field_effect_events SET document=? WHERE event_id=?",
+            (json.dumps(raw, separators=(",", ":"), sort_keys=True), row[0]),
+        )
+        self.repository._connection.commit()
+
+        with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
+            self.repository.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=0, page=1, page_size=25,
+            )
 
     def test_unused_continuous_consent_survives_exact_schema_validation(self) -> None:
         consent = self.repository.grant_field_effect_consents(
@@ -381,6 +588,11 @@ class FieldEffectTests(unittest.TestCase):
              non_candidate.occurred_at, non_candidate.to_json()),
         )
         self.repository._connection.commit()
+        automatic_activity = self.repository.field_effect_activity_page(
+            search=None, event_type="metadata", occurred_after=0, page=1,
+            page_size=25,
+        )
+        self.assertEqual(automatic_activity["total"], 2)
 
         consent = self.repository.grant_field_effect_consents(
             "primary", ("books",), (proposal["destination"],), 9
@@ -402,6 +614,87 @@ class FieldEffectTests(unittest.TestCase):
         automatic_operation = FieldEffectOperation(plan, updated_at=9)
         self.repository.record_field_effect(automatic_operation)
         self.repository.record_human_decision(human)
+        human_activity = self.repository.field_effect_activity_page(
+            search=None, event_type="review", occurred_after=0, page=1,
+            page_size=25,
+        )
+        self.assertTrue(any(
+            event["state"] == "accept" for event in human_activity["events"]
+        ))
+        human_row = self.repository._connection.execute(
+            "SELECT event_id,document FROM human_decision_events WHERE decision_id=?",
+            (human.decision_id,),
+        ).fetchone()
+        corrupt_human = json.loads(human_row[1])
+        corrupt_human["outcome"] = "keep_current"
+        self.repository._connection.execute("DROP TRIGGER human_decision_events_no_update")
+        self.repository._connection.execute(
+            "UPDATE human_decision_events SET document=? WHERE event_id=?",
+            (json.dumps(corrupt_human, separators=(",", ":"), sort_keys=True), human_row[0]),
+        )
+        self.repository._connection.commit()
+        with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
+            self.repository.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=0, page=1,
+                page_size=25,
+            )
+        self.repository._connection.execute(
+            "UPDATE human_decision_events SET document=? WHERE event_id=?",
+            (human_row[1], human_row[0]),
+        )
+        self.repository._connection.execute(
+            "CREATE TRIGGER human_decision_events_no_update BEFORE UPDATE ON human_decision_events BEGIN SELECT RAISE(ABORT, 'human decision events are append-only'); END"
+        )
+        consideration_id = "cover_consideration_" + "7" * 64
+        consideration_document = json.dumps({
+            "consideration_id": consideration_id,
+            "report_id": report.report_id,
+            "replay_digest": "8" * 64,
+            "review_case_id": case.review_case_id,
+            "schema_version": "cover-consideration-v1",
+            "supersedes_id": None,
+        }, separators=(",", ":"), sort_keys=True)
+        self.repository._connection.execute(
+            "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
+            (consideration_id, case.review_case_id, report.report_id, "8" * 64,
+             hashlib.sha256(consideration_document.encode()).hexdigest(), None, 11,
+             consideration_document),
+        )
+        cover_document = json.dumps({
+            "consideration_id": consideration_id, "decision_id": None,
+            "kind": "automatic_prepared", "occurred_at": 11,
+            "review_case_id": case.review_case_id,
+            "schema_version": "cover-consideration-event-v1",
+        }, separators=(",", ":"), sort_keys=True)
+        wrong_cover_event_id = "cover_consideration_event_" + "9" * 64
+        self.repository._connection.execute(
+            "INSERT INTO cover_consideration_events(event_id,consideration_id,review_case_id,kind,decision_id,occurred_at,document) VALUES(?,?,?,?,?,?,?)",
+            (wrong_cover_event_id, consideration_id, case.review_case_id,
+             "automatic_prepared", None, 11, cover_document),
+        )
+        self.repository._connection.commit()
+        with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
+            self.repository.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=0, page=1,
+                page_size=25,
+            )
+        self.repository._connection.execute("DROP TRIGGER cover_consideration_events_no_delete")
+        self.repository._connection.execute("DROP TRIGGER cover_considerations_no_delete")
+        self.repository._connection.execute(
+            "DELETE FROM cover_consideration_events WHERE event_id=?",
+            (wrong_cover_event_id,),
+        )
+        self.repository._connection.execute(
+            "DELETE FROM cover_considerations WHERE consideration_id=?",
+            (consideration_id,),
+        )
+        self.repository._connection.execute(
+            "CREATE TRIGGER cover_considerations_no_delete BEFORE DELETE ON cover_considerations BEGIN SELECT RAISE(ABORT, 'cover considerations are append-only'); END"
+        )
+        self.repository._connection.execute(
+            "CREATE TRIGGER cover_consideration_events_no_delete BEFORE DELETE ON cover_consideration_events BEGIN SELECT RAISE(ABORT, 'cover consideration events are append-only'); END"
+        )
+        self.repository._connection.commit()
         stale_hold_token = self.repository.field_effect_manual_hold_token(
             case_id, proposal["destination"]
         )
@@ -1682,6 +1975,24 @@ class FieldEffectTests(unittest.TestCase):
 
 
 class FieldEffectDomainTests(unittest.TestCase):
+    def test_no_change_identity_is_canonical_and_closed(self) -> None:
+        values = dict(
+            decision_id="automatic_decision_" + "a" * 64,
+            review_case_id="review_case_" + "b" * 64,
+            report_id="report_" + "c" * 64,
+            connection="primary", library="ebooks", work_id="item-1",
+            destination="title", target_fingerprint="d" * 64,
+            target_version="e" * 64, occurred_at=17,
+        )
+        first = FieldEffectNoChange.create(**values)
+        replay = FieldEffectNoChange.create(**{**values, "occurred_at": 18})
+        self.assertEqual(first.event_id, replay.event_id)
+        self.assertNotEqual(first.occurred_at, replay.occurred_at)
+        self.assertEqual(first.origin, "automatic_policy")
+        self.assertTrue(first.event_id.startswith("field_effect_no_change_"))
+        with self.assertRaisesRegex(FieldEffectError, "invalid_no_change"):
+            FieldEffectNoChange.create(**{**values, "destination": "unknown"})
+
     def test_service_tokens_accept_realistic_opaque_ids_but_remain_bounded(self) -> None:
         authority = EffectAuthority(
             "human_decision_" + "a" * 64, "review_case_" + "b" * 64,

@@ -10,6 +10,7 @@ import {
   derivePolicyDraftDisplay,
   SessionExpiredError,
   mapLibrary,
+  mapPreparation,
 } from '../src/api/http'
 
 const token = 'a'.repeat(32)
@@ -26,15 +27,37 @@ describe('ReviewApiClient', () => {
       schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true,
       target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
       fields: [{
+        classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, navigation_role: 'attention', preservation_only: false,
         destination: 'series', deterministic_disposition: 'review', effect_capability: 'manual',
         needs_attention: true, manual_hold: false, current: { value: series },
         proposed_values: [], proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',
         human_decision: null, automatic_decision: null, notices: [], provenance: [],
+        corroboration_sources: [],
       }],
     })
 
     expect(detail([{ name: 'Archive', sequence: '2.5' }]).fields[0]?.currentValue).toBe('Archive · 2.5')
     expect(detail([{ name: 'Standalone' }]).fields[0]?.currentValue).toBe('Standalone')
+  })
+
+  it('requires exact creator corroboration source lists in case-detail responses', () => {
+    const response = (corroboration_sources: unknown) => ({
+      schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true,
+      target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
+      fields: [{
+        classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, navigation_role: 'attention', preservation_only: false,
+        destination: 'authors', deterministic_disposition: 'review', effect_capability: 'manual',
+        needs_attention: true, manual_hold: false, current: { value: ['Ada Example'] },
+        proposed_values: [], proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',
+        human_decision: null, automatic_decision: null, notices: [], provenance: [],
+        corroboration_sources,
+      }],
+    })
+
+    expect(() => mapCaseDetail(response(undefined))).toThrow(ApiError)
+    expect(() => mapCaseDetail(response('Hardcover'))).toThrow(ApiError)
+    expect(mapCaseDetail(response(['Hardcover', 'Open Library'])).fields[0]?.corroborationSources)
+      .toEqual(['Hardcover', 'Open Library'])
   })
 
   it('maps exact library DTOs into presentation-safe view models', async () => {
@@ -57,6 +80,8 @@ describe('ReviewApiClient', () => {
           detail_url: '/review/case-1',
           dispositions: ['unresolved_choice'],
           work_id: 'library_work_1',
+          preparation: null,
+          preparation_outcomes: [],
         }, {
           review_case_id: null,
           title: 'Catalogue-only work',
@@ -69,6 +94,8 @@ describe('ReviewApiClient', () => {
           detail_url: null,
           dispositions: [],
           work_id: 'library_work_2',
+          preparation: null,
+          preparation_outcomes: [{ provider_requests: 2, lane_kind: 'isbn', provider: 'google-books', reason: 'Provider returned no matching metadata.', status: 'no_match' }],
         }],
       }),
     )
@@ -86,6 +113,8 @@ describe('ReviewApiClient', () => {
       mediaKind: 'ebook',
       attentionCount: 1,
       attention: 'needs_attention',
+      preparation: null,
+      preparationOutcomes: [],
     })
     expect(view.works[1]).toEqual({
       id: 'library_work_2',
@@ -95,6 +124,8 @@ describe('ReviewApiClient', () => {
       mediaKind: 'ebook',
       attentionCount: 0,
       attention: 'no_attention_needed',
+      preparation: null,
+      preparationOutcomes: [{ providerRequests: 2, laneKind: 'isbn', provider: 'google-books', reason: 'Provider returned no matching metadata.', status: 'no_match' }],
     })
     expect(JSON.stringify(view)).not.toContain('internal-item-2')
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/library?lens=all', expect.objectContaining({
@@ -110,14 +141,14 @@ describe('ReviewApiClient', () => {
       items: [{
         review_case_id: 'case-1', destination: 'publication_date', title: 'A Book',
         authors: ['Ada Example'], library: 'Books', media_kind: 'ebook', item: 'internal-item-1',
-        detail_url: '/review/case-1?field=publication_date', notices: ['The available dates disagree.'],
+        detail_url: '/review/case-1?field=publication_date', classification_reason: 'The available dates disagree.', notices: ['The available dates disagree.'],
         provenance: ['Selected EPUB supports a complete date.'], work_attention_count: 2,
       }],
     })
 
     expect(view.items[0]).toEqual({
       id: 'case-1', destination: 'publication_date', title: 'A Book', authors: ['Ada Example'],
-      library: 'Books', mediaKind: 'ebook', notices: ['The available dates disagree.'],
+      library: 'Books', mediaKind: 'ebook', classificationReason: 'The available dates disagree.', notices: ['The available dates disagree.'],
       provenance: ['Selected EPUB supports a complete date.'], workAttentionCount: 2,
     })
     expect(JSON.stringify(view)).not.toContain('internal-item-1')
@@ -129,11 +160,12 @@ describe('ReviewApiClient', () => {
 
   it('maps bounded activity labels and grouped state into the display seam', () => {
     const activity = mapActivity({
-      schema_version: 'continuous-field-activity-v1', backup_ready: true, paused: false,
-      configured_libraries: [{ connection: 'primary', library: 'Fiction', prepared: { automatic: 1, human: 2, total: 3 } }],
+      schema_version: 'continuous-field-activity-v2', backup_ready: true, paused: false,
+      configured_libraries: [{ connection: 'primary', library: 'Fiction', prepared: { automatic: 1, human: 2, total: 3 } }], current_waiting: null,
       consented_libraries: [], enabled_libraries: [], counts: { verified: 1 },
       capabilities: [{ connection: 'primary', library: 'Fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: true }] }],
-      events: [{ destination: 'title', library: 'Fiction', occurred_at: 1, origin: 'human', state: 'verified', work_id: 'work-1' }],
+      events: [{ destination: 'title', event_id: 'event-1', event_type: 'review', evidence: [{ label: 'Decision', value: 'Owner choice recorded' }], library: 'Fiction', occurred_at: 1, origin: 'human', state: 'verified', work_id: 'work-1' }],
+      ledger: { event_type: 'all', page: 1, page_count: 1, page_size: 25, query: null, range_days: 30, total: 1 },
       example: { after: 'After', before: 'Before', destination: 'title', library: 'Fiction', work_id: 'work-1' }, last_failure: null, prepared: { automatic: 1, human: 2, total: 3 }, suspensions: [{ connection: 'primary', destination: null, reason: 'recovery', scope: 'library', updated_at: 1 }],
     })
 
@@ -234,11 +266,23 @@ describe('ReviewApiClient', () => {
   it('accepts scan progress acknowledgements independently from preparation controls', async () => {
     const fetchMock = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ scan_id: 'scan-1', connection: 'primary', library: 'Books', library_id: 'books', state: 'queued', checked: 0, total: 2, ready: 0, blocked: 0, rescan_requested: false }))
-      .mockResolvedValueOnce(Response.json({ schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [] }))
+      .mockResolvedValueOnce(Response.json({ schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [], connections: [] }))
     const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
 
     await expect(client.preparationAction('primary/Books/scan')).resolves.toMatchObject({ scan_id: 'scan-1', state: 'queued' })
     await expect(client.preparationAction('pause')).resolves.toMatchObject({ schema_version: 'review-preparation-v1', paused: false })
+  })
+
+  it('maps only closed target-connection preparation conditions', () => {
+    const base = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [] }
+    for (const state of ['paused', 'checking', 'recovered']) {
+      expect(mapPreparation({ ...base, connections: [{ connection: 'primary', code: 'unavailable', state, affected: state === 'recovered' ? 0 : 2, updated_at: 1 }] }).connections?.[0]?.state).toBe(state)
+    }
+    for (const invalid of [
+      base,
+      { ...base, connections: [{ connection: 'primary', code: 'unknown', state: 'paused', affected: 1, updated_at: 1 }] },
+      { ...base, connections: [{ connection: 'primary', code: 'tls', state: 'paused', affected: 1 }] },
+    ]) expect(() => mapPreparation(invalid)).toThrow(ApiError)
   })
 
   it('preserves structured server error codes and rejects malformed DTOs', async () => {

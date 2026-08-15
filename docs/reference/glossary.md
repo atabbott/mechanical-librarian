@@ -2,7 +2,7 @@
 
 **Canonical report**
 The exact compact, key-sorted UTF-8 JSON document validated by the closed
-`metadata-report-v23` model. It carries the closed ordered local-field results,
+`metadata-report-v26` model. It carries the closed ordered local-field results,
 source capabilities, bounded claim occurrence, and (when present) rear-spine
 provenance as well as the report's scope and evidence.
 
@@ -42,3 +42,12 @@ persisting a private host path.
 **Report-only**
 Authority to observe and persist evidence, never to review, approve, apply, or
 write target/media metadata.
+
+**Policy representation**
+One closed field-value choice. The Policy page names its admitted source/value,
+any bounded transformation, the affected field, and when it abstains. A
+manual-review-only representation never gains Automatic authority; selecting
+one while Automatic is active visibly changes the field to Ask me. In
+particular, Visible Google text admits only eligible Google Books visible text
+after bounded inert HTML-to-text extraction, fills an empty Description, and
+abstains rather than falling back to Hardcover.

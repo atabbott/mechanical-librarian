@@ -5,7 +5,7 @@
 `Dockerfile` and `compose.yaml` define the pre-release installed runtime. It is
 one non-root container, one named `/data` volume, one HTTPS port, a read-only
 root filesystem, and no runtime package installation or extra application
-process. Put the exact `config-v5` document at `/data/config.json` and keep its
+process. Put the exact `config-v6` document at `/data/config.json` and keep its
 referenced owner-only TLS, password and service-secret files within explicitly
 mounted private locations. Add ebook media mounts as read-only Compose
 overrides; never grant a writable media mount or Docker socket.
@@ -54,7 +54,7 @@ source-bound as documented in the
 
 ## Runtime prerequisites
 
-Run as a non-root dedicated identity with an explicit `config-v5` file and
+Run as a non-root dedicated identity with an explicit `config-v6` file and
 application and catalogue database paths on reliable local storage. Each
 database path is either absent for its clean first invocation or already holds
 the exact-current schema. The owner-controlled artifact-store directory must
@@ -95,3 +95,10 @@ revocation stop new claims, and all target calls use the existing API-key
 adapter and guarded application service. Media mounts remain read-only; release,
 deployment publication, dashboard, bulk, rollback, and destructive authority
 remain outside this contract.
+
+The authenticated Activity ledger is a private read projection, not an
+operations console. It pages a deterministic newest-first union of durable
+review decisions, policy transitions, safeguards, guarded effects, and
+verification, with bounded search, type and date filters. It never offers
+queue administration, blind retries, telemetry, exports, or extra write
+authority; recovery and consent remain the existing server-validated actions.

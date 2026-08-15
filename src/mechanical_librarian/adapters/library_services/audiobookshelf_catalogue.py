@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-import posixpath
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote
 
 import httpx
 
-from mechanical_librarian.application.catalogue import CatalogueEntry, CatalogueError
+from mechanical_librarian.application.catalogue import (
+    CatalogueEntry,
+    CatalogueError,
+    TargetConnectionError,
+)
 from mechanical_librarian.application.configuration import (
     LibraryConfiguration,
     MediaMountConfiguration,
@@ -20,6 +23,20 @@ from mechanical_librarian.domain.metadata_report import (
     canonical_json,
     validate_observed_title,
 )
+from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
+    normalize_ebook_location,
+)
+
+
+def target_connection_code(error: BaseException) -> str:
+    """Classify only the closed, owner-actionable target transport outcome."""
+    if isinstance(error, httpx.TransportError):
+        current: BaseException | None = error
+        while current is not None:
+            if "SSL" in type(current).__name__.upper():
+                return "tls"
+            current = current.__cause__
+    return "unavailable"
 
 
 class AudiobookshelfCatalogueReader:
@@ -65,14 +82,46 @@ class AudiobookshelfCatalogueReader:
                 return tuple(_entry(connection, library, mount, summary, _get(client, f"/api/items/{quote(str(summary.get('id')), safe='')}", self._maximum_bytes, self._timeout_seconds, {"expanded": "1"})) for summary in summaries)
         except CatalogueError:
             raise
+        except httpx.TransportError as error:
+            # httpx keeps certificate verification enabled in the configured
+            # target client.  Classifying the outcome must not weaken it.
+            raise TargetConnectionError(target_connection_code(error)) from None
         except (httpx.HTTPError, OSError, UnicodeError, ValueError, TypeError) as error:
-            raise CatalogueError("catalogue service unavailable") from error
+            raise TargetConnectionError("unavailable") from None
+
+    def probe_connection(
+        self, connection: str, libraries: tuple[LibraryConfiguration, ...]
+    ) -> None:
+        """Perform the bounded configured ABS trust/read authority probe."""
+        try:
+            with self._client_factory(connection) as client:
+                payload = _get(
+                    client, "/api/libraries", self._maximum_bytes,
+                    self._timeout_seconds,
+                )
+                available = {
+                    value.get("id")
+                    for value in payload.get("libraries", [])
+                    if type(value) is dict and value.get("mediaType") == "book"
+                }
+                if any(library.library_id not in available for library in libraries):
+                    # Deliberately retain only the closed owner-actionable
+                    # condition; configured IDs never cross this boundary.
+                    raise TargetConnectionError("unavailable")
+        except TargetConnectionError:
+            raise
+        except Exception as error:
+            raise TargetConnectionError(target_connection_code(error)) from None
 
 
 def _get(client: httpx.Client, path: str, maximum: int, timeout: int, params: dict[str, str] | None = None) -> dict[str, Any]:
     with client.stream("GET", path, params=params, headers={"Accept": "application/json", "Accept-Encoding": "identity"}, timeout=timeout) as response:
+        if response.status_code == 401:
+            raise TargetConnectionError("authentication")
+        if response.status_code == 403:
+            raise TargetConnectionError("authorization")
         if response.status_code != 200 or response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
-            raise CatalogueError("catalogue service unavailable")
+            raise TargetConnectionError("unavailable")
         chunks: list[bytes] = []
         size = 0
         for chunk in response.iter_bytes():
@@ -119,26 +168,23 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
     elif type(ebook) is dict and plural is None:
         has_ebook = True
         metadata_file = ebook.get("metadata")
-        fmt = ebook.get("ebookFormat")
-        ino = ebook.get("ino", metadata_file.get("ino") if type(metadata_file) is dict else None)
-        relative = metadata_file.get("relPath") if type(metadata_file) is dict else None
-        if relative is None and mount is not None and type(metadata_file) is dict and type(metadata_file.get("path")) is str:
-            path = metadata_file["path"]
-            prefix = mount.service_path.rstrip("/") + "/"
-            if path.startswith(prefix):
-                relative = path[len(prefix):]
-        if type(fmt) is not str:
-            extension = metadata_file.get("ext") if type(metadata_file) is dict else None
-            fmt = extension[1:] if type(extension) is str and extension.startswith(".") else None
-        if type(fmt) is not str or fmt.lower() != "epub" or type(ino) is not str or not 1 <= len(ino) <= 256 or type(relative) is not str or not 1 <= len(relative) <= 1024 or posixpath.normpath(relative) != relative or relative.startswith("/") or "" in relative.split("/") or "." in relative.split("/") or ".." in relative.split("/"):
+        try:
+            location = normalize_ebook_location(
+                ebook,
+                service_path=None if mount is None else mount.service_path,
+                item=detail,
+            )
+        except ValueError:
             classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None
         else:
-            size = metadata_file.get("size")
-            if type(size) is not int or size < 0:
-                raise CatalogueError("catalogue response is invalid")
-            classification = "singular-supported"
-            file_identity = hashlib.sha256(canonical_json({"format": "epub", "inode": ino, "relative": relative, "size": size}).encode()).hexdigest()
-            service_path = relative; format_value = "epub"; mount_name = None if mount is None else mount.name
+            if location.format != "epub":
+                classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None
+            else:
+                classification = "singular-supported"
+                file_identity = location.identity
+                service_path = location.relative_path
+                format_value = location.format
+                mount_name = None if mount is None else mount.name
     else:
         classification = "needs-attention"; file_identity = service_path = format_value = mount_name = None; has_ebook = True
     reviewed_fields = {

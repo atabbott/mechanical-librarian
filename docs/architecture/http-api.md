@@ -90,6 +90,9 @@ automatic outcome publication itself creates no effect plan or target/media
 write. A persisted qualified automatic decision can later enter the same
 consent, backup, capability, field-currentness, verification, audit, and
 reconciliation-guarded field-effect path as an accepted human decision.
+When the exact current target already equals that automatic candidate, Activity
+instead records the terminal `no_change_required` outcome. It creates no plan
+and consults none of those guarded-write controls.
 Separate automatic-safety pause, suspension, and recovery operations fail
 closed.
 Shadow history events remain distinct from human decision events. Malformed
@@ -175,7 +178,10 @@ supply the exact consideration ID, and an accepted value must be one displayed
 selectable non-incumbent `cover_<sha256>` original. Keep-current and reject
 carry no selected value. The ordinary decision route remains the only owner
 decision mutation and the ordinary Activity path remains the only apply
-authority.
+authority. Ordinary preparation attempts the single configured qualified
+advisory comparison before F22 publishes the case; its completed,
+unavailable, failed, stale, superseded, retry, and owner-outcome states appear
+through the existing value-free Activity projection.
 
 Representations expose deterministic disposition, human or qualified automatic
 decision, stale state, and apply readiness as separate fields. An omitted human

@@ -14,7 +14,7 @@ interface DropdownPosition {
   above: boolean
 }
 
-export function Dropdown(props: { ariaLabel: string; value: string; options: readonly DropdownOption[]; onChange: (value: string) => void; disabled?: boolean; compact?: boolean }) {
+export function Dropdown(props: { ariaLabel: string; value: string; options: readonly DropdownOption[]; onChange: (value: string) => void; disabled?: boolean; compact?: boolean; focusKey?: string }) {
   const listboxId = useId()
   const triggerRef = useRef<HTMLButtonElement>(null)
   const optionRefs = useRef<(HTMLButtonElement | null)[]>([])
@@ -118,7 +118,7 @@ export function Dropdown(props: { ariaLabel: string; value: string; options: rea
   const menuStyle: CSSProperties | undefined = position ? { left: position.left, top: position.top, width: position.width, maxHeight: position.maxHeight } : undefined
 
   return <div className={`cm-dropdown ${props.compact ? 'is-compact' : ''}`}>
-    <button ref={triggerRef} type="button" className="cm-dropdown-trigger" role="combobox" aria-label={props.ariaLabel} aria-haspopup="listbox" aria-expanded={open} aria-controls={listboxId} disabled={props.disabled} onClick={() => open ? setOpen(false) : openMenu()} onKeyDown={handleTriggerKeyDown}><span>{selected?.label ?? props.value}</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg></button>
+    <button ref={triggerRef} data-activity-focus={props.focusKey} type="button" className="cm-dropdown-trigger" role="combobox" aria-label={props.ariaLabel} aria-haspopup="listbox" aria-expanded={open} aria-controls={listboxId} disabled={props.disabled} onClick={() => open ? setOpen(false) : openMenu()} onKeyDown={handleTriggerKeyDown}><span>{selected?.label ?? props.value}</span><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg></button>
     {open && position ? createPortal(<div id={listboxId} className={`cm-dropdown-menu ${position.above ? 'is-above' : ''}`} role="listbox" aria-label={props.ariaLabel} style={menuStyle}>{props.options.map((option, index) => <button key={option.value} ref={(element) => { optionRefs.current[index] = element }} type="button" role="option" aria-selected={option.value === props.value} className={index === activeIndex ? 'is-active' : ''} onFocus={() => setActiveIndex(index)} onKeyDown={(event) => handleOptionKeyDown(event, index)} onClick={() => choose(option.value)}><span>{option.label}</span>{option.value === props.value ? <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m5 12 4 4L19 7" /></svg> : null}</button>)}</div>, document.body) : null}
   </div>
 }

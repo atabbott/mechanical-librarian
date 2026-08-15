@@ -147,6 +147,15 @@ class _PagedRepository:
     def field_effect_backup_ready(self):
         return True
 
+    def field_effect_activity_page(self, **_query):
+        return {
+            "events": [], "report_documents": {}, "current_waiting": None,
+            "page": 1, "page_count": 1, "page_size": 25, "total": 0,
+        }
+
+    def field_effect_activity_summary(self):
+        return self.field_effect_activity_data(50)
+
     def grant_field_effect_consent_matrix(self, *arguments):
         raise AssertionError("consent must not be granted before capability proof")
 
@@ -392,7 +401,7 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
 
         self.assertEqual(0, service.schedule())
         activity = service.activity()
-        self.assertEqual("continuous-field-activity-v1", activity["schema_version"])
+        self.assertEqual("continuous-field-activity-v2", activity["schema_version"])
         self.assertEqual(1, activity["prepared"]["automatic"])
 
     def test_return_to_automatic_releases_only_after_current_scan_completes(self) -> None:
@@ -726,6 +735,30 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
                 activity_only=True,
             )
 
+    def test_activity_accepts_activated_recovery_states_and_rejects_unknown_state(self) -> None:
+        class Repository(_PagedRepository):
+            def field_effect_activity_data(self, _limit):
+                return {
+                    "consented_destinations": [], "consented_libraries": [],
+                    "counts": {}, "events": [], "paused": False,
+                    "suspensions": [],
+                }
+
+        def service(snapshot):
+            return ContinuousGuardedApplication(
+                Repository([]), {}, {}, _Authority(),
+                (("primary", "alpha"),), lambda: 1, lambda *_: None,
+                activity_only=True, provider_recovery_snapshot=lambda: snapshot,
+            )
+
+        snapshot = (
+            {"state": "fanout", "affected_count": 3, "next_eligible_at": None},
+            {"state": "exhausted", "affected_count": 1, "next_eligible_at": None},
+        )
+        self.assertEqual(list(snapshot), service(snapshot).activity()["provider_recovery"])
+        with self.assertRaisesRegex(GuardedApplicationError, "activity"):
+            service(({"state": "unknown", "affected_count": 1, "next_eligible_at": None},)).activity()
+
     def test_activity_strips_valid_cleanup_and_rejects_malformed_cleanup(self) -> None:
         decision = self._decisions(1)[0]
 
@@ -743,6 +776,14 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
                     "events": [],
                     "paused": False,
                     "suspensions": [],
+                }
+
+            def field_effect_activity_page(self, **_query):
+                data = self.field_effect_activity_data(50)
+                return {
+                    "events": data.get("events", []), "report_documents": data.get("report_documents", {}),
+                    "current_waiting": None, "page": 1, "page_count": 1,
+                    "page_size": 25, "total": 2,
                 }
 
         def service(cleanup):
@@ -772,6 +813,14 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
                     "counts": {}, "events": [dict(event), dict(event)],
                     "paused": False, "report_documents": {"report-1": "{}"},
                     "suspensions": [],
+                }
+
+            def field_effect_activity_page(self, **_query):
+                data = self.field_effect_activity_data(50)
+                return {
+                    "events": data["events"], "report_documents": data["report_documents"],
+                    "current_waiting": None, "page": 1, "page_count": 1,
+                    "page_size": 25, "total": 2,
                 }
 
         service = ContinuousGuardedApplication(

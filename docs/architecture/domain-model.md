@@ -1,5 +1,13 @@
 # Current pre-release domain model
 
+## Automatic no-change fact
+
+`FieldEffectNoChange` is a closed immutable fact for an automatic candidate
+whose canonical target value is already current. It binds the decision, case,
+report, target fingerprint/version, opaque target identity, timestamp, and a
+content-derived event identity. It contains neither values nor consent,
+capability, authority, or plan material and never authorizes a write.
+
 ## Metadata evidence report
 
 `MetadataReport` is one closed typed observation of one explicitly selected
@@ -135,7 +143,7 @@ does not interpret reports from prior or intermediate development schemas.
 ## Explainable ProposalSet
 
 `ProposalSet` is the deterministic, content-addressed evaluation of one exact
-`MetadataReport` under `fixed-conservative-v7`. It binds the report ID and
+`MetadataReport` under `fixed-conservative-v8`. It binds the report ID and
 derived target fingerprint and fixed policy version. Its ordered result tuple
 contains exactly one result for every
 `TargetDestination`.
@@ -252,6 +260,16 @@ provider-completeness, proposal, admission, and read-only projection stages.
 Existing immutable reports,
 ProposalSets, ReviewCases, decisions, and audit transitions remain the semantic
 records.
+
+The public Library and Attention snapshots read one current review package
+pointer, not intermediate report or admission pointers. A first generation is
+therefore absent until its read-only projection succeeds; a refresh keeps its
+previous package visible until the successor package atomically replaces it.
+Failed, stale, and restarted work never changes that pointer.
+Non-success provider lanes remain bounded report evidence on the published
+package and are inspectable in Library without becoming Attention. A terminal
+work that has no coherent package is represented separately with safe recovery
+context and cannot create a review case.
 
 Claims are persisted before work. Restart changes discovering and running
 claims back to queued without inventing a result. Two fixed claimers have no

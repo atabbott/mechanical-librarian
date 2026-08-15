@@ -10,6 +10,9 @@ from pathlib import Path
 
 import httpx
 
+from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
+    AudiobookshelfItemReader,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
@@ -162,6 +165,62 @@ class _Repository:
 
 
 class MetadataReportTests(unittest.TestCase):
+    def test_real_audiobookshelf_currentness_accepts_asymmetric_equivalent_locations(self) -> None:
+        def payload(*, file_path: str | None, size: int = 1) -> dict[str, object]:
+            file_metadata: dict[str, object] = {"relPath": "book.epub", "size": size}
+            if file_path is not None:
+                file_metadata["path"] = file_path
+            return {
+                "id": "item-1", "libraryId": "library-id", "isInvalid": False,
+                "isMissing": False, "mediaType": "book", "relPath": "Author/Book",
+                "path": "/media/Author/Book", "isFile": False,
+                "media": {"metadata": {"title": "Current title"}, "ebookFile": {
+                    "ebookFormat": "epub", "ino": "inode-1", "metadata": file_metadata,
+                }},
+            }
+
+        def service_for(responses: list[dict[str, object]]):
+            position = 0
+
+            def factory() -> httpx.Client:
+                nonlocal position
+
+                def handler(_request: httpx.Request) -> httpx.Response:
+                    nonlocal position
+                    response = responses[position]
+                    position += 1
+                    return httpx.Response(200, headers={"content-type": "application/json"}, json=response)
+
+                return httpx.Client(transport=httpx.MockTransport(handler))
+
+            target = AudiobookshelfItemReader(
+                client_factory=factory, endpoint="https://example.invalid", library_id="library-id",
+                service_path="/media", maximum_bytes=65_536,
+            )
+            repository = _Repository()
+            return GenerateMetadataReport(
+                target=target, inspector=_Inspector(InspectionResult("c" * 64, ())),
+                repository_factory=lambda: repository, providers=(),
+                connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"),
+                library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()),
+                mount=MediaMountConfiguration("books", "/container", "/media", True), limits=ReportLimits(),
+            ), repository
+
+        initial = payload(file_path=None)
+        service, repository = service_for([initial, payload(file_path="/media/Author/Book/book.epub")])
+        self.assertTrue(service.run("item-1", 0))
+        self.assertEqual(1, len(repository.values))
+
+        changed, repository = service_for([initial, payload(file_path=None, size=2)])
+        with self.assertRaises(CurrentnessError):
+            changed.run("item-1", 0)
+        self.assertEqual({}, repository.values)
+
+        contradictory, repository = service_for([initial, payload(file_path="/media/Other/book.epub")])
+        with self.assertRaises(MetadataReportError):
+            contradictory.run("item-1", 0)
+        self.assertEqual({}, repository.values)
+
     def test_provider_diagnostics_reject_foreign_and_noncanonical_aggregates(
         self,
     ) -> None:
@@ -1100,7 +1159,7 @@ class MetadataReportTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
-        self.assertEqual("metadata-report-v23", report.schema_version)
+        self.assertEqual("metadata-report-v26", report.schema_version)
         previous = report.to_data()
         previous["schema_version"] = "metadata-report-v22"
         with self.assertRaises(ReportValueError):

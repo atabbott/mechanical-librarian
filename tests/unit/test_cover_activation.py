@@ -313,7 +313,7 @@ class CoverActivationTests(unittest.TestCase):
             self.assertEqual(selected["artifact_id"], target.read(operation.plan).value)
             events = consideration_service.history(review_case_id)
             self.assertEqual(
-                Counter({"selected": 2, "considered": 2, "superseded": 1, "stale": 1}),
+                Counter({"selected": 2, "automatic_prepared": 2, "superseded": 1, "stale": 1}),
                 Counter(event["kind"] for event in events),
             )
             self.assertEqual(

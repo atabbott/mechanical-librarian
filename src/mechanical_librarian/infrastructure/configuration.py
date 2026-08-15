@@ -203,7 +203,8 @@ class ReviewInput(_Closed):
 
 
 class ConfigurationInput(_Closed):
-    schema_version: Literal["config-v5"]
+    schema_version: Literal["config-v6"]
+    provider_recovery_generation: Annotated[StrictInt, Field(ge=1)]
     connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=32)]
     libraries: Annotated[list[LibraryInput], Field(min_length=1, max_length=128)]
     mounts: Annotated[list[MountInput], Field(max_length=32)]
@@ -228,6 +229,7 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
             tuple(sorted((ProviderConnectionConfiguration(**item.model_dump()) for item in value.providers), key=lambda item: item.name)),
             ReportLimits(**value.limits.model_dump()),
             value.schema_version,
+            value.provider_recovery_generation,
             None
             if value.review is None
             else ReviewWebConfiguration(

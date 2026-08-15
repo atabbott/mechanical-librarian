@@ -661,6 +661,11 @@
       "title": "Mounts",
       "type": "array"
     },
+    "provider_recovery_generation": {
+      "minimum": 1,
+      "title": "Provider Recovery Generation",
+      "type": "integer"
+    },
     "providers": {
       "items": {
         "$ref": "#/$defs/ProviderInput"
@@ -681,13 +686,14 @@
       "default": null
     },
     "schema_version": {
-      "const": "config-v5",
+      "const": "config-v6",
       "title": "Schema Version",
       "type": "string"
     }
   },
   "required": [
     "schema_version",
+    "provider_recovery_generation",
     "connections",
     "libraries",
     "mounts",

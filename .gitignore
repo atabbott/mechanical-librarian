@@ -43,3 +43,26 @@ dist/
 build/
 *.egg-info/
 coverage/
+
+# Impeccable local state and exploratory output. Durable PRODUCT.md, DESIGN.md,
+# and .impeccable/design.json remain trackable shared context.
+**/.impeccable/config.local.json
+**/.impeccable/hook.cache.json
+**/.impeccable/hook.pending.json
+**/.impeccable/critique/
+**/.impeccable/mocks/
+**/.impeccable/references/
+**/.impeccable/sketches/
+**/.impeccable/*.png
+**/.impeccable/*.webp
+**/.impeccable/live/server.json
+**/.impeccable/live/sessions/
+**/.impeccable/live/previews/
+**/.impeccable/live/annotations/
+**/.impeccable/live/cache/
+**/.impeccable/live/manual-edit-apply-transaction.json
+**/.impeccable/live/manual-edit-events.jsonl
+**/.impeccable/live/manual-edit-evidence/
+**/.impeccable/live/pending-manual-edits.json
+**/.impeccable/live/deferred-svelte-component-accepts.json
+**/.impeccable/live/*.png

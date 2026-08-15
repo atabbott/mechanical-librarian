@@ -247,6 +247,14 @@ retry using the exact preserved command and idempotency key; mutations are
 never retried automatically. An ambiguous or unreconciled outcome remains
 locked until a later authoritative current-case read proves a safe state.
 
+Every field exposes one closed server-owned interaction classification. Owner
+attention and automatic abstention are queued; an ordinary automatic outcome is
+inspectable and may be deliberately overridden but is not ordinary next work.
+Recorded owner outcomes remain inspectable. Unsupported or suspended fields
+retain their current value and a specific explanation, never a selectable
+``Not set`` placeholder. Equal current and proposed values render as one
+full-width preservation choice.
+
 ## Protected Library workflow
 
 The protected Library workflow keeps the work index, stable selected-work

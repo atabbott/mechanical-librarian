@@ -4,7 +4,7 @@ import { Suspense, useEffect, useRef, useState } from 'react'
 
 import type { createMemoryHistory } from '@tanstack/react-router'
 import { BuildMismatchError } from './api/http'
-import type { AttentionSearch, AutomaticSafetyView, DetailSearch, LibrarySearch, LibraryWorkView, PolicySearch, PolicyStateView, ReviewHttp, ShadowPostureView } from './api/http'
+import type { ActivitySearch, AttentionSearch, AutomaticSafetyView, DetailSearch, LibrarySearch, LibraryWorkView, PolicySearch, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView } from './api/http'
 import { ChunkRecoveryError, recoverableLazy, reloadCurrentApplication } from './chunkRecovery'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
@@ -19,6 +19,15 @@ export const normalizeLibrarySearch = (search: Record<string, unknown>): Library
 export const normalizeAttentionSearch = (search: Record<string, unknown>): AttentionSearch => { const q = bounded(search.q); const cursor = bounded(search.cursor); return { ...(q ? { q } : {}), ...(cursor ? { cursor } : {}) } }
 export const normalizeDetailSearch = (search: Record<string, unknown>): DetailSearch => { const field = bounded(search.field); const subview = search.subview === 'evidence' || search.subview === 'history' ? search.subview : 'review'; return { ...(field ? { field } : {}), subview } }
 export const normalizePolicySearch = (search: Record<string, unknown>): PolicySearch => ({ section: search.section === 'publication' || search.section === 'curation' || search.section === 'unsupported' ? search.section : 'identity' })
+export const normalizeActivitySearch = (search: Record<string, unknown>): ActivitySearch => {
+  const eventType = ['review', 'policy', 'metadata', 'safety', 'unknown'].includes(String(search.eventType)) ? String(search.eventType) as ActivitySearch['eventType'] : 'all'
+  const rangeDays = [7, 90].includes(Number(search.rangeDays)) ? Number(search.rangeDays) as 7 | 90 : 30
+  const pageSize = [50, 100].includes(Number(search.pageSize)) ? Number(search.pageSize) as 50 | 100 : 25
+  const requestedPage = Number(search.page)
+  const page = Number.isSafeInteger(requestedPage) && requestedPage >= 1 && requestedPage <= 1_000_000 ? requestedPage : 1
+  const q = bounded(search.q)
+  return { eventType, rangeDays, pageSize, page, ...(q ? { q } : {}) }
+}
 
 export const libraryQuery = (http: ReviewHttp, search: LibrarySearch) => queryOptions({ queryKey: ['library', search.lens, search.q ?? null, search.cursor ?? null] as const, queryFn: ({ signal }) => http.getLibrary(search, signal), staleTime: 15_000, retry: false })
 export const attentionQuery = (http: ReviewHttp, search: AttentionSearch) => queryOptions({ queryKey: ['attention', search.q ?? null, search.cursor ?? null] as const, queryFn: ({ signal }) => http.getAttention(search, signal), staleTime: 15_000, retry: false })
@@ -26,17 +35,15 @@ export const detailQuery = (http: ReviewHttp, id: string) => queryOptions({ quer
 const policyStateQuery = (http: ReviewHttp) => queryOptions({ queryKey: ['policy', 'state'] as const, queryFn: ({ signal }) => http.getPolicyState(signal), staleTime: 15_000, retry: false })
 const shadowQuery = (http: ReviewHttp) => queryOptions({ queryKey: ['policy', 'shadow'] as const, queryFn: ({ signal }) => http.getShadowPosture(signal), staleTime: 15_000, retry: false })
 const safetyQuery = (http: ReviewHttp) => queryOptions({ queryKey: ['policy', 'safety'] as const, queryFn: ({ signal }) => http.getAutomaticSafety(signal), staleTime: 15_000, retry: false })
-const activityQuery = (http: ReviewHttp) => queryOptions({ queryKey: ['activity'] as const, queryFn: ({ signal }) => http.getActivity(signal), staleTime: 4_000, retry: false })
+const activityQuery = (http: ReviewHttp, search: ActivitySearch) => queryOptions({ queryKey: ['activity', search.q ?? null, search.eventType, search.rangeDays, search.page, search.pageSize] as const, queryFn: ({ signal }) => http.getActivity(search, signal), staleTime: 4_000, retry: false })
+export const preparationQuery = (http: ReviewHttp) => queryOptions({ queryKey: ['review-preparation'] as const, queryFn: ({ signal }) => http.getPreparation(signal), staleTime: 1_000, retry: false, refetchInterval: (result) => { const value = result.state.data; return value?.active || value?.actionable || value?.paused ? 1_500 : 15_000 } })
 
 const routeTitle = (path: string) => path.startsWith('/review/') ? 'Review case' : path === '/library' ? 'Library' : path === '/attention' ? 'Attention' : path === '/policy' ? 'Policy' : path === '/activity' ? 'Activity' : 'Page unavailable'
 
-const PreparationActivity = () => {
+export const usePreparation = () => {
   const { http, queryClient } = rootRoute.useRouteContext()
-  const [open, setOpen] = useState(false)
-  const trigger = useRef<HTMLButtonElement>(null)
   const previousSnapshot = useRef<string | null>(null)
-  const query = useQuery({ queryKey: ['review-preparation'], queryFn: ({ signal }) => http.getPreparation(signal), staleTime: 1_000, retry: false, refetchInterval: (result) => { const value = result.state.data; return value?.active || value?.actionable || value?.paused ? 1_500 : 15_000 } })
-  const action = useMutation({ mutationFn: (path: string) => http.preparationAction(path), retry: false, onSettled: async () => { await queryClient.invalidateQueries({ queryKey: ['review-preparation'] }); await Promise.all([queryClient.invalidateQueries({ queryKey: ['library'] }), queryClient.invalidateQueries({ queryKey: ['attention'] })]) } })
+  const query = useQuery(preparationQuery(http))
   const data = query.data
   const snapshot = data ? JSON.stringify(data) : null
   useEffect(() => {
@@ -49,6 +56,90 @@ const PreparationActivity = () => {
       queryClient.invalidateQueries({ queryKey: ['attention'] }),
     ])
   }, [queryClient, snapshot])
+  return { data, queryClient, http }
+}
+
+const connectionCopy = (code: 'tls' | 'authentication' | 'authorization' | 'unavailable') => ({
+  tls: 'The library connection needs its secure connection settings checked by its owner.',
+  authentication: 'The library connection needs its sign-in settings checked by its owner.',
+  authorization: 'The library connection needs its access permission checked by its owner.',
+  unavailable: 'The library connection is unavailable and needs an owner check.',
+}[code])
+
+export const ConnectionNotice = ({ data, checking, onCheck, error }: { data: PreparationView | undefined; checking: boolean; onCheck: (connection: string) => void; error: boolean }) => {
+  const condition = data?.connections?.find((item) => item.state !== 'recovered') ?? data?.connections?.[0]
+  if (!condition) return null
+  const ready = data?.libraries.reduce((total, item) => total + item.ready, 0) ?? 0
+  const paused = condition.state === 'recovered' ? 0 : condition.affected
+  const title = condition.state === 'checking' ? 'Checking library connection' : condition.state === 'recovered' ? 'Library connection recovered' : 'Library connection needs attention'
+  const copy = condition.state === 'checking'
+    ? 'Preparation remains safely paused while the configured connection is checked.'
+    : condition.state === 'recovered'
+      ? 'Preparation resumed from its retained checkpoint. Completed reviews remain available.'
+      : `${connectionCopy(condition.code)} ${String(paused)} preparation ${paused === 1 ? 'work is' : 'works are'} safely paused. Completed reviews remain available.`
+  const canCheck = condition.state === 'paused' && !checking
+  const action = condition.state === 'paused' ? 'Check connection again' : condition.state === 'recovered' ? 'Recovered' : 'Checking connection…'
+  return <section className={`connection-notice is-${condition.state}`} aria-live="polite" aria-label="Shared library connection status"><div><strong>{title}</strong><span>{copy}</span></div><dl><div><dt>Ready</dt><dd>{String(ready)}</dd></div><div><dt>Safely paused</dt><dd>{String(paused)}</dd></div></dl><button type="button" aria-disabled={!canCheck} aria-busy={checking || undefined} onClick={() => { if (canCheck) onCheck(condition.connection) }}>{action}</button>{error ? <p role="alert">Connection checking could not be completed. Preparation remains safely paused.</p> : null}</section>
+}
+
+export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) => {
+  const { data, queryClient, http } = usePreparation()
+  const action = useMutation({
+    mutationFn: (path: string) => http.preparationAction(path),
+    retry: false,
+    onMutate: (path) => {
+      const match = /^([^/]+)\/check-connection$/.exec(path)
+      if (!match) return
+      const encodedConnection = match[1]
+      if (!encodedConnection) return
+      const connection = decodeURIComponent(encodedConnection)
+      const previous = queryClient.getQueryData<PreparationView>(['review-preparation'])
+      queryClient.setQueryData<PreparationView>(['review-preparation'], (current) => {
+        if (!current || !current.connections) return current
+        return {
+          ...current,
+          connections: current.connections.map((condition) => (
+            condition.connection === connection
+              ? { ...condition, state: 'checking' as const }
+              : condition
+          )),
+        }
+      })
+      return { previous }
+    },
+    onError: (_error, _path, context) => {
+      if (context?.previous) queryClient.setQueryData(['review-preparation'], context.previous)
+    },
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['library'] }),
+        queryClient.invalidateQueries({ queryKey: ['attention'] }),
+      ])
+    },
+  })
+  return <ConnectionNotice data={data} checking={action.isPending} error={action.isError} onCheck={(connection) => {
+    const main = document.getElementById('main-content')
+    if (main) main.dataset.routeFocusIdentity = `${window.location.pathname}:${routeIdentity}`
+    action.mutate(`${encodeURIComponent(connection)}/check-connection`)
+  }}/>
+}
+
+export const PreparationActivity = () => {
+  const { data, queryClient, http } = usePreparation()
+  const [open, setOpen] = useState(false)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const action = useMutation({
+    mutationFn: (path: string) => http.preparationAction(path),
+    retry: false,
+    onSettled: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['library'] }),
+        queryClient.invalidateQueries({ queryKey: ['attention'] }),
+      ])
+    },
+  })
   const unavailable = !data || (!data.active && !data.actionable && !data.paused)
   useEffect(() => {
     if (!open || !unavailable) return
@@ -56,7 +147,7 @@ const PreparationActivity = () => {
   }, [open, unavailable])
   if (unavailable && !open) return null
   const close = () => { trigger.current?.focus(); setOpen(false) }
-  return <div className="preparation"><button ref={trigger} type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{data?.paused ? 'Preparation paused' : data?.actionable ? 'Preparation needs attention' : 'Preparing libraries'}</button>{open && data ? <section aria-label="Background activity"><h2>Background activity</h2>{data.libraries.map((item) => <article key={`${item.connection}:${item.library}`}><strong>{item.library}</strong><span>{item.state} · {item.checked}/{item.total}</span><button disabled={action.isPending || data.paused || item.state === 'queued' || item.state === 'discovering'} onClick={() => action.mutate(`${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/scan`)}>Scan now</button>{item.state === 'completed_with_failures' ? <button disabled={action.isPending || data.paused} onClick={() => action.mutate(`${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/retry`)}>Retry</button> : null}</article>)}<button disabled={action.isPending} onClick={() => action.mutate(data.paused ? 'resume' : 'pause')}>{data.paused ? 'Resume' : 'Pause'}</button><button onClick={close}>Close</button>{action.isError ? <p role="alert">Preparation control failed safely. Try again.</p> : null}</section> : null}</div>
+  return <div className="preparation-activity"><button ref={trigger} type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{data?.paused ? 'Preparation paused' : data?.actionable ? 'Preparation needs attention' : 'Preparing libraries'}</button>{open && data ? <section className="preparation-popover" aria-label="Background activity"><h2>Background activity</h2>{data.libraries.map((item) => <article key={`${item.connection}:${item.library}`}><strong>{item.library}</strong><span>{item.state} · {item.checked}/{item.total}</span><button disabled={action.isPending || data.paused || item.state === 'queued' || item.state === 'discovering'} onClick={() => action.mutate(`${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/scan`)}>Scan now</button>{item.state === 'completed_with_failures' ? <button disabled={action.isPending || data.paused} onClick={() => action.mutate(`${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/retry`)}>Retry</button> : null}</article>)}<button disabled={action.isPending} onClick={() => action.mutate(data.paused ? 'resume' : 'pause')}>{data.paused ? 'Resume' : 'Pause'}</button><button onClick={close}>Close</button>{action.isError ? <p role="alert">Preparation control failed safely. Try again.</p> : null}</section> : null}</div>
 }
 
 const ThemeControl = () => {
@@ -84,11 +175,11 @@ const Shell = () => {
     document.title = `${title} · Mechanical Librarian`
     const changed = previousPath.current !== path
     previousPath.current = path
-    const frame = requestAnimationFrame(() => { const target = main.current?.querySelector<HTMLElement>('[data-route-focus]') ?? main.current; target?.focus({ preventScroll: true }); if (changed && !popNavigation.current) window.scrollTo({ top: 0 }); popNavigation.current = false; main.current?.setAttribute('data-restored-path', path); dispatchEvent(new Event('ml:route-restored')) })
+    const frame = requestAnimationFrame(() => { if (changed) { const target = main.current?.querySelector<HTMLElement>('[data-route-focus]') ?? main.current; target?.focus({ preventScroll: true }) }; if (changed && !popNavigation.current) window.scrollTo({ top: 0 }); popNavigation.current = false; main.current?.setAttribute('data-restored-path', path); dispatchEvent(new Event('ml:route-restored')) })
     return () => cancelAnimationFrame(frame)
   }, [navigation.status, path, title])
   const signOut = async () => { setShellError(''); try { await http.logout(); window.location.assign('/login') } catch (error) { if (!(error instanceof BuildMismatchError)) setShellError('Sign out failed. Try again.') } }
-  return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to content</a><header className="masthead"><Link to="/library" search={{ lens: 'all' }} className="brand" aria-label="Mechanical Librarian home"><span className="brand-mark" aria-hidden="true">ML</span><span>Mechanical Librarian</span></Link><nav aria-label="Primary workspace"><Link to="/library" search={{ lens: 'all' }} activeOptions={{ includeSearch: false }} activeProps={{ 'aria-current': 'page' }}>Library</Link><Link to="/policy" search={{ section: 'identity' }} activeProps={{ 'aria-current': 'page' }}>Policy</Link><Link to="/activity" activeProps={{ 'aria-current': 'page' }}>Activity</Link></nav><div className="shell-actions"><PreparationActivity/><ThemeControl/><span className="private-session"><span aria-hidden="true">●</span> Private</span><button className="sign-out" type="button" onClick={() => void signOut()}>Sign out</button></div></header><p className="navigation-status" role="status" aria-live="polite">{navigation.status === 'idle' ? `${title} loaded` : `Loading ${title}`}</p>{shellError ? <p className="shell-error" role="alert">{shellError}</p> : null}{mismatch ? <section className="build-mismatch" role="alert"><strong>This page is from a different application build.</strong><span>Writes are blocked. Reload once to continue safely.</span><button onClick={() => window.location.reload()}>Reload application</button></section> : null}<main id="main-content" ref={main} tabIndex={-1} aria-busy={navigation.status !== 'idle'}><Suspense fallback={<RoutePending title={title}/>}><Outlet/></Suspense></main></div>
+  return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to content</a><header className="masthead"><Link to="/library" search={{ lens: 'all' }} className="brand" aria-label="Mechanical Librarian home"><span className="brand-mark" aria-hidden="true">ML</span><span>Mechanical Librarian</span></Link><nav aria-label="Primary workspace"><Link to="/library" search={{ lens: 'all' }} activeOptions={{ includeSearch: false }} activeProps={{ 'aria-current': 'page' }}>Library</Link><Link to="/policy" search={{ section: 'identity' }} activeProps={{ 'aria-current': 'page' }}>Policy</Link><Link to="/activity" search={{ eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 }} activeProps={{ 'aria-current': 'page' }}>Activity</Link></nav><div className="shell-actions"><PreparationActivity/><ThemeControl/><span className="private-session"><span aria-hidden="true">●</span> Private</span><button className="sign-out" type="button" onClick={() => void signOut()}>Sign out</button></div></header><p className="navigation-status" role="status" aria-live="polite">{navigation.status === 'idle' ? `${title} loaded` : `Loading ${title}`}</p>{shellError ? <p className="shell-error" role="alert">{shellError}</p> : null}{mismatch ? <section className="build-mismatch" role="alert"><strong>This page is from a different application build.</strong><span>Writes are blocked. Reload once to continue safely.</span><button onClick={() => window.location.reload()}>Reload application</button></section> : null}<main id="main-content" ref={main} tabIndex={-1} aria-busy={navigation.status !== 'idle'}><Suspense fallback={<RoutePending title={title}/>}><Outlet/></Suspense></main></div>
 }
 
 const RoutePending = ({ title = 'workspace' }: { title?: string }) => <section aria-busy="true" className="route-state"><p className="eyebrow">Authenticated review</p><h1>Loading {title.toLowerCase()}…</h1></section>
@@ -108,7 +199,7 @@ export const detailRoute = createRoute({ getParentRoute: () => rootRoute, path: 
 export interface PolicyCritical { state: PolicyStateView; shadow: ShadowPostureView; safety: AutomaticSafetyView }
 const PolicyRouteComponent = () => { const initial = policyRoute.useLoaderData(); const { http } = rootRoute.useRouteContext(); const state = useQuery({ ...policyStateQuery(http), initialData: initial.state }); const shadow = useQuery({ ...shadowQuery(http), initialData: initial.shadow }); const safety = useQuery({ ...safetyQuery(http), initialData: initial.safety }); return <PolicyPage data={{ state: state.data, shadow: shadow.data, safety: safety.data }}/> }
 export const policyRoute = createRoute({ getParentRoute: () => rootRoute, path: '/policy', validateSearch: normalizePolicySearch, loader: async ({ context, abortController }) => { const [state, shadow, safety] = await Promise.all([context.queryClient.ensureQueryData({ ...policyStateQuery(context.http), queryFn: () => context.http.getPolicyState(abortController.signal) }), context.queryClient.ensureQueryData({ ...shadowQuery(context.http), queryFn: () => context.http.getShadowPosture(abortController.signal) }), context.queryClient.ensureQueryData({ ...safetyQuery(context.http), queryFn: () => context.http.getAutomaticSafety(abortController.signal) })]); return { state, shadow, safety } }, component: PolicyRouteComponent })
-export const activityRoute = createRoute({ getParentRoute: () => rootRoute, path: '/activity', loader: ({ context, abortController }) => context.queryClient.ensureQueryData({ ...activityQuery(context.http), queryFn: () => context.http.getActivity(abortController.signal) }), component: () => <ActivityPage initial={activityRoute.useLoaderData()}/> })
+export const activityRoute = createRoute({ getParentRoute: () => rootRoute, path: '/activity', validateSearch: normalizeActivitySearch, loaderDeps: ({ search }) => search, loader: ({ context, deps, abortController }) => context.queryClient.ensureQueryData({ ...activityQuery(context.http, deps), queryFn: () => context.http.getActivity(deps, abortController.signal) }), pendingMs: Infinity, component: () => <ActivityPage initial={activityRoute.useLoaderData()}/> })
 const routeTree = rootRoute.addChildren([indexRoute, libraryRoute, attentionRoute, detailRoute, policyRoute, activityRoute])
 
 type WorkIdentity = Pick<LibraryWorkView, 'title' | 'authors' | 'library' | 'mediaKind'>

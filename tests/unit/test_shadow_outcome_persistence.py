@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from mechanical_librarian.adapters.persistence.metadata_reports import MetadataReportError, open_repository
+from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
@@ -23,6 +24,9 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     FakeTargetService,
 )
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
 from mechanical_librarian.application.metadata_policy import (
     MAX_SHADOW_SAMPLE_RESPONSE_BYTES,
     PolicyNotebook,
@@ -46,9 +50,11 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     LocalClaim,
+    MetadataReport,
     TargetDestination,
     TargetField,
     TargetFieldState,
+    TargetFacts,
 )
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.domain.automatic_decision import (
@@ -56,9 +62,15 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecisionError,
     AutomaticSafetyState,
 )
+from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
-from mechanical_librarian.domain.review_case import ReviewCase
-from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
+from mechanical_librarian.application.review_web import BrowseReviewLibrary, InspectCurrentReviewCase
+from mechanical_librarian.application.catalogue import CatalogueEntry
+from mechanical_librarian.application.review_pipeline import (
+    PipelineAction,
+    ReviewPreparationPipeline,
+)
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source,
@@ -70,6 +82,12 @@ from tests.unit.test_proposal_set import (
     _report as _proposal_report,
 )
 from tests.unit.test_review_case_persistence import _report
+from tests.unit.test_cover_packets import (
+    _observer_result as _cover_observer_result,
+    _preview as _cover_preview,
+    _report as _cover_report,
+    _source as _cover_source,
+)
 
 
 def _case(repository):
@@ -122,6 +140,30 @@ def _running_projection(repository, case_id: str) -> str:
     return work_id
 
 
+def _staged_projection_action(repository, work_id: str) -> PipelineAction:
+    row = repository._connection.execute(
+        "SELECT work_id,scan_id,stage,attempt,connection_name,library_name,library_id,"
+        "producer_fingerprint,catalogue_generation,catalogue_fingerprint,item_id,"
+        "file_identity,source_revision,report_id,proposal_set_id,review_case_id,"
+        "source_fingerprint FROM review_preparation_work WHERE work_id=?",
+        (work_id,),
+    ).fetchone()
+    assert row is not None
+    checkpoint = repository._connection.execute(
+        "SELECT checkpoint FROM current_review_case_lineages WHERE "
+        "connection_name=? AND library_name=? AND item_id=?",
+        (row[4], row[5], row[10]),
+    ).fetchone()
+    assert checkpoint is not None
+    generation = repository._connection.execute(
+        "SELECT generation FROM metadata_policy_state WHERE singleton=1"
+    ).fetchone()
+    assert generation is not None
+    return PipelineAction(
+        *row, lineage_checkpoint=checkpoint[0], policy_generation=generation[0]
+    )
+
+
 def _digest(value: object) -> str:
     serialized = json.dumps(
         value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
@@ -144,7 +186,9 @@ def _preview_automatic_profile() -> MetadataPolicyProfile:
     )
 
 
-def _pipeline_configuration() -> ApplicationConfiguration:
+def _pipeline_configuration(
+    *, cover_reviewer_profile_file: str | None = None
+) -> ApplicationConfiguration:
     return ApplicationConfiguration(
         (
             TargetConnectionConfiguration(
@@ -155,7 +199,9 @@ def _pipeline_configuration() -> ApplicationConfiguration:
         (),
         (),
         review=ReviewWebConfiguration(
-            "https://review.example.invalid", "/run/owner-password"
+            "https://review.example.invalid",
+            "/run/owner-password",
+            cover_reviewer_profile_file=cover_reviewer_profile_file,
         ),
     )
 
@@ -280,6 +326,443 @@ def _human_title_decision(repository, case_id: str, occurred_at: int) -> HumanDe
 
 
 class ShadowOutcomePersistenceTests(unittest.TestCase):
+    def _qualified_cover_report(self, root: Path) -> tuple[MetadataReport, object]:
+        payloads = (_cover_preview(1), _cover_preview(2))
+        sources = (
+            _cover_source(1, payloads[0], incumbent=True),
+            _cover_source(2, payloads[1], embedded=True),
+        )
+        base = _cover_report(sources)
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", base.target.fields),
+            file=base.file,
+            local_claims=base.local_claims,
+            local_reasons=base.local_reasons,
+            providers=base.providers,
+            cover_sources=base.cover_sources,
+        )
+        artifacts = CoverArtifactStore(root / "artifacts")
+        for index, (source, payload) in enumerate(zip(sources, payloads, strict=True), 1):
+            assert source.artifact is not None
+            artifacts.stage(source.artifact, f"original-{index}".encode(), payload)
+        return report, evaluate_report(report)
+
+    def _run_qualified_cover_pipeline(
+        self, repository, root: Path, report: MetadataReport, proposal, supervisor
+    ) -> ReviewPreparationPipeline:
+        database = root / "reports.sqlite"
+
+        def extract(bound, action, claim_next):
+            bound.publish(
+                report, lambda: True,
+                after_publication=lambda current, published: current.complete_review_extraction_publication(
+                    action, published.report_id, 10, 0, None, claim_next, None,
+                ),
+            )
+            return report.report_id, True
+
+        def project(bound, action):
+            outcome = bound.persist_shadow_outcome(
+                action.review_case_id or "", 10, staged_action=action,
+            )
+            return "stale" if outcome == "stale" else "complete"
+
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(
+                database, authority=repository.authority
+            ),
+            libraries=(("primary", "ebooks", "lib-1", "f" * 64),),
+            discover=lambda *_: (1, report.file.content_digest, (
+                CatalogueEntry("primary", "ebooks", "lib-1", "item-1", 1,
+                               "Synthetic cover", (), True, False,
+                               "singular-supported", report.file.identity,
+                               "/item-1.epub", "epub", "books"),
+            )),
+            extract=extract,
+            providers=lambda *_: (),
+            propose=lambda bound, _: (
+                bound.publish_proposal(proposal), proposal.proposal_set_id
+            )[1],
+            admit=lambda bound, _: (
+                lambda value: (value["status"], value.get("review_case_id"))
+            )(json.loads(bound.admit_review_case(proposal))),
+            project=project,
+            before_projection=supervisor._pipeline._before_projection,
+            after_advance=supervisor._pipeline._after_advance,
+            clock=lambda: 10,
+        )
+        pipeline.request("primary", "ebooks")
+        return pipeline
+
+    def _assert_no_cover_effect_authority(self, repository) -> None:
+        self.assertEqual(
+            (0,), repository._connection.execute(
+                "SELECT count(*) FROM field_effects"
+            ).fetchone(),
+        )
+
+    def _assert_manual_cover_surface(
+        self, repository, case_id: str, considerations, reviewer_status: str
+    ) -> None:
+        detail = InspectCurrentReviewCase(repository, considerations).run(case_id)
+        cover = next(
+            field for field in detail["fields"] if field["destination"] == "cover"
+        )
+        consideration = cover["cover_consideration"]
+        self.assertIsNotNone(consideration)
+        assert consideration is not None
+        self.assertEqual(reviewer_status, consideration["reviewer_status"])
+        self.assertTrue(any(candidate["selectable"] for candidate in consideration["candidates"]))
+        self.assertTrue(cover["editable"])
+        self.assertTrue(cover["needs_attention"])
+        self.assertIsNone(cover["human_decision"])
+
+    def test_activity_projects_cover_reviewer_terminal_state_without_private_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            review_case_id = _case(repository)
+            report_id = json.loads(repository.get_review_case(review_case_id))["case"]["report_id"]
+
+            def record(status: str, suffix: str, kind: str = "automatic_prepared") -> None:
+                consideration_id = "cover_consideration_" + suffix * 64
+                consideration = json.dumps({
+                    "candidate": "private-candidate", "document": "private-document",
+                    "image": "private-image", "path": "/private/profile",
+                    "profile": "private-profile", "recommendation": "private-recommendation",
+                    "reviewer_status": status,
+                }, separators=(",", ":"), sort_keys=True)
+                repository._connection.execute(
+                    "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
+                    (consideration_id, review_case_id, report_id, suffix * 64,
+                     hashlib.sha256(consideration.encode()).hexdigest(), None, 10, consideration),
+                )
+                event = json.dumps({
+                    "consideration_id": consideration_id, "decision_id": None,
+                    "kind": kind, "occurred_at": 10, "review_case_id": review_case_id,
+                    "schema_version": "cover-consideration-event-v1",
+                }, separators=(",", ":"), sort_keys=True)
+                event_id = "cover_consideration_event_" + hashlib.sha256(event.encode()).hexdigest()
+                repository._connection.execute(
+                    "INSERT INTO cover_consideration_events(event_id,consideration_id,review_case_id,kind,decision_id,occurred_at,document) VALUES(?,?,?,?,?,?,?)",
+                    (event_id, consideration_id, review_case_id, kind, None, 10, event),
+                )
+
+            record("completed", "a", "automatic_prepared")
+            record("unavailable", "b", "automatic_prepared")
+            record("failed", "c", "automatic_prepared")
+            record("completed", "1", "owner_retry_prepared")
+            record("unavailable", "2", "owner_retry_prepared")
+            record("failed", "3", "owner_retry_prepared")
+            record("failed", "d", "stale")
+            record("failed", "e", "superseded")
+            record("completed", "6", "selected")
+            record("completed", "7", "kept_incumbent")
+            record("completed", "8", "no_action")
+            repository._connection.commit()
+            page = repository.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=0, page=1, page_size=25,
+            )
+            cover_events = [event for event in page["events"] if event["destination"] == "cover"]
+            self.assertEqual(
+                {"completed", "unavailable", "failed", "stale", "superseded", "selected", "kept_incumbent", "no_action"},
+                {event["state"] for event in cover_events},
+            )
+            self.assertEqual(
+                {"completed", "unavailable", "failed"},
+                {event["state"] for event in cover_events if event["origin"] == "automatic_pipeline"},
+            )
+            self.assertEqual(
+                {"completed", "unavailable", "failed"},
+                {event["state"] for event in cover_events if event["origin"] == "owner_retry"},
+            )
+            self.assertEqual(
+                {"review"},
+                {event["event_type"] for event in cover_events if event["origin"] == "owner_retry"},
+            )
+            self.assertEqual("safety", next(event["event_type"] for event in cover_events if event["state"] == "stale"))
+            reviews = repository.field_effect_activity_page(
+                search=None, event_type="review", occurred_after=0, page=1, page_size=25,
+            )
+            review_cover_events = [event for event in reviews["events"] if event["destination"] == "cover"]
+            self.assertEqual(
+                {"completed", "unavailable", "failed", "selected", "kept_incumbent", "no_action"},
+                {event["state"] for event in review_cover_events},
+            )
+            self.assertEqual(
+                {"human"},
+                {event["origin"] for event in review_cover_events if event["state"] in {"selected", "kept_incumbent", "no_action"}},
+            )
+            serialized = json.dumps(page)
+            for value in ("private-candidate", "private-document", "private-image", "/private/profile", "private-profile", "private-recommendation"):
+                self.assertNotIn(value, serialized)
+            repository.close()
+
+    def test_activity_fails_closed_for_malformed_cover_consideration_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            review_case_id = _case(repository)
+            report_id = json.loads(repository.get_review_case(review_case_id))["case"]["report_id"]
+            consideration_id = "cover_consideration_" + "f" * 64
+            repository._connection.execute(
+                "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
+                (consideration_id, review_case_id, report_id, "f" * 64, "0" * 64, None, 10, "{malformed"),
+            )
+            event = json.dumps({"consideration_id": consideration_id, "decision_id": None, "kind": "automatic_prepared", "occurred_at": 10, "review_case_id": review_case_id, "schema_version": "cover-consideration-event-v1"}, separators=(",", ":"), sort_keys=True)
+            repository._connection.execute(
+                "INSERT INTO cover_consideration_events(event_id,consideration_id,review_case_id,kind,decision_id,occurred_at,document) VALUES(?,?,?,?,?,?,?)",
+                ("cover_consideration_event_" + hashlib.sha256(event.encode()).hexdigest(), consideration_id, review_case_id, "automatic_prepared", None, 10, event),
+            )
+            repository._connection.commit()
+            with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
+                repository.field_effect_activity_page(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+            repository.close()
+
+    def test_activity_accepts_the_cover_document_cap_and_rejects_larger_or_malformed_values(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            review_case_id = _case(repository)
+            report_id = json.loads(repository.get_review_case(review_case_id))["case"]["report_id"]
+
+            def record(document: str, suffix: str) -> None:
+                consideration_id = "cover_consideration_" + suffix * 64
+                event = json.dumps({"consideration_id": consideration_id, "decision_id": None, "kind": "automatic_prepared", "occurred_at": 10, "review_case_id": review_case_id, "schema_version": "cover-consideration-event-v1"}, separators=(",", ":"), sort_keys=True)
+                repository._connection.execute("INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)", (consideration_id, review_case_id, report_id, suffix * 64, hashlib.sha256(document.encode()).hexdigest(), None, 10, document))
+                repository._connection.execute("INSERT INTO cover_consideration_events(event_id,consideration_id,review_case_id,kind,decision_id,occurred_at,document) VALUES(?,?,?,?,?,?,?)", ("cover_consideration_event_" + hashlib.sha256(event.encode()).hexdigest(), consideration_id, review_case_id, "automatic_prepared", None, 10, event))
+
+            for size, suffix in ((2_097_153, "a"), (12_582_912, "b")):
+                prefix = '{"padding":"'
+                suffix_text = '","reviewer_status":"completed"}'
+                document = prefix + "x" * (size - len(prefix) - len(suffix_text)) + suffix_text
+                record(document, suffix)
+                repository._connection.commit()
+                page = repository.field_effect_activity_page(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+                self.assertEqual(1 if suffix == "a" else 2, len([item for item in page["events"] if item["destination"] == "cover"]))
+
+            repository._connection.execute("PRAGMA ignore_check_constraints=ON")
+            record('{"padding":"' + "private" + "x" * 12_582_912 + '"}', "c")
+            repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
+            repository._connection.commit()
+            with self.assertRaisesRegex(FieldEffectError, "^persistence$"):
+                repository.field_effect_activity_page(search=None, event_type="all", occurred_after=0, page=1, page_size=25)
+            repository.close()
+
+    def test_activity_page_does_not_materialize_repeated_near_limit_cover_documents(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            review_case_id = _case(repository)
+            report_id = json.loads(repository.get_review_case(review_case_id))["case"]["report_id"]
+            consideration_id = "cover_consideration_" + "a" * 64
+            prefix = '{"candidate":"private-candidate","document":"private-document","image":"private-image","padding":"'
+            suffix = '","profile":"private-profile","recommendation":"private-recommendation","reviewer_status":"completed"}'
+            document = prefix + "x" * (12_582_912 - len(prefix) - len(suffix)) + suffix
+            repository._connection.execute(
+                "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
+                (consideration_id, review_case_id, report_id, "a" * 64,
+                 hashlib.sha256(document.encode()).hexdigest(), None, 10, document),
+            )
+            for occurred_at in range(100, 200):
+                event = json.dumps({
+                    "consideration_id": consideration_id, "decision_id": None,
+                    "kind": "automatic_prepared", "occurred_at": occurred_at,
+                    "review_case_id": review_case_id,
+                    "schema_version": "cover-consideration-event-v1",
+                }, separators=(",", ":"), sort_keys=True)
+                repository._connection.execute(
+                    "INSERT INTO cover_consideration_events(event_id,consideration_id,review_case_id,kind,decision_id,occurred_at,document) VALUES(?,?,?,?,?,?,?)",
+                    ("cover_consideration_event_" + hashlib.sha256(event.encode()).hexdigest(),
+                     consideration_id, review_case_id, "automatic_prepared", None, occurred_at, event),
+                )
+            repository._connection.commit()
+            original_loads = json.loads
+
+            def reject_large_json(value: object, *args: object, **kwargs: object) -> object:
+                if type(value) is str and len(value.encode("utf-8")) > 65_536:
+                    raise AssertionError("activity materialized a private cover document")
+                return original_loads(value, *args, **kwargs)
+
+            with patch("mechanical_librarian.adapters.persistence.metadata_reports.json.loads", side_effect=reject_large_json):
+                page = repository.field_effect_activity_page(
+                    search=None, event_type="metadata", occurred_after=0, page=1, page_size=100,
+                )
+            cover_events = [event for event in page["events"] if event["destination"] == "cover"]
+            self.assertEqual(100, len(cover_events))
+            self.assertEqual({"completed"}, {event["state"] for event in cover_events})
+            serialized = json.dumps(page)
+            self.assertLess(len(serialized), 100_000)
+            for value in ("private-candidate", "private-document", "private-image", "private-profile", "private-recommendation"):
+                self.assertNotIn(value, serialized)
+            repository.close()
+
+    def test_atomic_cover_preparation_excludes_sibling_drift_and_rolls_back_every_pointer(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports.sqlite"
+            repository = open_repository(path)
+            review_case_id = _case(repository)
+            report_id = json.loads(repository.get_review_case(review_case_id))["case"]["report_id"]
+            consideration_id = "cover_consideration_" + "d" * 64
+            document = json.dumps({"consideration_id": consideration_id, "replay_digest": "e" * 64, "report_id": report_id, "review_case_id": review_case_id, "schema_version": "cover-consideration-v1", "supersedes_id": None}, separators=(",", ":"), sort_keys=True)
+            repository._connection.execute("CREATE TEMP TRIGGER abort_cover_event BEFORE INSERT ON cover_consideration_events BEGIN SELECT RAISE(ABORT,'synthetic'); END")
+            package_count = repository._connection.execute("SELECT count(*) FROM current_review_packages").fetchone()[0]
+
+            def finalize() -> object:
+                sibling = sqlite3.connect(path, timeout=0)
+                try:
+                    with self.assertRaises(sqlite3.OperationalError):
+                        sibling.execute("UPDATE current_review_case_lineages SET checkpoint=checkpoint")
+                finally:
+                    sibling.close()
+                return repository.record_cover_consideration(document, review_case_id=review_case_id, report_id=report_id, replay_digest="e" * 64, supersedes_id=None, occurred_at=10)
+
+            with self.assertRaisesRegex(MetadataReportError, "unavailable"):
+                repository.atomic_cover_preparation(finalize)
+            self.assertEqual((0, 0, 0, package_count), repository._connection.execute("SELECT (SELECT count(*) FROM cover_considerations), (SELECT count(*) FROM cover_consideration_events), (SELECT count(*) FROM current_cover_considerations), (SELECT count(*) FROM current_review_packages)").fetchone())
+            repository.close()
+
+    def test_manual_cover_predecessor_drift_rolls_back_and_releases_the_writer_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports.sqlite"
+            repository = open_repository(path)
+            review_case_id = _case(repository)
+            report_id = json.loads(repository.get_review_case(review_case_id))["case"]["report_id"]
+
+            def document(suffix: str, supersedes_id: str | None) -> str:
+                return json.dumps({"consideration_id": "cover_consideration_" + suffix * 64, "replay_digest": suffix * 64, "report_id": report_id, "review_case_id": review_case_id, "schema_version": "cover-consideration-v1", "supersedes_id": supersedes_id}, separators=(",", ":"), sort_keys=True)
+
+            first = document("a", None)
+            repository.record_cover_consideration(first, review_case_id=review_case_id, report_id=report_id, replay_digest="a" * 64, supersedes_id=None, occurred_at=10)
+            with self.assertRaisesRegex(MetadataReportError, "cover consideration changed"):
+                repository.record_cover_consideration(document("b", None), review_case_id=review_case_id, report_id=report_id, replay_digest="b" * 64, supersedes_id=None, occurred_at=11)
+            self.assertFalse(repository._connection.in_transaction)
+            sibling = sqlite3.connect(path, timeout=0)
+            try:
+                sibling.execute("BEGIN IMMEDIATE")
+                sibling.execute("ROLLBACK")
+            finally:
+                sibling.close()
+            self.assertEqual((1, 1, 1), repository._connection.execute("SELECT (SELECT count(*) FROM cover_considerations), (SELECT count(*) FROM cover_consideration_events), (SELECT count(*) FROM current_cover_considerations)").fetchone())
+            repository.close()
+
+    def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards(self) -> None:
+        isbn10 = LocalClaim.create(
+            kind=ClaimKind.ISBN, observed="0306406152", canonical="0306406152",
+            excerpt="0306406152", applicability="ebook", checksum="valid_isbn_10",
+            applicability_basis="ebook", scope=ClaimScope.EDITION,
+        )
+        report = _proposal_report(
+            fields=_fields(isbn=TargetField(
+                TargetDestination.ISBN, TargetFieldState.VALUE, "0306406152",
+            )),
+            local_claims=(isbn10,), providers=(_provider(
+                "catalogue", "edition-1", (_claim(
+                    "catalogue", "edition-1", ClaimKind.ISBN, "9780306406157",
+                    scope=ClaimScope.EDITION, applicability="ebook",
+                ),),
+            ),),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "reports.sqlite"
+            repository = open_repository(path)
+            options = dict(DEFAULT_OPTIONS)
+            options["isbn_form"] = "preserve_exact"
+            destinations = {
+                name: "unsupported" if name == "explicit" else "ask"
+                for name in OPTION_CATALOGUE
+            }
+            destinations["isbn_form"] = "automatic"
+            profile = MetadataPolicyProfile.create("No-change ISBN", options, destinations)
+            resolved = resolve_policy(profile, report.target.library)
+            repository.enter_shadow_preview(1)
+            repository.create_metadata_policy_draft(profile.canonical_json)
+            repository.activate_metadata_policy(
+                profile.policy_id, MetadataPolicyProfile.builtin().policy_id,
+                ((report.target.library, resolved.resolved_id, resolved.canonical_json),), 2,
+            )
+            repository.activate_qualified_automatic(3)
+            proposal_set = evaluate_report(
+                report, resolved.resolved_id, human_review_destinations(resolved),
+            )
+            repository.publish(report, lambda: True)
+            repository.publish_proposal(proposal_set)
+            case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
+            assert case_id is not None
+            case = ReviewCase.create_from_data(
+                json.loads(repository.get_review_case(case_id))["case"]
+            )
+            proposal = next(value for value in case.proposals if value["destination"] == "isbn")
+            alternative = proposal["result"]["alternatives"][0]
+            decision = AutomaticDecision.create(
+                review_case_id=case.review_case_id, report_id=case.report_id,
+                proposal_set_id=case.proposal_set_id, proposal_id=proposal["proposal_id"],
+                target_fingerprint=case.target_fingerprint, destination="isbn",
+                outcome="candidate", candidate_id=alternative["alternative_id"],
+                resolved_policy_id=resolved.resolved_id, policy_generation=2,
+                rule_id="shadow_rule_" + "1" * 64, policy_category="isbn_form",
+                policy_option="preserve_exact",
+                qualification_manifest_sha256="aba7b436d88bb4e884cda0c4b247aa871063dce459e0f5fbea298227a1e9b06c",
+                source_outcome_id="shadow_outcome_" + "2" * 64,
+                bundle_id=None, occurred_at=4,
+            )
+            repository._connection.execute(
+                "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
+                "idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
+                (decision.decision_id, decision.review_case_id, decision.destination,
+                 decision.idempotency_digest, decision.occurred_at, decision.to_json()),
+            )
+            repository._connection.commit()
+
+            self.assertTrue(repository.record_current_field_effect_no_change(decision, 5))
+            self.assertTrue(repository.record_current_field_effect_no_change(decision, 9))
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT count(*) FROM field_effect_no_changes"
+                ).fetchone(), (1,),
+            )
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT count(*) FROM field_effects"
+                ).fetchone(), (0,),
+            )
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT count(*) FROM field_effect_authorities"
+                ).fetchone(), (0,),
+            )
+            self.assertEqual(
+                repository._connection.execute(
+                    "SELECT count(*) FROM field_effect_consents"
+                ).fetchone(), (0,),
+            )
+
+            class UnexpectedAuthority:
+                def resolve(self, _decision):
+                    raise AssertionError("equal decision reached authority")
+
+            scheduler = ContinuousGuardedApplication(
+                repository, {("primary", "ebooks"): SimpleNamespace()},
+                {("primary", "ebooks"): SimpleNamespace()}, UnexpectedAuthority(),
+                (("primary", "ebooks"),), lambda: 10, lambda *_: None,
+            )
+            self.assertEqual(scheduler.schedule(), 0)
+            self.assertEqual(repository.pending_field_effect_decision_documents(100), ())
+            page = repository.field_effect_activity_page(
+                search="item-1", event_type="metadata", occurred_after=0, page=1,
+                page_size=25,
+            )
+            no_change = next(
+                event for event in page["events"]
+                if event["state"] == "no_change_required"
+            )
+            self.assertEqual(no_change["report_id"], report.report_id)
+            repository.close()
+            reopened = open_repository(path, create=False)
+            self.assertEqual(
+                reopened.field_effect_activity_page(
+                    search="item-1", event_type="metadata", occurred_after=0,
+                    page=1, page_size=25,
+                )["events"][0]["state"], "no_change_required",
+            )
+            reopened.close()
+
     def test_every_f20_automatic_option_reaches_persisted_effect_authority(self) -> None:
         isbn10 = LocalClaim.create(
             kind=ClaimKind.ISBN, observed="0306406152", canonical="0306406152",
@@ -653,6 +1136,28 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 )
                 recorded.update(value.disposition for value in outcome.outcomes)
                 self.assertEqual("none", outcome.authority)
+                abstentions = [
+                    value for value in outcome.outcomes
+                    if value.disposition == "abstention"
+                ]
+                for abstention in abstentions:
+                    detail = InspectCurrentReviewCase(repository).run(
+                        admitted["review_case_id"]
+                    )
+                    field = next(
+                        value for value in detail["fields"]
+                        if value["destination"] == abstention.destination
+                    )
+                    self.assertEqual("manual_fallback", field["classification"])
+                    self.assertTrue(field["needs_attention"])
+                    self.assertEqual(1, repository.count_current_attention_fields(None))
+                    self.assertEqual((1, 1), repository.count_current_review_cases(None))
+                    attention = repository.read_review_attention(None, 50, 0)
+                    self.assertEqual(1, attention.total)
+                    self.assertEqual(
+                        [abstention.destination],
+                        [row[2] for row in attention.rows],
+                    )
                 repository.close()
         with tempfile.TemporaryDirectory() as temporary:
             repository = open_repository(Path(temporary) / "reports.sqlite")
@@ -703,6 +1208,9 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             root = Path(temporary)
             database = root / "reports.sqlite"
             repository = open_repository(database)
+            provider_recovery = composition.SQLiteProviderRecoveryStore.open(
+                root / "provider-recovery.sqlite"
+            )
             case_id = _case(repository)
             repository.enter_shadow_preview(1)
             supervisor = composition.create_review_pipeline(
@@ -710,6 +1218,8 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
+                database_authority=repository.authority,
+                provider_recovery=provider_recovery,
             )
 
             self.assertEqual(
@@ -727,6 +1237,384 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 "stale", supervisor._pipeline._project(repository, case_id)
             )
             self.assertEqual(1, len(repository.list_shadow_outcomes(50)))
+            supervisor.stop()
+            repository.close()
+
+    def test_composed_projection_prepares_one_qualified_cover_advice_before_f22(self) -> None:
+        """Ordinary F22 composition persists advice before its package projection.
+
+        The synthetic runner is the only observer boundary in this test.  The
+        pipeline still composes its real consideration service and repository,
+        so replay can prove that neither restart nor projection replay dispatches
+        a second observer or gains cover-effect authority.
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            payloads = (_cover_preview(1), _cover_preview(2))
+            sources = (
+                _cover_source(1, payloads[0], incumbent=True),
+                _cover_source(2, payloads[1], embedded=True),
+            )
+            base = _cover_report(sources)
+            report = MetadataReport.create(
+                target=TargetFacts("primary", "ebooks", "item-1", base.target.fields),
+                file=base.file,
+                local_claims=base.local_claims,
+                local_reasons=base.local_reasons,
+                providers=base.providers,
+                cover_sources=base.cover_sources,
+            )
+            artifacts = CoverArtifactStore(root / "artifacts")
+            for index, (source, payload) in enumerate(zip(sources, payloads, strict=True), 1):
+                assert source.artifact is not None
+                artifacts.stage(source.artifact, f"original-{index}".encode(), payload)
+            proposal = evaluate_report(report)
+            recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
+            calls: list[object] = []
+
+            def reviewer(*args):
+                calls.append(args)
+                return _cover_observer_result(*args)
+
+            with patch.object(composition, "read_contained_reviewer_profile", return_value=b"synthetic-profile"), patch.object(composition, "run_cover_packet_reviewer", side_effect=reviewer):
+                supervisor = composition.create_review_pipeline(
+                    _pipeline_configuration(cover_reviewer_profile_file="/run/synthetic-profile"),
+                    database,
+                    root / "catalogue.sqlite",
+                    root / "artifacts",
+                    database_authority=repository.authority,
+                    provider_recovery=recovery,
+                )
+                def extract(bound, action, claim_next):
+                    bound.publish(report, lambda: True, after_publication=lambda current, published: current.complete_review_extraction_publication(action, published.report_id, 10, 0, None, claim_next, None))
+                    return report.report_id, True
+
+                def project(bound, action):
+                    self.assertEqual((0,), bound._connection.execute("SELECT count(*) FROM current_review_packages").fetchone())
+                    document = bound.current_cover_consideration_document(action.review_case_id or "")
+                    self.assertIsNotNone(document)
+                    assert document is not None
+                    self.assertEqual("completed", json.loads(document)["reviewer_status"])
+                    outcome = bound.persist_shadow_outcome(action.review_case_id or "", 10, staged_action=action)
+                    return "stale" if outcome == "stale" else "complete"
+
+                pipeline = ReviewPreparationPipeline(
+                    repository_factory=lambda: open_repository(database, authority=repository.authority),
+                    libraries=(("primary", "ebooks", "lib-1", "f" * 64),),
+                    discover=lambda *_: (1, report.file.content_digest, (CatalogueEntry("primary", "ebooks", "lib-1", "item-1", 1, "Synthetic cover", (), True, False, "singular-supported", report.file.identity, "/item-1.epub", "epub", "books"),)),
+                    extract=extract,
+                    providers=lambda *_: (),
+                    propose=lambda bound, _: (bound.publish_proposal(proposal), proposal.proposal_set_id)[1],
+                    admit=lambda bound, _: (lambda value: (value["status"], value.get("review_case_id")))(json.loads(bound.admit_review_case(proposal))),
+                    project=project,
+                    before_projection=supervisor._pipeline._before_projection,
+                    after_advance=supervisor._pipeline._after_advance,
+                    clock=lambda: 10,
+                )
+                pipeline.request("primary", "ebooks")
+                advanced = [pipeline.run_next(1) for _ in range(6)]
+                self.assertEqual(
+                    [True, True, True, True, True, False],
+                    advanced,
+                    repository._connection.execute(
+                        "SELECT stage,state,failure_code FROM review_preparation_work"
+                    ).fetchone(),
+                )
+                case_id = repository._connection.execute("SELECT review_case_id FROM current_review_packages").fetchone()[0]
+                first = repository.current_cover_consideration_document(case_id)
+                self.assertIsNotNone(first)
+                self.assertEqual((1,), repository._connection.execute("SELECT count(*) FROM current_review_packages").fetchone())
+                self.assertEqual((1,), repository._connection.execute("SELECT count(*) FROM provider_recovery_outbox").fetchone())
+                self.assertEqual("completed", json.loads(first)["reviewer_status"])
+                self.assertEqual(1, len(calls))
+                self.assertFalse(pipeline.run_next(1))
+                self.assertEqual(first, repository.current_cover_consideration_document(case_id))
+                self.assertEqual(1, len(calls))
+                self.assertEqual(0, repository._connection.execute("SELECT count(*) FROM field_effects").fetchone()[0])
+                supervisor.stop()
+            repository.close()
+
+    def test_composed_projection_without_reviewer_persists_unavailable_before_f22(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            report, proposal = self._qualified_cover_report(root)
+            recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
+            supervisor = composition.create_review_pipeline(
+                _pipeline_configuration(), database, root / "catalogue.sqlite",
+                root / "artifacts", database_authority=repository.authority,
+                provider_recovery=recovery,
+            )
+            with patch.object(composition, "run_cover_packet_reviewer") as dispatch:
+                pipeline = self._run_qualified_cover_pipeline(
+                    repository, root, report, proposal, supervisor
+                )
+                self.assertEqual(
+                    [True, True, True, True, True, False],
+                    [pipeline.run_next(1) for _ in range(6)],
+                )
+            case_id = repository._connection.execute(
+                "SELECT review_case_id FROM current_review_packages"
+            ).fetchone()[0]
+            document = repository.current_cover_consideration_document(case_id)
+            self.assertIsNotNone(document)
+            self.assertEqual("unavailable", json.loads(document)["reviewer_status"])
+            dispatch.assert_not_called()
+            considerations = composition._compose_cover_considerations(
+                repository, root / "artifacts", _pipeline_configuration().review
+            )
+            self._assert_manual_cover_surface(
+                repository, case_id, considerations, "unavailable"
+            )
+            self.assertEqual((1,), repository._connection.execute(
+                "SELECT count(*) FROM provider_recovery_outbox"
+            ).fetchone())
+            self._assert_no_cover_effect_authority(repository)
+            supervisor.stop()
+            repository.close()
+
+    def test_composed_projection_contains_reviewer_failures_before_f22(self) -> None:
+        failures = {
+            "refusal": lambda *_: '{"status":"refused"}',
+            "malformed": lambda *_: "not-json",
+            "exception": lambda *_: (_ for _ in ()).throw(RuntimeError("contained")),
+        }
+        for name, reviewer in failures.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                database = root / "reports.sqlite"
+                repository = open_repository(database)
+                report, proposal = self._qualified_cover_report(root)
+                recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
+                calls: list[object] = []
+
+                def dispatch(*args):
+                    calls.append(args)
+                    return reviewer(*args)
+
+                with patch.object(composition, "read_contained_reviewer_profile", return_value=b"profile"), patch.object(composition, "run_cover_packet_reviewer", side_effect=dispatch):
+                    supervisor = composition.create_review_pipeline(
+                        _pipeline_configuration(cover_reviewer_profile_file="/run/profile"),
+                        database, root / "catalogue.sqlite", root / "artifacts",
+                        database_authority=repository.authority, provider_recovery=recovery,
+                    )
+                    pipeline = self._run_qualified_cover_pipeline(
+                        repository, root, report, proposal, supervisor
+                    )
+                    self.assertEqual(
+                        [True, True, True, True, True, False],
+                        [pipeline.run_next(1) for _ in range(6)],
+                    )
+                case_id = repository._connection.execute(
+                    "SELECT review_case_id FROM current_review_packages"
+                ).fetchone()[0]
+                document = repository.current_cover_consideration_document(case_id)
+                self.assertIsNotNone(document)
+                self.assertEqual("failed", json.loads(document)["reviewer_status"])
+                self.assertEqual(1, len(calls))
+                with patch.object(
+                    composition, "read_contained_reviewer_profile",
+                    return_value=b"profile",
+                ):
+                    considerations = composition._compose_cover_considerations(
+                        repository, root / "artifacts", _pipeline_configuration(
+                            cover_reviewer_profile_file="/run/profile"
+                        ).review,
+                    )
+                self._assert_manual_cover_surface(
+                    repository, case_id, considerations, "failed"
+                )
+                self.assertEqual((1,), repository._connection.execute(
+                    "SELECT count(*) FROM provider_recovery_outbox"
+                ).fetchone())
+                self._assert_no_cover_effect_authority(repository)
+                supervisor.stop()
+                repository.close()
+
+    def test_composed_projection_stale_after_observation_does_not_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            report, proposal = self._qualified_cover_report(root)
+            recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
+
+            def drift(*_args):
+                repository._connection.execute(
+                    "UPDATE metadata_policy_state SET generation=generation+1 WHERE singleton=1"
+                )
+                repository._connection.commit()
+                return _cover_observer_result(*_args)
+
+            with patch.object(composition, "read_contained_reviewer_profile", return_value=b"profile"), patch.object(composition, "run_cover_packet_reviewer", side_effect=drift):
+                supervisor = composition.create_review_pipeline(
+                    _pipeline_configuration(cover_reviewer_profile_file="/run/profile"),
+                    database, root / "catalogue.sqlite", root / "artifacts",
+                    database_authority=repository.authority, provider_recovery=recovery,
+                )
+                pipeline = self._run_qualified_cover_pipeline(
+                    repository, root, report, proposal, supervisor
+                )
+                self.assertEqual([True, True, True, True], [pipeline.run_next(1) for _ in range(4)])
+                self.assertTrue(pipeline.run_next(1))
+            self.assertEqual(
+                ("queued", "stale"), repository._connection.execute(
+                    "SELECT state,failure_code FROM review_preparation_work "
+                    "WHERE stage='projection'"
+                ).fetchone(),
+            )
+            for table in (
+                "cover_considerations", "current_cover_considerations",
+                "current_review_packages", "provider_recovery_outbox",
+            ):
+                self.assertEqual((0,), repository._connection.execute(
+                    f"SELECT count(*) FROM {table}"
+                ).fetchone())
+            self._assert_no_cover_effect_authority(repository)
+            supervisor.stop()
+            repository.close()
+
+    def test_composed_projection_cover_persistence_failure_does_not_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            report, proposal = self._qualified_cover_report(root)
+            recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
+            supervisor = composition.create_review_pipeline(
+                _pipeline_configuration(), database, root / "catalogue.sqlite",
+                root / "artifacts", database_authority=repository.authority,
+                provider_recovery=recovery,
+            )
+            pipeline = self._run_qualified_cover_pipeline(
+                repository, root, report, proposal, supervisor
+            )
+            self.assertEqual([True, True, True, True], [pipeline.run_next(1) for _ in range(4)])
+            with patch.object(
+                type(repository), "record_cover_consideration",
+                side_effect=MetadataReportError("persistence"),
+            ):
+                self.assertTrue(pipeline.run_next(1))
+            self.assertEqual(
+                ("failed", "failed", None), repository._connection.execute(
+                    "SELECT state,failure_code,failure_root FROM review_preparation_work "
+                    "WHERE stage='projection'"
+                ).fetchone(),
+            )
+            for table in (
+                "cover_considerations", "current_cover_considerations",
+                "current_review_packages", "provider_recovery_outbox",
+            ):
+                self.assertEqual((0,), repository._connection.execute(
+                    f"SELECT count(*) FROM {table}"
+                ).fetchone())
+            self._assert_no_cover_effect_authority(repository)
+            supervisor.stop()
+            repository.close()
+
+    def test_composed_cover_replay_reuses_exact_binding_and_profile_change_supersedes_once(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            report, proposal = self._qualified_cover_report(root)
+            recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
+            calls: list[object] = []
+
+            def reviewer(*args):
+                calls.append(args)
+                return _cover_observer_result(*args)
+
+            with patch.object(composition, "read_contained_reviewer_profile", side_effect=(b"profile-1", b"profile-1", b"profile-2")), patch.object(composition, "run_cover_packet_reviewer", side_effect=reviewer):
+                supervisor = composition.create_review_pipeline(
+                    _pipeline_configuration(cover_reviewer_profile_file="/run/profile-1"),
+                    database, root / "catalogue.sqlite", root / "artifacts",
+                    database_authority=repository.authority, provider_recovery=recovery,
+                )
+                pipeline = self._run_qualified_cover_pipeline(
+                    repository, root, report, proposal, supervisor
+                )
+                self.assertEqual([True, True, True, True, True, False], [pipeline.run_next(1) for _ in range(6)])
+                case_id = repository._connection.execute(
+                    "SELECT review_case_id FROM current_review_packages"
+                ).fetchone()[0]
+                first = repository.current_cover_consideration_document(case_id)
+                cover_proposal_id = json.loads(first)["proposal_id"]
+                replay = composition._compose_cover_considerations(
+                    repository, root / "artifacts", _pipeline_configuration(
+                        cover_reviewer_profile_file="/run/profile-1"
+                    ).review,
+                ).ensure(case_id, report.to_json(), {"proposal_id": cover_proposal_id})
+                successor = composition._compose_cover_considerations(
+                    repository, root / "artifacts", _pipeline_configuration(
+                        cover_reviewer_profile_file="/run/profile-2"
+                    ).review,
+                ).ensure(case_id, report.to_json(), {"proposal_id": cover_proposal_id})
+            self.assertEqual(2, len(calls))
+            self.assertEqual(json.loads(first)["consideration_id"], replay["consideration_id"])
+            self.assertEqual(json.loads(first)["consideration_id"], successor["supersedes_id"])
+            self.assertEqual((2,), repository._connection.execute(
+                "SELECT count(*) FROM cover_considerations"
+            ).fetchone())
+            self._assert_no_cover_effect_authority(repository)
+            supervisor.stop()
+            repository.close()
+
+    def test_composed_projection_without_cover_skips_advice_and_completes_f22(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            report = _report("No cover proposal")
+            proposal = evaluate_report(report)
+            recovery = composition.SQLiteProviderRecoveryStore.open(
+                root / "provider-recovery.sqlite"
+            )
+            supervisor = composition.create_review_pipeline(
+                _pipeline_configuration(cover_reviewer_profile_file="/run/profile"),
+                database, root / "catalogue.sqlite", root / "artifacts",
+                database_authority=repository.authority, provider_recovery=recovery,
+            )
+
+            def extract(bound, action, claim_next):
+                bound.publish(
+                    report, lambda: True,
+                    after_publication=lambda current, published: current.complete_review_extraction_publication(
+                        action, published.report_id, 10, 0, None, claim_next, None,
+                    ),
+                )
+                return report.report_id, True
+
+            def project(bound, action):
+                self.assertIsNone(bound.current_cover_consideration_document(action.review_case_id or ""))
+                outcome = bound.persist_shadow_outcome(
+                    action.review_case_id or "", 10, staged_action=action,
+                )
+                return "stale" if outcome == "stale" else "complete"
+
+            pipeline = ReviewPreparationPipeline(
+                repository_factory=lambda: open_repository(database, authority=repository.authority),
+                libraries=(("primary", "ebooks", "lib-1", "f" * 64),),
+                discover=lambda *_: (1, report.file.content_digest, (
+                    CatalogueEntry("primary", "ebooks", "lib-1", "item-1", 1, "No cover proposal", (), True, False, "singular-supported", report.file.identity, "/item-1.epub", "epub", "books"),
+                )),
+                extract=extract, providers=lambda *_: (),
+                propose=lambda bound, _: (bound.publish_proposal(proposal), proposal.proposal_set_id)[1],
+                admit=lambda bound, _: (lambda value: (value["status"], value.get("review_case_id")))(json.loads(bound.admit_review_case(proposal))),
+                project=project, before_projection=supervisor._pipeline._before_projection,
+                after_advance=supervisor._pipeline._after_advance, clock=lambda: 10,
+            )
+            pipeline.request("primary", "ebooks")
+            self.assertEqual([True, True, True, True, True, False], [pipeline.run_next(1) for _ in range(6)])
+            self.assertEqual((1,), repository._connection.execute("SELECT count(*) FROM current_review_packages").fetchone())
+            self.assertEqual((1,), repository._connection.execute("SELECT count(*) FROM provider_recovery_outbox").fetchone())
+            self.assertEqual((0,), repository._connection.execute("SELECT count(*) FROM cover_considerations").fetchone())
+            self.assertEqual((0,), repository._connection.execute("SELECT count(*) FROM field_effects").fetchone())
+            self.assertFalse(pipeline.run_next(1))
+            supervisor.stop()
             repository.close()
 
     def test_review_posture_composed_stale_projection_restarts_instead_of_completing(self) -> None:
@@ -734,6 +1622,9 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             root = Path(temporary)
             database = root / "reports.sqlite"
             repository = open_repository(database)
+            provider_recovery = composition.SQLiteProviderRecoveryStore.open(
+                root / "provider-recovery.sqlite"
+            )
             old_case_id = _case(repository)
             old_case = json.loads(repository.get_review_case(old_case_id))["case"]
             work_id = _running_projection(repository, old_case_id)
@@ -747,6 +1638,8 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 database,
                 root / "catalogue.sqlite",
                 root / "artifacts",
+                database_authority=repository.authority,
+                provider_recovery=provider_recovery,
             )
 
             self.assertEqual("automatic", repository.shadow_posture())
@@ -771,6 +1664,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                     "SELECT COUNT(*) FROM review_preparation_work"
                 ).fetchone(),
             )
+            supervisor.stop()
             repository.close()
 
     def test_automatic_bootstrap_and_preview_replay_one_exact_set(self) -> None:
@@ -1071,6 +1965,97 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             )
             repository.close()
 
+    def test_old_claim_cannot_project_same_ids_at_newer_lineage_checkpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            repository = open_repository(Path(temporary) / "reports.sqlite")
+            case_id = _case(repository)
+            work_id = _running_projection(repository, case_id)
+            action = _staged_projection_action(repository, work_id)
+            pointer = repository._connection.execute(
+                "SELECT proposal_set_id,report_id,transition_id,checkpoint FROM "
+                "current_review_case_lineages WHERE connection_name='primary' "
+                "AND library_name='ebooks' AND item_id='item-1'"
+            ).fetchone()
+            assert pointer is not None
+            successor = ReviewTransition(
+                "primary", "ebooks", "item-1", pointer[3] + 1,
+                pointer[0], pointer[1], "superseded", case_id, case_id,
+                "actionable",
+            )
+            repository._connection.execute(
+                "INSERT INTO review_case_transitions(transition_id,connection_name,"
+                "library_name,item_id,checkpoint,actor,from_review_case_id,"
+                "to_review_case_id,proposal_set_id,report_id,kind,reason) "
+                "VALUES(?,?,?,?,?,'review-admission-v1',?,?,?,?,?,'actionable')",
+                (
+                    successor.transition_id,
+                    "primary", "ebooks", "item-1", pointer[3] + 1,
+                    case_id, case_id, pointer[0], pointer[1], "superseded",
+                ),
+            )
+            repository._connection.execute(
+                "UPDATE current_review_case_lineages SET transition_id=?,checkpoint=?,outcome='superseded' "
+                "WHERE connection_name='primary' AND library_name='ebooks' AND item_id='item-1'",
+                (successor.transition_id, pointer[3] + 1),
+            )
+            repository._connection.execute(
+                "UPDATE current_review_packages SET checkpoint=?,outcome='superseded' "
+                "WHERE connection_name='primary' AND library_name='ebooks' AND item_id='item-1'",
+                (pointer[3] + 1,),
+            )
+            repository._connection.execute(
+                "DELETE FROM current_review_packages WHERE connection_name='primary' "
+                "AND library_name='ebooks' AND item_id='item-1'"
+            )
+            repository._connection.commit()
+            repository.enter_shadow_preview(2)
+
+            # The old claim is tied to generation one.  Reconcile the active
+            # policy before the package exists, so an old projection cannot
+            # create a generation-two observation or automatic decision.
+            profile = _preview_automatic_profile()
+            repository.create_metadata_policy_draft(profile.canonical_json)
+            resolved = resolve_policy(profile, "ebooks")
+            transition = repository.activate_metadata_policy(
+                profile.policy_id,
+                MetadataPolicyProfile.builtin().policy_id,
+                (("ebooks", resolved.resolved_id, resolved.canonical_json),),
+                3,
+                reconcile_current=True,
+            )
+            assert transition is not None
+            self.assertEqual(2, transition.generation)
+
+            self.assertEqual("stale", repository.persist_shadow_outcome(
+                case_id, 4, staged_action=action
+            ))
+            self.assertEqual((0,), repository._connection.execute(
+                "SELECT COUNT(*) FROM shadow_decision_outcomes"
+            ).fetchone())
+            self.assertEqual((0,), repository._connection.execute(
+                "SELECT COUNT(*) FROM automatic_decisions"
+            ).fetchone())
+            with self.assertRaisesRegex(
+                MetadataReportError, "review preparation state changed"
+            ):
+                repository.advance_review_pipeline_action(action, None, 5)
+            self.assertEqual(("projection", "running"), repository._connection.execute(
+                "SELECT stage,state FROM review_preparation_work WHERE work_id=?",
+                (work_id,),
+            ).fetchone())
+            self.assertEqual((0,), repository._connection.execute(
+                "SELECT COUNT(*) FROM current_review_packages"
+            ).fetchone())
+            repository.fail_review_pipeline_action(action, "stale", True, 5)
+            self.assertEqual(("queued", "stale"), repository._connection.execute(
+                "SELECT state,failure_code FROM review_preparation_work WHERE work_id=?",
+                (work_id,),
+            ).fetchone())
+            self.assertEqual((0,), repository._connection.execute(
+                "SELECT COUNT(*) FROM metadata_policy_transition_items"
+            ).fetchone())
+            repository.close()
+
     def test_stale_recovery_currentness_failure_rolls_back_owned_transaction(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             repository = open_repository(Path(temporary) / "reports.sqlite")
@@ -1311,12 +2296,35 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
                 detail = InspectCurrentReviewCase(repository).run(case_id)
                 title = next(field for field in detail["fields"] if field["destination"] == "title")
                 self.assertTrue(title["needs_attention"])
+                self.assertEqual(
+                    "Automatic handling is suspended pending a safety recovery.",
+                    title["classification_reason"],
+                )
                 library = repository.read_review_library(None, 50, 0, True)
                 self.assertEqual(1, library.total)
                 self.assertEqual(1, library.attention_total)
                 attention = repository.read_review_attention(None, 50, 0)
                 self.assertGreaterEqual(attention.total, 1)
                 self.assertIn("title", tuple(row[2] for row in attention.rows))
+                self.assertEqual(
+                    "automatic_safety_suspended",
+                    next(row[5] for row in attention.rows if row[2] == "title"),
+                )
+                projected = BrowseReviewLibrary(repository).attention(
+                    search=None, limit=50, cursor=None,
+                )
+                self.assertEqual(attention.total, projected["total"])
+                self.assertIn(
+                    "title", [item["destination"] for item in projected["items"]],
+                )
+                self.assertEqual(
+                    "Automatic handling is suspended pending a safety recovery.",
+                    next(
+                        item["classification_reason"]
+                        for item in projected["items"]
+                        if item["destination"] == "title"
+                    ),
+                )
                 repository.close()
 
     def test_bootstrap_transition_acknowledgement_is_durable(self) -> None:

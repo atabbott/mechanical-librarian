@@ -1,6 +1,94 @@
 # Changelog
 
+- Make Library, Attention, and review detail use one truthful field
+  classification: automatic abstentions return to owner review, automatic
+  outcomes remain inspectable and overrideable, and unavailable fields explain
+  their state without a fake empty-value choice. (#598)
+
 ## Unreleased
+
+- Pause only review-preparation work that shares an unavailable Audiobookshelf
+  connection. The owner can run one authenticated, CSRF-protected bounded
+  connection check; recovery resumes the retained checkpoint without rerunning
+  completed packages or provider/proposal work. (#638)
+
+- Run one configured, qualified cover-reviewer comparison during ordinary
+  review preparation before the review package is published. Advice remains
+  immutable, exact-current, and owner-only; unavailable or failed reviewers
+  retain the manual comparison and never gain cover-write authority. (#600)
+
+- Preserve valid unlabelled Hardcover work creators as neutral,
+  identity-bound evidence and admit one deterministic authors proposal only
+  when a distinct provider's complete explicit author set exactly corroborates
+  the same qualified work. Partial, reordered, mixed-role, malformed, and
+  same-authority creator sets remain unresolved. (#416)
+  The exact-current metadata report and proposal policy contracts are now
+  `metadata-report-v25` and `fixed-conservative-v8`; earlier development
+  documents and databases remain incompatible under the clean-schema policy.
+
+- Add durable provider- and configuration-scoped recovery canaries. Terminal
+  packages register only retry-eligible lanes; the existing supervisor claims
+  one exact-current canary before durable, independently leased sibling fanout.
+  Shared failures publish nothing and retain bounded Retry-After/backoff;
+  successful members complete ordinary proposal, admission, projection, and
+  atomic package cutover while stale work and disabled configuration stop safely
+  without target metadata writes.
+  (#408)
+
+- Add the internal, unreachable scoped provider retry-successor seam. It
+  rebuilds only explicit retry-eligible failed lanes from an exact-current
+  report, preserves unselected lane evidence, and relies on existing atomic
+  review-package cutover; it adds no scheduler, endpoint, canary, or write
+  path. (#629)
+
+- Complete first-generation staged review projection before its package becomes
+  owner-visible, while retaining published-package authority for Library,
+  Attention, owner decisions, and field effects. (#630)
+
+- Record terminal provider failure recovery eligibility as durable,
+  configuration-generation-scoped waiting or dormant state. The local canary
+  claim is non-executing: it makes no provider, replay, fanout, or write call.
+  Operators increment `provider_recovery_generation` and restart after fixing
+  a dormant provider condition. (#625)
+
+- Make Library policy impact previews distinguish real changes from retained
+  values, unsupported evidence, and owner review. Empty fields with no
+  candidate now read `No change · remains empty — no supported value found`;
+  exact-current, ignored, and abstained outcomes no longer inflate the change
+  total, while bounded technical detail preserves their closed audit codes.
+  (#609)
+
+- Explain every closed Library policy representation in place: its admitted
+  source/value, bounded transformation, field effect, and abstention boundary.
+  Visible Google text now explicitly admits only eligible transformed Google
+  Books text and never falls back to Hardcover; manual-review-only choices and
+  any Automatic-to-Ask-me consequence are owner-visible. (#608)
+
+- Record an equal automatic metadata candidate as a durable **No change
+  required** Activity outcome without creating a guarded write plan or
+  consulting write authority, consent, capability, backup, target, or read-back
+  services. (#599)
+
+- Show each Library policy chapter's exact changed-field count, including zero,
+  with chapter-specific accessible labels. Unsupported fields now explain that
+  they are read-only and cannot be changed in a draft. (#607)
+
+- Keep authenticated Library and Attention reads bound to one completed review
+  package. In-progress, stale, and failed preparation no longer replaces a
+  visible prior package or exposes a first-generation partial result. Complete
+  provider-lane failures and no-match outcomes remain inspectable without
+  discarding coherent sibling evidence, while pre-package failures appear as
+  bounded Library-only recovery states and never enter Attention. (#597)
+
+- Preserve safely anchored Hardcover work identity, title, and complete creator
+  evidence when the requested edition enrichment exceeds its bound. The
+  oversized enrichment is diagnosed without retaining any edition claims or
+  cover evidence. (#418)
+
+- Fix Audiobookshelf nested ebook identity handling so catalogue discovery and
+  current-item validation derive the same canonical service-relative location
+  and opaque file identity. Conflicting, traversal, missing, and ambiguous file
+  records remain fail-closed before currentness can admit a write. (#596)
 
 - Compare checksum-valid ISBN-10 and ISBN-13 forms from one canonical family as
   one proposal, retaining each original evidence reference while preferring an
@@ -12,6 +100,14 @@
   process-wide descriptor-number allocation. Authenticated review-preparation
   status polling now remains available and snapshot-consistent while legitimate
   concurrent writers churn rollback-journal descriptors. (#594)
+
+- Add the protected owner-only Activity ledger. The calm current-state summary
+  now leads to a server-paged, date-bounded record of durable review decisions,
+  policy transitions, safeguards, guarded writes, and verification. Search,
+  type filters, direct page navigation, bounded evidence inspection, and the
+  existing consent, pause, revoke, stale, and ambiguous-recovery controls use
+  the same authenticated private Activity projection; no queue, retry system,
+  export, write authority, or persistence schema was added. (#591)
 
 - Implement the protected Library policy notebook: one active policy and one
   mutable draft now present as four focused chapters, with field meaning,

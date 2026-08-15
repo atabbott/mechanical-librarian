@@ -6,9 +6,7 @@ import { useRouteReadyFocus } from '../focus'
 import { attentionRoute } from '../router'
 
 const destinationLabel = (value: string) => value.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase())
-const reasonLabel = (item: AttentionItemView) => item.notices[0]
-  ? destinationLabel(item.notices[0]).replace(/\.$/u, '')
-  : 'The current evidence requires a human choice'
+const reasonLabel = (item: AttentionItemView) => item.classificationReason ?? 'The current evidence requires a human choice'
 const outcomePreview = (item: AttentionItemView) => `Inspect the current value and available ${destinationLabel(item.destination).toLowerCase()} choices${item.provenance.length ? ` · ${String(item.provenance.length)} evidence ${item.provenance.length === 1 ? 'record' : 'records'} available` : ''}.`
 const authors = (item: AttentionItemView) => item.authors.length ? item.authors.join(', ') : 'Author details unavailable'
 const groupItems = (items: readonly AttentionItemView[]) => {

@@ -16,13 +16,14 @@ from pathlib import Path
 from typing import Iterator
 from urllib.parse import quote
 
-from mechanical_librarian.application.catalogue import CatalogueEntry
+from mechanical_librarian.application.catalogue import CatalogueEntry, TargetConnectionError
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.metadata_policy import PolicyTransition
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     PipelineProgress,
     ReviewPipelineError,
+    TargetConnectionCondition,
     pipeline_scan_id,
 )
 from mechanical_librarian.application.review_web import (
@@ -47,10 +48,12 @@ from mechanical_librarian.domain.field_effect import (
     FIELD_EFFECT_FAILURES,
     SUPPORTED_DESTINATIONS,
     FieldEffectError,
+    FieldEffectNoChange,
     FieldEffectOperation,
     authority_to_data,
     canonical_json as canonical_effect_json,
     field_value_version,
+    project_decision_value,
 )
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
@@ -111,7 +114,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v23'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v26'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -216,6 +219,34 @@ _REVIEW_POINTERS_SQL = (
     "CHECK ((outcome IN ('admitted','superseded') AND review_case_id IS NOT NULL) OR (outcome IN ('no_case','retired','tombstoned') AND review_case_id IS NULL)), "
     "PRIMARY KEY (connection_name,library_name,item_id))"
 )
+_CURRENT_REVIEW_PACKAGES_SQL = (
+    "CREATE TABLE current_review_packages ("
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
+    "proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), "
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "review_case_id TEXT REFERENCES review_cases(review_case_id), "
+    "checkpoint INTEGER CHECK(checkpoint IS NULL OR checkpoint>=1), "
+    "outcome TEXT NOT NULL CHECK(outcome IN ('report_only','admitted','superseded','no_case','retired')), "
+    "CHECK ((outcome='report_only' AND proposal_set_id IS NULL AND review_case_id IS NULL AND checkpoint IS NULL) "
+    "OR (outcome IN ('admitted','superseded') AND proposal_set_id IS NOT NULL AND review_case_id IS NOT NULL AND checkpoint IS NOT NULL) "
+    "OR (outcome IN ('no_case','retired') AND proposal_set_id IS NOT NULL AND review_case_id IS NULL AND checkpoint IS NOT NULL)), "
+    "PRIMARY KEY(connection_name,library_name,item_id))"
+)
+_PROVIDER_RECOVERY_OUTBOX_SQL = (
+    "CREATE TABLE provider_recovery_outbox ("
+    "outbox_id TEXT PRIMARY KEY NOT NULL CHECK(outbox_id GLOB 'recovery_outbox_[0-9a-f]*' AND length(outbox_id)=80), "
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
+    "proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), "
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "review_case_id TEXT REFERENCES review_cases(review_case_id), "
+    "checkpoint INTEGER CHECK(checkpoint IS NULL OR checkpoint>=1), "
+    "outcome TEXT NOT NULL CHECK(outcome IN ('report_only','admitted','superseded','no_case','retired')), "
+    "created_at INTEGER NOT NULL CHECK(created_at>=0), "
+    "delivered_at INTEGER CHECK(delivered_at IS NULL OR delivered_at>=created_at), "
+    "CHECK ((outcome='report_only' AND proposal_set_id IS NULL AND review_case_id IS NULL AND checkpoint IS NULL) "
+    "OR (outcome IN ('admitted','superseded') AND proposal_set_id IS NOT NULL AND review_case_id IS NOT NULL AND checkpoint IS NOT NULL) "
+    "OR (outcome IN ('no_case','retired') AND proposal_set_id IS NOT NULL AND review_case_id IS NULL AND checkpoint IS NOT NULL)))"
+)
 _REVIEW_TRANSITIONS_SQL = (
     "CREATE TABLE review_case_transitions ("
     "transition_id TEXT PRIMARY KEY NOT NULL CHECK(transition_id GLOB 'review_transition_[0-9a-f]*' AND length(transition_id)=82), "
@@ -232,7 +263,7 @@ _REVIEW_SCANS_SQL = (
     "producer_fingerprint TEXT NOT NULL CHECK(length(producer_fingerprint)=64 AND producer_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "state TEXT NOT NULL CHECK(state IN ('queued','discovering','processing','completed','completed_with_failures')), "
     "requested_at INTEGER NOT NULL CHECK(requested_at>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=requested_at), "
-    "catalogue_generation INTEGER CHECK(catalogue_generation IS NULL OR catalogue_generation>0), catalogue_fingerprint TEXT CHECK(catalogue_fingerprint IS NULL OR (length(catalogue_fingerprint)=64 AND catalogue_fingerprint NOT GLOB '*[^0-9a-f]*')), "
+    "catalogue_generation INTEGER CHECK(catalogue_generation IS NULL OR catalogue_generation>0), catalogue_fingerprint TEXT CHECK(catalogue_fingerprint IS NULL OR (length(catalogue_fingerprint)=64 AND catalogue_fingerprint NOT GLOB '*[^0-9a-f]*')), qualification_epoch INTEGER CHECK(qualification_epoch IS NULL OR qualification_epoch>=0), "
     "total INTEGER NOT NULL DEFAULT 0 CHECK(total>=0), refresh_count INTEGER NOT NULL DEFAULT 0 CHECK(refresh_count BETWEEN 0 AND 3), rescan_requested INTEGER NOT NULL DEFAULT 0 CHECK(rescan_requested IN (0,1)))"
 )
 _REVIEW_CONTROL_SQL = (
@@ -243,6 +274,14 @@ _REVIEW_CONTROL_SQL = (
     "last_library TEXT CHECK(last_library IS NULL OR (typeof(last_library)='text' AND length(CAST(last_library AS BLOB)) BETWEEN 1 AND 64 AND last_library NOT GLOB '*[^a-z0-9_-]*' AND substr(last_library,1,1) GLOB '[a-z]')), circuit_failures INTEGER NOT NULL CHECK(circuit_failures BETWEEN 0 AND 3), "
     "circuit_open_until INTEGER NOT NULL CHECK(circuit_open_until>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
 )
+_REVIEW_CONNECTION_CONDITIONS_SQL = (
+    "CREATE TABLE review_preparation_connection_conditions ("
+    "connection_name TEXT PRIMARY KEY NOT NULL CHECK(typeof(connection_name)='text' AND length(CAST(connection_name AS BLOB)) BETWEEN 1 AND 64 AND connection_name NOT GLOB '*[^a-z0-9_-]*' AND substr(connection_name,1,1) GLOB '[a-z]'), "
+    "code TEXT NOT NULL CHECK(code IN ('tls','authentication','authorization','unavailable')), "
+    "state TEXT NOT NULL CHECK(state IN ('paused','checking','recovered')), "
+    "epoch INTEGER NOT NULL CHECK(epoch>=1), affected INTEGER NOT NULL CHECK(affected>=0), "
+    "updated_at INTEGER NOT NULL CHECK(updated_at>=0))"
+)
 _REVIEW_WORK_SQL = (
     "CREATE TABLE review_preparation_work ("
     "work_id TEXT PRIMARY KEY NOT NULL CHECK(work_id GLOB 'review_work_[0-9a-f]*' AND length(work_id)=76), "
@@ -252,8 +291,8 @@ _REVIEW_WORK_SQL = (
     "producer_fingerprint TEXT NOT NULL CHECK(length(producer_fingerprint)=64 AND producer_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "catalogue_generation INTEGER NOT NULL CHECK(catalogue_generation>0), catalogue_fingerprint TEXT NOT NULL CHECK(length(catalogue_fingerprint)=64 AND catalogue_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "stage TEXT NOT NULL CHECK(stage IN ('extraction','provider','proposal','admission','projection','complete')), "
-    "state TEXT NOT NULL CHECK(state IN ('queued','running','complete','failed','stale')), attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt BETWEEN 0 AND 3), recovery_attempt INTEGER NOT NULL DEFAULT 0 CHECK(recovery_attempt BETWEEN 0 AND 3), "
-    "report_id TEXT REFERENCES metadata_reports(report_id), proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
+    "state TEXT NOT NULL CHECK(state IN ('queued','running','complete','failed','stale')), attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt BETWEEN 0 AND 3), recovery_attempt INTEGER NOT NULL DEFAULT 0 CHECK(recovery_attempt BETWEEN 0 AND 3), retry_not_before INTEGER NOT NULL DEFAULT 0 CHECK(retry_not_before>=0), "
+    "report_id TEXT REFERENCES metadata_reports(report_id), recovery_source_report_id TEXT REFERENCES metadata_reports(report_id), proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
     "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('provider','configuration','authentication','stale','transient','projection','failed','currentness')), "
     "failure_root TEXT CHECK(failure_root IS NULL OR (failure_code='authentication' AND typeof(failure_root)='text' AND length(CAST(failure_root AS BLOB)) BETWEEN 1 AND 64 AND failure_root NOT GLOB '*[^a-z0-9_-]*' AND substr(failure_root,1,1) GLOB '[a-z]')), "
     "updated_at INTEGER NOT NULL CHECK(updated_at>=0), UNIQUE(scan_id,item_id))"
@@ -334,7 +373,7 @@ _COVER_CONSIDERATION_EVENTS_SQL = (
     "event_id TEXT PRIMARY KEY NOT NULL CHECK(event_id GLOB 'cover_consideration_event_[0-9a-f]*' AND length(event_id)=90), "
     "consideration_id TEXT NOT NULL REFERENCES cover_considerations(consideration_id), "
     "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
-    "kind TEXT NOT NULL CHECK(kind IN ('considered','superseded','selected','kept_incumbent','no_action','stale')), "
+    "kind TEXT NOT NULL CHECK(kind IN ('automatic_prepared','owner_retry_prepared','superseded','selected','kept_incumbent','no_action','stale')), "
     "decision_id TEXT, occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 4096))"
 )
@@ -407,6 +446,14 @@ _FIELD_EFFECTS_SQL = (
     "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072))"
 )
+_FIELD_EFFECT_NO_CHANGES_SQL = (
+    "CREATE TABLE field_effect_no_changes ("
+    "decision_id TEXT PRIMARY KEY NOT NULL REFERENCES automatic_decisions(decision_id), "
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, work_id TEXT NOT NULL, destination TEXT NOT NULL, "
+    "target_fingerprint TEXT NOT NULL, target_version TEXT NOT NULL, origin TEXT NOT NULL CHECK(origin='automatic_policy'), "
+    "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), event_id TEXT NOT NULL UNIQUE) WITHOUT ROWID"
+)
 _FIELD_EFFECT_ACTIONS_SQL = (
     "CREATE TABLE field_effect_actions ("
     "action_id TEXT PRIMARY KEY NOT NULL CHECK(action_id GLOB 'effect_action_[0-9a-f]*' AND length(action_id)=78), "
@@ -435,40 +482,35 @@ _FIELD_EFFECT_EVENTS_SQL = (
 )
 _FIELD_EFFECT_EVENT_NO_UPDATE_SQL = "CREATE TRIGGER field_effect_events_no_update BEFORE UPDATE ON field_effect_events BEGIN SELECT RAISE(ABORT, 'field effect events are append-only'); END"
 _FIELD_EFFECT_EVENT_NO_DELETE_SQL = "CREATE TRIGGER field_effect_events_no_delete BEFORE DELETE ON field_effect_events BEGIN SELECT RAISE(ABORT, 'field effect events are append-only'); END"
+_FIELD_EFFECT_NO_CHANGE_NO_UPDATE_SQL = "CREATE TRIGGER field_effect_no_changes_no_update BEFORE UPDATE ON field_effect_no_changes BEGIN SELECT RAISE(ABORT, 'field effect no-change facts are append-only'); END"
+_FIELD_EFFECT_NO_CHANGE_NO_DELETE_SQL = "CREATE TRIGGER field_effect_no_changes_no_delete BEFORE DELETE ON field_effect_no_changes BEGIN SELECT RAISE(ABORT, 'field effect no-change facts are append-only'); END"
 _CURRENT_REVIEW_FROM_SQL = (
-    "FROM current_review_case_lineages c "
+    "FROM current_review_packages c "
+    "JOIN current_review_packages ml ON ml.connection_name=c.connection_name "
+    "AND ml.library_name=c.library_name AND ml.item_id=c.item_id "
     "JOIN review_cases rc ON rc.review_case_id=c.review_case_id "
     "JOIN metadata_reports mr ON mr.report_id=rc.report_id "
-    "JOIN current_metadata_report_lineages ml "
-    "ON ml.connection_name=c.connection_name "
-    "AND ml.library_name=c.library_name AND ml.item_id=c.item_id "
-    "AND ml.report_id=rc.report_id "
-    "JOIN current_metadata_reports mf "
-    "ON mf.connection_name=c.connection_name "
-    "AND mf.library_name=c.library_name AND mf.item_id=c.item_id "
-    "AND mf.file_identity=json_extract(rc.document,'$.file_identity') "
-    "AND mf.report_id=rc.report_id"
 )
 _CURRENT_LIBRARY_FROM_SQL = (
-    "FROM current_metadata_report_lineages ml "
+    "FROM current_review_packages ml "
     "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
-    "JOIN current_metadata_reports mf "
-    "ON mf.connection_name=ml.connection_name "
-    "AND mf.library_name=ml.library_name AND mf.item_id=ml.item_id "
-    "AND mf.report_id=ml.report_id "
-    "LEFT JOIN current_review_case_lineages c "
+    "LEFT JOIN current_review_packages c "
     "ON c.connection_name=ml.connection_name "
     "AND c.library_name=ml.library_name AND c.item_id=ml.item_id "
-    "AND c.report_id=ml.report_id "
-    "LEFT JOIN review_cases rc ON rc.review_case_id=c.review_case_id"
+    "LEFT JOIN review_cases rc ON rc.review_case_id=ml.review_case_id"
 )
 _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL = (
-    "EXISTS (SELECT 1 FROM json_each(rc.document,'$.results') manual_result "
-    "WHERE json_extract(manual_result.value,'$.destination') "
-    "IN ('title','subtitle','series') "
-    "AND json_array_length(json_extract(manual_result.value,'$.reasons'))=1 "
-    "AND json_extract(manual_result.value,'$.reasons[0]')="
-    "'no_safe_bibliographic_combination')"
+    "json_extract(result.value,'$.destination') IN ('title','subtitle','series') "
+    "AND json_array_length(json_extract(result.value,'$.reasons'))=1 "
+    "AND json_extract(result.value,'$.reasons[0]')="
+    "'no_safe_bibliographic_combination'"
+)
+_SHADOW_ABSTENTION_SQL = (
+    "EXISTS (SELECT 1 FROM shadow_decision_outcomes shadow,"
+    "json_each(shadow.document,'$.outcomes') outcome WHERE "
+    "shadow.review_case_id=rc.review_case_id AND "
+    "json_extract(outcome.value,'$.destination')=json_extract(result.value,'$.destination') AND "
+    "json_extract(outcome.value,'$.disposition')='abstention')"
 )
 _AUTOMATIC_SAFETY_ATTENTION_SQL = (
     "EXISTS (SELECT 1 FROM shadow_decision_outcomes shadow,"
@@ -482,15 +524,15 @@ _AUTOMATIC_SAFETY_ATTENTION_SQL = (
 )
 _REVIEW_FIELD_ATTENTION_SQL = (
     "(json_extract(result.value,'$.outcome')='unresolved_choice' "
-    "OR (json_extract(result.value,'$.destination') "
-    "IN ('title','subtitle','series') AND "
-    + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
-    + ") OR " + _AUTOMATIC_SAFETY_ATTENTION_SQL + ") AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
+    "OR " + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
+    + " OR " + _AUTOMATIC_SAFETY_ATTENTION_SQL
+    + " OR " + _SHADOW_ABSTENTION_SQL + ") AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
     "AND decision.destination=json_extract(result.value,'$.destination')) "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
-    "AND decision.destination=json_extract(result.value,'$.destination')) "
+    "AND decision.destination=json_extract(result.value,'$.destination') "
+    ") "
     "AND NOT EXISTS (SELECT 1 FROM field_effect_suspensions suspension "
     "WHERE suspension.connection_name=c.connection_name AND ("
     "(suspension.scope='connection' AND suspension.destination='') OR "
@@ -950,6 +992,8 @@ class SQLiteMetadataReportRepository:
         self, decision: HumanDecision | AutomaticDecision
     ) -> dict[str, object]:
         """Resolve one exact persisted decision against its current case lineage."""
+        if not self._review_case_accepts_authority(decision.review_case_id):
+            raise FieldEffectError("authority_binding")
         table = "human_decisions" if type(decision) is HumanDecision else "automatic_decisions"
         row = self._connection.execute(
             f"SELECT document FROM {table} WHERE decision_id=?", (decision.decision_id,)
@@ -965,53 +1009,25 @@ class SQLiteMetadataReportRepository:
             decision.validate_for(case)
             value = decision.selected_value
         else:
-            if (decision.review_case_id != case.review_case_id
-                    or decision.report_id != case.report_id
-                    or decision.proposal_set_id != case.proposal_set_id
-                    or decision.target_fingerprint != case.target_fingerprint):
+            report_row = self._connection.execute(
+                "SELECT document FROM metadata_reports WHERE report_id=?",
+                (decision.report_id,),
+            ).fetchone()
+            proposal_row = self._connection.execute(
+                "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+                (decision.proposal_set_id,),
+            ).fetchone()
+            if report_row is None or proposal_row is None:
                 raise FieldEffectError("authority_binding")
-            proposal = next((item for item in case.proposals
-                             if item["proposal_id"] == decision.proposal_id
-                             and item["destination"] == decision.destination), None)
-            alternatives = None if proposal is None else proposal["result"].get("alternatives")
-            selected = next((item for item in alternatives or ()
-                             if item.get("alternative_id") == decision.candidate_id), None)
-            if selected is None:
-                raise FieldEffectError("authority_binding")
-            value = selected["value"]
-            if decision.policy_category == "isbn_form":
-                report_row = self._connection.execute(
-                    "SELECT document FROM metadata_reports WHERE report_id=?",
-                    (decision.report_id,),
-                ).fetchone()
-                proposal_row = self._connection.execute(
-                    "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
-                    (decision.proposal_set_id,),
-                ).fetchone()
-                if report_row is None or proposal_row is None:
-                    raise FieldEffectError("authority_binding")
-                try:
-                    report = MetadataReport.from_json(report_row[0])
-                    proposal_set = ProposalSet.from_json(proposal_row[0])
-                    result = next(
-                        item for item in proposal_set.results
-                        if item.destination.value == decision.destination
-                    )
-                    candidate = next(
-                        item for item in result.alternatives
-                        if item.alternative_id == decision.candidate_id
-                    )
-                    exact_value = select_isbn_representation(
-                        report, candidate, decision.policy_option
-                    )
-                except (
-                    ReportValueError, ProposalValueError, StopIteration,
-                    RichMetadataPreviewError,
-                ) as error:
-                    raise FieldEffectError("authority_binding") from error
-                if exact_value is None:
-                    raise FieldEffectError("authority_binding")
-                value = {"kind": "text", "value": exact_value}
+            try:
+                value = _automatic_decision_value(
+                    decision, case, MetadataReport.from_json(report_row[0]),
+                    ProposalSet.from_json(proposal_row[0]),
+                )
+            except (
+                ReportValueError, ProposalValueError, RichMetadataPreviewError,
+            ) as error:
+                raise FieldEffectError("authority_binding") from error
         lineage = self._connection.execute(
             "SELECT connection_name,library_name,item_id FROM current_review_case_lineages "
             "WHERE review_case_id=?", (decision.review_case_id,),
@@ -1037,18 +1053,6 @@ class SQLiteMetadataReportRepository:
             if target_field["state"] == "value"
             else None
         )
-        if type(decision) is AutomaticDecision and decision.policy_category in {
-            "series", "genres", "tags", "description_fill", "isbn_form",
-        }:
-            try:
-                value = project_f20_automatic_decision_value(
-                    decision.policy_category,
-                    decision.policy_option,
-                    value,
-                    pre_value,
-                )
-            except RichMetadataPreviewError as error:
-                raise FieldEffectError("authority_binding") from error
         dependency_digests = (decision.target_fingerprint,)
         if type(decision) is HumanDecision and decision.destination == "cover":
             consideration_row = self._connection.execute(
@@ -1102,6 +1106,64 @@ class SQLiteMetadataReportRepository:
                 "pre_value": pre_value,
                 "dependency_digests": dependency_digests}
 
+    def record_current_field_effect_no_change(
+        self, decision: AutomaticDecision, occurred_at: int,
+    ) -> bool:
+        """Atomically persist an equal automatic candidate without write authority."""
+        if type(decision) is not AutomaticDecision or type(occurred_at) is not int or occurred_at < 0:
+            raise FieldEffectError("authority_binding")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            source = self.field_effect_authority_source(decision)
+            desired = project_decision_value(decision.destination, source["decision_value"])
+            if desired != source["pre_value"]:
+                self._connection.commit()
+                return False
+            record = FieldEffectNoChange.create(
+                decision_id=decision.decision_id, review_case_id=decision.review_case_id,
+                report_id=decision.report_id, connection=source["connection"],
+                library=source["library"], work_id=source["work_id"],
+                destination=decision.destination, target_fingerprint=decision.target_fingerprint,
+                target_version=source["target_version"], occurred_at=occurred_at,
+            )
+            inserted = self._connection.execute(
+                "INSERT OR IGNORE INTO field_effect_no_changes(decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                (record.decision_id, record.review_case_id, record.report_id,
+                 record.connection, record.library, record.work_id, record.destination,
+                 record.target_fingerprint, record.target_version, record.origin,
+                 record.occurred_at, record.event_id),
+            ).rowcount
+            if not inserted:
+                row = self._connection.execute(
+                    "SELECT review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id FROM field_effect_no_changes WHERE decision_id=?",
+                    (record.decision_id,),
+                ).fetchone()
+                if row is None:
+                    raise FieldEffectError("persistence")
+                existing = FieldEffectNoChange.create(
+                    decision_id=record.decision_id, review_case_id=row[0], report_id=row[1],
+                    connection=row[2], library=row[3], work_id=row[4], destination=row[5],
+                    target_fingerprint=row[6], target_version=row[7], occurred_at=row[9],
+                )
+                if row[8] != existing.origin or row[10] != existing.event_id or (
+                    existing.decision_id, existing.review_case_id, existing.report_id,
+                    existing.connection, existing.library, existing.work_id,
+                    existing.destination, existing.target_fingerprint,
+                    existing.target_version, existing.origin, existing.event_id,
+                ) != (
+                    record.decision_id, record.review_case_id, record.report_id,
+                    record.connection, record.library, record.work_id,
+                    record.destination, record.target_fingerprint,
+                    record.target_version, record.origin, record.event_id,
+                ):
+                    raise FieldEffectError("persistence")
+            self._connection.commit()
+            return True
+        except (sqlite3.Error, FieldEffectError, TypeError, ValueError) as error:
+            self._connection.rollback()
+            if isinstance(error, FieldEffectError): raise
+            raise FieldEffectError("authority_binding") from error
+
     def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool:
         current = (self._connection.execute(
             "SELECT current FROM field_effect_authorities WHERE decision_id=?",
@@ -1109,7 +1171,9 @@ class SQLiteMetadataReportRepository:
         ).fetchone() == (1,) and self._connection.execute(
             "SELECT 1 FROM current_review_case_lineages WHERE review_case_id=?",
             (authority.review_case_id,),
-        ).fetchone() == (1,))
+        ).fetchone() == (1,) and self._review_case_accepts_authority(
+            authority.review_case_id
+        ))
         if not current or authority.origin != "automatic_policy":
             return current
         lineage = self._connection.execute(
@@ -1431,7 +1495,11 @@ class SQLiteMetadataReportRepository:
                 "returned.destination=human.destination AND returned.active=0) UNION ALL "
                 "SELECT automatic.decision_id,automatic.occurred_at,automatic.document "
                 "FROM automatic_decisions automatic WHERE "
-                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
+                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage JOIN "
+                "current_review_packages package ON package.connection_name=lineage.connection_name "
+                "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
+                "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
+                "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint "
                 "WHERE lineage.review_case_id=automatic.review_case_id) AND "
                 "json_extract(automatic.document,'$.outcome')='candidate' AND NOT EXISTS ("
                 "SELECT 1 FROM human_decisions human WHERE "
@@ -1445,7 +1513,7 @@ class SQLiteMetadataReportRepository:
                 "hold.destination=automatic.destination AND hold.active=1)"
                 ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
                 "WHERE effect.decision_id=pending.decision_id AND "
-                "effect.state NOT IN ('superseded','abandoned')) " + cursor +
+                "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) " + cursor +
                 "ORDER BY pending.occurred_at,pending.decision_id LIMIT ?",
                 (*parameters, limit),
             ).fetchall()
@@ -1470,7 +1538,11 @@ class SQLiteMetadataReportRepository:
                 "returned.destination=human.destination AND returned.active=0) UNION ALL "
                 "SELECT automatic.decision_id,automatic.review_case_id,'automatic' origin "
                 "FROM automatic_decisions automatic WHERE "
-                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
+                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage JOIN "
+                "current_review_packages package ON package.connection_name=lineage.connection_name "
+                "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
+                "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
+                "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint "
                 "WHERE lineage.review_case_id=automatic.review_case_id) AND "
                 "json_extract(automatic.document,'$.outcome')='candidate' AND NOT EXISTS ("
                 "SELECT 1 FROM human_decisions human WHERE "
@@ -1484,10 +1556,14 @@ class SQLiteMetadataReportRepository:
                 "hold.destination=automatic.destination AND hold.active=1)) "
                 "SELECT lineage.connection_name,lineage.library_name,pending.origin,count(*) "
                 "FROM pending JOIN current_review_case_lineages lineage "
-                "ON lineage.review_case_id=pending.review_case_id "
+                "ON lineage.review_case_id=pending.review_case_id JOIN current_review_packages package "
+                "ON package.connection_name=lineage.connection_name AND package.library_name=lineage.library_name "
+                "AND package.item_id=lineage.item_id AND package.proposal_set_id=lineage.proposal_set_id "
+                "AND package.report_id=lineage.report_id AND package.review_case_id=lineage.review_case_id "
+                "AND package.checkpoint=lineage.checkpoint "
                 "WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
                 "WHERE effect.decision_id=pending.decision_id AND "
-                "effect.state NOT IN ('superseded','abandoned')) "
+                "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
                 "GROUP BY lineage.connection_name,lineage.library_name,pending.origin "
                 "ORDER BY lineage.connection_name,lineage.library_name,pending.origin"
             ).fetchall()
@@ -1643,7 +1719,7 @@ class SQLiteMetadataReportRepository:
                     "UPDATE review_preparation_scans SET state='queued',"
                     "requested_at=?,updated_at=MAX(?,?),"
                     "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
-                    "refresh_count=0,rescan_requested=0 WHERE scan_id=? "
+                    "qualification_epoch=NULL,refresh_count=0,rescan_requested=0 WHERE scan_id=? "
                     "AND state='completed_with_failures'",
                     (requested_at, requested_at, changed_at, scan_id),
                 ).rowcount
@@ -1856,9 +1932,19 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
-    def field_effect_activity_data(self, limit: int = 50) -> dict[str, object]:
+    def field_effect_activity_summary(self) -> dict[str, object]:
+        """Project Activity status without reading legacy event/report payloads."""
+        return self.field_effect_activity_data(1, include_events=False)
+
+    def field_effect_activity_data(
+        self, limit: int = 50, *, include_events: bool = True
+    ) -> dict[str, object]:
         """Project a bounded value-free status and chronological audit ledger."""
-        if type(limit) is not int or not 1 <= limit <= 100:
+        if (
+            type(limit) is not int
+            or not 1 <= limit <= 100
+            or type(include_events) is not bool
+        ):
             raise FieldEffectError("invalid_limit")
         try:
             consent_rows = self._connection.execute(
@@ -1928,7 +2014,7 @@ class SQLiteMetadataReportRepository:
                 "coalesce(sum(CASE WHEN attempt>=3 THEN 1 ELSE 0 END),0) "
                 "FROM field_effect_cleanups WHERE state='pending'"
             ).fetchone()
-            event_rows = self._connection.execute(
+            event_rows = [] if not include_events else self._connection.execute(
                 "SELECT effect.connection_name,effect.destination,json_extract(event.document,'$.failure'),"
                 "effect.library_name,event.occurred_at,"
                 "json_extract(event.document,'$.origin'),lineage.report_id,event.kind,effect.work_id "
@@ -1991,6 +2077,440 @@ class SQLiteMetadataReportRepository:
         except (json.JSONDecodeError, MetadataPolicyError, sqlite3.Error,
                 TypeError, ValueError) as error:
             raise FieldEffectError("persistence") from error
+
+    def field_effect_activity_page(
+        self,
+        *,
+        search: str | None,
+        event_type: str,
+        occurred_after: int,
+        page: int,
+        page_size: int,
+    ) -> dict[str, object]:
+        """Return one exact, bounded page from the durable owner activity ledgers."""
+        if (
+            (search is not None and (type(search) is not str or not search or len(search) > 128))
+            or event_type not in {"all", "review", "policy", "metadata", "safety", "unknown"}
+            or type(occurred_after) is not int
+            or occurred_after < 0
+            or type(page) is not int
+            or not 1 <= page <= 1_000_000
+            or page_size not in {25, 50, 100}
+        ):
+            raise FieldEffectError("invalid_activity_query")
+        document_limit = 12_582_912
+        scalar_limit = 512
+        # The selected page and its joined report documents are validated
+        # below.  Do not rescan every historical document on each poll: that
+        # makes a bounded page read proportional to the whole durable corpus.
+        owns_snapshot = not self._connection.in_transaction
+        try:
+            if owns_snapshot:
+                self._connection.execute("BEGIN")
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+        # This is deliberately a read-only union over the existing immutable
+        # ledgers.  It neither broadens write authority nor invents a second
+        # audit store just for presentation.
+        events = """
+            SELECT event.event_id, effect.connection_name, effect.destination,
+                   effect.library_name, event.occurred_at,
+                   COALESCE(CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END, 'unknown'),
+                   lineage.report_id, event.kind, effect.work_id, event.document,
+                   CASE WHEN event.kind IN ('retryable','stale','superseded','abandoned')
+                             OR CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.failure') END IS NOT NULL
+                        THEN 'safety'
+                        WHEN CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END='human' THEN 'review'
+                        WHEN CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END='automatic_policy' THEN 'metadata'
+                        ELSE 'unknown' END,
+                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'field_effect', NULL, event.plan_id, event.sequence, effect.decision_id,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END
+              FROM field_effect_events event
+              JOIN field_effects effect ON effect.plan_id=event.plan_id
+         LEFT JOIN current_metadata_report_lineages lineage
+                ON lineage.connection_name=effect.connection_name
+               AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id
+              LEFT JOIN metadata_reports report ON report.report_id=lineage.report_id
+            UNION ALL
+            SELECT event.event_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, event.destination,
+                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END, event.occurred_at, 'human', review.report_id,
+                   decision.outcome, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END, event.document, 'review', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'human_decision', decision.document, event.review_case_id, NULL, event.decision_id,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END
+              FROM human_decision_events event
+              JOIN human_decisions decision ON decision.decision_id=event.decision_id
+              JOIN review_cases review ON review.review_case_id=event.review_case_id
+              JOIN metadata_reports report ON report.report_id=review.report_id
+            UNION ALL
+            SELECT decision.decision_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, decision.destination,
+                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END, decision.occurred_at, 'automatic_policy', review.report_id,
+                   'recorded', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END, decision.document, 'metadata', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'automatic_decision', NULL, decision.review_case_id, NULL, decision.decision_id,
+                   CASE WHEN typeof(decision.document)='text' AND length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(decision.document) THEN 1 ELSE 0 END
+              FROM automatic_decisions decision
+              JOIN review_cases review ON review.review_case_id=decision.review_case_id
+              JOIN metadata_reports report ON report.report_id=review.report_id
+            UNION ALL
+            SELECT no_change.event_id, no_change.connection_name, no_change.destination,
+                   no_change.library_name, no_change.occurred_at, no_change.origin,
+                   no_change.report_id, 'no_change_required', no_change.work_id, '{}',
+                   'metadata', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END,
+                   NULL, 'field_effect_no_change', NULL, no_change.review_case_id,
+                   NULL, no_change.decision_id, 1
+              FROM field_effect_no_changes no_change
+              JOIN metadata_reports report ON report.report_id=no_change.report_id
+            UNION ALL
+            SELECT event.event_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, 'cover', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END,
+                   event.occurred_at, CASE event.kind WHEN 'automatic_prepared' THEN 'automatic_pipeline' WHEN 'owner_retry_prepared' THEN 'owner_retry' WHEN 'selected' THEN 'human' WHEN 'kept_incumbent' THEN 'human' WHEN 'no_action' THEN 'human' ELSE 'unknown' END, review.report_id,
+                   CASE WHEN event.kind IN ('automatic_prepared','owner_retry_prepared') THEN json_extract(consideration.document, '$.reviewer_status') ELSE event.kind END, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END,
+                   event.document,
+                   CASE WHEN event.kind IN ('stale','superseded') THEN 'safety' WHEN event.kind='automatic_prepared' THEN 'metadata' WHEN event.kind IN ('owner_retry_prepared','selected','kept_incumbent','no_action') THEN 'review' ELSE 'unknown' END,
+                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'cover_safeguard', CASE WHEN json_extract(consideration.document, '$.reviewer_status') IN ('completed','unavailable','failed') THEN json_object('reviewer_status', json_extract(consideration.document, '$.reviewer_status')) ELSE '{}' END, event.review_case_id, NULL, event.consideration_id,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) AND typeof(consideration.document)='text' AND length(CAST(consideration.document AS BLOB)) BETWEEN 2 AND 12582912 AND json_valid(consideration.document) THEN 1 ELSE 0 END
+              FROM cover_consideration_events event
+              JOIN cover_considerations consideration ON consideration.consideration_id=event.consideration_id
+              JOIN review_cases review ON review.review_case_id=event.review_case_id
+              JOIN metadata_reports report ON report.report_id=review.report_id
+            UNION ALL
+            SELECT transition.transition_id, NULL, 'policy', 'Library policy', transition.updated_at,
+                   'policy', NULL, transition.state, 'Library policy', '{}', 'policy',
+                   'Library policy', 'Policy generation ' || transition.generation, 'policy_transition', NULL, NULL, NULL, NULL, 1
+              FROM metadata_policy_transitions transition
+        """
+        where = ["occurred_at>=?"]
+        parameters: list[object] = [occurred_after]
+        if event_type != "all":
+            where.append("event_type=?")
+            parameters.append(event_type)
+        if search is not None:
+            escaped = search.casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = f"%{escaped}%"
+            where.append(
+                "(ml_casefold(work_id) LIKE ? ESCAPE '\\' OR ml_casefold(library) LIKE ? ESCAPE '\\' "
+                "OR ml_casefold(destination) LIKE ? ESCAPE '\\' OR ml_casefold(state) LIKE ? ESCAPE '\\' "
+                "OR ml_casefold(coalesce(title,'')) LIKE ? ESCAPE '\\' OR ml_casefold(coalesce(detail,'')) LIKE ? ESCAPE '\\')"
+            )
+            parameters.extend((like, like, like, like, like, like))
+        predicate = " WHERE " + " AND ".join(where)
+        projection = "WITH activity_events(event_id,connection,destination,library,occurred_at,origin,report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,source_valid) AS (" + events + ") "
+        def waiting_scalar(value: object, *, nullable: bool = False) -> str | None:
+            if value is None and nullable:
+                return None
+            if type(value) is not str or not value or len(value) > scalar_limit:
+                raise FieldEffectError("persistence")
+            return value
+        try:
+            total = int(self._connection.execute(
+                projection + "SELECT count(*) FROM activity_events" + predicate, parameters
+            ).fetchone()[0])
+            page_count = max(1, (total + page_size - 1) // page_size)
+            selected_page = min(page, page_count)
+            rows = self._connection.execute(
+                projection + "SELECT event_id,connection,destination,library,occurred_at,origin,"
+                "report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,source_valid FROM activity_events" + predicate
+                + " ORDER BY occurred_at DESC,event_id DESC LIMIT ? OFFSET ?",
+                (*parameters, page_size, (selected_page - 1) * page_size),
+            ).fetchall()
+            report_ids = sorted({row[6] for row in rows if row[6] is not None})
+            report_rows = [] if not report_ids else self._connection.execute(
+                "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id IN ("
+                + ",".join("?" for _ in report_ids) + ")",
+                report_ids,
+            ).fetchall()
+            report_documents = {}
+            try:
+                for report_row in report_rows:
+                    if (
+                        type(report_row[8]) is not str
+                        or not 2 <= len(report_row[8].encode("utf-8")) <= document_limit
+                    ):
+                        raise MetadataReportError("persisted report is invalid")
+                    report_documents[report_row[0]] = _validate_report_row(report_row)
+            except MetadataReportError as error:
+                raise FieldEffectError("persistence") from error
+            # Every report joined to the selected page participates in the
+            # response contract.  Validate it here (not through a corpus-wide
+            # preflight) so malformed durable data fails closed without making
+            # a bounded poll proportional to unrelated history.
+            if set(report_documents) != set(report_ids):
+                raise FieldEffectError("persistence")
+            events = []
+            for (
+                event_id, connection, destination, library, occurred_at, origin,
+                report_id, state, work_id, document, projected_type, title, detail, source_kind, source_document, source_parent_id, source_sequence, source_identity, source_valid,
+            ) in rows:
+                if (
+                    source_valid != 1
+                    or type(document) is not str
+                    or not 2 <= len(document.encode("utf-8")) <= document_limit
+                ):
+                    raise FieldEffectError("persistence")
+                raw = json.loads(document)
+                if type(raw) is not dict:
+                    raise FieldEffectError("persistence")
+                def scalar(value: object, maximum: int = 512, *, nullable: bool = False) -> str | None:
+                    if value is None and nullable:
+                        return None
+                    if type(value) is not str or not value or len(value) > maximum:
+                        raise FieldEffectError("persistence")
+                    return value
+                event_id = scalar(event_id, 128)
+                scalar(connection, nullable=True)
+                destination = scalar(destination)
+                library = scalar(library)
+                origin = scalar(origin)
+                state = scalar(state)
+                work_id = scalar(work_id)
+                projected_type = scalar(projected_type, 32)
+                if projected_type not in {"review", "policy", "metadata", "safety", "unknown"}:
+                    raise FieldEffectError("persistence")
+                source_kind = scalar(source_kind)
+                if source_kind not in {"field_effect", "field_effect_no_change", "human_decision", "automatic_decision", "cover_safeguard", "policy_transition"}:
+                    raise FieldEffectError("persistence")
+                if source_document is not None and (
+                    type(source_document) is not str
+                    or not 2 <= len(source_document.encode("utf-8")) <= document_limit
+                ):
+                    raise FieldEffectError("persistence")
+                try:
+                    if source_kind == "field_effect":
+                        event_keys = {
+                            "attempt", "decision_id", "desired_value", "destination",
+                            "event_id", "failure", "kind", "occurred_at", "origin",
+                            "plan_id", "pre_value", "schema_version", "sequence", "state",
+                        }
+                        if (
+                            set(raw) != event_keys
+                            or raw.get("schema_version") != "field-effect-event-v1"
+                            or raw.get("event_id") != event_id
+                            or raw.get("plan_id") != source_parent_id
+                            or raw.get("decision_id") != source_identity
+                            or raw.get("sequence") != source_sequence
+                            or type(raw.get("sequence")) is not int
+                            or raw["sequence"] < 1
+                            or type(raw.get("attempt")) is not int
+                            or not 0 <= raw["attempt"] <= 3
+                            or raw.get("failure") not in FIELD_EFFECT_FAILURES
+                            or raw.get("destination") != destination
+                            or raw.get("kind") != state
+                            or raw.get("state") != state
+                            or raw.get("occurred_at") != occurred_at
+                            or raw.get("origin") != origin
+                            or canonical_effect_json(raw) != document
+                            or event_id != "effect_event_" + hashlib.sha256(
+                                canonical_effect_json({
+                                    key: value for key, value in raw.items()
+                                    if key != "event_id"
+                                }).encode()
+                            ).hexdigest()
+                        ):
+                            raise FieldEffectError("persistence")
+                    elif source_kind == "field_effect_no_change":
+                        if raw or document != "{}" or source_document is not None:
+                            raise FieldEffectError("persistence")
+                        record = FieldEffectNoChange.create(
+                            decision_id=source_identity, review_case_id=source_parent_id,
+                            report_id=report_id, connection=connection, library=library,
+                            work_id=work_id, destination=destination,
+                            target_fingerprint=self._connection.execute(
+                                "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
+                                (source_identity,),
+                            ).fetchone()[0],
+                            target_version=self._connection.execute(
+                                "SELECT target_version FROM field_effect_no_changes WHERE decision_id=?",
+                                (source_identity,),
+                            ).fetchone()[0],
+                            occurred_at=occurred_at,
+                        )
+                        if (
+                            state != "no_change_required" or origin != record.origin
+                            or event_id != record.event_id
+                        ):
+                            raise FieldEffectError("persistence")
+                    elif source_kind == "human_decision":
+                        if source_document is None:
+                            raise FieldEffectError("persistence")
+                        decision = HumanDecision.from_json(source_document)
+                        event_keys = {
+                            "actor", "decision_id", "destination", "event_id", "kind",
+                            "occurred_at", "outcome", "review_case_id", "schema_version",
+                        }
+                        if (
+                            set(raw) != event_keys
+                            or raw.get("schema_version") != "human-decision-event-v1"
+                            or raw.get("kind") != "human_decision_recorded"
+                            or raw.get("event_id") != event_id
+                            or raw.get("decision_id") != decision.decision_id
+                            or raw.get("decision_id") != source_identity
+                            or raw.get("destination") != destination
+                            or raw.get("actor") != decision.actor
+                            or raw.get("outcome") != state
+                            or raw.get("outcome") != decision.outcome
+                            or raw.get("occurred_at") != occurred_at
+                            or raw.get("occurred_at") != decision.occurred_at
+                            or raw.get("review_case_id") != decision.review_case_id
+                            or raw.get("review_case_id") != source_parent_id
+                            or decision.destination != destination
+                            or decision.to_json() != source_document
+                            or _canonical_json(raw) != document
+                            or event_id != "human_decision_event_" + hashlib.sha256(
+                                ("human-decision-event-v1:" + decision.decision_id).encode("utf-8")
+                            ).hexdigest()
+                        ):
+                            raise FieldEffectError("persistence")
+                    elif source_kind == "automatic_decision":
+                        decision = AutomaticDecision.from_json(document)
+                        if (
+                            decision.decision_id != event_id
+                            or decision.decision_id != source_identity
+                            or decision.destination != destination
+                            or decision.occurred_at != occurred_at
+                            or origin != "automatic_policy"
+                            or decision.review_case_id != source_parent_id
+                            or decision.report_id != report_id
+                            or decision.to_json() != document
+                        ):
+                            raise FieldEffectError("persistence")
+                    elif source_kind == "cover_safeguard":
+                        if source_document is None:
+                            raise FieldEffectError("persistence")
+                        consideration = json.loads(source_document)
+                        if type(consideration) is not dict:
+                            raise FieldEffectError("persistence")
+                        reviewer_status = consideration.get("reviewer_status")
+                        event_keys = {
+                            "consideration_id", "decision_id", "kind", "occurred_at",
+                            "review_case_id", "schema_version",
+                        }
+                        if (
+                            set(raw) != event_keys
+                            or raw.get("schema_version") != "cover-consideration-event-v1"
+                            or raw.get("consideration_id") != source_identity
+                            or raw.get("kind") not in {
+                                "automatic_prepared", "owner_retry_prepared", "superseded", "selected",
+                                "kept_incumbent", "no_action", "stale",
+                            }
+                            or (
+                                raw.get("kind") in {"automatic_prepared", "owner_retry_prepared"}
+                                and reviewer_status not in {"completed", "unavailable", "failed"}
+                            )
+                            or state != (
+                                reviewer_status if raw.get("kind") in {"automatic_prepared", "owner_retry_prepared"}
+                                else raw.get("kind")
+                            )
+                            or (raw.get("kind") == "automatic_prepared" and (origin, projected_type) != ("automatic_pipeline", "metadata"))
+                            or (raw.get("kind") == "owner_retry_prepared" and (origin, projected_type) != ("owner_retry", "review"))
+                            or (raw.get("kind") in {"selected", "kept_incumbent", "no_action"} and (origin, projected_type) != ("human", "review"))
+                            or (raw.get("kind") in {"stale", "superseded"} and (origin, projected_type) != ("unknown", "safety"))
+                            or raw.get("occurred_at") != occurred_at
+                            or raw.get("review_case_id") != source_parent_id
+                            or _canonical_json(raw) != document
+                            or event_id != "cover_consideration_event_" + hashlib.sha256(
+                                document.encode("utf-8")
+                            ).hexdigest()
+                        ):
+                            raise FieldEffectError("persistence")
+                    elif raw or document != "{}" or source_document is not None:
+                        raise FieldEffectError("persistence")
+                except (AutomaticDecisionError, HumanDecisionError, TypeError, ValueError) as error:
+                    raise FieldEffectError("persistence") from error
+                event_title = scalar(title, nullable=True)
+                failure = scalar(raw.get("failure"), nullable=True)
+                if report_id is not None:
+                    scalar(report_id)
+                source_label = {
+                    "field_effect": "Recorded field effect",
+                    "field_effect_no_change": "Recorded no-change decision",
+                    "human_decision": "Recorded human decision",
+                    "automatic_decision": "Recorded automatic decision",
+                    "cover_safeguard": "Recorded cover safeguard",
+                    "policy_transition": "Recorded policy transition",
+                }[source_kind]
+                evidence = [{"label": source_label, "value": state.replace("_", " ")}]
+                lifecycle = scalar(raw.get("state"), nullable=True)
+                if source_kind == "field_effect" and lifecycle is not None:
+                    evidence.append({"label": "Recorded lifecycle", "value": lifecycle.replace("_", " ")})
+                if failure is not None:
+                    evidence.append({"label": "Recorded failure", "value": failure.replace("_", " ")})
+                if source_kind == "policy_transition":
+                    transition = scalar(detail)
+                    evidence.append({"label": "Transition generation", "value": transition})
+                if type(occurred_at) is not int or not 0 <= occurred_at <= 253_402_300_799:
+                    raise FieldEffectError("persistence")
+                events.append({
+                    "connection": connection,
+                    "destination": destination,
+                    "event_id": event_id,
+                    "event_type": projected_type,
+                    "failure": failure,
+                    "library": library,
+                    "occurred_at": occurred_at,
+                    "origin": origin,
+                    "report_id": report_id,
+                    "state": state,
+                    "work_id": work_id,
+                    **({"work_label": event_title} if event_title else {}),
+                    "evidence": evidence,
+                })
+            waiting = self._connection.execute(
+                "SELECT effect.connection_name,effect.destination,effect.library_name,effect.work_id,effect.state,"
+                "lineage.report_id FROM field_effects effect "
+                "LEFT JOIN current_metadata_report_lineages lineage ON lineage.connection_name=effect.connection_name "
+                "AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id "
+                "WHERE effect.state IN ('planned','claimed','applying','reconciling','retryable') "
+                "ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
+            ).fetchone()
+            waiting_title = "Recorded work"
+            if waiting is not None:
+                for value in waiting[:5]:
+                    waiting_scalar(value)
+                waiting_report_id = waiting_scalar(waiting[5], nullable=True)
+                if waiting_report_id is not None:
+                    waiting_report_row = self._connection.execute(
+                        "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document "
+                        "FROM metadata_reports WHERE report_id=?",
+                        (waiting_report_id,),
+                    ).fetchone()
+                    if (
+                        waiting_report_row is None
+                        or type(waiting_report_row[8]) is not str
+                        or not 2 <= len(waiting_report_row[8].encode("utf-8")) <= document_limit
+                    ):
+                        raise FieldEffectError("persistence")
+                    try:
+                        waiting_report_document = _validate_report_row(waiting_report_row)
+                        waiting_report = MetadataReport.from_json(waiting_report_document)
+                    except (MetadataReportError, ReportValueError) as error:
+                        raise FieldEffectError("persistence") from error
+                    if (
+                        waiting_report.target.connection != waiting[0]
+                        or waiting_report.target.library != waiting[2]
+                        or waiting_report.target.item != waiting[3]
+                    ):
+                        raise FieldEffectError("persistence")
+                    waiting_title = waiting_report.target.current_title or "Untitled"
+            result = {
+                "events": events,
+                "page": selected_page,
+                "page_count": page_count,
+                "page_size": page_size,
+                "report_documents": report_documents,
+                "current_waiting": None if waiting is None else {
+                    "destination": waiting[1], "library": waiting[2],
+                    "work_id": waiting[3], "state": waiting[4],
+                    "work_label": waiting_title,
+                },
+                "total": total,
+            }
+            if owns_snapshot:
+                self._connection.commit()
+            return result
+        except (json.JSONDecodeError, RecursionError, sqlite3.Error, TypeError, ValueError) as error:
+            if owns_snapshot and self._connection.in_transaction:
+                self._connection.rollback()
+            raise FieldEffectError("persistence") from error
+        except FieldEffectError:
+            if owns_snapshot and self._connection.in_transaction:
+                self._connection.rollback()
+            raise
 
     def record_field_effect(self, operation: FieldEffectOperation) -> FieldEffectOperation:
         """Persist a deterministic plan and its first audit fact atomically."""
@@ -2283,6 +2803,9 @@ class SQLiteMetadataReportRepository:
                         json.JSONDecodeError) as error:
                     raise FieldEffectError("authority") from error
                 if (case_envelope.get("current") is not True
+                        or not self._review_case_accepts_authority(
+                            authority.review_case_id
+                        )
                         or case.get("target_fingerprint")
                         != authority.target_fingerprint
                         or (target.get("connection"), target.get("library"),
@@ -2950,7 +3473,7 @@ class SQLiteMetadataReportRepository:
                         "UPDATE review_preparation_scans SET state='queued',"
                         "library_id=?,producer_fingerprint=?,requested_at=?,updated_at=?,"
                         "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
-                        "refresh_count=0,"
+                        "qualification_epoch=NULL,refresh_count=0,"
                         "rescan_requested=0 WHERE scan_id=?",
                         (
                             library_id,
@@ -2960,6 +3483,7 @@ class SQLiteMetadataReportRepository:
                             row[0],
                         ),
                     )
+                self._refresh_target_connection_affected(connection)
                 self._connection.commit()
                 progress = self.review_pipeline_progress(connection, library)
                 if progress is None:
@@ -2981,6 +3505,7 @@ class SQLiteMetadataReportRepository:
                     requested_at,
                 ),
             )
+            self._refresh_target_connection_affected(connection)
             self._connection.commit()
             return PipelineProgress(
                 scan_id, connection, library, "queued", 0, 0, 0, 0, False, requested_at
@@ -3126,6 +3651,38 @@ class SQLiteMetadataReportRepository:
                 "UPDATE review_preparation_work SET state='queued' "
                 "WHERE state='running' AND attempt<3"
             )
+            # A process cannot complete a check it abandoned. Preserve the
+            # condition and return it to the owner-actionable state.
+            self._connection.execute(
+                "UPDATE review_preparation_connection_conditions "
+                "SET state='paused' WHERE state='checking'"
+            )
+            configured_connections = tuple(sorted({connection for connection, *_ in producers}))
+            if configured_connections:
+                placeholders = ",".join("?" for _ in configured_connections)
+                self._connection.execute(
+                    "DELETE FROM review_preparation_connection_conditions "
+                    f"WHERE connection_name NOT IN ({placeholders})",
+                    configured_connections,
+                )
+            configured_scopes = {(connection, library) for connection, library, *_ in producers}
+            active_scans = self._connection.execute(
+                "SELECT scan_id,connection_name,library_name FROM review_preparation_scans "
+                "WHERE state IN ('queued','discovering','processing')"
+            ).fetchall()
+            for scan_id, connection, library in active_scans:
+                if (connection, library) in configured_scopes:
+                    continue
+                self._connection.execute(
+                    "UPDATE review_preparation_work SET state='stale',failure_code='stale',"
+                    "failure_root=NULL WHERE scan_id=? AND state IN ('queued','running')",
+                    (scan_id,),
+                )
+                self._connection.execute(
+                    "UPDATE review_preparation_scans SET state='completed_with_failures' "
+                    "WHERE scan_id=? AND state IN ('queued','discovering','processing')",
+                    (scan_id,),
+                )
             for connection, library, library_id, producer_fingerprint in producers:
                 row = self._connection.execute(
                     "SELECT scan_id,state,library_id,producer_fingerprint "
@@ -3141,7 +3698,7 @@ class SQLiteMetadataReportRepository:
                     self._connection.execute(
                         "UPDATE review_preparation_scans SET state='queued',"
                         "library_id=?,producer_fingerprint=?,catalogue_generation=NULL,"
-                        "catalogue_fingerprint=NULL,total=0,refresh_count=0,"
+                        "catalogue_fingerprint=NULL,qualification_epoch=NULL,total=0,refresh_count=0,"
                         "rescan_requested=0 "
                         "WHERE scan_id=?",
                         (library_id, producer_fingerprint, row[0]),
@@ -3149,7 +3706,7 @@ class SQLiteMetadataReportRepository:
                     self._connection.execute(
                         "UPDATE review_preparation_work SET stage='extraction',"
                         "state='queued',attempt=0,recovery_attempt=0,library_id=?,producer_fingerprint=?,"
-                        "report_id=NULL,"
+                        "report_id=NULL,recovery_source_report_id=NULL,"
                         "proposal_set_id=NULL,review_case_id=NULL,failure_code=NULL,"
                         "failure_root=NULL "
                         "WHERE scan_id=?",
@@ -3159,6 +3716,244 @@ class SQLiteMetadataReportRepository:
         except sqlite3.Error as error:
             self._connection.rollback()
             raise MetadataReportError("review preparation recovery failed") from error
+
+    def target_connection_conditions(self) -> tuple[TargetConnectionCondition, ...]:
+        try:
+            rows = self._connection.execute(
+                "SELECT connection_name,code,state,epoch,affected,updated_at "
+                "FROM review_preparation_connection_conditions "
+                "ORDER BY connection_name"
+            ).fetchall()
+            return tuple(TargetConnectionCondition(*row) for row in rows)
+        except (sqlite3.Error, TypeError, ValueError) as error:
+            raise MetadataReportError("target connection condition is unavailable") from error
+
+    def guard_target_connection(self, action: PipelineAction, checked_at: int) -> bool:
+        """Return a claimed action to queue when its connection is held."""
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            condition = self._connection.execute(
+                "SELECT state FROM review_preparation_connection_conditions "
+                "WHERE connection_name=?", (action.connection,)
+            ).fetchone()
+            if condition is None or condition[0] not in {"paused", "checking"}:
+                self._connection.commit()
+                return True
+            if action.stage == "discovery":
+                updated = self._connection.execute(
+                    "UPDATE review_preparation_scans SET state='queued',updated_at=? "
+                    "WHERE scan_id=? AND state='discovering'",
+                    (checked_at, action.scan_id),
+                ).rowcount
+            else:
+                updated = self._connection.execute(
+                    "UPDATE review_preparation_work SET state='queued',attempt=0,updated_at=? "
+                    "WHERE work_id=? AND stage=? AND state='running' AND attempt=?",
+                    (checked_at, action.action_id, action.stage, action.attempt),
+                ).rowcount
+            if updated != 1:
+                raise MetadataReportError("review preparation state changed")
+            self._connection.commit()
+            return False
+        except (sqlite3.Error, MetadataReportError) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("target connection condition is unavailable") from error
+
+    def discovery_requires_qualification(self, action: PipelineAction) -> bool:
+        if action.stage != "discovery":
+            raise MetadataReportError("review preparation state changed")
+        try:
+            row = self._connection.execute(
+                "SELECT qualification_epoch FROM review_preparation_scans "
+                "WHERE scan_id=? AND state='discovering'", (action.scan_id,)
+            ).fetchone()
+            if row is None:
+                raise MetadataReportError("review preparation state changed")
+            return row[0] is None
+        except sqlite3.Error as error:
+            raise MetadataReportError("target connection condition is unavailable") from error
+
+    def qualify_review_discovery(self, action: PipelineAction, qualified_at: int) -> bool:
+        """Persist successful preflight authority before target enumeration."""
+        if action.stage != "discovery":
+            raise MetadataReportError("review preparation state changed")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            condition = self._connection.execute(
+                "SELECT state,epoch FROM review_preparation_connection_conditions "
+                "WHERE connection_name=?", (action.connection,)
+            ).fetchone()
+            if condition is not None and condition[0] in {"paused", "checking"}:
+                updated = self._connection.execute(
+                    "UPDATE review_preparation_scans SET state='queued',updated_at=? "
+                    "WHERE scan_id=? AND state='discovering'", (qualified_at, action.scan_id)
+                ).rowcount
+                if updated != 1:
+                    raise MetadataReportError("review preparation state changed")
+                self._connection.commit()
+                return False
+            epoch = 0 if condition is None else condition[1]
+            updated = self._connection.execute(
+                "UPDATE review_preparation_scans SET qualification_epoch=?,updated_at=? "
+                "WHERE scan_id=? AND state='discovering' AND qualification_epoch IS NULL",
+                (epoch, qualified_at, action.scan_id),
+            ).rowcount
+            if updated != 1:
+                raise MetadataReportError("review preparation state changed")
+            self._connection.commit()
+            return True
+        except (sqlite3.Error, MetadataReportError) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("target connection condition is unavailable") from error
+
+    def defer_for_target_connection(
+        self, action: PipelineAction, code: str, updated_at: int
+    ) -> None:
+        if code not in {"tls", "authentication", "authorization", "unavailable"}:
+            raise MetadataReportError("target connection condition is invalid")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            current = self._connection.execute(
+                "SELECT epoch,state FROM review_preparation_connection_conditions "
+                "WHERE connection_name=?", (action.connection,)
+            ).fetchone()
+            epoch = 1 if current is None else current[0] + (current[1] != "paused")
+            self._connection.execute(
+                "INSERT INTO review_preparation_connection_conditions("
+                "connection_name,code,state,epoch,affected,updated_at) VALUES(?,?,'paused',?,?,?) "
+                "ON CONFLICT(connection_name) DO UPDATE SET code=excluded.code,state='paused',"
+                "epoch=excluded.epoch,affected=excluded.affected,updated_at=excluded.updated_at",
+                (action.connection, code, epoch, 0, updated_at),
+            )
+            if action.stage == "discovery":
+                updated = self._connection.execute(
+                    "UPDATE review_preparation_scans SET state='queued',qualification_epoch=NULL,updated_at=? "
+                    "WHERE scan_id=? AND state='discovering'", (updated_at, action.scan_id)
+                ).rowcount
+            else:
+                updated = self._connection.execute(
+                    "UPDATE review_preparation_work SET state='queued',attempt=0,updated_at=? "
+                    "WHERE work_id=? AND stage=? AND state='running' AND attempt=?",
+                    (updated_at, action.action_id, action.stage, action.attempt),
+                ).rowcount
+            if updated != 1:
+                raise MetadataReportError("review preparation state changed")
+            affected = self._target_connection_affected(action.connection)
+            self._connection.execute(
+                "UPDATE review_preparation_connection_conditions SET affected=? "
+                "WHERE connection_name=?", (affected, action.connection)
+            )
+            self._connection.commit()
+        except (sqlite3.Error, MetadataReportError) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("target connection condition is unavailable") from error
+
+    def hold_target_connection(self, connection: str, code: str, updated_at: int) -> None:
+        """Persist a connection-wide hold without changing a retry checkpoint."""
+        if code not in {"tls", "authentication", "authorization", "unavailable"}:
+            raise MetadataReportError("target connection condition is invalid")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            current = self._connection.execute(
+                "SELECT epoch,state FROM review_preparation_connection_conditions "
+                "WHERE connection_name=?", (connection,)
+            ).fetchone()
+            epoch = 1 if current is None else current[0] + (current[1] != "paused")
+            self._connection.execute(
+                "INSERT INTO review_preparation_connection_conditions("
+                "connection_name,code,state,epoch,affected,updated_at) VALUES(?,?,'paused',?,?,?) "
+                "ON CONFLICT(connection_name) DO UPDATE SET code=excluded.code,state='paused',"
+                "epoch=excluded.epoch,affected=excluded.affected,updated_at=excluded.updated_at",
+                (connection, code, epoch, self._target_connection_affected(connection), updated_at),
+            )
+            self._connection.commit()
+        except sqlite3.Error as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            raise MetadataReportError("target connection condition is unavailable") from error
+
+    def _target_connection_affected(self, connection: str) -> int:
+        return self._connection.execute(
+                "SELECT (SELECT count(*) FROM review_preparation_scans scan "
+                "WHERE scan.connection_name=? AND scan.state IN ('queued','discovering','processing') "
+                "AND NOT EXISTS(SELECT 1 FROM review_preparation_work work "
+                "WHERE work.scan_id=scan.scan_id AND work.state IN ('queued','running')))+"
+                "(SELECT count(*) FROM review_preparation_work "
+                "WHERE connection_name=? AND state IN ('queued','running'))",
+                (connection, connection),
+            ).fetchone()[0]
+
+    def _refresh_target_connection_affected(self, connection: str) -> None:
+        """Keep an existing hold truthful as newly admitted work arrives."""
+        self._connection.execute(
+            "UPDATE review_preparation_connection_conditions SET affected=? "
+            "WHERE connection_name=? AND state IN ('paused','checking')",
+            (self._target_connection_affected(connection), connection),
+        )
+
+    def begin_target_connection_check(
+        self, connection: str, checked_at: int
+    ) -> TargetConnectionCondition | None:
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT code,state,epoch,affected,updated_at FROM review_preparation_connection_conditions "
+                "WHERE connection_name=?", (connection,)
+            ).fetchone()
+            if row is None or row[1] != "paused":
+                self._connection.commit()
+                return None
+            epoch = row[2] + 1
+            if self._connection.execute(
+                "UPDATE review_preparation_connection_conditions SET state='checking',epoch=?,updated_at=? "
+                "WHERE connection_name=? AND state='paused' AND epoch=?",
+                (epoch, checked_at, connection, row[2]),
+            ).rowcount != 1:
+                raise MetadataReportError("target connection check changed")
+            self._connection.commit()
+            return TargetConnectionCondition(connection, row[0], "checking", epoch, row[3], checked_at)
+        except (sqlite3.Error, MetadataReportError) as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("target connection condition is unavailable") from error
+
+    def finish_target_connection_check(
+        self, connection: str, epoch: int, code: str | None, checked_at: int
+    ) -> bool:
+        if code is not None and code not in {"tls", "authentication", "authorization", "unavailable"}:
+            raise MetadataReportError("target connection condition is invalid")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            affected = self._target_connection_affected(connection)
+            updated = self._connection.execute(
+                "UPDATE review_preparation_connection_conditions SET state=?,code=COALESCE(?,code),"
+                "affected=?,updated_at=? WHERE connection_name=? AND state='checking' AND epoch=?",
+                ("recovered" if code is None else "paused", code, affected, checked_at, connection, epoch),
+            ).rowcount
+            if updated == 1 and code is None:
+                self._connection.execute(
+                    "UPDATE review_preparation_scans SET qualification_epoch=?,updated_at=? "
+                    "WHERE connection_name=? AND state='queued' "
+                    "AND qualification_epoch IS NULL",
+                    (epoch, checked_at, connection),
+                )
+            self._connection.commit()
+            return updated == 1
+        except sqlite3.Error as error:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            raise MetadataReportError("target connection condition is unavailable") from error
 
     def claim_review_pipeline_action(self, claimed_at: int) -> PipelineAction | None:
         owns_transaction = not self._connection.in_transaction
@@ -3187,6 +3982,9 @@ class SQLiteMetadataReportRepository:
             scan = self._connection.execute(
                 "SELECT scan_id,connection_name,library_name,library_id,producer_fingerprint "
                 "FROM review_preparation_scans WHERE state='queued' "
+                "AND NOT EXISTS(SELECT 1 FROM review_preparation_connection_conditions c "
+                "WHERE c.connection_name=review_preparation_scans.connection_name "
+                "AND c.state IN ('paused','checking')) "
                 "ORDER BY requested_at,scan_id LIMIT 1"
             ).fetchone()
             if scan is not None:
@@ -3209,14 +4007,17 @@ class SQLiteMetadataReportRepository:
                 )
             library = self._connection.execute(
                 "SELECT library_name FROM review_preparation_work WHERE state='queued' "
+                "AND NOT EXISTS(SELECT 1 FROM review_preparation_connection_conditions c "
+                "WHERE c.connection_name=review_preparation_work.connection_name "
+                "AND c.state IN ('paused','checking')) "
                 "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
                 "WHERE s.scan_id=review_preparation_work.scan_id "
                 "AND s.state='processing') "
-                "AND (stage!='extraction' OR ?<=?) "
+                "AND retry_not_before<=? "
                 "GROUP BY library_name "
                 "ORDER BY CASE WHEN library_name>? THEN 0 ELSE 1 END,library_name "
                 "LIMIT 1",
-                (control[2], claimed_at, control[1] or ""),
+                (claimed_at, control[1] or ""),
             ).fetchone()
             ordering = (
                 "updated_at DESC,ordinal"
@@ -3227,16 +4028,26 @@ class SQLiteMetadataReportRepository:
                 "SELECT work_id,scan_id,stage,attempt,connection_name,library_name,library_id,"
                 "producer_fingerprint,catalogue_generation,catalogue_fingerprint,"
                 "item_id,file_identity,source_revision,"
-                "report_id,proposal_set_id,review_case_id,source_fingerprint "
+                "report_id,proposal_set_id,review_case_id,source_fingerprint,"
+                "(SELECT checkpoint FROM current_review_case_lineages lineage "
+                "WHERE lineage.connection_name=review_preparation_work.connection_name "
+                "AND lineage.library_name=review_preparation_work.library_name "
+                "AND lineage.item_id=review_preparation_work.item_id "
+                "AND lineage.proposal_set_id=review_preparation_work.proposal_set_id "
+                "AND lineage.report_id=review_preparation_work.report_id "
+                "AND lineage.review_case_id=review_preparation_work.review_case_id) "
+                ",(SELECT generation FROM metadata_policy_state WHERE singleton=1) "
                 "FROM review_preparation_work WHERE state='queued' AND library_name=? "
+                "AND NOT EXISTS(SELECT 1 FROM review_preparation_connection_conditions c "
+                "WHERE c.connection_name=review_preparation_work.connection_name "
+                "AND c.state IN ('paused','checking')) "
                 "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
                 "WHERE s.scan_id=review_preparation_work.scan_id "
                 "AND s.state='processing') "
-                "AND (stage!='extraction' OR ?<=?) "
+                "AND retry_not_before<=? "
                 f"ORDER BY {ordering} LIMIT 1",
                 (
                     library[0],
-                    control[2],
                     claimed_at,
                 ),
             ).fetchone()
@@ -3274,6 +4085,8 @@ class SQLiteMetadataReportRepository:
                     work[14],
                     work[15],
                     work[16],
+                    work[17],
+                    work[18],
                 )
             scans = self._connection.execute(
                 "SELECT scan_id,rescan_requested FROM review_preparation_scans "
@@ -3305,7 +4118,7 @@ class SQLiteMetadataReportRepository:
                     self._connection.execute(
                         "UPDATE review_preparation_scans SET state='queued',"
                         "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
-                        "refresh_count=0,rescan_requested=0,updated_at=? "
+                        "qualification_epoch=NULL,refresh_count=0,rescan_requested=0,updated_at=? "
                         "WHERE scan_id=?",
                         (claimed_at, scan_id),
                     )
@@ -3323,7 +4136,7 @@ class SQLiteMetadataReportRepository:
                     self._connection.execute(
                         "UPDATE review_preparation_scans SET state='queued',"
                         "catalogue_generation=NULL,catalogue_fingerprint=NULL,total=0,"
-                        "rescan_requested=0,updated_at=? WHERE scan_id=?",
+                        "qualification_epoch=NULL,rescan_requested=0,updated_at=? WHERE scan_id=?",
                         (claimed_at, scan_id),
                     )
                 else:
@@ -3348,6 +4161,142 @@ class SQLiteMetadataReportRepository:
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("review preparation claim failed") from error
+
+    def claim_review_pipeline_work(
+        self, work_id: str, claimed_at: int
+    ) -> PipelineAction | None:
+        """Claim one named queued successor without bypassing stage handling."""
+        if type(work_id) is not str or type(claimed_at) is not int or claimed_at < 0:
+            raise MetadataReportError("review preparation state is invalid")
+        owns_transaction = not self._connection.in_transaction
+        try:
+            if owns_transaction:
+                self._connection.execute("BEGIN IMMEDIATE")
+            work = self._connection.execute(
+                "SELECT work_id,scan_id,stage,attempt,connection_name,library_name,library_id,"
+                "producer_fingerprint,catalogue_generation,catalogue_fingerprint,item_id,"
+                "file_identity,source_revision,report_id,proposal_set_id,review_case_id,"
+                "source_fingerprint,(SELECT checkpoint FROM current_review_case_lineages lineage "
+                "WHERE lineage.connection_name=review_preparation_work.connection_name "
+                "AND lineage.library_name=review_preparation_work.library_name "
+                "AND lineage.item_id=review_preparation_work.item_id "
+                "AND lineage.proposal_set_id=review_preparation_work.proposal_set_id "
+                "AND lineage.report_id=review_preparation_work.report_id "
+                "AND lineage.review_case_id=review_preparation_work.review_case_id),"
+                "(SELECT generation FROM metadata_policy_state WHERE singleton=1) "
+                "FROM review_preparation_work WHERE work_id=? AND state='queued' "
+                "AND retry_not_before<=? AND EXISTS(SELECT 1 FROM review_preparation_scans s "
+                "WHERE s.scan_id=review_preparation_work.scan_id AND s.state='processing')",
+                (work_id, claimed_at),
+            ).fetchone()
+            if work is None:
+                if owns_transaction:
+                    self._connection.execute("COMMIT")
+                return None
+            attempt = work[3] + 1
+            if self._connection.execute(
+                "UPDATE review_preparation_work SET state='running',attempt=?,updated_at=? "
+                "WHERE work_id=? AND state='queued'",
+                (attempt, claimed_at, work_id),
+            ).rowcount != 1:
+                raise MetadataReportError("review preparation claim changed")
+            if owns_transaction:
+                self._connection.execute("COMMIT")
+            return PipelineAction(
+                work[0], work[1], work[2], attempt, work[4], work[5], work[6],
+                work[7], work[8], work[9], work[10], work[11], work[12], work[13],
+                work[14], work[15], work[16], work[17], work[18],
+            )
+        except (sqlite3.Error, MetadataReportError) as error:
+            if owns_transaction and self._connection.in_transaction:
+                self._connection.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("review preparation claim failed") from error
+
+    def stage_provider_retry_successor(
+        self, source_report_id: str, report: MetadataReport, staged_at: int
+    ) -> str:
+        """Attach a retry report to its existing work before publication commits."""
+        if (
+            not self._connection.in_transaction
+            or type(source_report_id) is not str
+            or not source_report_id
+            or type(report) is not MetadataReport
+            or type(staged_at) is not int
+            or staged_at < 0
+        ):
+            raise MetadataReportError("provider retry staging is invalid")
+        row = self._connection.execute(
+            "SELECT work_id,scan_id FROM review_preparation_work WHERE connection_name=? "
+            "AND library_name=? AND item_id=? AND file_identity=? "
+            "AND report_id=? AND state IN ('complete','failed','stale')",
+            (report.target.connection, report.target.library, report.target.item,
+             report.file.identity, source_report_id),
+        ).fetchone()
+        if row is None:
+            raise MetadataReportError("provider retry staging is stale")
+        if self._connection.execute(
+            "UPDATE review_preparation_work SET stage='provider',state='queued',attempt=0,"
+            "recovery_attempt=0,retry_not_before=0,report_id=?,proposal_set_id=NULL,"
+            "review_case_id=NULL,recovery_source_report_id=?,failure_code=NULL,failure_root=NULL,updated_at=? "
+            "WHERE work_id=? AND state IN ('complete','failed','stale')",
+            (report.report_id, source_report_id, staged_at, row[0]),
+        ).rowcount != 1:
+            raise MetadataReportError("provider retry staging changed")
+        self._connection.execute(
+            "UPDATE review_preparation_scans SET state='processing',updated_at=? "
+            "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
+            (staged_at, row[1]),
+        )
+        return row[0]
+
+    def provider_retry_work_id(self, report_id: str) -> str:
+        try:
+            row = self._connection.execute(
+                "SELECT work_id FROM review_preparation_work WHERE report_id=? "
+                "AND stage IN ('provider','proposal','admission','projection','complete')",
+                (report_id,),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise MetadataReportError("provider retry staging is unavailable") from error
+        if row is None:
+            raise MetadataReportError("provider retry staging is stale")
+        return row[0]
+
+    def provider_retry_complete(self, report_id: str) -> bool:
+        try:
+            row = self._connection.execute(
+                "SELECT 1 FROM review_preparation_work w WHERE w.report_id=? "
+                "AND w.stage='complete' AND w.state='complete' AND EXISTS("
+                "SELECT 1 FROM current_review_packages p WHERE p.connection_name=w.connection_name "
+                "AND p.library_name=w.library_name AND p.item_id=w.item_id AND p.report_id=w.report_id)",
+                (report_id,),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise MetadataReportError("provider retry staging is unavailable") from error
+        return row is not None
+
+    def completed_provider_retry_successor(
+        self, source_report_id: str
+    ) -> str | None:
+        """Return only the exact staged successor that completed package cutover."""
+        if type(source_report_id) is not str or not source_report_id:
+            raise MetadataReportError("provider retry staging is invalid")
+        try:
+            rows = self._connection.execute(
+                "SELECT w.report_id FROM review_preparation_work w "
+                "JOIN current_review_packages p ON p.connection_name=w.connection_name "
+                "AND p.library_name=w.library_name AND p.item_id=w.item_id "
+                "AND p.report_id=w.report_id WHERE w.recovery_source_report_id=? "
+                "AND w.stage='complete' AND w.state='complete' LIMIT 2",
+                (source_report_id,),
+            ).fetchall()
+        except sqlite3.Error as error:
+            raise MetadataReportError("provider retry staging is unavailable") from error
+        if len(rows) > 1:
+            raise MetadataReportError("provider retry staging conflicts")
+        return None if not rows else rows[0][0]
 
     def complete_review_discovery(
         self,
@@ -3504,9 +4453,9 @@ class SQLiteMetadataReportRepository:
                     "INSERT INTO review_preparation_work("
                     "work_id,scan_id,ordinal,connection_name,library_name,library_id,"
                     "item_id,file_identity,source_revision,source_fingerprint,producer_fingerprint,"
-                    "catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,"
+                    "catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,retry_not_before,"
                     "report_id,proposal_set_id,review_case_id,failure_code,failure_root,updated_at"
-                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                    ") VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                     "ON CONFLICT(work_id) DO UPDATE SET ordinal=excluded.ordinal,"
                     "library_id=excluded.library_id,file_identity=excluded.file_identity,"
                     "source_revision=excluded.source_revision,"
@@ -3514,9 +4463,12 @@ class SQLiteMetadataReportRepository:
                     "producer_fingerprint=excluded.producer_fingerprint,"
                     "catalogue_generation=excluded.catalogue_generation,"
                     "catalogue_fingerprint=excluded.catalogue_fingerprint,"
-                    "stage=excluded.stage,state=excluded.state,attempt=0,recovery_attempt=0,"
+                    "stage=excluded.stage,state=excluded.state,attempt=0,recovery_attempt=0,retry_not_before=0,"
                     "report_id=excluded.report_id,proposal_set_id=excluded.proposal_set_id,"
-                    "review_case_id=excluded.review_case_id,failure_code=NULL,failure_root=NULL,"
+                    "review_case_id=excluded.review_case_id,recovery_source_report_id="
+                    "CASE WHEN excluded.report_id IS NULL THEN NULL "
+                    "ELSE review_preparation_work.recovery_source_report_id END,"
+                    "failure_code=NULL,failure_root=NULL,"
                     "updated_at=excluded.updated_at",
                     (
                         work_id,
@@ -3534,6 +4486,7 @@ class SQLiteMetadataReportRepository:
                         fingerprint,
                         stage,
                         state,
+                        0,
                         0,
                         0,
                         report_id,
@@ -3607,6 +4560,12 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             if current != (proposal_id, report_id, case_id, checkpoint):
                 continue
+            published = self._connection.execute(
+                "SELECT proposal_set_id,report_id,review_case_id,checkpoint "
+                "FROM current_review_packages WHERE connection_name=? "
+                "AND library_name=? AND item_id=?",
+                (connection, library, item_id),
+            ).fetchone()
             transition = ReviewTransition(
                 connection,
                 library,
@@ -3656,6 +4615,12 @@ class SQLiteMetadataReportRepository:
                     checkpoint,
                 ),
             )
+            if published is not None:
+                if self._connection.execute(
+                    "DELETE FROM current_review_packages WHERE connection_name=? AND library_name=? AND item_id=? AND proposal_set_id=? AND report_id=? AND review_case_id=? AND checkpoint=?",
+                    (connection, library, item_id, *published),
+                ).rowcount != 1:
+                    raise MetadataReportError("review preparation state changed")
         self._connection.execute(
             "DELETE FROM review_preparation_absences WHERE scan_id=?", (scan_id,)
         )
@@ -3666,8 +4631,9 @@ class SQLiteMetadataReportRepository:
         output_id: str | None,
         completed_at: int,
         claim_next: bool = False,
+        exact_next: bool = False,
     ) -> PipelineAction | None:
-        if type(claim_next) is not bool:
+        if type(claim_next) is not bool or type(exact_next) is not bool or (claim_next and exact_next):
             raise MetadataReportError("review preparation state is invalid")
         stages = {
             "extraction": ("provider", "report_id"),
@@ -3684,6 +4650,12 @@ class SQLiteMetadataReportRepository:
         try:
             if not self._connection.in_transaction:
                 self._connection.execute("BEGIN IMMEDIATE")
+            if action.stage == "projection":
+                if action.review_case_id is None:
+                    raise MetadataReportError("review preparation state changed")
+                self._require_staged_shadow_projection_current(
+                    action.review_case_id, action
+                )
             values: list[object] = [target[0], completed_at]
             assignment = ""
             if target[1] is not None:
@@ -3715,6 +4687,43 @@ class SQLiteMetadataReportRepository:
                     self._refresh_metadata_policy_transition(
                         transition_row[0], completed_at
                     )
+            if (
+                target[0] == "complete"
+                and action.stage in {"admission", "projection"}
+                and action.proposal_set_id is not None
+                and action.report_id is not None
+            ):
+                pointer = self._connection.execute(
+                    "SELECT proposal_set_id,report_id,review_case_id,checkpoint,outcome FROM current_review_case_lineages "
+                    "WHERE connection_name=? AND library_name=? AND item_id=?",
+                    (action.connection, action.library, action.item_id),
+                ).fetchone()
+                if (
+                    pointer is None
+                    or pointer[0] != action.proposal_set_id
+                    or pointer[1] != action.report_id
+                    or pointer[4] not in {"admitted", "superseded", "no_case", "retired"}
+                    or (action.stage == "projection" and pointer[2] != action.review_case_id)
+                ):
+                    raise MetadataReportError("review preparation state changed")
+                self._connection.execute(
+                    "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) "
+                    "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET "
+                    "proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,"
+                    "review_case_id=excluded.review_case_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
+                    (action.connection, action.library, action.item_id, *pointer),
+                )
+                outbox_id = _provider_recovery_outbox_id(
+                    action.connection, action.library, action.item_id, *pointer,
+                )
+                self._connection.execute(
+                    "INSERT INTO provider_recovery_outbox(outbox_id,connection_name,"
+                    "library_name,item_id,proposal_set_id,report_id,review_case_id,"
+                    "checkpoint,outcome,created_at,delivered_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,NULL) ON CONFLICT(outbox_id) DO NOTHING",
+                    (outbox_id, action.connection, action.library, action.item_id,
+                     *pointer, completed_at),
+                )
             if target[0] == "complete":
                 transition_row = self._connection.execute(
                     "SELECT transition_id FROM metadata_policy_transition_items WHERE work_id=? AND state='pending'",
@@ -3737,15 +4746,21 @@ class SQLiteMetadataReportRepository:
             next_action = (
                 self.claim_review_pipeline_action(completed_at)
                 if claim_next
-                else None
+                else (
+                    self.claim_review_pipeline_work(action.action_id, completed_at)
+                    if exact_next and target[0] != "complete"
+                    else None
+                )
             )
             self._connection.commit()
             return next_action
-        except (sqlite3.Error, MetadataReportError) as error:
+        except (sqlite3.Error, MetadataReportError, ReviewAdmissionStaleError) as error:
             if self._connection.in_transaction:
                 self._connection.rollback()
             if isinstance(error, MetadataReportError):
                 raise
+            if isinstance(error, ReviewAdmissionStaleError):
+                raise MetadataReportError("review preparation state changed") from error
             raise MetadataReportError("review preparation persistence failed") from error
 
     def begin_review_pipeline_output(self) -> None:
@@ -3805,24 +4820,34 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("review preparation state is invalid")
         if provider_failure_code == "transient":
             updated = self._connection.execute(
-                "UPDATE review_preparation_work SET stage='extraction',"
-                "state=CASE WHEN recovery_attempt<2 THEN 'queued' ELSE 'failed' END,"
-                "attempt=0,recovery_attempt=recovery_attempt+1,report_id=NULL,"
-                "proposal_set_id=NULL,review_case_id=NULL,failure_code='transient',"
-                "failure_root=NULL,"
+                "UPDATE review_preparation_work SET "
+                "stage=CASE WHEN recovery_attempt<2 THEN 'extraction' ELSE 'proposal' END,"
+                "state='queued',attempt=0,recovery_attempt=recovery_attempt+1,"
+                "retry_not_before=CASE WHEN recovery_attempt<2 THEN ? "
+                "ELSE 0 END,report_id=?,proposal_set_id=NULL,review_case_id=NULL,"
+                "failure_code='transient',failure_root=NULL,"
                 "updated_at=? WHERE work_id=? AND stage='extraction' "
                 "AND state='running' AND attempt=?",
-                (completed_at, action.action_id, action.attempt),
+                (
+                    completed_at + max(
+                        recovery_delay_seconds,
+                        5 * (1 << min(3, action.attempt)),
+                    ),
+                    report_id,
+                    completed_at,
+                    action.action_id,
+                    action.attempt,
+                ),
             ).rowcount
         else:
-            state = "queued" if provider_failure_code is None else "failed"
+            terminal_failure = provider_failure_code in {"authentication", "configuration"}
             updated = self._connection.execute(
                 "UPDATE review_preparation_work SET stage=?,state=?,attempt=0,"
-                "report_id=?,failure_code=?,failure_root=?,updated_at=? WHERE work_id=? "
+                "retry_not_before=0,report_id=?,failure_code=?,failure_root=?,updated_at=? WHERE work_id=? "
                 "AND stage='extraction' AND state='running' AND attempt=?",
                 (
-                    "proposal" if provider_failure_code is None else "provider",
-                    state,
+                    "provider" if terminal_failure else "proposal",
+                    "failed" if terminal_failure else "queued",
                     report_id,
                     provider_failure_code,
                     provider_failure_root,
@@ -3868,21 +4893,6 @@ class SQLiteMetadataReportRepository:
                 self._refresh_metadata_policy_transition(
                     transition_row[0], completed_at
                 )
-        if provider_failure_code == "transient":
-            self._connection.execute(
-                "UPDATE review_preparation_control SET "
-                "circuit_failures=MIN(3,circuit_failures+1),"
-                "circuit_open_until=MAX(circuit_open_until,"
-                "?+(5*(1 << MIN(3,circuit_failures+1)))),updated_at=? "
-                "WHERE singleton=1",
-                (completed_at, completed_at),
-            )
-        if recovery_delay_seconds:
-            self._connection.execute(
-                "UPDATE review_preparation_control SET circuit_open_until="
-                "MAX(circuit_open_until,?+?),updated_at=? WHERE singleton=1",
-                (completed_at, recovery_delay_seconds, completed_at),
-            )
         self._review_pipeline_claim = (
             self.claim_review_pipeline_action(completed_at) if claim_next else None
         )
@@ -3954,10 +4964,18 @@ class SQLiteMetadataReportRepository:
                     "UPDATE review_preparation_work SET stage='extraction',"
                     "state=CASE WHEN recovery_attempt<2 THEN 'queued' ELSE 'failed' END,"
                     "attempt=0,recovery_attempt=recovery_attempt+1,"
-                    "report_id=NULL,proposal_set_id=NULL,review_case_id=NULL,"
+                    "retry_not_before=CASE WHEN recovery_attempt<2 THEN ? ELSE 0 END,"
+                    "report_id=NULL,recovery_source_report_id=NULL,"
+                    "proposal_set_id=NULL,review_case_id=NULL,"
                     "failure_code='transient',failure_root=NULL,updated_at=? WHERE work_id=? AND stage=? "
                     "AND state='running' AND attempt=?",
-                    (completed_at, action.action_id, action.stage, action.attempt),
+                    (
+                        completed_at + 5 * (1 << min(3, action.attempt)),
+                        completed_at,
+                        action.action_id,
+                        action.stage,
+                        action.attempt,
+                    ),
                 ).rowcount
                 if updated == 1:
                     state = self._connection.execute(
@@ -3998,14 +5016,6 @@ class SQLiteMetadataReportRepository:
                         ("stale" if state == "stale" else "failed", completed_at, transition_row[0], action.action_id),
                     )
                     self._refresh_metadata_policy_transition(transition_row[0], completed_at)
-            if code == "transient":
-                self._connection.execute(
-                    "UPDATE review_preparation_control SET "
-                    "circuit_failures=MIN(3,circuit_failures+1),"
-                    "circuit_open_until=MAX(circuit_open_until,?+(5*(1 << MIN(3,circuit_failures+1)))),"
-                    "updated_at=? WHERE singleton=1",
-                    (completed_at, completed_at),
-                )
             self._connection.commit()
         except (sqlite3.Error, MetadataReportError) as error:
             if self._connection.in_transaction:
@@ -4025,6 +5035,9 @@ class SQLiteMetadataReportRepository:
             self._connection.execute("COMMIT")
             if self._binding is not None:
                 self._binding.require_current()
+        except TargetConnectionError:
+            self._connection.rollback()
+            raise
         except MetadataReportError:
             if self._connection.in_transaction:
                 self._connection.execute("ROLLBACK")
@@ -4040,6 +5053,8 @@ class SQLiteMetadataReportRepository:
         currentness: Callable[[], bool],
         expected_current: str | None = None,
         after_publication: Callable[[object, MetadataReport], None] | None = None,
+        *,
+        expected_package: tuple[str | None, str, str | None, int | None, str] | None = None,
     ) -> str:
         if type(report) is not MetadataReport or not callable(currentness):
             raise MetadataReportError("report publication failed")
@@ -4064,6 +5079,10 @@ class SQLiteMetadataReportRepository:
             self._connection.execute("BEGIN IMMEDIATE")
             if self._binding is not None:
                 self._binding.require_current()
+            if expected_package is not None and self.current_review_package(
+                report.target.connection, report.target.library, report.target.item
+            ) != expected_package:
+                raise MetadataReportError("current review package changed")
             current = self._connection.execute(
                 "SELECT r.report_id,r.connection_name,r.library_name,r.item_id,r.file_identity,r.content_digest,r.schema_version,r.document_digest,r.document FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
                 values[1:5],
@@ -4123,12 +5142,21 @@ class SQLiteMetadataReportRepository:
                 "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET report_id=excluded.report_id",
                 (report.target.connection, report.target.library, report.target.item, report.report_id),
             )
+            if after_publication is None:
+                self._connection.execute(
+                    "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) VALUES(?,?,?,NULL,?,NULL,NULL,'report_only') "
+                    "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=NULL,report_id=excluded.report_id,review_case_id=NULL,checkpoint=NULL,outcome='report_only'",
+                    (report.target.connection, report.target.library, report.target.item, report.report_id),
+                )
             if after_publication is not None:
                 after_publication(self, report)
             if self._binding is not None:
                 self._binding.require_current()
             self._connection.commit()
             return self.get(report.report_id)
+        except TargetConnectionError:
+            self._connection.rollback()
+            raise
         except MetadataReportError:
             self._connection.rollback()
             raise
@@ -4351,6 +5379,12 @@ class SQLiteMetadataReportRepository:
                 transition = ReviewTransition(*lineage, checkpoint, proposal_set.proposal_set_id, report.report_id, outcome, prior_case_id, None, "nonactionable")
                 self._connection.execute("INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (transition.transition_id, *lineage, checkpoint, transition.actor, transition.from_review_case_id, None, proposal_set.proposal_set_id, report.report_id, outcome, "nonactionable"))
                 self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?, ?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=NULL,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome", (*lineage, proposal_set.proposal_set_id, report.report_id, None, transition.transition_id, checkpoint, outcome))
+                if owns_transaction:
+                    self._connection.execute(
+                        "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?) "
+                        "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
+                        (*lineage, proposal_set.proposal_set_id, report.report_id, None, checkpoint, outcome),
+                    )
                 if self._binding is not None:
                     self._binding.require_current()
                 if owns_transaction:
@@ -4366,6 +5400,12 @@ class SQLiteMetadataReportRepository:
             transition = ReviewTransition(*lineage, checkpoint, proposal_set.proposal_set_id, report.report_id, outcome, prior_case_id, case.review_case_id, "actionable")
             self._connection.execute("INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (transition.transition_id, *lineage, checkpoint, transition.actor, transition.from_review_case_id, case.review_case_id, proposal_set.proposal_set_id, report.report_id, outcome, "actionable"))
             self._connection.execute("INSERT INTO current_review_case_lineages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,transition_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,transition_id=excluded.transition_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome", (*lineage, proposal_set.proposal_set_id, report.report_id, case.review_case_id, transition.transition_id, checkpoint, outcome))
+            if owns_transaction:
+                self._connection.execute(
+                    "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) VALUES(?,?,?,?,?,?,?,?) "
+                    "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=excluded.proposal_set_id,report_id=excluded.report_id,review_case_id=excluded.review_case_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
+                    (*lineage, proposal_set.proposal_set_id, report.report_id, case.review_case_id, checkpoint, outcome),
+                )
             if self._binding is not None:
                 self._binding.require_current()
             if owns_transaction:
@@ -4430,16 +5470,44 @@ class SQLiteMetadataReportRepository:
                 or tuple(value.to_data() for value in proposal.results) != case.results
             ):
                 raise MetadataReportError("review case source disagrees")
-            current = self._connection.execute("SELECT review_case_id FROM current_review_case_lineages WHERE connection_name=? AND library_name=? AND item_id=?", (case.target["connection"], case.target["library"], case.target["item"])).fetchone()
-            if current is not None and current[0] is not None and (
-                type(current[0]) is not str
-                or not current[0].startswith("review_case_")
-            ):
-                raise MetadataReportError("review case pointer is invalid")
-            source_current = self._connection.execute("SELECT report_id FROM current_metadata_report_lineages WHERE connection_name=? AND library_name=? AND item_id=?", (case.target["connection"], case.target["library"], case.target["item"])).fetchone()
-            file_current = self._connection.execute("SELECT report_id FROM current_metadata_reports WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?", (case.target["connection"], case.target["library"], case.target["item"], case.file_identity)).fetchone()
-            return _canonical_json({"case": case.to_data(), "current": current == (case.review_case_id,) and source_current == (case.report_id,) and file_current == (case.report_id,), "schema_version": "review-case-get-v1"})
+            package = self._connection.execute(
+                "SELECT proposal_set_id,report_id,review_case_id FROM current_review_packages WHERE connection_name=? AND library_name=? AND item_id=?",
+                (case.target["connection"], case.target["library"], case.target["item"]),
+            ).fetchone()
+            current = package == (case.proposal_set_id, case.report_id, case.review_case_id)
+            return _canonical_json({"case": case.to_data(), "current": current, "schema_version": "review-case-get-v1"})
         except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
+            raise MetadataReportError("review case is unavailable") from error
+
+    def read_staged_cover_preparation(
+        self, action: PipelineAction
+    ) -> tuple[str, str, bool] | None:
+        """Read only the claimed staged cover facts before F22 package cutover."""
+        if action.review_case_id is None:
+            raise MetadataReportError("review case is unavailable")
+        try:
+            self._require_staged_shadow_projection_current(action.review_case_id, action)
+            row = self._connection.execute(
+                "SELECT review.document,report.document FROM review_cases review "
+                "JOIN metadata_reports report ON report.report_id=review.report_id "
+                "WHERE review.review_case_id=? AND review.report_id=?",
+                (action.review_case_id, action.report_id),
+            ).fetchone()
+            if row is None or len(row) != 2:
+                raise MetadataReportError("review case is unavailable")
+            case = ReviewCase.from_json(row[0])
+            report = MetadataReport.from_json(row[1])
+            if case.review_case_id != action.review_case_id or case.report_id != report.report_id:
+                raise MetadataReportError("review case is unavailable")
+            cover = next(
+                (proposal for proposal in case.proposals
+                 if proposal["destination"] == "cover"),
+                None,
+            )
+            if cover is None or cover["result"]["outcome"] == "ineligible":
+                return None
+            return report.to_json(), str(cover["proposal_id"]), False
+        except (sqlite3.Error, ReviewCaseValueError, ReportValueError, KeyError, TypeError) as error:
             raise MetadataReportError("review case is unavailable") from error
 
     def get_review_case_report(self, review_case_id: str) -> str:
@@ -4485,6 +5553,15 @@ class SQLiteMetadataReportRepository:
                     else self.get_review_case_history(review_case_id, history_limit)
                 ),
                 automatic_attention_destinations=self._automatic_attention_destinations(review_case_id),
+                automatic_safety_suspended_destinations=self._automatic_attention_destinations(review_case_id),
+                shadow_abstention_destinations=self._shadow_abstention_destinations(review_case_id),
+                automatic_override_blocked_destinations=self._automatic_override_blocked_destinations(review_case_id),
+                suspended_destinations=self._field_effect_capability_suspended_destinations(
+                    review_case_id
+                ),
+                suspension_causes=self._field_effect_capability_suspension_causes(
+                    review_case_id
+                ),
                 cover_consideration_document=(
                     self.current_cover_consideration_document(review_case_id)
                 ),
@@ -4509,34 +5586,39 @@ class SQLiteMetadataReportRepository:
             rows = self.list_current_review_case_documents(
                 search, limit, offset, attention
             )
-            projected = tuple(
-                (
-                    case_document,
-                    report_document,
-                    (
-                        ()
-                        if case_document is None
-                        else self.get_review_case_decisions(
-                            ReviewCase.from_json(case_document).review_case_id
-                        )
-                    ),
-                    (
-                        ()
-                        if case_document is None
-                        else self._automatic_attention_destinations(
-                            ReviewCase.from_json(case_document).review_case_id
-                        )
-                    ),
-                    (
-                        ()
-                        if case_document is None
-                        else self._field_effect_capability_suspended_destinations(
-                            ReviewCase.from_json(case_document).review_case_id
-                        )
-                    ),
-                )
-                for case_document, report_document in rows
-            )
+            projected_rows = []
+            for case_document, report_document in rows:
+                if case_document is None and '"schema_version":"review-terminal-work-v1"' in report_document:
+                    projected_rows.append((case_document, report_document, (), (), (), (), None))
+                    continue
+                report = MetadataReport.from_json(report_document)
+                terminal = self._connection.execute(
+                    "SELECT work_id,stage,attempt,recovery_attempt,state,failure_code,failure_root "
+                    "FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=? "
+                    "ORDER BY updated_at DESC,work_id DESC LIMIT 1",
+                    (report.target.connection, report.target.library, report.target.item),
+                ).fetchone()
+                terminal_document = None if (
+                    terminal is None
+                    or terminal[4] != "failed"
+                    or terminal[5] is None
+                ) else _canonical_json({
+                    "attempt": terminal[2], "connection": report.target.connection,
+                    "failure_root": terminal[6], "item": report.target.item,
+                    "lane": terminal[1], "library": report.target.library,
+                    "recovery_attempt": terminal[3], "schema_version": "review-terminal-work-v1",
+                    "status": terminal[5], "work_id": terminal[0],
+                })
+                case_id = None if case_document is None else ReviewCase.from_json(case_document).review_case_id
+                projected_rows.append((
+                    case_document, report_document,
+                    () if case_id is None else self.get_review_case_decisions(case_id),
+                    () if case_id is None else self._automatic_attention_destinations(case_id),
+                    () if case_id is None else self._field_effect_capability_suspended_destinations(case_id),
+                    () if case_id is None else self._shadow_abstention_destinations(case_id),
+                    terminal_document,
+                ))
+            projected = tuple(projected_rows)
             total, attention_total = self.count_current_review_cases(search)
             snapshot = ReviewLibrarySnapshot(
                 rows=projected,
@@ -4551,6 +5633,31 @@ class SQLiteMetadataReportRepository:
             "json_each(shadow.document,'$.outcomes') outcome, automatic_safety_state safety "
             "WHERE shadow.review_case_id=? AND json_extract(outcome.value,'$.policy_destination')='automatic' AND ("
             "safety.paused=1 OR safety.global_suspension IS NOT NULL OR EXISTS(SELECT 1 FROM json_each(safety.category_suspensions_document) category WHERE json_extract(category.value,'$[0]')=json_extract(outcome.value,'$.policy_category'))) ORDER BY 1",
+            (review_case_id,),
+        ).fetchall()
+        if any(type(row[0]) is not str for row in rows):
+            raise MetadataReportError("review attention is unavailable")
+        return tuple(row[0] for row in rows)
+
+    def _shadow_abstention_destinations(self, review_case_id: str) -> tuple[str, ...]:
+        rows = self._connection.execute(
+            "SELECT DISTINCT json_extract(outcome.value,'$.destination') FROM shadow_decision_outcomes shadow, "
+            "json_each(shadow.document,'$.outcomes') outcome WHERE shadow.review_case_id=? "
+            "AND json_extract(outcome.value,'$.disposition')='abstention' ORDER BY 1",
+            (review_case_id,),
+        ).fetchall()
+        if any(type(row[0]) is not str for row in rows):
+            raise MetadataReportError("review attention is unavailable")
+        return tuple(row[0] for row in rows)
+
+    def _automatic_override_blocked_destinations(
+        self, review_case_id: str,
+    ) -> tuple[str, ...]:
+        rows = self._connection.execute(
+            "SELECT DISTINCT automatic.destination FROM automatic_decisions automatic "
+            "JOIN field_effects effect ON effect.decision_id=automatic.decision_id "
+            "WHERE automatic.review_case_id=? AND effect.state IN "
+            "('claimed','applying','reconciling','verified') ORDER BY automatic.destination",
             (review_case_id,),
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):
@@ -4576,6 +5683,38 @@ class SQLiteMetadataReportRepository:
         if any(type(row[0]) is not str for row in rows):
             raise MetadataReportError("review attention is unavailable")
         return tuple(row[0] for row in rows)
+
+    def _field_effect_capability_suspension_causes(
+        self, review_case_id: str,
+    ) -> tuple[tuple[str, str], ...]:
+        rows = self._connection.execute(
+            "SELECT json_extract(result.value,'$.destination'),(SELECT "
+            "suspension.scope FROM field_effect_suspensions suspension "
+            "WHERE suspension.connection_name=c.connection_name AND (("
+            "suspension.scope='connection' AND suspension.destination='') OR "
+            "(suspension.scope='destination' AND suspension.destination="
+            "json_extract(result.value,'$.destination'))) ORDER BY CASE "
+            "suspension.scope WHEN 'connection' THEN 0 ELSE 1 END LIMIT 1) "
+            "FROM current_review_case_lineages c JOIN review_cases rc "
+            "ON rc.review_case_id=c.review_case_id,json_each(rc.document,'$.results') result "
+            "WHERE rc.review_case_id=? AND EXISTS(SELECT 1 FROM "
+            "field_effect_suspensions suspension WHERE "
+            "suspension.connection_name=c.connection_name AND (("
+            "suspension.scope='connection' AND suspension.destination='') OR "
+            "(suspension.scope='destination' AND suspension.destination="
+            "json_extract(result.value,'$.destination')))) ORDER BY 1",
+            (review_case_id,),
+        ).fetchall()
+        causes = {
+            "connection": "external_connection_failure",
+            "destination": "external_field_failure",
+        }
+        if any(
+            type(destination) is not str or scope not in causes
+            for destination, scope in rows
+        ):
+            raise MetadataReportError("review attention is unavailable")
+        return tuple((destination, causes[scope]) for destination, scope in rows)
 
     def read_review_attention(
         self, search: str | None, limit: int, offset: int
@@ -4603,20 +5742,54 @@ class SQLiteMetadataReportRepository:
                 condition = f"NOT ({condition})"
             elif attention is None:
                 condition = "1"
+            terminal_union = ""
+            parameters: list[object] = [
+                query,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+                pattern,
+            ]
+            if attention is not True:
+                terminal_union = (
+                    " UNION ALL SELECT NULL,json_object("
+                    "'attempt',attempt,'connection',connection_name,"
+                    "'failure_root',failure_root,'item',item_id,'lane',stage,"
+                    "'library',library_name,'recovery_attempt',recovery_attempt,"
+                    "'schema_version','review-terminal-work-v1','status',failure_code,"
+                    "'work_id',work_id),connection_name,library_name,item_id,NULL,"
+                    "1,'preparation unavailable','' FROM review_preparation_work "
+                    "WHERE state='failed' AND failure_code IS NOT NULL AND NOT EXISTS ("
+                    "SELECT 1 FROM current_review_packages p WHERE "
+                    "p.connection_name=review_preparation_work.connection_name AND "
+                    "p.library_name=review_preparation_work.library_name AND "
+                    "p.item_id=review_preparation_work.item_id) AND "
+                    "(?='' OR ml_casefold(item_id) LIKE ? ESCAPE '\\' OR "
+                    "ml_casefold(library_name) LIKE ? ESCAPE '\\' OR "
+                    "ml_casefold('Preparation unavailable') LIKE ? ESCAPE '\\' OR "
+                    "ml_casefold('unknown') LIKE ? ESCAPE '\\')"
+                )
+                parameters.extend((query, pattern, pattern, pattern, pattern))
+            parameters.extend((limit, offset))
             rows = self._connection.execute(
-                "SELECT rc.document,mr.document,ml.connection_name,ml.library_name,"
-                "ml.item_id,c.outcome "
+                "SELECT case_document,report_document,connection_name,library_name,"
+                "item_id,outcome FROM (SELECT rc.document AS case_document,"
+                "mr.document AS report_document,ml.connection_name AS connection_name,"
+                "ml.library_name AS library_name,ml.item_id AS item_id,c.outcome AS outcome,"
+                "CASE WHEN "
+                + _REVIEW_ATTENTION_SQL
+                + " THEN 0 ELSE 1 END AS attention_order,"
+                "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) AS title_order,"
+                "COALESCE(rc.review_case_id,'') AS case_order "
                 + _CURRENT_LIBRARY_FROM_SQL
                 + " WHERE COALESCE(c.outcome,'')<>'tombstoned' AND "
                 + condition
                 + _REVIEW_SEARCH_SQL
-                + " ORDER BY CASE WHEN "
-                + _REVIEW_ATTENTION_SQL
-                + " THEN 0 ELSE 1 END,"
-                "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')),"
-                "ml.library_name,ml.item_id,ml.connection_name,"
-                "COALESCE(rc.review_case_id,'') LIMIT ? OFFSET ?",
-                (query, pattern, pattern, pattern, pattern, pattern, limit, offset),
+                + terminal_union
+                + ") ORDER BY attention_order,title_order,library_name,item_id,"
+                "connection_name,case_order LIMIT ? OFFSET ?",
+                tuple(parameters),
             ).fetchall()
             values: list[tuple[str | None, str]] = []
             for row in rows:
@@ -4627,6 +5800,15 @@ class SQLiteMetadataReportRepository:
                     or (row[5] is not None and type(row[5]) is not str)
                 ):
                     raise MetadataReportError("review browse row is invalid")
+                if row[0] is None and row[5] is None:
+                    terminal = json.loads(row[1])
+                    if (
+                        type(terminal) is dict
+                        and terminal.get("schema_version")
+                        == "review-terminal-work-v1"
+                    ):
+                        values.append((None, _canonical_json(terminal)))
+                        continue
                 lineage = (row[2], row[3], row[4])
                 report = MetadataReport.from_json(row[1])
                 if (
@@ -4643,15 +5825,8 @@ class SQLiteMetadataReportRepository:
                         raise MetadataReportError("review browse row disagrees")
                     values.append((None, report.to_json()))
                     continue
-                pointer = self._validated_review_pointer(lineage)
-                if (
-                    pointer is None
-                    or pointer[1] != report.report_id
-                    or pointer[5] != row[5]
-                ):
-                    raise MetadataReportError("review browse row disagrees")
                 if row[0] is None:
-                    if row[5] not in {"no_case", "retired"}:
+                    if row[5] not in {"report_only", "no_case", "retired"}:
                         raise MetadataReportError("review browse row disagrees")
                     values.append((None, report.to_json()))
                     continue
@@ -4697,20 +5872,33 @@ class SQLiteMetadataReportRepository:
                 or row[1] > row[0]
             ):
                 raise MetadataReportError("review library count is invalid")
-            return row
+            terminal = self._connection.execute(
+                "SELECT count(*) FROM review_preparation_work WHERE state='failed' AND failure_code IS NOT NULL "
+                "AND NOT EXISTS (SELECT 1 FROM current_review_packages p WHERE p.connection_name=review_preparation_work.connection_name AND p.library_name=review_preparation_work.library_name AND p.item_id=review_preparation_work.item_id) "
+                "AND (?='' OR ml_casefold(item_id) LIKE ? ESCAPE '\\' OR ml_casefold(library_name) LIKE ? ESCAPE '\\' "
+                "OR ml_casefold('Preparation unavailable') LIKE ? ESCAPE '\\' OR ml_casefold('unknown') LIKE ? ESCAPE '\\')",
+                (query, pattern, pattern, pattern, pattern),
+            ).fetchone()
+            if terminal is None or type(terminal[0]) is not int or terminal[0] < 0:
+                raise MetadataReportError("review library count is invalid")
+            return row[0] + terminal[0], row[1]
         except (sqlite3.Error, TypeError, ValueError) as error:
             raise MetadataReportError("review library is unavailable") from error
 
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[tuple[str, str, str, int], ...]:
+    ) -> tuple[tuple[str, str, str, int, str | None, str | None], ...]:
         try:
             query, pattern = _review_search_pattern(search)
             rows = self._connection.execute(
                 "SELECT rc.document,mr.document,"
                 "json_extract(result.value,'$.destination'),"
                 "(SELECT count(*) FROM json_each(rc.document,'$.results') result "
-                "WHERE " + _REVIEW_FIELD_ATTENTION_SQL + ") "
+                "WHERE " + _REVIEW_FIELD_ATTENTION_SQL + "),"
+                "(SELECT json_extract(outcome.value,'$.disposition') FROM shadow_decision_outcomes shadow, "
+                "json_each(shadow.document,'$.outcomes') outcome WHERE shadow.review_case_id=rc.review_case_id "
+                "AND json_extract(outcome.value,'$.destination')=json_extract(result.value,'$.destination') LIMIT 1),"
+                "(CASE WHEN " + _AUTOMATIC_SAFETY_ATTENTION_SQL + " THEN 'automatic_safety_suspended' ELSE NULL END) "
                 + _CURRENT_REVIEW_FROM_SQL
                 + ",json_each(rc.document,'$.results') result "
                 "WHERE "
@@ -4738,9 +5926,11 @@ class SQLiteMetadataReportRepository:
                     type(row[2]) is not str
                     or type(row[3]) is not int
                     or row[3] < 1
+                    or (row[4] is not None and type(row[4]) is not str)
+                    or (row[5] is not None and type(row[5]) is not str)
                 ):
                     raise MetadataReportError("review attention field is invalid")
-                values.append((case_document, report_document, row[2], row[3]))
+                values.append((case_document, report_document, row[2], row[3], row[4], row[5]))
             return tuple(values)
         except (
             sqlite3.Error,
@@ -5100,7 +6290,11 @@ class SQLiteMetadataReportRepository:
         return expected.to_json(), row[6]
 
     def persist_shadow_outcome(
-        self, review_case_id: str, evaluated_at: int
+        self,
+        review_case_id: str,
+        evaluated_at: int,
+        *,
+        staged_action: PipelineAction | None = None,
     ) -> str:
         """Atomically publish or replay one exact Preview decision set."""
         if (
@@ -5108,6 +6302,7 @@ class SQLiteMetadataReportRepository:
             or re.fullmatch(r"review_case_[0-9a-f]{64}", review_case_id) is None
             or type(evaluated_at) is not int
             or evaluated_at < 0
+            or (staged_action is not None and type(staged_action) is not PipelineAction)
         ):
             raise MetadataReportError("shadow outcome request is invalid")
         owns_transaction = not self._connection.in_transaction
@@ -5122,7 +6317,12 @@ class SQLiteMetadataReportRepository:
             if raw_case is None:
                 raise MetadataReportError("shadow outcome source is unavailable")
             case_for_recovery = ReviewCase.from_json(raw_case[0])
-            self._require_shadow_case_current(review_case_id)
+            if staged_action is not None:
+                self._require_staged_shadow_projection_current(
+                    review_case_id, staged_action
+                )
+            else:
+                self._require_shadow_case_current(review_case_id)
             state = self._connection.execute(
                 "SELECT s.generation,s.posture,d.document FROM metadata_policy_state s "
                 "JOIN metadata_policy_drafts d ON d.policy_id=s.active_policy_id "
@@ -5147,6 +6347,13 @@ class SQLiteMetadataReportRepository:
                 )
             if policy is None:
                 raise MetadataReportError("shadow policy is unavailable")
+            if staged_action is not None and (
+                staged_action.report_id != report.report_id
+                or staged_action.proposal_set_id != proposal.proposal_set_id
+                or staged_action.review_case_id != case.review_case_id
+                or proposal.resolved_policy_id != policy.resolved_id
+            ):
+                raise ReviewAdmissionStaleError
             outcome = ShadowOutcomeSet.create(
                 case, decide_shadow_packet(packet), policy, state[0], report, proposal
             )
@@ -5220,12 +6427,14 @@ class SQLiteMetadataReportRepository:
                     else:
                         self._connection.execute("RELEASE automatic_admission")
                         break
+            if self._binding is not None:
+                self._binding.require_current()
             if owns_transaction:
                 self._connection.commit()
             return serialized
         except ReviewAdmissionStaleError:
             try:
-                if case_for_recovery is not None:
+                if staged_action is None and case_for_recovery is not None:
                     self._schedule_current_shadow_work(
                         case_for_recovery, evaluated_at
                     )
@@ -5680,10 +6889,13 @@ class SQLiteMetadataReportRepository:
         self._connection.execute(
             "UPDATE review_preparation_work SET stage=?,state='queued',attempt=0,"
             "recovery_attempt=0,report_id=?,proposal_set_id=NULL,review_case_id=NULL,"
+            "recovery_source_report_id=CASE WHEN ?='extraction' THEN NULL "
+            "ELSE recovery_source_report_id END,"
             "failure_code=NULL,failure_root=NULL,updated_at=? WHERE work_id=?",
             (
                 restart_stage,
                 None if restart_stage == "extraction" else report_id,
+                restart_stage,
                 updated_at,
                 work_id,
             ),
@@ -6304,6 +7516,20 @@ class SQLiteMetadataReportRepository:
             ),
         )
 
+    def atomic_cover_preparation(self, call: Callable[[], object]) -> object:
+        """Serialize staged final-currentness and the durable consideration write."""
+        if self._connection.in_transaction:
+            return call()
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            result = call()
+            self._connection.commit()
+            return result
+        except Exception:
+            if self._connection.in_transaction:
+                self._connection.rollback()
+            raise
+
     def record_cover_consideration(
         self,
         document: str,
@@ -6313,6 +7539,7 @@ class SQLiteMetadataReportRepository:
         replay_digest: str,
         supersedes_id: str | None,
         occurred_at: int,
+        preparation_kind: str = "automatic_prepared",
     ) -> str:
         try:
             value = json.loads(document)
@@ -6329,7 +7556,12 @@ class SQLiteMetadataReportRepository:
             consideration_id = value["consideration_id"]
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise MetadataReportError("cover consideration is invalid") from error
-        with self._connection:
+        if preparation_kind not in {"automatic_prepared", "owner_retry_prepared"}:
+            raise MetadataReportError("cover preparation kind is invalid")
+        owns_transaction = not self._connection.in_transaction
+        try:
+            if owns_transaction:
+                self._connection.execute("BEGIN IMMEDIATE")
             existing = self._connection.execute(
                 "SELECT document FROM cover_considerations WHERE consideration_id=?",
                 (consideration_id,),
@@ -6337,6 +7569,8 @@ class SQLiteMetadataReportRepository:
             if existing is not None:
                 if existing != (document,):
                     raise MetadataReportError("cover consideration disagrees")
+                if owns_transaction:
+                    self._connection.commit()
                 return document
             current = self._connection.execute(
                 "SELECT consideration_id FROM current_cover_considerations WHERE review_case_id=?",
@@ -6368,8 +7602,18 @@ class SQLiteMetadataReportRepository:
                 (review_case_id, consideration_id),
             )
             self._record_cover_consideration_event(
-                consideration_id, review_case_id, "considered", occurred_at
+                consideration_id, review_case_id, preparation_kind, occurred_at
             )
+            if owns_transaction:
+                self._connection.commit()
+        except sqlite3.Error as error:
+            if owns_transaction and self._connection.in_transaction:
+                self._connection.rollback()
+            raise MetadataReportError("cover consideration is unavailable") from error
+        except MetadataReportError:
+            if owns_transaction and self._connection.in_transaction:
+                self._connection.rollback()
+            raise
         return document
 
     def record_cover_consideration_outcome(
@@ -6551,6 +7795,9 @@ class SQLiteMetadataReportRepository:
                 type(case_envelope) is not dict
                 or case_envelope.get("current") is not True
                 or type(case_envelope.get("case")) is not dict
+                or not self._review_case_accepts_authority(
+                    decision.review_case_id
+                )
             ):
                 raise HumanDecisionError("stale")
             case = ReviewCase.create_from_data(case_envelope["case"])
@@ -6958,8 +8205,58 @@ class SQLiteMetadataReportRepository:
             type(reopened) is not dict
             or reopened.get("current") is not True
             or type(reopened.get("case")) is not dict
+            or not self._review_case_accepts_authority(review_case_id)
         ):
             raise ReviewAdmissionStaleError
+
+    def _require_staged_shadow_projection_current(
+        self, review_case_id: str, action: PipelineAction
+    ) -> None:
+        """Admit only the exact claimed staged case to package-internal projection."""
+        if action.lineage_checkpoint is None or action.policy_generation is None or self._connection.execute(
+            "SELECT 1 FROM review_preparation_work work "
+            "JOIN current_review_case_lineages staged ON "
+            "staged.connection_name=work.connection_name AND "
+            "staged.library_name=work.library_name AND "
+            "staged.item_id=work.item_id AND "
+            "staged.proposal_set_id=work.proposal_set_id AND "
+            "staged.report_id=work.report_id AND "
+            "staged.review_case_id=work.review_case_id "
+            "JOIN current_metadata_reports report ON "
+            "report.connection_name=staged.connection_name AND "
+            "report.library_name=staged.library_name AND "
+            "report.item_id=staged.item_id AND "
+            "report.report_id=staged.report_id "
+            "JOIN metadata_policy_state policy ON policy.singleton=1 "
+            "WHERE work.work_id=? AND work.stage='projection' "
+            "AND work.state='running' AND work.attempt=? "
+            "AND work.connection_name=? AND work.library_name=? "
+            "AND work.item_id=? AND work.report_id=? "
+            "AND work.proposal_set_id=? AND work.review_case_id=? "
+            "AND staged.checkpoint=? AND policy.generation=?",
+            (
+                action.action_id, action.attempt, action.connection,
+                action.library, action.item_id, action.report_id,
+                action.proposal_set_id, review_case_id, action.lineage_checkpoint,
+                action.policy_generation,
+            ),
+        ).fetchone() != (1,):
+            raise ReviewAdmissionStaleError
+
+    def _review_case_accepts_authority(self, review_case_id: str) -> bool:
+        return self._connection.execute(
+            "SELECT 1 FROM current_review_case_lineages staged "
+            "JOIN current_review_packages published ON "
+            "published.connection_name=staged.connection_name AND "
+            "published.library_name=staged.library_name AND "
+            "published.item_id=staged.item_id AND "
+            "published.proposal_set_id=staged.proposal_set_id AND "
+            "published.report_id=staged.report_id AND "
+            "published.review_case_id=staged.review_case_id AND "
+            "published.checkpoint=staged.checkpoint "
+            "WHERE staged.review_case_id=?",
+            (review_case_id,),
+        ).fetchone() == (1,)
 
     def _policy_destinations_for(
         self, report: MetadataReport, proposal: ProposalSet
@@ -7083,6 +8380,128 @@ class SQLiteMetadataReportRepository:
         if document is None:
             raise MetadataReportError("persisted current report is unavailable")
         return document
+
+    def current_review_package(
+        self, connection: str, library: str, item: str
+    ) -> tuple[str | None, str, str | None, int | None, str] | None:
+        try:
+            row = self._connection.execute(
+                "SELECT proposal_set_id,report_id,review_case_id,checkpoint,outcome FROM current_review_packages WHERE connection_name=? AND library_name=? AND item_id=?",
+                (connection, library, item),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise MetadataReportError("persisted review package is invalid") from error
+        if row is None:
+            return None
+        if (
+            len(row) != 5
+            or (row[0] is not None and type(row[0]) is not str)
+            or type(row[1]) is not str
+            or (row[2] is not None and type(row[2]) is not str)
+            or (row[3] is not None and type(row[3]) is not int)
+            or type(row[4]) is not str
+        ):
+            raise MetadataReportError("persisted review package is invalid")
+        proposal_id, report_id, case_id, checkpoint, outcome = row
+        if outcome == "report_only":
+            if proposal_id is not None or case_id is not None or checkpoint is not None:
+                raise MetadataReportError("persisted review package is invalid")
+            return row
+        expected_case = outcome in {"admitted", "superseded"}
+        if (
+            outcome not in {"admitted", "superseded", "no_case", "retired"}
+            or proposal_id is None
+            or (case_id is not None) != expected_case
+            or checkpoint is None
+        ):
+            raise MetadataReportError("persisted review package is invalid")
+        try:
+            valid = self._connection.execute(
+                "SELECT 1 FROM proposal_sets proposal JOIN current_review_case_lineages lineage ON "
+                "lineage.connection_name=? AND lineage.library_name=? AND lineage.item_id=? "
+                "AND lineage.proposal_set_id=proposal.proposal_set_id AND lineage.report_id=proposal.report_id "
+                "WHERE proposal.proposal_set_id=? AND proposal.report_id=? AND "
+                "lineage.review_case_id IS ? AND lineage.checkpoint=? AND lineage.outcome=? "
+                "AND (? IS NULL OR EXISTS(SELECT 1 FROM review_cases review WHERE review.review_case_id=? "
+                "AND review.proposal_set_id=? AND review.report_id=?))",
+                (
+                    connection, library, item, proposal_id, report_id, case_id,
+                    checkpoint, outcome, case_id, case_id, proposal_id, report_id,
+                ),
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise MetadataReportError("persisted review package is invalid") from error
+        if valid != (1,):
+            raise MetadataReportError("persisted review package is invalid")
+        return row
+
+    def current_review_package_report(
+        self, connection: str, library: str, item: str
+    ) -> str | None:
+        package = self.current_review_package(connection, library, item)
+        return None if package is None else package[1]
+
+    def pending_provider_recovery_outbox(
+        self, *, limit: int = 100,
+    ) -> tuple[tuple[object, ...], ...]:
+        """Return bounded exact package cutovers awaiting recovery enqueue."""
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise MetadataReportError("provider recovery outbox query is invalid")
+        try:
+            rows = self._connection.execute(
+                "SELECT outbox_id,connection_name,library_name,item_id,"
+                "proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at "
+                "FROM provider_recovery_outbox WHERE delivered_at IS NULL "
+                "ORDER BY created_at,outbox_id LIMIT ?", (limit,),
+            ).fetchall()
+            for row in rows:
+                _validate_provider_recovery_outbox_row(row)
+            return tuple(rows)
+        except MetadataReportError:
+            raise
+        except sqlite3.Error as error:
+            raise MetadataReportError(
+                "provider recovery outbox is unavailable"
+            ) from error
+
+    def complete_provider_recovery_outbox(
+        self, outbox_id: str, *, delivered_at: int,
+    ) -> None:
+        """Mark one exact cutover delivered only after idempotent enqueue."""
+        if (type(outbox_id) is not str or type(delivered_at) is not int
+                or delivered_at < 0):
+            raise MetadataReportError("provider recovery outbox completion is invalid")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            row = self._connection.execute(
+                "SELECT outbox_id,connection_name,library_name,item_id,"
+                "proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at,"
+                "delivered_at FROM provider_recovery_outbox WHERE outbox_id=?",
+                (outbox_id,),
+            ).fetchone()
+            if row is None:
+                raise MetadataReportError("provider recovery outbox changed")
+            _validate_provider_recovery_outbox_row(row[:10])
+            if row[10] is None:
+                if delivered_at < row[9] or self._connection.execute(
+                    "UPDATE provider_recovery_outbox SET delivered_at=? "
+                    "WHERE outbox_id=? AND delivered_at IS NULL",
+                    (delivered_at, outbox_id),
+                ).rowcount != 1:
+                    raise MetadataReportError("provider recovery outbox changed")
+            elif type(row[10]) is not int or row[10] < row[9]:
+                raise MetadataReportError("provider recovery outbox changed")
+            self._connection.execute("COMMIT")
+        except MetadataReportError:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise
+        except sqlite3.Error as error:
+            if self._connection.in_transaction:
+                self._connection.execute("ROLLBACK")
+            raise MetadataReportError(
+                "provider recovery outbox is unavailable"
+            ) from error
 
     def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None:
         try:
@@ -7470,12 +8889,15 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             )
             connection.execute(_REVIEW_CASES_SQL)
             connection.execute(_REVIEW_POINTERS_SQL)
+            connection.execute(_CURRENT_REVIEW_PACKAGES_SQL)
+            connection.execute(_PROVIDER_RECOVERY_OUTBOX_SQL)
             connection.execute(_REVIEW_TRANSITIONS_SQL)
             connection.execute(_REVIEW_SCANS_SQL)
             connection.execute(_REVIEW_CONTROL_SQL)
             connection.execute(
                 "INSERT INTO review_preparation_control(singleton,paused,claim_sequence,last_library,circuit_failures,circuit_open_until,updated_at) VALUES(1,0,0,NULL,0,0,0)"
             )
+            connection.execute(_REVIEW_CONNECTION_CONDITIONS_SQL)
             connection.execute(_REVIEW_WORK_SQL)
             connection.execute(_METADATA_POLICY_TRANSITION_ITEMS_SQL)
             connection.execute(_REVIEW_ABSENCES_SQL)
@@ -7499,6 +8921,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_FIELD_EFFECT_MANUAL_HOLDS_SQL)
             connection.execute(_FIELD_EFFECTS_SQL)
             connection.execute(_FIELD_EFFECT_EVENTS_SQL)
+            connection.execute(_FIELD_EFFECT_NO_CHANGES_SQL)
             connection.execute(_FIELD_EFFECT_ACTIONS_SQL)
             connection.execute(_FIELD_EFFECT_CLEANUPS_SQL)
             connection.execute(_SHADOW_DECISION_OUTCOMES_SQL)
@@ -7525,6 +8948,8 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             connection.execute(_AUTOMATIC_DECISION_NO_DELETE_SQL)
             connection.execute(_FIELD_EFFECT_EVENT_NO_UPDATE_SQL)
             connection.execute(_FIELD_EFFECT_EVENT_NO_DELETE_SQL)
+            connection.execute(_FIELD_EFFECT_NO_CHANGE_NO_UPDATE_SQL)
+            connection.execute(_FIELD_EFFECT_NO_CHANGE_NO_DELETE_SQL)
             connection.execute(_SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL)
             connection.execute(_SHADOW_DECISION_OUTCOME_NO_DELETE_SQL)
             connection.execute(_NO_DELETE_SQL)
@@ -7767,6 +9192,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_current_metadata_reports_1", None),
         ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
         ("index", "sqlite_autoindex_current_review_case_lineages_1", None),
+        ("index", "sqlite_autoindex_current_review_packages_1", None),
+        ("index", "sqlite_autoindex_provider_recovery_outbox_1", None),
         ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
         ("index", "metadata_report_cover_references_artifact_id", _COVER_ARTIFACT_INDEX_SQL),
         ("index", "metadata_report_cover_references_preview_digest", _COVER_PREVIEW_INDEX_SQL),
@@ -7783,6 +9210,9 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_automatic_decisions_3", None),
         ("index", "sqlite_autoindex_field_effect_events_1", None),
         ("index", "sqlite_autoindex_field_effect_events_2", None),
+        # WITHOUT ROWID is deliberate: only the explicit unique event identity
+        # has an autoindex; the primary key does not.
+        ("index", "sqlite_autoindex_field_effect_no_changes_2", None),
         ("index", "sqlite_autoindex_field_effect_suspensions_1", None),
         ("index", "sqlite_autoindex_field_effect_actions_1", None),
         ("index", "sqlite_autoindex_field_effect_actions_2", None),
@@ -7803,6 +9233,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("index", "sqlite_autoindex_review_case_transitions_1", None),
         ("index", "sqlite_autoindex_review_case_transitions_2", None),
         ("index", "sqlite_autoindex_review_preparation_absences_1", None),
+        ("index", "sqlite_autoindex_review_preparation_connection_conditions_1", None),
         ("index", "sqlite_autoindex_review_preparation_scans_1", None),
         ("index", "sqlite_autoindex_review_preparation_work_1", None),
         ("index", "sqlite_autoindex_review_preparation_work_2", None),
@@ -7822,6 +9253,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "current_metadata_reports", _CURRENT_SQL),
         ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
         ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
+        ("table", "current_review_packages", _CURRENT_REVIEW_PACKAGES_SQL),
+        ("table", "provider_recovery_outbox", _PROVIDER_RECOVERY_OUTBOX_SQL),
         ("table", "cover_considerations", _COVER_CONSIDERATIONS_SQL),
         ("table", "current_cover_considerations", _CURRENT_COVER_CONSIDERATIONS_SQL),
         ("table", "cover_consideration_events", _COVER_CONSIDERATION_EVENTS_SQL),
@@ -7837,6 +9270,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "field_effect_consents", _FIELD_EFFECT_CONSENTS_SQL),
         ("table", "field_effect_manual_holds", _FIELD_EFFECT_MANUAL_HOLDS_SQL),
         ("table", "field_effect_events", _FIELD_EFFECT_EVENTS_SQL),
+        ("table", "field_effect_no_changes", _FIELD_EFFECT_NO_CHANGES_SQL),
         ("table", "field_effects", _FIELD_EFFECTS_SQL),
         ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
         ("table", "metadata_reports", _REPORTS_SQL),
@@ -7849,6 +9283,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
         ("table", "review_cases", _REVIEW_CASES_SQL),
         ("table", "review_preparation_control", _REVIEW_CONTROL_SQL),
+        ("table", "review_preparation_connection_conditions", _REVIEW_CONNECTION_CONDITIONS_SQL),
         ("table", "review_preparation_scans", _REVIEW_SCANS_SQL),
         ("table", "review_preparation_absences", _REVIEW_ABSENCES_SQL),
         ("table", "review_preparation_work", _REVIEW_WORK_SQL),
@@ -7873,6 +9308,8 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         ("trigger", "automatic_decisions_no_update", _AUTOMATIC_DECISION_NO_UPDATE_SQL),
         ("trigger", "field_effect_events_no_delete", _FIELD_EFFECT_EVENT_NO_DELETE_SQL),
         ("trigger", "field_effect_events_no_update", _FIELD_EFFECT_EVENT_NO_UPDATE_SQL),
+        ("trigger", "field_effect_no_changes_no_delete", _FIELD_EFFECT_NO_CHANGE_NO_DELETE_SQL),
+        ("trigger", "field_effect_no_changes_no_update", _FIELD_EFFECT_NO_CHANGE_NO_UPDATE_SQL),
         ("trigger", "proposal_sets_no_delete", _PROPOSAL_NO_DELETE_SQL),
         ("trigger", "proposal_sets_no_update", _PROPOSAL_NO_UPDATE_SQL),
         ("trigger", "review_case_transitions_no_delete", _REVIEW_TRANSITION_NO_DELETE_SQL),
@@ -7886,6 +9323,12 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         raise MetadataReportError("database is unavailable or incompatible")
     _validate_metadata_policy_documents(connection)
     _validate_field_effect_state(connection)
+    for row in connection.execute(
+        "SELECT outbox_id,connection_name,library_name,item_id,proposal_set_id,"
+        "report_id,review_case_id,checkpoint,outcome,created_at "
+        "FROM provider_recovery_outbox"
+    ):
+        _validate_provider_recovery_outbox_row(row)
 
 
 def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:
@@ -7931,9 +9374,141 @@ def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:
         ) from error
 
 
+def _automatic_decision_value(
+    decision: AutomaticDecision, case: ReviewCase, report: MetadataReport,
+    proposal_set: ProposalSet,
+) -> object:
+    """Project one persisted automatic decision to its exact target envelope."""
+    target = case.target
+    if (
+        decision.outcome != "candidate"
+        or decision.review_case_id != case.review_case_id
+        or decision.report_id != case.report_id
+        or decision.proposal_set_id != case.proposal_set_id
+        or decision.target_fingerprint != case.target_fingerprint
+        or proposal_set.proposal_set_id != case.proposal_set_id
+        or proposal_set.report_id != case.report_id
+        or proposal_set.target_fingerprint != case.target_fingerprint
+        or report.report_id != case.report_id
+        or report.target.fingerprint != case.target_fingerprint
+        or (target.get("connection"), target.get("library"), target.get("item"))
+        != (report.target.connection, report.target.library, report.target.item)
+    ):
+        raise FieldEffectError("authority_binding")
+    proposal = next(
+        (item for item in case.proposals
+         if item["proposal_id"] == decision.proposal_id
+         and item["destination"] == decision.destination),
+        None,
+    )
+    alternatives = None if proposal is None else proposal["result"].get("alternatives")
+    selected = next(
+        (item for item in alternatives or ()
+         if item.get("alternative_id") == decision.candidate_id),
+        None,
+    )
+    target_field = next(
+        (item for item in target.get("fields", ())
+         if type(item) is dict and item.get("destination") == decision.destination),
+        None,
+    )
+    if (
+        selected is None
+        or type(target_field) is not dict
+        or target_field.get("state") not in {"value", "null", "empty", "missing"}
+    ):
+        raise FieldEffectError("authority_binding")
+    value = selected["value"]
+    if decision.policy_category == "isbn_form":
+        try:
+            result = next(
+                item for item in proposal_set.results
+                if item.destination.value == decision.destination
+            )
+            candidate = next(
+                item for item in result.alternatives
+                if item.alternative_id == decision.candidate_id
+            )
+            exact_value = select_isbn_representation(report, candidate, decision.policy_option)
+        except (StopIteration, RichMetadataPreviewError) as error:
+            raise FieldEffectError("authority_binding") from error
+        if exact_value is None:
+            raise FieldEffectError("authority_binding")
+        value = {"kind": "text", "value": exact_value}
+    pre_value = target_field.get("value") if target_field["state"] == "value" else None
+    if decision.policy_category in {"series", "genres", "tags", "description_fill", "isbn_form"}:
+        try:
+            value = project_f20_automatic_decision_value(
+                decision.policy_category, decision.policy_option, value, pre_value,
+            )
+        except RichMetadataPreviewError as error:
+            raise FieldEffectError("authority_binding") from error
+    return value
+
+
 def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
     """Fail closed on any non-canonical field-effect envelope or row mismatch."""
     try:
+        for row in connection.execute(
+            "SELECT decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id FROM field_effect_no_changes"
+        ).fetchall():
+            record = FieldEffectNoChange.create(
+                decision_id=row[0], review_case_id=row[1], report_id=row[2],
+                connection=row[3], library=row[4], work_id=row[5], destination=row[6],
+                target_fingerprint=row[7], target_version=row[8], occurred_at=row[10],
+            )
+            if row[9] != record.origin or row[11] != record.event_id:
+                raise FieldEffectError("persistence")
+            decision_row = connection.execute(
+                "SELECT document FROM automatic_decisions WHERE decision_id=?", (record.decision_id,)
+            ).fetchone()
+            case_row = connection.execute(
+                "SELECT document FROM review_cases WHERE review_case_id=?", (record.review_case_id,)
+            ).fetchone()
+            report_row = connection.execute(
+                "SELECT document FROM metadata_reports WHERE report_id=?", (record.report_id,)
+            ).fetchone()
+            if decision_row is None or case_row is None or report_row is None:
+                raise FieldEffectError("persistence")
+            decision = AutomaticDecision.from_json(decision_row[0])
+            case = ReviewCase.from_json(case_row[0])
+            report = MetadataReport.from_json(report_row[0])
+            proposal_row = connection.execute(
+                "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+                (decision.proposal_set_id,),
+            ).fetchone()
+            if proposal_row is None:
+                raise FieldEffectError("persistence")
+            proposal_set = ProposalSet.from_json(proposal_row[0])
+            if (
+                decision.destination != record.destination
+                or decision.target_fingerprint != record.target_fingerprint
+                or report.target.connection != record.connection
+                or report.target.library != record.library
+                or report.target.item != record.work_id
+            ):
+                raise FieldEffectError("persistence")
+            target = next((value for value in case.target.get("fields", ())
+                           if type(value) is dict
+                           and value.get("destination") == record.destination), None)
+            proposal = next((value for value in case.proposals
+                             if value.get("proposal_id") == decision.proposal_id
+                             and value.get("destination") == record.destination), None)
+            result = proposal.get("result") if type(proposal) is dict else None
+            alternatives = result.get("alternatives") if type(result) is dict else None
+            selected = next((value for value in alternatives or ()
+                             if type(value) is dict
+                             and value.get("alternative_id") == decision.candidate_id), None)
+            if (type(target) is not dict or target.get("state") not in {"value", "null", "empty", "missing"}
+                    or type(selected) is not dict):
+                raise FieldEffectError("persistence")
+            pre_value = target.get("value") if target["state"] == "value" else None
+            desired = project_decision_value(
+                record.destination,
+                _automatic_decision_value(decision, case, report, proposal_set),
+            )
+            if desired != pre_value or record.target_version != field_value_version(record.destination, pre_value):
+                raise FieldEffectError("persistence")
         control = connection.execute(
             "SELECT singleton,paused,updated_at FROM field_effect_control"
         ).fetchall()
@@ -8162,6 +9737,33 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
 
 def _canonical_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+
+def _provider_recovery_outbox_id(
+    connection: str, library: str, item: str, proposal_id: str | None,
+    report_id: str, case_id: str | None, checkpoint: int | None, outcome: str,
+) -> str:
+    document = _canonical_json({
+        "case_id": case_id, "checkpoint": checkpoint, "connection": connection,
+        "item": item, "library": library, "outcome": outcome,
+        "proposal_id": proposal_id, "report_id": report_id,
+    })
+    return "recovery_outbox_" + hashlib.sha256(document.encode("utf-8")).hexdigest()
+
+
+def _validate_provider_recovery_outbox_row(row: tuple[object, ...]) -> None:
+    if (
+        len(row) != 10
+        or not all(type(row[index]) is str and row[index] for index in (0, 1, 2, 3, 5, 8))
+        or (row[4] is not None and (type(row[4]) is not str or not row[4]))
+        or (row[6] is not None and (type(row[6]) is not str or not row[6]))
+        or (row[7] is not None and (type(row[7]) is not int or row[7] < 1))
+        or type(row[9]) is not int or row[9] < 0
+        or row[0] != _provider_recovery_outbox_id(
+            row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8]
+        )
+    ):
+        raise MetadataReportError("provider recovery outbox is invalid")
 
 
 def _operational_signal(kind: str, cause: str, scope: str, *,

@@ -169,6 +169,7 @@ class PreparationView:
     paused: bool
     active: bool
     actionable: bool
+    connections: tuple[dict[str, object], ...] = ()
     schema_version: str = "review-preparation-v1"
 
     def to_data(self) -> dict[str, object]:
@@ -177,6 +178,7 @@ class PreparationView:
             "paused": self.paused,
             "active": self.active,
             "actionable": self.actionable,
+            "connections": [dict(item) for item in self.connections],
             "schema_version": self.schema_version,
         }
 
@@ -538,96 +540,14 @@ class ReviewApplication:
     def prepare_cover_consideration(
         self, review_case_id: str, *, retry: bool = False
     ) -> dict[str, object]:
-        if self._cover_considerations is None:
-            raise ReviewApplicationError("unavailable")
+        return prepare_cover_consideration(
+            self._cases,
+            self._cover_considerations,
+            review_case_id,
+            serialized=self.serialized,
+            retry=retry,
+        )
 
-        def capture() -> tuple[
-            dict[str, object] | None, str, str, str | None, object | None
-        ]:
-            detail, report, _ = self._cases._read(review_case_id)  # same serialized use case
-            cover = next(
-                field for field in detail["fields"]
-                if field["destination"] == "cover"
-            )
-            current = self._cover_considerations.current(review_case_id)
-            if retry and cover["human_decision"] is not None and current is not None:
-                raise ReviewApplicationError("already_decided")
-            report_document = report.to_json()
-            existing = (
-                None
-                if retry
-                else self._cover_considerations.existing(
-                    review_case_id, report_document
-                )
-            )
-            return (
-                existing,
-                report_document,
-                str(cover["proposal_id"]),
-                self._cover_considerations.latest_id(review_case_id),
-                (
-                    None
-                    if existing is not None
-                    else self._cover_considerations.prepare_observation(
-                        review_case_id, report_document
-                    )
-                ),
-            )
-
-        try:
-            (
-                existing,
-                report_document,
-                proposal_id,
-                previous_id,
-                observation_request,
-            ) = self.serialized(capture)
-            if existing is not None:
-                return existing
-            assert observation_request is not None
-
-            # The optional process-bound observer receives only the immutable,
-            # report-bound snapshot and never holds the application's global gate.
-            evidence = self._cover_considerations.observe(observation_request)
-
-            def persist() -> dict[str, object]:
-                detail, current_report, _ = self._cases._read(review_case_id)
-                cover = next(
-                    field
-                    for field in detail["fields"]
-                    if field["destination"] == "cover"
-                )
-                if (
-                    current_report.to_json() != report_document
-                    or str(cover["proposal_id"]) != proposal_id
-                ):
-                    raise ReviewApplicationError("stale")
-                current = self._cover_considerations.current(review_case_id)
-                if (
-                    retry
-                    and cover["human_decision"] is not None
-                    and current is not None
-                ):
-                    raise ReviewApplicationError("already_decided")
-                if not retry:
-                    reopened = self._cover_considerations.existing(
-                        review_case_id, report_document
-                    )
-                    if reopened is not None:
-                        return reopened
-                if self._cover_considerations.latest_id(review_case_id) != previous_id:
-                    raise ReviewApplicationError("stale")
-                return self._cover_considerations.ensure(
-                    review_case_id,
-                    report_document,
-                    {"proposal_id": proposal_id},
-                    retry=retry,
-                    reviewer_evidence=evidence,
-                )
-
-            return self.serialized(persist)
-        except CoverConsiderationError as error:
-            raise ReviewApplicationError(error.code) from error
 
     @property
     def policy(self) -> PolicyOperations:
@@ -648,9 +568,23 @@ class ReviewApplication:
             "category_suspensions": dict(state.category_suspensions),
         }
 
-    def activity(self) -> dict[str, object]:
+    def activity(
+        self,
+        *,
+        search: str | None = None,
+        event_type: str = "all",
+        range_days: int = 30,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> dict[str, object]:
         application = self._continuous_application()
-        return self.serialized(application.activity)
+        return self.serialized(lambda: application.activity(
+            search=search,
+            event_type=event_type,
+            range_days=range_days,
+            page=page,
+            page_size=page_size,
+        ))
 
     def enable_activity(
         self, grants: tuple[tuple[str, tuple[str, ...]], ...]
@@ -702,6 +636,7 @@ class ReviewApplication:
         if self._preparation is None:
             return PreparationView((), False, False, False)
         progress_values, paused = self.serialized(self._preparation.status)
+        conditions = self.serialized(self._preparation.connection_conditions)
         if len(progress_values) != len(self._preparation.libraries):
             raise ReviewApplicationError("persistence")
         libraries = tuple(
@@ -721,11 +656,18 @@ class ReviewApplication:
                 self._preparation.libraries, progress_values, strict=True
             )
         )
+        connections = tuple(
+            {"connection": condition.connection, "code": condition.code,
+             "state": condition.state, "affected": condition.affected,
+             "updated_at": condition.updated_at}
+            for condition in conditions
+        )
         return PreparationView(
             libraries,
             paused,
             any(item["state"] in {"queued", "discovering", "processing"} for item in libraries),
             any(item["state"] == "completed_with_failures" for item in libraries),
+            connections,
         )
 
     def request_review_scan(
@@ -743,6 +685,15 @@ class ReviewApplication:
 
     def resume_review_preparation(self) -> PreparationView:
         return self._set_preparation_paused(False)
+
+    def check_review_preparation_connection(self, connection: str) -> PreparationView:
+        if self._preparation is None:
+            raise ReviewApplicationError("unavailable")
+        # The preparation pipeline persists its short begin/finish CAS
+        # transitions itself.  The potentially slow target probe must not hold
+        # this application's global read/decision gate.
+        self._preparation.check_connection(connection)
+        return self.preparation()
 
     def _preparation_request(
         self, action: Literal["request", "retry"], connection: str, library: str
@@ -778,6 +729,103 @@ class ReviewApplication:
         if not isinstance(self._field_application, ContinuousGuardedApplication):
             raise ReviewApplicationError("unavailable")
         return self._field_application
+
+
+def prepare_cover_consideration(
+    cases: InspectCurrentReviewCase | None,
+    cover_considerations: CoverConsiderationService | None,
+    review_case_id: str,
+    *,
+    serialized: Callable[[Callable[[], _Result]], _Result],
+    retry: bool = False,
+    snapshot: Callable[[], tuple[str, str, bool] | None] | None = None,
+    finalize: Callable[[Callable[[], _Result]], _Result] | None = None,
+) -> dict[str, object]:
+    """Prepare one exact-current advisory cover consideration.
+
+    Web/CLI requests and ordinary preparation share this operation. Its sole
+    retry authority remains the explicit owner retry path.
+    """
+    if cover_considerations is None:
+        raise ReviewApplicationError("unavailable")
+
+    def capture() -> tuple[
+        dict[str, object] | None, str, str, str | None, object | None
+    ]:
+        if snapshot is None:
+            if cases is None:
+                raise ReviewApplicationError("unavailable")
+            detail, report, _ = cases._read(review_case_id)
+            cover = next(field for field in detail["fields"] if field["destination"] == "cover")
+            report_document, proposal_id, has_human_decision = report.to_json(), str(cover["proposal_id"]), cover["human_decision"] is not None
+        else:
+            staged = snapshot()
+            if staged is None:
+                raise ReviewApplicationError("stale")
+            report_document, proposal_id, has_human_decision = staged
+        current = cover_considerations.current(review_case_id)
+        if retry and has_human_decision and current is not None:
+            raise ReviewApplicationError("already_decided")
+        existing = (
+            None
+            if retry
+            else cover_considerations.existing(review_case_id, report_document)
+        )
+        request = (
+            None
+            if existing is not None
+            else cover_considerations.prepare_observation(review_case_id, report_document)
+        )
+        return (
+            existing, report_document, proposal_id,
+            cover_considerations.latest_id(review_case_id), request,
+        )
+
+    try:
+        existing, report_document, proposal_id, previous_id, request = serialized(
+            capture
+        )
+        if existing is not None:
+            return existing
+        assert request is not None
+        evidence = cover_considerations.observe(request)
+
+        def persist() -> dict[str, object]:
+            if snapshot is None:
+                if cases is None:
+                    raise ReviewApplicationError("unavailable")
+                detail, current_report, _ = cases._read(review_case_id)
+                cover = next(field for field in detail["fields"] if field["destination"] == "cover")
+                current_report_document, current_proposal_id, has_human_decision = current_report.to_json(), str(cover["proposal_id"]), cover["human_decision"] is not None
+            else:
+                staged = snapshot()
+                if staged is None:
+                    raise ReviewApplicationError("stale")
+                current_report_document, current_proposal_id, has_human_decision = staged
+            if (
+                current_report_document != report_document
+                or current_proposal_id != proposal_id
+            ):
+                raise ReviewApplicationError("stale")
+            current = cover_considerations.current(review_case_id)
+            if retry and has_human_decision and current is not None:
+                raise ReviewApplicationError("already_decided")
+            if not retry:
+                reopened = cover_considerations.existing(
+                    review_case_id, report_document
+                )
+                if reopened is not None:
+                    return reopened
+            if cover_considerations.latest_id(review_case_id) != previous_id:
+                raise ReviewApplicationError("stale")
+            return cover_considerations.ensure(
+                review_case_id, report_document, {"proposal_id": proposal_id},
+                retry=retry, reviewer_evidence=evidence,
+            )
+
+        return (serialized if finalize is None else finalize)(persist)
+    except CoverConsiderationError as error:
+        raise ReviewApplicationError(error.code) from error
 
 
 def compose_review_application(
@@ -862,4 +910,5 @@ __all__ = [
     "ReviewApplication",
     "ReviewApplicationError",
     "compose_review_application",
+    "prepare_cover_consideration",
 ]

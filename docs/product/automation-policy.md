@@ -136,6 +136,12 @@ and typographic forms, plus conservative single-author comma inversion, may
 explain agreement only when complete ordered creator identity and role remain
 intact. Structurally bound aliases may support identity while preserving every
 full observed and proposed name; unbound aliases remain neutral.
+An untyped creator role remains neutral. It can corroborate an otherwise
+complete explicit-author set only across two distinct provider authorities for
+the same qualified work, with a complete ordered identity-bound creator set
+and exact identity (or, across provider-native namespaces, closed
+normalized-name) agreement. It is never a
+provider-neutral conversion from an untyped creator to an author.
 
 An embedded value is not automatically true, and a catalogue value is not automatically edition-applicable. However, imperfect evidence can still support a non-destructive improvement when the competing explanation is materially less plausible.
 

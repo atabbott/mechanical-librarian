@@ -41,6 +41,7 @@ from mechanical_librarian.application.review_web import (
     ReviewWebError,
     _decode_cursor,
     _encode_cursor,
+    _provider_outcomes,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import PipelineProgress
@@ -57,6 +58,8 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     FileFacts,
     MetadataReport,
+    ProviderObservation,
+    ProviderStatus,
     TargetDestination,
     TargetFacts,
     TargetField,
@@ -519,6 +522,12 @@ class _Preparation:
         self.status_calls += 1
         return ((self.progress("primary", "fiction"),), self.is_paused)
 
+    def connection_conditions(self):
+        return ()
+
+    def check_connection(self, connection: str) -> bool:
+        return connection == "primary"
+
     def paused(self) -> bool:
         return self.is_paused
 
@@ -552,7 +561,7 @@ class _ActivityApplication(ContinuousGuardedApplication):
     def wait_for_drain(self, deadline=None) -> None:
         return None
 
-    def activity(self):
+    def activity(self, **query):
         return {
             "backup_ready": True,
             "configured_libraries": [
@@ -569,10 +578,12 @@ class _ActivityApplication(ContinuousGuardedApplication):
                                    "consented": "history" in self.enabled_libraries}]},
             ],
             "counts": {}, "enabled_libraries": [{"connection": "primary", "library": library} for library in sorted(self.enabled_libraries)],
-            "events": [{"destination": "title", "failure": None, "library": "fiction", "occurred_at": 1, "origin": "automatic_policy", "state": "verified", "work_id": "book-1"}], "example": {"after": "After", "before": "Before", "destination": "title", "library": "fiction", "work_id": "book-1"},
+            "events": [{"destination": "title", "event_id": "event-1", "event_type": "metadata", "evidence": [{"label": "Recorded automatic decision", "value": "verified"}], "failure": None, "library": "fiction", "occurred_at": 1, "origin": "automatic_policy", "state": "verified", "work_id": "book-1"}], "example": {"after": "After", "before": "Before", "destination": "title", "library": "fiction", "work_id": "book-1"},
             "last_failure": None, "paused": self.paused,
+            "ledger": {"event_type": query.get("event_type", "all"), "page": query.get("page", 1), "page_count": 1, "page_size": query.get("page_size", 25), "query": query.get("search"), "range_days": query.get("range_days", 30), "total": 1},
+            "current_waiting": None,
             "prepared": {"automatic": 1, "human": 1, "total": 2},
-            "schema_version": "continuous-field-activity-v1", "suspensions": [],
+            "schema_version": "continuous-field-activity-v2", "suspensions": [],
         }
 
     def enable(self, grants):
@@ -935,6 +946,17 @@ class ReviewWebTests(unittest.TestCase):
         )
         self.assertEqual(script.status_code, 200)
         self.assertEqual(self.client.get("/api/v1/activity").json()["prepared"]["total"], 2)
+        filtered = self.client.get(
+            "/api/v1/activity?event_type=all&range_days=30&page=1&page_size=25"
+        )
+        self.assertEqual(filtered.status_code, 200, filtered.text)
+        self.assertEqual(filtered.json()["ledger"], {
+            "event_type": "all", "page": 1, "page_count": 1, "page_size": 25,
+            "query": None, "range_days": 30, "total": 1,
+        })
+        self.assertEqual(
+            self.client.get("/api/v1/activity?range_days=8").status_code, 422
+        )
         denied = self.client.post(
             "/api/v1/activity/consent",
             headers={**self.origin, "X-CSRF-Token": "invalid"},
@@ -1008,6 +1030,17 @@ class ReviewWebTests(unittest.TestCase):
                 "total": 5,
             },
         )
+        check_missing_csrf = self.client.post(
+            "/api/v1/review-preparation/primary/check-connection",
+            headers=self.origin,
+        )
+        self.assertEqual(check_missing_csrf.status_code, 422)
+        checked = self.client.post(
+            "/api/v1/review-preparation/primary/check-connection",
+            headers={**self.origin, "x-csrf-token": session["csrf_token"]},
+        )
+        self.assertEqual(checked.status_code, 200)
+        self.assertEqual(checked.json()["connections"], [])
         missing_csrf = self.client.post(
             "/api/v1/review-preparation/primary/fiction/scan",
             headers=self.origin,
@@ -1792,6 +1825,7 @@ class ReviewWebTests(unittest.TestCase):
                 "paused": False,
                 "active": False,
                 "actionable": False,
+                "connections": [],
             },
         )
         page = self.client.get(f"/review/{self.case.review_case_id}")
@@ -2085,6 +2119,7 @@ class ReviewWebTests(unittest.TestCase):
                     "post",
                     "/api/v1/review-preparation/{connection}/{library_name}/retry",
                 ),
+                ("post", "/api/v1/review-preparation/{connection}/check-connection"),
                 ("post", "/api/v1/review-preparation/pause"),
                 ("post", "/api/v1/review-preparation/resume"),
                 ("post", "/api/v1/session/logout"),
@@ -2167,6 +2202,10 @@ class ReviewWebTests(unittest.TestCase):
         self.assertEqual(
             response_statuses[("post", "/api/v1/review-preparation/{connection}/{library_name}/retry")],
             {"202", "401", "403", "404", "409", "422", "503"},
+        )
+        self.assertEqual(
+            response_statuses[("post", "/api/v1/review-preparation/{connection}/check-connection")],
+            {"200", "401", "403", "404", "409", "422", "503"},
         )
         headers = {
             value["name"]: value
@@ -2384,6 +2423,7 @@ class ReviewWebTests(unittest.TestCase):
         from tests.support.tls import synthetic_tls_identity
 
         repository = Mock()
+        database = Path(self.temporary.name) / "application.sqlite3"
         certificate, private_key = synthetic_tls_identity(
             Path(self.temporary.name)
         )
@@ -2418,14 +2458,14 @@ class ReviewWebTests(unittest.TestCase):
         ):
             run_review_server(
                 Path("/config.json"),
-                Path("/application.sqlite3"),
+                database,
                 Path("/catalogue.sqlite3"),
                 Path("/artifacts"),
                 "127.0.0.1",
                 8443,
             )
         opened.assert_called_once_with(
-            Path("/application.sqlite3"),
+            database,
             create=False,
             cross_thread=True,
         )
@@ -2445,6 +2485,143 @@ class ReviewWebTests(unittest.TestCase):
 
 
 class ReviewSessionPersistenceTests(unittest.TestCase):
+    def test_terminal_provider_taxonomy_projects_closed_safe_outcomes(self) -> None:
+        statuses = tuple(
+            status
+            for status in ProviderStatus
+            if status is not ProviderStatus.CANDIDATES
+        )
+        source = _report()
+        report = MetadataReport.create(
+            target=source.target,
+            file=source.file,
+            local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=tuple(
+                sorted(
+                    (
+                        ProviderObservation(f"provider-{index}", status)
+                        for index, status in enumerate(statuses)
+                    ),
+                    key=lambda provider: provider.provider,
+                )
+            ),
+        )
+        outcomes = _provider_outcomes(report)
+        self.assertEqual(
+            {outcome["status"] for outcome in outcomes},
+            {status.value for status in statuses}
+            - {"disabled", "insufficient_input"},
+        )
+        self.assertTrue(
+            all(
+                set(outcome)
+                == {"lane_kind", "provider", "provider_requests", "reason", "status"}
+                and outcome["provider_requests"] == 0
+                for outcome in outcomes
+            )
+        )
+        self.assertNotIn("diagnostic", json.dumps(outcomes))
+        many = MetadataReport.create(
+            target=source.target, file=source.file, local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=tuple(ProviderObservation(f"lane-{index:02d}", ProviderStatus.NO_MATCH) for index in range(33)),
+        )
+        self.assertEqual(len(_provider_outcomes(many)), 33)
+
+    def test_fifty_mixed_packages_and_failures_share_one_bounded_browse_window(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "review.sqlite")
+            repository.request_review_scan("primary", "fiction", "lib-1", "f" * 64, 10)
+            discovery = repository.claim_review_pipeline_action(11)
+            assert discovery is not None
+            from mechanical_librarian.application.catalogue import CatalogueEntry
+            entries = tuple(
+                CatalogueEntry("primary", "fiction", "lib-1", f"failed-{index:02d}", index, f"Failed {index:02d}", (), True, False, "singular-supported", f"{index + 1:064x}", f"/safe-{index}.epub", "epub", "/media")
+                for index in range(25)
+            )
+            repository.complete_review_discovery(discovery, 1, "a" * 64, entries, 12)
+            now = 13
+            while action := repository.claim_review_pipeline_action(now):
+                if action.stage == "extraction":
+                    repository.advance_review_pipeline_action(action, None, now + 1)
+                elif action.stage == "provider":
+                    repository.fail_review_pipeline_action(action, "authentication", False, now + 1, "hardcover-main")
+                else:
+                    self.fail(f"unexpected stage {action.stage}")
+                now += 2
+            for index in range(25):
+                source = _report(title=f"Published {index:02d}", content_digest=f"{index + 30:064x}"[-1], file_identity=f"{index + 60:064x}"[-1])
+                report = MetadataReport.create(
+                    target=TargetFacts("primary", "ebooks", f"published-{index:02d}", source.target.fields),
+                    file=source.file,
+                    local_claims=source.local_claims,
+                    local_reasons=source.local_reasons,
+                    providers=source.providers,
+                )
+                repository.publish(report, lambda: True)
+            total, attention = repository.count_current_review_cases(None)
+            rows = tuple(
+                row
+                for offset in range(0, 50, 7)
+                for row in repository.list_current_review_case_documents(None, 7, offset, None)
+            )
+            failed_total = repository.count_current_review_cases("fiction")[0]
+            published_total = repository.count_current_review_cases("ebooks")[0]
+            repository.close()
+        self.assertEqual((total, attention), (50, 0))
+        self.assertEqual((failed_total, published_total), (25, 25))
+        self.assertEqual(len(rows), 50)
+        self.assertEqual(len(set(rows)), 50)
+
+    def test_terminal_failed_work_is_library_only_and_safe(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "review.sqlite")
+            repository.request_review_scan("primary", "fiction", "lib-1", "f" * 64, 10)
+            discovery = repository.claim_review_pipeline_action(11)
+            assert discovery is not None
+            from mechanical_librarian.application.catalogue import CatalogueEntry
+            repository.complete_review_discovery(discovery, 1, "a" * 64, (CatalogueEntry("primary", "fiction", "lib-1", "item-secret", 1, "Title", (), True, False, "singular-supported", "b" * 64, "/safe.epub", "epub", "/media"),), 12)
+            extraction = repository.claim_review_pipeline_action(13)
+            assert extraction is not None
+            repository.advance_review_pipeline_action(extraction, None, 14)
+            provider = repository.claim_review_pipeline_action(15)
+            assert provider is not None
+            repository.fail_review_pipeline_action(provider, "authentication", False, 16, "hardcover-main")
+            repository.publish(_report(), lambda: True)
+            first_page = repository.list_current_review_case_documents(None, 1, 0, None)
+            second_page = repository.list_current_review_case_documents(None, 1, 1, None)
+            title_rows = repository.list_current_review_case_documents(
+                "Preparation unavailable", 10, 0, None
+            )
+            media_rows = repository.list_current_review_case_documents(
+                "unknown", 10, 0, None
+            )
+            snapshot = repository.read_review_library(None, 10, 0, None)
+            title_total = repository.count_current_review_cases(
+                "Preparation unavailable"
+            )
+            media_total = repository.count_current_review_cases("unknown")
+            attention = repository.read_review_attention(None, 10, 0)
+            repository.close()
+        self.assertEqual(len(first_page), 1)
+        self.assertEqual(len(second_page), 1)
+        self.assertNotEqual(first_page, second_page)
+        self.assertEqual(snapshot.total, 2)
+        self.assertEqual(snapshot.attention_total, 0)
+        self.assertEqual(len(snapshot.rows), 2)
+        self.assertEqual((len(title_rows), title_total), (1, (1, 0)))
+        self.assertEqual((len(media_rows), media_total), (1, (1, 0)))
+        self.assertEqual(attention.total, 0)
+        from mechanical_librarian.application.review_web import _library_item
+        item = next(
+            _library_item(*row[:3])
+            for row in snapshot.rows
+            if _library_item(*row[:3])["preparation"] is not None
+        )
+        self.assertEqual(item["preparation"], {"attempt": 1, "provider": "hardcover-main", "reason": "Provider credentials need owner attention.", "recovery": "Retry review preparation after correcting the reported condition.", "recovery_attempt": 0, "stage": "provider", "status": "authentication"})
+        self.assertEqual(item["preparation_outcomes"], [])
+        self.assertNotIn("credential unavailable", json.dumps(item))
     def test_cover_state_is_inside_the_current_case_read_snapshot(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "application.sqlite3"
@@ -2520,7 +2697,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             self.assertEqual([], writer_errors)
             after = reader.read_current_review_case(case_id, 50)
             self.assertEqual(document, after.cover_consideration_document)
-            self.assertEqual("considered", after.cover_history[0]["kind"])
+            self.assertEqual("automatic_prepared", after.cover_history[0]["kind"])
             reader.close()
 
     def test_cover_retry_stops_after_an_owner_outcome(self) -> None:
@@ -3630,7 +3807,7 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             self.assertEqual(reopened.count_current_review_cases("NOVELS"), (1, 0))
             reopened.close()
 
-    def test_sqlite_attention_includes_coherent_manual_bibliographic_siblings(
+    def test_sqlite_attention_keeps_manual_bibliographic_membership_field_local(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -3651,27 +3828,29 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             repository.publish_proposal(proposal)
             repository.admit_review_case(proposal)
             first = repository.list_current_attention_documents(None, 1, 0)
-            second = repository.list_current_attention_documents(None, 1, 1)
             self.assertEqual(len(first), 1)
-            self.assertEqual(len(second), 1)
-            self.assertGreater(first[0][3], 1)
-            self.assertEqual(first[0][3], second[0][3])
+            self.assertEqual(first[0][3], 1)
             rows = repository.list_current_attention_documents(None, 10, 0)
             self.assertEqual(
                 [row[2] for row in rows],
-                ["series", "subtitle", "title"],
+                ["series"],
             )
-            self.assertEqual(repository.count_current_attention_fields(None), 3)
+            self.assertEqual(repository.count_current_attention_fields(None), 1)
             self.assertEqual(repository.count_current_review_cases(None), (1, 1))
             repository.suspend_field_effect_capability(
                 scope="destination", connection="primary", destination="series",
                 reason="field_unavailable", changed_at=1,
             )
+            suspended = InspectCurrentReviewCase(repository).run(
+                json.loads(repository.admit_review_case(proposal))["review_case_id"]
+            )
+            field = next(value for value in suspended["fields"] if value["destination"] == "series")
+            self.assertEqual("This field is waiting for an external service recovery.", field["classification_reason"])
             self.assertEqual(
                 [row[2] for row in repository.list_current_attention_documents(None, 1, 0)],
-                ["subtitle"],
+                [],
             )
-            self.assertEqual(repository.count_current_attention_fields(None), 2)
+            self.assertEqual(repository.count_current_attention_fields(None), 0)
             repository.clear_field_effect_capability_suspension(
                 scope="destination", connection="primary", destination="series",
                 reason="field_unavailable", observed_at=2,

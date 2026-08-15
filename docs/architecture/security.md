@@ -9,6 +9,9 @@ provider-write client. Owner pause and durable category/global suspension fail
 closed to the authenticated human queue, and recovery is an explicit
 CSRF-protected owner action. Private qualification cases, values, and paths are
 not stored in the repository or public API.
+An equal automatic candidate is a separate identifier-only terminal fact. Its
+atomic currentness comparison happens before, and does not read, authority,
+consent, capability, backup, target, or read-back controls.
 
 The `RefreshCurrentCatalogue` application operation may make only bounded GET observations of configured ABS
 book libraries and publish a local current generation. Its bearer credential is
@@ -53,7 +56,11 @@ transaction. A third crashed attempt becomes a bounded failed work rather than
 an invalid fourth claim. Operational rows contain only bounded identifiers, stage, state,
 counts, timestamps, and fixed failure codes; the authenticated progress response
 contains no metadata values, paths, credentials, provider payloads, or raw
-errors. A complete target enumeration stages absence candidates, but only a
+errors. Target TLS, authentication, authorization, and unavailable observations
+are connection-scoped durable conditions with only a closed code, state, epoch,
+and affected-work count. Owner recovery is CSRF-bound and probes the configured
+TLS client with bounded JSON only; it never reflects endpoint or transport
+detail. A complete target enumeration stages absence candidates, but only a
 fully successful scan may tombstone an absent review lineage or retire a
 present lineage that is no longer eligible. Catalogue discovery and shared
 provider pacers serialize their mutation of global generation and pacing state
@@ -91,13 +98,18 @@ work unclaimable. Final pipeline publication also requires the
 target to remain singular. External target, media, cover, and artifact
 currentness checks precede the short SQLite write transaction, which retains
 its local expected-pointer check; one slow external read cannot hold the writer
-lock against the other lane. Technical failure in any
-configured provider lane stops that work before proposal creation and prevents
-that scan's staged retirements. The path cannot decide a field, construct an apply plan, write a
+lock against the other lane. A complete report retains each configured lane's
+bounded terminal status. Technical failure remains typed and inspectable but
+cannot erase coherent sibling evidence or prevent proposal creation; only a
+failure before a complete report exists terminalizes the work. Public
+projection allowlists safe provider identity, lane kind, aggregate bounded
+request count, status, reason, and recovery text, never raw diagnostics,
+queries, headers, credentials, paths, or payloads. The path cannot decide a field, construct an apply plan, write a
 target or media file, or delete media. The supported review server may poll on
-the one bounded configured interval, resume transient work, and hold terminal
-provider failure for an authenticated owner retry. Durable pause, fair-claim,
-and circuit state contains only bounded operational values.
+the one bounded configured interval and hold pre-package terminal failure for
+an authenticated owner retry. Per-work retry eligibility, durable pause, and
+fair-claim state contain only bounded operational values; one work never opens
+a library-wide provider barrier.
 
 ## External actors
 
@@ -333,7 +345,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v23`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v26`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -678,7 +690,7 @@ observer is packaged and composed for bounded private report-cover previews,
 with no target credentials, identity admission, owner-decision, or write
 authority.
 
-The final report database, `catalogue-v2` database, `config-v5`, artifact
+The final report database, `catalogue-v2` database, `config-v6`, artifact
 records, and `batch-manifest-v5` each accept only absent or their exact current
 schema. `metadata-report-v1` through `metadata-report-v10`, prior development
 schemas, extra objects, altered
@@ -726,6 +738,17 @@ endpoints disabled. Per-response, aggregate-byte, row, lane, request, and
 deadline bounds fail closed into typed provider outcomes; quota and service
 failures are never reclassified as `no_match`.
 
+Provider recovery is credential-bearing background egress under the same
+adapter limits, never a new network authority. The claimant revalidates the
+exact source report, full current review-package tuple, target/media identity,
+enabled provider binding, and positive configuration generation immediately
+before constructing the provider client. Provider work runs outside SQLite
+writer transactions with the existing aggregate request, byte, 60-second
+deadline, retry, pacing, and cancellation bounds. Shared authentication,
+authorization, quota, unavailable, or incomplete results are classified before
+publication; diagnostics retain neither credentials, raw headers, queries,
+payloads, response bodies, work identifiers, nor private paths.
+
 The deterministic shadow-decision preview adds no network or credential
 authority. It opens only an existing regular exact-current report database by
 the dedicated read-only/no-create path, verifies query-only behavior, and never
@@ -758,6 +781,23 @@ the closed qualified category/option matrix may reach decision-only Automatic;
 all other automatic intent is rejected, and no automatic outcome itself grants
 effect or target-write authority. The deterministic F19 projection includes
 exact `policy_ignored` proposals; the external-review packet remains unchanged.
+
+### Authenticated Activity history
+
+The authenticated Activity endpoint is a private, `no-store`, read-only history
+projection. Its bounded event type, date range, page, page size, and search
+inputs are validated before a parameterized SQL query selects one page and its
+count from the same durable ledger projection. The response has no export,
+write, target, provider, or recovery authority. Stored documents are hostile
+input: malformed, oversized, or inconsistent rows fail closed rather than
+exposing a raw row, private path, or invented verification claim. The projection
+contains only bounded readable labels and source-recorded facts. Current waiting
+work is independently read from the present field-effect state, so filtering or
+pagination cannot make completed historical work appear active. Count and page
+are snapshot-consistent only for the individual read transaction; concurrent
+append-only activity can change a later request. Focused repository,
+application, API, and browser tests cover bounds, redaction, malformed rows,
+current-state recovery, and private-cache headers.
 
 Guarded field effects add the first persisted mutation boundary. The installed
 product composes the API-key Audiobookshelf target only after authenticated,

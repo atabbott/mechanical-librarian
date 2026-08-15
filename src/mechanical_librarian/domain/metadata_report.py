@@ -36,7 +36,7 @@ from mechanical_librarian.domain.epub_inspection import (
 )
 
 
-REPORT_SCHEMA = "metadata-report-v23"
+REPORT_SCHEMA = "metadata-report-v26"
 COMPARISON_VERSION = "closed-title-creator-publication-v4"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -1402,7 +1402,7 @@ class ProviderIdentityBinding:
     claim_reference: str
     identity: str
     scope: ClaimScope
-    role: str
+    role: str | None
     source_ordinal: int = 0
 
     def __post_init__(self) -> None:
@@ -1410,16 +1410,17 @@ class ProviderIdentityBinding:
             _REFERENCE.fullmatch(self.claim_reference) is None
             or not self.claim_reference.startswith("provider_")
             or type(self.scope) is not ClaimScope
-            or self.role != "author"
+            or self.role not in {None, "author"}
             or type(self.source_ordinal) is not int
             or not 0 <= self.source_ordinal <= 2_147_483_647
         ):
             raise ReportValueError("provider identity binding is invalid")
         _text(self.identity, "provider identity binding identity", 128)
-        try:
-            validate_role_projection(self.role)
-        except EvidenceValueError as error:
-            raise ReportValueError("provider identity binding role is invalid") from error
+        if self.role is not None:
+            try:
+                validate_role_projection(self.role)
+            except EvidenceValueError as error:
+                raise ReportValueError("provider identity binding role is invalid") from error
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -1428,6 +1429,62 @@ class ProviderIdentityBinding:
             "role": self.role,
             "scope": self.scope.value,
             "source_ordinal": self.source_ordinal,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class EditionEnrichmentOverflow:
+    """Work-only evidence retained after a bounded edition probe overflows."""
+
+    work_identity: str
+    title: str
+    authors: tuple[ProviderClaim, ...]
+    identity_bindings: tuple[ProviderIdentityBinding, ...]
+
+    def __post_init__(self) -> None:
+        _text(self.work_identity, "edition overflow work identity", 128)
+        _projection_text(self.title, "edition overflow title", MAX_SCALAR_CHARACTERS)
+        if (
+            type(self.authors) is not tuple
+            or not self.authors
+            or any(
+                type(value) is not ProviderClaim
+                or value.kind is not ClaimKind.CREATOR
+                or value.scope is not ClaimScope.WORK
+                or value.state is not FieldState.VALID
+                or value.role != "author"
+                for value in self.authors
+            )
+            or tuple(value.raw_order for value in self.authors) != tuple(range(len(self.authors)))
+            or type(self.identity_bindings) is not tuple
+            or len(self.identity_bindings) != len(self.authors)
+        ):
+            raise ReportValueError("edition overflow authors are invalid")
+        expected = tuple(
+            ProviderIdentityBinding(author.reference, binding.identity, ClaimScope.WORK, "author", index)
+            for index, (author, binding) in enumerate(zip(self.authors, self.identity_bindings, strict=True))
+        )
+        if self.identity_bindings != expected:
+            raise ReportValueError("edition overflow identity bindings are invalid")
+        references = tuple(author.reference for author in self.authors)
+        identities = tuple(binding.identity for binding in self.identity_bindings)
+        names = tuple(
+            normalize_title(author.value or "").casefold()
+            for author in self.authors
+        )
+        if (
+            len(set(references)) != len(references)
+            or len(set(identities)) != len(identities)
+            or len(set(names)) != len(names)
+        ):
+            raise ReportValueError("edition overflow authors are contradictory")
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "authors": [value.to_data() for value in self.authors],
+            "identity_bindings": [value.to_data() for value in self.identity_bindings],
+            "title": self.title,
+            "work_identity": self.work_identity,
         }
 
 
@@ -1475,7 +1532,7 @@ class ProviderCandidate:
                     self.identity_bindings,
                     key=lambda value: (
                         value.scope.value,
-                        value.role,
+                        value.role or "",
                         value.source_ordinal,
                         value.identity,
                         value.claim_reference,
@@ -1749,6 +1806,7 @@ class ProviderObservation:
     accessed_at: str | None = None
     diagnostics: tuple[FailureDiagnostic, ...] = ()
     request_accounting: ProviderRequestAccounting = ProviderRequestAccounting()
+    edition_enrichment_overflow: EditionEnrichmentOverflow | None = None
 
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
@@ -1786,6 +1844,39 @@ class ProviderObservation:
             raise ReportValueError("provider candidates are not in canonical identity order")
         if (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates):
             raise ReportValueError("provider status and candidates disagree")
+        if self.edition_enrichment_overflow is not None and (
+            type(self.edition_enrichment_overflow) is not EditionEnrichmentOverflow
+            or self.status is not ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+            or self.candidates
+            or self.convergence
+            or (self.lanes and len(
+                tuple(
+                    lane for lane in self.lanes
+                    if lane.kind is ProviderQueryKind.WORK
+                    and lane.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+                    and not lane.candidates
+                )
+            ) != 1)
+            or any(lane.candidates for lane in self.lanes)
+        ):
+            raise ReportValueError("edition overflow witness is invalid")
+        if self.edition_enrichment_overflow is not None and any(
+            author.links
+            or author
+            != ProviderClaim.create(
+                provider=self.provider,
+                candidate=self.edition_enrichment_overflow.work_identity,
+                kind=ClaimKind.CREATOR,
+                value=author.value,
+                state=author.state,
+                scope=ClaimScope.WORK,
+                applicability=author.applicability,
+                role="author",
+                raw_order=author.raw_order,
+            )
+            for author in self.edition_enrichment_overflow.authors
+        ):
+            raise ReportValueError("edition overflow witness references are inconsistent")
         if self.status in {ProviderStatus.DISABLED, ProviderStatus.INSUFFICIENT_INPUT} and self.input_references:
             raise ReportValueError("inactive provider cannot claim inputs")
         if any(
@@ -1903,6 +1994,10 @@ class ProviderObservation:
             "diagnostics": [value.to_data() for value in self.diagnostics],
             "request_accounting": self.request_accounting.to_data(),
             "lanes": [value.to_data() for value in self.lanes],
+            "edition_enrichment_overflow": (
+                None if self.edition_enrichment_overflow is None
+                else self.edition_enrichment_overflow.to_data()
+            ),
         }
 
 
@@ -1996,6 +2091,32 @@ class MetadataReport:
         names = tuple(value.provider for value in self.providers)
         if names != tuple(sorted(set(names))):
             raise ReportValueError("provider observations are not in canonical order")
+        for provider in self.providers:
+            witness = provider.edition_enrichment_overflow
+            if witness is None:
+                continue
+            target_title = self.target.current_title
+            authors = next(
+                (
+                    field.value
+                    for field in self.target.fields
+                    if field.destination is TargetDestination.AUTHORS
+                    and field.state is TargetFieldState.VALUE
+                ),
+                None,
+            )
+            if (
+                target_title is None
+                or type(authors) is not tuple
+                or normalize_title(witness.title).casefold()
+                != normalize_title(target_title).casefold()
+                or tuple(
+                    normalize_title(author.value or "").casefold()
+                    for author in witness.authors
+                ) != tuple(normalize_title(author).casefold() for author in authors)
+                or _has_title_variant_marker(witness.title, None)
+            ):
+                raise ReportValueError("edition overflow witness does not match target")
         if (
             type(self.field_results) is not tuple
             or any(type(value) is not FieldResult for value in self.field_results)
@@ -3579,6 +3700,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
             "candidates",
             "convergence",
             "diagnostics",
+            "edition_enrichment_overflow",
             "input_references",
             "lanes",
             "provider",
@@ -3606,6 +3728,20 @@ def _provider_from_data(value: object) -> ProviderObservation:
             for value in _list(item["diagnostics"])
         ),
         _request_accounting(item["request_accounting"]),
+        (
+            None
+            if item["edition_enrichment_overflow"] is None
+            else _edition_enrichment_overflow_from_data(item["edition_enrichment_overflow"])
+        ),
+    )
+
+
+def _edition_enrichment_overflow_from_data(value: object) -> EditionEnrichmentOverflow:
+    item = _object(value, {"authors", "identity_bindings", "title", "work_identity"})
+    return EditionEnrichmentOverflow(
+        item["work_identity"], item["title"],
+        tuple(_provider_claim_from_data(author) for author in _list(item["authors"])),
+        tuple(_provider_identity_binding_from_data(binding) for binding in _list(item["identity_bindings"])),
     )
 
 
@@ -3846,7 +3982,7 @@ def _valid_isbn(value: str, checksum: str) -> bool:
 
 
 __all__ = [
-    "ClaimKind", "ClaimScope", "COMPARISON_VERSION", "Comparison", "ComparisonLink", "ComparisonMethod", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
+    "ClaimKind", "ClaimScope", "COMPARISON_VERSION", "Comparison", "ComparisonLink", "ComparisonMethod", "EditionEnrichmentOverflow", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
     "IdentifierEvidence", "IdentifierEvidenceBasis", "IdentifierRelation",
     "MAX_REPORT_BYTES", "MetadataReport", "ProviderCandidate", "ProviderClaim",
     "ProviderEvidence", "ProviderEvidenceKind", "ProviderIdentityBinding", "DateLinkConfidence", "PublicationDateRelation",

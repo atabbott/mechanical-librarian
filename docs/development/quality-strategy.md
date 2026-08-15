@@ -30,6 +30,16 @@ rejected input may contain secrets, private paths, or media text. Synthetic
 fixtures are repository-authored and contain no personal or copyrighted
 material.
 
+Qualified advisory-cover preparation proves the composed F22 path: one
+qualified observer dispatch occurs before projection and package cutover, and
+the immutable consideration is replayed without a second dispatch or
+field-effect authority. An unavailable profile, reviewer refusal or failure,
+malformed reviewer output, persistence failure, and staged-currentness drift
+all stop safely before package cutover; a case without a cover proposal skips
+advice normally. Existing cover-consideration and browser coverage proves
+stale retirement, owner-only manual retry and history, and that advice never
+creates automatic cover authority.
+
 Policy-draft qualification additionally proves the authenticated private
 state/validate/create/read/preview schemas, CSRF and Origin/Host failure paths,
 closed bounded maps, and declared or chunked bodies above 16 KiB. Browser proof

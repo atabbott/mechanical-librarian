@@ -217,18 +217,24 @@ class _CoverConsiderationResponse(_ClosedModel):
 
 
 class _ReviewField(_ClosedModel):
+    classification: Literal["needs_attention", "manual_fallback", "automatic_recorded", "human_recorded", "unsupported"]
+    classification_reason: str
     current: _TargetField
     deterministic_disposition: str
     destination: str
+    editable: bool
     effect_capability: str
     human_decision: _DecisionProjection | None
     automatic_decision: _AutomaticDecisionProjection | None
     manual_hold: bool
     manual_required: bool
     needs_attention: bool
+    navigation_role: Literal["attention", "inspect"]
     notices: list[str]
     proposed_values: list[_ProposedValue]
     provenance: list[str]
+    preservation_only: bool
+    corroboration_sources: list[str]
     proposal_id: str
     target_fingerprint: str
     uncertainty: list[str]
@@ -314,7 +320,7 @@ class _HistoryCoverItem(_ClosedModel):
     decision: _DecisionProjection | None
     decision_id: str | None
     kind: Literal[
-        "considered", "superseded", "selected", "kept_incumbent", "no_action", "stale"
+        "automatic_prepared", "owner_retry_prepared", "superseded", "selected", "kept_incumbent", "no_action", "stale"
     ]
     occurred_at: int
     review_case_id: str
@@ -350,6 +356,24 @@ class _ReviewCounts(_ClosedModel):
     no_attention_needed: int
 
 
+class _PreparationFailure(_ClosedModel):
+    attempt: int
+    provider: str
+    reason: str
+    recovery: str
+    recovery_attempt: int
+    stage: str
+    status: str
+
+
+class _ProviderOutcome(_ClosedModel):
+    provider_requests: int
+    lane_kind: str
+    provider: str
+    reason: str
+    status: str
+
+
 class _LibraryWork(_ClosedModel):
     authors: list[str]
     attention_count: int
@@ -362,6 +386,8 @@ class _LibraryWork(_ClosedModel):
     review_case_id: str | None
     title: str
     work_id: str
+    preparation: _PreparationFailure | None = None
+    preparation_outcomes: list[_ProviderOutcome]
 
 
 class _LibraryResponse(_ClosedModel):
@@ -375,6 +401,7 @@ class _LibraryResponse(_ClosedModel):
 
 class _AttentionItem(_ClosedModel):
     authors: list[str]
+    classification_reason: str
     destination: str
     detail_url: str
     item: str
@@ -420,16 +447,24 @@ class _ActivityCapability(_ClosedModel):
     state: str
 
 
+class _ActivityEvidence(_ClosedModel):
+    label: str = Field(max_length=64)
+    value: str = Field(max_length=512)
+
+
 class _ActivityEvent(_ClosedModel):
     author_label: str = Field(default="Author details are not recorded", max_length=512)
-    destination: str
-    failure: str | None = None
-    library: str
+    destination: str = Field(max_length=512)
+    event_id: str = Field(default="recorded-event", max_length=128)
+    event_type: str = Field(default="unknown", max_length=32)
+    evidence: list[_ActivityEvidence] = Field(default_factory=list, max_length=8)
+    failure: str | None = Field(default=None, max_length=512)
+    library: str = Field(max_length=512)
     occurred_at: int | None = None
-    origin: str
-    state: str
+    origin: str = Field(max_length=512)
+    state: str = Field(max_length=512)
     work_label: str = Field(default="Recorded work", max_length=512)
-    work_id: str
+    work_id: str = Field(max_length=512)
 
 
 class _ActivitySuspension(_ClosedModel):
@@ -448,6 +483,30 @@ class _ActivityExample(_ClosedModel):
     work_id: str
 
 
+class _ActivityLedger(_ClosedModel):
+    event_type: Literal["all", "review", "policy", "metadata", "safety", "unknown"]
+    page: int = Field(ge=1, le=1_000_000)
+    page_count: int = Field(ge=1, le=1_000_000)
+    page_size: Literal[25, 50, 100]
+    query: str | None = Field(default=None, max_length=128)
+    range_days: Literal[7, 30, 90]
+    total: int = Field(ge=0)
+
+
+class _ActivityWaiting(_ClosedModel):
+    destination: str = Field(max_length=512)
+    library: str = Field(max_length=512)
+    state: str = Field(max_length=512)
+    work_id: str = Field(max_length=512)
+    work_label: str = Field(max_length=512)
+
+
+class _ProviderRecoveryActivity(_ClosedModel):
+    affected_count: int = Field(ge=1, le=1_000_000)
+    next_eligible_at: int | None = Field(default=None, ge=0, le=8_640_000_000_000)
+    state: Literal["waiting", "checking", "dormant", "recovered", "fanout", "exhausted"]
+
+
 class _ActivityResponse(_ClosedModel):
     backup_ready: bool
     capabilities: list[_ActivityCapability]
@@ -458,9 +517,12 @@ class _ActivityResponse(_ClosedModel):
     events: list[_ActivityEvent]
     example: _ActivityExample | None
     last_failure: str | None
+    ledger: _ActivityLedger
+    current_waiting: _ActivityWaiting | None
     paused: bool
     prepared: _ActivityPrepared
-    schema_version: Literal["continuous-field-activity-v1"]
+    provider_recovery: list[_ProviderRecoveryActivity] = Field(default_factory=list, max_length=100)
+    schema_version: Literal["continuous-field-activity-v2"]
     suspensions: list[_ActivitySuspension]
 
 
@@ -477,8 +539,17 @@ class _PreparationProgress(_ClosedModel):
     rescan_requested: bool
 
 
+class _PreparationConnection(_ClosedModel):
+    connection: str
+    code: Literal["tls", "authentication", "authorization", "unavailable"]
+    state: Literal["paused", "checking", "recovered"]
+    affected: int = Field(ge=0)
+    updated_at: int = Field(ge=0)
+
+
 class _PreparationResponse(_ClosedModel):
     libraries: list[_PreparationProgress]
+    connections: list[_PreparationConnection] = Field(default_factory=list)
     paused: bool = False
     active: bool = False
     actionable: bool = False
@@ -1542,12 +1613,34 @@ def _register_case_and_effect_routes(
             raise HTTPException(status_code, detail={"code": code}) from None
 
     @app.get("/api/v1/activity", response_model=_ActivityResponse,
-             responses={status: {"model": _ErrorResponse} for status in (401, 503)})
+             responses={status: {"model": _ErrorResponse} for status in (401, 422, 503)})
     def activity_status(
+        q: str | None = Query(default=None),
+        event_type: Literal["all", "review", "policy", "metadata", "safety", "unknown"] = Query(default="all"),
+        range_days: int = Query(default=30, json_schema_extra={"enum": [7, 30, 90]}),
+        page: int = Query(default=1, ge=1, le=1_000_000),
+        page_size: int = Query(default=25, json_schema_extra={"enum": [25, 50, 100]}),
         ml_session: str = Depends(authenticated_session_cookie),
     ) -> _ActivityResponse:
         _require_session(sessions, ml_session)
-        return _ActivityResponse.model_validate(field_effect_call(application.activity))
+        # Query normalisation belongs at the HTTP boundary so hostile values
+        # are a client error, never an application/persistence outage.  Both
+        # the received and Unicode-casefolded forms are bounded.
+        if q is not None:
+            if len(q) > 128:
+                raise HTTPException(status_code=422, detail={"code": "invalid"})
+            q = q.strip().casefold() or None
+            if q is not None and len(q) > 128:
+                raise HTTPException(status_code=422, detail={"code": "invalid"})
+        if range_days not in {7, 30, 90} or page_size not in {25, 50, 100}:
+            raise HTTPException(status_code=422, detail={"code": "invalid"})
+        return _ActivityResponse.model_validate(field_effect_call(lambda: application.activity(
+            search=q,
+            event_type=event_type,
+            range_days=range_days,
+            page=page,
+            page_size=page_size,
+        )))
 
     @app.post("/api/v1/activity/consent", response_model=_ActivityResponse,
               responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)})
@@ -1792,6 +1885,28 @@ def _register_browse_and_preparation_routes(
         x_csrf_token: str = Header(),
     ) -> _PreparationResponse:
         return preparation_control(False, ml_session, x_csrf_token)
+
+    @app.post(
+        "/api/v1/review-preparation/{connection}/check-connection",
+        response_model=_PreparationResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 403, 404, 422, 503)},
+    )
+    def check_review_preparation_connection(
+        connection: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PreparationResponse:
+        _require_session(sessions, ml_session, x_csrf_token)
+        if not 1 <= len(connection) <= 64:
+            raise HTTPException(404, detail={"code": "connection"})
+        try:
+            return _PreparationResponse.model_validate(
+                application.check_review_preparation_connection(connection).to_data()
+            )
+        except RuntimeError as error:
+            raise _preparation_http_error(error) from None
+        except Exception:
+            raise HTTPException(503, detail={"code": "persistence"}) from None
 
     @app.post(
         "/api/v1/review-preparation/{connection}/{library_name}/retry",

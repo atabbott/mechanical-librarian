@@ -231,7 +231,8 @@ class ReviewServerTLSCompositionTests(unittest.TestCase):
             config.write_text(
                 json.dumps(
                     {
-                        "schema_version": "config-v5",
+                        "schema_version": "config-v6",
+                        "provider_recovery_generation": 1,
                         "connections": [
                             {
                                 "name": "target",
@@ -339,6 +340,7 @@ class ReviewServerTLSCompositionTests(unittest.TestCase):
                 tls_private_key_file=str(private_key),
             )
             repository = Mock()
+            database = root / "application.sqlite3"
 
             def qualified_run(app, **arguments):
                 self.assertTrue(Path(arguments["ssl_certfile"]).exists())
@@ -412,14 +414,14 @@ class ReviewServerTLSCompositionTests(unittest.TestCase):
             ):
                 run_review_server(
                     Path("/config.json"),
-                    Path("/application.sqlite3"),
+                    database,
                     Path("/catalogue.sqlite3"),
                     Path("/artifacts"),
                     "127.0.0.1",
                     8443,
                 )
             opened.assert_called_once_with(
-                Path("/application.sqlite3"), create=False, cross_thread=True
+                database, create=False, cross_thread=True
             )
 
     def test_missing_or_invalid_tls_fails_before_database_or_server(self) -> None:

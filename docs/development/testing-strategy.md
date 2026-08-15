@@ -142,6 +142,11 @@ report and ProposalSet creation, concurrent admission, replay, restart-backed
 get, successor/historical projection, and nonactionable retirement against a
 disposable loopback target and synthetic EPUB.
 
+The committed focused automatic no-change tests prove deterministic identity
+across replay timestamps, closed domain bounds, exact-current schema admission,
+and the existing scheduler/guarded-effect regression suite. Broader integration
+scenarios remain covered by their established field-effect cohorts.
+
 The required suite includes a 45-item continuous-review restart cohort across
 three libraries. It retains the cross-library fairness, interruption, forced
 restart and recovery, authenticated progress and completion, exact installed
@@ -329,12 +334,12 @@ The suite covers:
   54/27/49 Google Books/Hardcover/Open Library metadata-attempt maxima, one
   shared pacer per paced adapter across foreground entries, and no persisted
   attempt diagnostics;
-- deterministic `metadata-report-v23` serialization and database reopen preserve
+- deterministic `metadata-report-v26` serialization and database reopen preserve
   claim raw order, rich-evidence canonical order, duplicate source occurrences,
   source ordinals, scopes, roles, field states and diagnostics byte-for-byte.
   Application tests merge parser, attempt and incomplete-outcome diagnostics
   once before persistence and prove reopen does not inflate them. Persistence
-  rejects `metadata-report-v22` before mutation and a direct regression proves
+  rejects immediate prior `metadata-report-v25` before mutation and a direct regression proves
   the prior database bytes remain unchanged;
 - cover-gallery provider/aggregate bounds, safe provenance, timeout/rejection
   states, visible truncation, and digest deduplication with all provenance;
@@ -370,8 +375,8 @@ Workbench integration tests use a disposable loopback target, synthetic media,
 private test secrets, and an absent database. Unit proposal-policy coverage includes whitespace, case, and
 width variants of the controlled package creator placeholder. The installed
 proposal path uses a whitespace/case variant and requires a nonmutating authors
-result under `fixed-conservative-v7`. Persistence tests reject prior proposal
-documents and proposal-store table shapes, including `fixed-conservative-v6`,
+result under `fixed-conservative-v8`. Persistence tests reject prior proposal
+documents and proposal-store table shapes, including immediate prior `fixed-conservative-v7`,
 without mutation, then prove exact deterministic replay under the current
 policy. Every synthetic EPUB member has a fixed timestamp so the probe identity
 does not depend on the qualification wall clock. No live library or provider is
@@ -425,8 +430,8 @@ cover nested single-emission, multiple exact sibling labels, mixed complete and
 split labels in one ancestor, repeated equal complete/split siblings, multiple
 assembled labels, scanning/production/workflow label values, promotion cues
 inside labels, the exact 16-fact rear cap, front/rear NFC and whitespace
-normalization, `metadata-report-v23`
-canonical replay, clean database creation, and byte-unchanged rejection of v22
+normalization, `metadata-report-v26`
+canonical replay, clean database creation, and byte-unchanged rejection of v23
 state. Only aggregate expected, found, and false-positive counts are asserted
 or exported; fixture rows and source text remain private.
 
@@ -489,8 +494,13 @@ reports to exercise the transaction boundary, restart while a fixed transition
 is processing, exact response replay, consecutive generation gating,
 exact-current cohort exclusion, stale old-policy publication, historical
 resolved-destination replay, progressive completion, missing F17a linkage,
-actual terminal extraction/provider failure and safe stage-specific retry, and
-transition-scoped acknowledgement. Regression coverage also binds configured
+actual pre-package extraction/provider failure, complete mixed-provider
+terminal reports, safe per-work retry, atomic package publication, and
+transition-scoped acknowledgement. The matrix includes matched, no-match,
+disabled, insufficient-input, ambiguous/over-bound, authentication,
+unavailable, and malformed outcomes; mixed pagination and a 50-work synthetic
+cohort prove exact counts and absence of a slow-work global barrier. Regression
+coverage also binds configured
 generation-one overrides through admission, keeps new-library preview separate
 from fail-closed proposal execution, restarts pre-existing terminal work, and
 checks atomic extraction-publication transition failure. Generated

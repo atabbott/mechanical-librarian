@@ -15,15 +15,21 @@ export interface AttentionSearch { q?: string; cursor?: string }
 export interface DetailSearch { field?: string; subview: DetailSubview }
 export interface PolicySearch { section: PolicySection }
 
-export interface LibraryWorkView { id: string; reviewCaseId?: string; title: string; authors: readonly string[]; library: string; mediaKind: string; attentionCount: number; attention: string }
+export interface ProviderOutcomeView { providerRequests: number; laneKind: string; provider: string; reason: string; status: string }
+export interface PreparationFailureView { attempt: number; provider: string; reason: string; recovery: string; recoveryAttempt: number; stage: string; status: string }
+export interface LibraryWorkView { id: string; reviewCaseId?: string; title: string; authors: readonly string[]; library: string; mediaKind: string; attentionCount: number; attention: string; preparation: PreparationFailureView | null; preparationOutcomes: readonly ProviderOutcomeView[] }
 export interface LibraryView { lens: LibraryLens; query?: string; nextCursor?: string; counts: { attention: number; all: number; clear: number }; works: readonly LibraryWorkView[] }
-export interface AttentionItemView { id: string; destination: string; title: string; authors: readonly string[]; library: string; mediaKind: string; notices: readonly string[]; provenance: readonly string[]; workAttentionCount: number }
+export interface AttentionItemView { id: string; destination: string; title: string; authors: readonly string[]; library: string; mediaKind: string; classificationReason?: string; notices: readonly string[]; provenance: readonly string[]; workAttentionCount: number }
 export interface AttentionView { query?: string; nextCursor?: string; total: number; items: readonly AttentionItemView[] }
 export interface ReviewFieldView {
+  classification: string
+  classificationReason: string
   destination: string
+  editable: boolean
   disposition: string
   effectCapability: string
   needsAttention: boolean
+  navigationRole: string
   manualHold: boolean
   currentValue: string
   currentRaw: unknown
@@ -34,6 +40,8 @@ export interface ReviewFieldView {
   automaticDecision: Schema<'_AutomaticDecisionProjection'> | null
   notices: readonly string[]
   provenance: readonly string[]
+  preservationOnly: boolean
+  corroborationSources: readonly string[]
   coverConsideration?: CoverConsiderationView | null
 }
 export interface CoverCandidateView {
@@ -81,9 +89,15 @@ export interface ActivityPreparedView { automatic: number; human: number; total:
 export interface ActivityLibraryView { connection: string; library: string; prepared?: ActivityPreparedView | null }
 export interface ActivityDestinationView { consented: boolean; destination: string; state: string }
 export interface ActivityCapabilityView { connection: string; destinations: readonly ActivityDestinationView[]; library: string; state: string }
-export interface ActivityEventView { author_label?: string; destination: string; failure: string | null; library: string; occurred_at: number | null; origin: string; state: string; work_id: string; work_label: string }
+export type ActivityEventType = 'review' | 'policy' | 'metadata' | 'safety' | 'unknown'
+export interface ActivityEvidenceView { label: string; value: string }
+export interface ActivityEventView { author_label?: string; destination: string; event_id: string; event_type: ActivityEventType; evidence: readonly ActivityEvidenceView[]; failure: string | null; library: string; occurred_at: number | null; origin: string; state: string; work_id: string; work_label: string }
+export interface ActivitySearch { q?: string; eventType: 'all' | ActivityEventType; rangeDays: 7 | 30 | 90; page: number; pageSize: 25 | 50 | 100 }
+export interface ActivityLedgerView { event_type: ActivitySearch['eventType']; page: number; page_count: number; page_size: ActivitySearch['pageSize']; query: string | null; range_days: ActivitySearch['rangeDays']; total: number }
+export interface ActivityWaitingView { destination: string; library: string; state: string; work_id: string; work_label: string }
 export interface ActivityExampleView { after: unknown; before: unknown; destination: string; library: string; work_id: string; work_label: string }
 export interface ActivitySuspensionView { connection: string; destination: string | null; reason: string; scope: string; updated_at: number }
+export interface ProviderRecoveryActivityView { affected_count: number; next_eligible_at: number | null; state: 'waiting' | 'checking' | 'dormant' | 'recovered' | 'fanout' | 'exhausted' }
 export interface ActivityDisplayView {
   backup_ready: boolean
   capabilities: readonly ActivityCapabilityView[]
@@ -94,9 +108,12 @@ export interface ActivityDisplayView {
   events: readonly ActivityEventView[]
   example: ActivityExampleView | null
   last_failure: string | null
+  ledger: ActivityLedgerView
+  current_waiting: ActivityWaitingView | null
   paused: boolean
   prepared: ActivityPreparedView
-  schema_version: 'continuous-field-activity-v1'
+  provider_recovery?: readonly ProviderRecoveryActivityView[]
+  schema_version: 'continuous-field-activity-v2'
   suspensions: readonly ActivitySuspensionView[]
 }
 
@@ -146,7 +163,7 @@ export interface ReviewHttp {
   getShadowSample(signal?: AbortSignal): Promise<ShadowSampleView>
   getPolicyTransition(signal?: AbortSignal): Promise<PolicyTransitionView | null>
   policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T>
-  getActivity(signal?: AbortSignal): Promise<ActivityView>
+  getActivity(search?: ActivitySearch, signal?: AbortSignal): Promise<ActivityView>
   activityCommand(path: string, body?: unknown, signal?: AbortSignal): Promise<ActivityView | undefined>
   logout(signal?: AbortSignal): Promise<void>
 }
@@ -205,11 +222,11 @@ export class ReviewApiClient implements ReviewHttp {
     if (value === null) throw new ApiError(502, 'invalid_cover_consideration_response')
     return value
   }
-  async getPreparation(signal?: AbortSignal) { return validateObject(await this.read('/api/v1/review-preparation', signal), 'preparation') as unknown as PreparationView }
+  async getPreparation(signal?: AbortSignal) { return mapPreparation(await this.read('/api/v1/review-preparation', signal)) }
   async preparationAction(path: string, signal?: AbortSignal) {
     const value = await this.mutate(`/api/v1/review-preparation/${path}`, undefined, signal)
     if (/(?:^|\/)(?:scan|retry)$/.test(path)) return preparationProgress(value)
-    return validateObject(value, 'preparation') as unknown as PreparationView
+    return mapPreparation(value)
   }
   async recordDecision(id: string, command: DecisionCommand, signal?: AbortSignal) {
     const { idempotencyKey, proposalId, targetFingerprint, selectedValue, destination, outcome, considerationId } = command
@@ -222,7 +239,11 @@ export class ReviewApiClient implements ReviewHttp {
   async getShadowSample(signal?: AbortSignal) { return validateObject(await this.read('/api/v1/metadata-policy/shadow/outcomes?limit=10', signal), 'shadow_sample') as unknown as ShadowSampleView }
   async getPolicyTransition(signal?: AbortSignal) { const value = await this.read('/api/v1/metadata-policy/transition', signal); return value === null ? null : validateObject(value, 'policy_transition') as unknown as PolicyTransitionView }
   async policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal) { const value = await this.mutate(`/api/v1/metadata-policy/${path}`, body, signal); if (!record(value)) throw new ApiError(502, 'invalid_policy_response'); return value as T }
-  async getActivity(signal?: AbortSignal): Promise<ActivityView> { return mapActivity(await this.read('/api/v1/activity', signal)) }
+  async getActivity(search?: ActivitySearch, signal?: AbortSignal): Promise<ActivityView> {
+    const p = new URLSearchParams()
+    if (search) { if (search.q) p.set('q', search.q); p.set('event_type', search.eventType); p.set('range_days', String(search.rangeDays)); p.set('page', String(search.page)); p.set('page_size', String(search.pageSize)) }
+    return mapActivity(await this.read(`/api/v1/activity${p.size ? `?${p}` : ''}`, signal))
+  }
   async activityCommand(path: string, body?: unknown, signal?: AbortSignal): Promise<ActivityView | undefined> { const value = await this.mutate(`/api/v1/${path}`, body, signal); return value === undefined ? undefined : mapActivity(value) }
   async logout(signal?: AbortSignal) { await this.mutate('/api/v1/session/logout', undefined, signal) }
 
@@ -260,7 +281,10 @@ const stringValue = (value: unknown, field: string) => { if (typeof value !== 's
 const integerValue = (value: unknown, field: string) => { if (!Number.isSafeInteger(value) || (value as number) < 0) throw new ApiError(502, `invalid_${field}`); return value as number }
 const optionalString = (value: unknown, field: string) => value === null || value === undefined ? undefined : stringValue(value, field)
 const stringArray = (value: unknown, field: string) => { if (!Array.isArray(value) || !value.every((item) => typeof item === 'string')) throw new ApiError(502, `invalid_${field}`); return value }
-export const displayValue = (value: unknown): string => value === null ? 'Not set' : typeof value === 'string' || typeof value === 'boolean' ? String(value) : Array.isArray(value) ? value.map(displayValue).join(' · ') : record(value) && typeof value.name === 'string' ? `${value.name}${typeof value.sequence === 'string' ? ` · ${value.sequence}` : ''}` : 'Unavailable'
+const booleanValue = (value: unknown, field: string) => { if (typeof value !== 'boolean') throw new ApiError(502, `invalid_${field}`); return value }
+const classificationValue = (value: unknown) => { const allowed = ['needs_attention', 'manual_fallback', 'automatic_recorded', 'human_recorded', 'unsupported']; if (typeof value !== 'string' || !allowed.includes(value)) throw new ApiError(502, 'invalid_classification'); return value }
+const navigationRole = (value: unknown) => { if (value !== 'attention' && value !== 'inspect') throw new ApiError(502, 'invalid_navigation_role'); return value }
+export const displayValue = (value: unknown): string => value === null ? 'Unavailable' : typeof value === 'string' || typeof value === 'boolean' ? String(value) : Array.isArray(value) ? value.map(displayValue).join(' · ') : record(value) && typeof value.name === 'string' ? `${value.name}${typeof value.sequence === 'string' ? ` · ${value.sequence}` : ''}` : 'Unavailable'
 
 const validateObject = (value: unknown, name: string): Record<string, unknown> => { if (!record(value) || typeof value.schema_version !== 'string') throw new ApiError(502, `invalid_${name}_response`); return value }
 const preparationProgress = (value: unknown): PreparationProgress => {
@@ -269,6 +293,17 @@ const preparationProgress = (value: unknown): PreparationProgress => {
   for (const field of ['checked', 'total', 'ready', 'blocked']) integerValue(value[field], `preparation_${field}`)
   if (typeof value.rescan_requested !== 'boolean') throw new ApiError(502, 'invalid_preparation_rescan_requested')
   return value as unknown as PreparationProgress
+}
+export const mapPreparation = (value: unknown): PreparationView => {
+  if (!record(value) || value.schema_version !== 'review-preparation-v1' || !Array.isArray(value.libraries) || !Array.isArray(value.connections) || typeof value.paused !== 'boolean' || typeof value.active !== 'boolean' || typeof value.actionable !== 'boolean') throw new ApiError(502, 'invalid_preparation_response')
+  value.libraries.forEach((item, index) => { if (!record(item)) throw new ApiError(502, `invalid_preparation_library_${String(index)}`); preparationProgress(item) })
+  value.connections.forEach((item, index) => {
+    if (!record(item)) throw new ApiError(502, `invalid_preparation_connection_${String(index)}`)
+    stringValue(item.connection, 'preparation_connection')
+    if (!['tls', 'authentication', 'authorization', 'unavailable'].includes(stringValue(item.code, 'preparation_connection_code')) || !['paused', 'checking', 'recovered'].includes(stringValue(item.state, 'preparation_connection_state'))) throw new ApiError(502, `invalid_preparation_connection_${String(index)}`)
+    integerValue(item.affected, 'preparation_connection_affected'); integerValue(item.updated_at, 'preparation_connection_updated_at')
+  })
+  return value as unknown as PreparationView
 }
 const activityPrepared = (value: unknown, field: string): ActivityPreparedView => {
   if (!record(value)) throw new ApiError(502, `invalid_${field}`)
@@ -284,7 +319,7 @@ const activitySuspensions = (value: unknown): ActivitySuspensionView[] => {
   return value.map((item, index) => { if (!record(item)) throw new ApiError(502, `invalid_activity_suspension_${String(index)}`); return { connection: stringValue(item.connection, 'activity_suspension_connection'), destination: item.destination === null ? null : stringValue(item.destination, 'activity_suspension_destination'), reason: stringValue(item.reason, 'activity_suspension_reason'), scope: stringValue(item.scope, 'activity_suspension_scope'), updated_at: integerValue(item.updated_at, 'activity_suspension_updated_at') } })
 }
 export const mapActivity = (value: unknown): ActivityDisplayView => {
-  if (!record(value) || value.schema_version !== 'continuous-field-activity-v1') throw new ApiError(502, 'invalid_activity_response')
+  if (!record(value) || value.schema_version !== 'continuous-field-activity-v2' || !record(value.ledger)) throw new ApiError(502, 'invalid_activity_response')
   const libraries = (raw: unknown, field: string): ActivityLibraryView[] => {
     if (!Array.isArray(raw)) throw new ApiError(502, `invalid_${field}`)
     return raw.map((item, index) => { if (!record(item)) throw new ApiError(502, `invalid_${field}_${String(index)}`); return { connection: stringValue(item.connection, `${field}_connection`), library: stringValue(item.library, `${field}_library`), ...(item.prepared === undefined ? {} : { prepared: item.prepared === null ? null : activityPrepared(item.prepared, `${field}_prepared`) }) } })
@@ -294,10 +329,18 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
   if (!Array.isArray(capabilities) || !Array.isArray(events) || !record(value.counts)) throw new ApiError(502, 'invalid_activity_response')
   const counts: Record<string, number> = {}
   for (const [key, count] of Object.entries(value.counts)) counts[stringValue(key, 'activity_count_name')] = integerValue(count, 'activity_count')
+  const providerRecovery = value.provider_recovery === undefined ? [] : value.provider_recovery
+  if (!Array.isArray(providerRecovery)) throw new ApiError(502, 'invalid_provider_recovery')
+  const recovery = providerRecovery.map((item, index) => {
+    if (!record(item) || !['waiting', 'checking', 'dormant', 'recovered', 'fanout', 'exhausted'].includes(stringValue(item.state, `provider_recovery_state_${String(index)}`))) throw new ApiError(502, `invalid_provider_recovery_${String(index)}`)
+    const next = item.next_eligible_at === null ? null : integerValue(item.next_eligible_at, 'provider_recovery_next_eligible_at')
+    if (next !== null && (!Number.isSafeInteger(next) || next < 0 || next > 8640000000000)) throw new ApiError(502, 'invalid_provider_recovery_timestamp')
+    return { state: item.state as ProviderRecoveryActivityView['state'], affected_count: integerValue(item.affected_count, 'provider_recovery_affected_count'), next_eligible_at: next }
+  })
   return {
     backup_ready: typeof value.backup_ready === 'boolean' ? value.backup_ready : (() => { throw new ApiError(502, 'invalid_activity_backup_ready') })(), capabilities: capabilities.map((item, index) => { if (!record(item) || !Array.isArray(item.destinations)) throw new ApiError(502, `invalid_activity_capability_${String(index)}`); return { connection: stringValue(item.connection, 'activity_connection'), library: stringValue(item.library, 'activity_library'), state: stringValue(item.state, 'activity_state'), destinations: item.destinations.map((destination, destinationIndex) => { if (!record(destination) || typeof destination.consented !== 'boolean') throw new ApiError(502, `invalid_activity_destination_${String(destinationIndex)}`); return { destination: stringValue(destination.destination, 'activity_destination'), state: stringValue(destination.state, 'activity_destination_state'), consented: destination.consented } }) } }),
-    configured_libraries: libraries(value.configured_libraries, 'activity_configured_libraries'), consented_libraries: libraries(value.consented_libraries, 'activity_consented_libraries'), counts, enabled_libraries: libraries(value.enabled_libraries, 'activity_enabled_libraries'), events: events.map((event, index) => { if (!record(event)) throw new ApiError(502, `invalid_activity_event_${String(index)}`); const occurred_at = event.occurred_at === undefined || event.occurred_at === null ? null : integerValue(event.occurred_at, 'activity_occurred_at'); const failure = event.failure === undefined || event.failure === null ? null : stringValue(event.failure, 'activity_failure'); const author_label = event.author_label === undefined ? undefined : stringValue(event.author_label, 'activity_author_label'); return { destination: stringValue(event.destination, 'activity_event_destination'), library: stringValue(event.library, 'activity_event_library'), origin: stringValue(event.origin, 'activity_event_origin'), state: stringValue(event.state, 'activity_event_state'), work_id: stringValue(event.work_id, 'activity_work_id'), work_label: event.work_label === undefined ? 'Recorded work' : stringValue(event.work_label, 'activity_work_label'), ...(author_label === undefined ? {} : { author_label }), occurred_at, failure } }),
-    example: activityExample(value.example), last_failure: value.last_failure === null ? null : stringValue(value.last_failure, 'activity_last_failure'), paused: typeof value.paused === 'boolean' ? value.paused : (() => { throw new ApiError(502, 'invalid_activity_paused') })(), prepared: activityPrepared(value.prepared, 'activity_prepared'), schema_version: 'continuous-field-activity-v1', suspensions: activitySuspensions(value.suspensions),
+    configured_libraries: libraries(value.configured_libraries, 'activity_configured_libraries'), consented_libraries: libraries(value.consented_libraries, 'activity_consented_libraries'), counts, enabled_libraries: libraries(value.enabled_libraries, 'activity_enabled_libraries'), provider_recovery: recovery, events: events.map((event, index) => { if (!record(event) || !Array.isArray(event.evidence)) throw new ApiError(502, `invalid_activity_event_${String(index)}`); const occurred_at = event.occurred_at === undefined || event.occurred_at === null ? null : integerValue(event.occurred_at, 'activity_occurred_at'); const failure = event.failure === undefined || event.failure === null ? null : stringValue(event.failure, 'activity_failure'); const author_label = event.author_label === undefined ? undefined : stringValue(event.author_label, 'activity_author_label'); const eventType = stringValue(event.event_type, 'activity_event_type'); if (!['review', 'policy', 'metadata', 'safety', 'unknown'].includes(eventType) || event.evidence.length > 8) throw new ApiError(502, 'invalid_activity_event'); return { destination: stringValue(event.destination, 'activity_event_destination'), event_id: stringValue(event.event_id, 'activity_event_id'), event_type: eventType as ActivityEventType, evidence: event.evidence.map((item) => { if (!record(item)) throw new ApiError(502, 'invalid_activity_evidence'); return { label: stringValue(item.label, 'activity_evidence_label'), value: stringValue(item.value, 'activity_evidence_value') } }), library: stringValue(event.library, 'activity_event_library'), origin: stringValue(event.origin, 'activity_event_origin'), state: stringValue(event.state, 'activity_event_state'), work_id: stringValue(event.work_id, 'activity_work_id'), work_label: event.work_label === undefined ? 'Recorded work' : stringValue(event.work_label, 'activity_work_label'), ...(author_label === undefined ? {} : { author_label }), occurred_at, failure } }),
+    example: activityExample(value.example), last_failure: value.last_failure === null ? null : stringValue(value.last_failure, 'activity_last_failure'), ledger: (() => { const item = value.ledger; const eventType = stringValue(item.event_type, 'activity_ledger_type'); const pageSize = integerValue(item.page_size, 'activity_page_size'); const rangeDays = integerValue(item.range_days, 'activity_range_days'); if (!['all', 'review', 'policy', 'metadata', 'safety', 'unknown'].includes(eventType) || ![25, 50, 100].includes(pageSize) || ![7, 30, 90].includes(rangeDays)) throw new ApiError(502, 'invalid_activity_ledger'); return { event_type: eventType as ActivitySearch['eventType'], page: integerValue(item.page, 'activity_page'), page_count: integerValue(item.page_count, 'activity_page_count'), page_size: pageSize as ActivitySearch['pageSize'], query: item.query === null ? null : stringValue(item.query, 'activity_query'), range_days: rangeDays as ActivitySearch['rangeDays'], total: integerValue(item.total, 'activity_total') } })(), current_waiting: value.current_waiting === null ? null : (() => { if (!record(value.current_waiting)) throw new ApiError(502, 'invalid_activity_waiting'); return { destination: stringValue(value.current_waiting.destination, 'activity_waiting_destination'), library: stringValue(value.current_waiting.library, 'activity_waiting_library'), state: stringValue(value.current_waiting.state, 'activity_waiting_state'), work_id: stringValue(value.current_waiting.work_id, 'activity_waiting_work_id'), work_label: stringValue(value.current_waiting.work_label, 'activity_waiting_work_label') } })(), paused: typeof value.paused === 'boolean' ? value.paused : (() => { throw new ApiError(502, 'invalid_activity_paused') })(), prepared: activityPrepared(value.prepared, 'activity_prepared'), schema_version: 'continuous-field-activity-v2', suspensions: activitySuspensions(value.suspensions),
   }
 }
 
@@ -306,20 +349,29 @@ export const mapLibrary = (value: unknown): LibraryView => {
   const lens = stringValue(value.lens, 'library_lens'); if (!['needs_attention', 'all', 'no_attention_needed'].includes(lens)) throw new ApiError(502, 'invalid_library_lens')
   const dto = value as unknown as LibraryDto; stringValue(dto.schema_version, 'schema_version')
   const query = optionalString(dto.query, 'library_query'); const nextCursor = optionalString(dto.next_cursor, 'library_cursor')
-  return { lens: lens as LibraryLens, ...(query ? { query } : {}), ...(nextCursor ? { nextCursor } : {}), counts: { attention: integerValue(dto.counts.needs_attention, 'attention_count'), all: integerValue(dto.counts.all, 'all_count'), clear: integerValue(dto.counts.no_attention_needed, 'clear_count') }, works: dto.items.map((item) => { const reviewCaseId = optionalString(item.review_case_id, 'review_case_id'); return { id: reviewCaseId ?? stringValue(item.work_id, 'work_id'), ...(reviewCaseId ? { reviewCaseId } : {}), title: stringValue(item.title, 'title'), authors: stringArray(item.authors, 'authors'), library: stringValue(item.library, 'library'), mediaKind: stringValue(item.media_kind, 'media_kind'), attentionCount: integerValue(item.attention_count, 'attention_count'), attention: stringValue(item.attention_state, 'attention_state') } }) }
+  return { lens: lens as LibraryLens, ...(query ? { query } : {}), ...(nextCursor ? { nextCursor } : {}), counts: { attention: integerValue(dto.counts.needs_attention, 'attention_count'), all: integerValue(dto.counts.all, 'all_count'), clear: integerValue(dto.counts.no_attention_needed, 'clear_count') }, works: dto.items.map((item) => {
+    const reviewCaseId = optionalString(item.review_case_id, 'review_case_id')
+    const preparation = item.preparation == null ? null : { attempt: integerValue(item.preparation.attempt, 'preparation_attempt'), provider: stringValue(item.preparation.provider, 'preparation_provider'), reason: stringValue(item.preparation.reason, 'preparation_reason'), recovery: stringValue(item.preparation.recovery, 'preparation_recovery'), recoveryAttempt: integerValue(item.preparation.recovery_attempt, 'preparation_recovery_attempt'), stage: stringValue(item.preparation.stage, 'preparation_stage'), status: stringValue(item.preparation.status, 'preparation_status') }
+    if (!Array.isArray(item.preparation_outcomes)) throw new ApiError(502, 'invalid_preparation_outcomes')
+    const preparationOutcomes = (item.preparation_outcomes as unknown[]).map((outcome, index) => {
+      if (!record(outcome)) throw new ApiError(502, `invalid_provider_outcome_${String(index)}`)
+      return { providerRequests: integerValue(outcome.provider_requests, `provider_outcome_${String(index)}_requests`), laneKind: stringValue(outcome.lane_kind, `provider_outcome_${String(index)}_lane`), provider: stringValue(outcome.provider, `provider_outcome_${String(index)}_provider`), reason: stringValue(outcome.reason, `provider_outcome_${String(index)}_reason`), status: stringValue(outcome.status, `provider_outcome_${String(index)}_status`) }
+    })
+    return { id: reviewCaseId ?? stringValue(item.work_id, 'work_id'), ...(reviewCaseId ? { reviewCaseId } : {}), title: stringValue(item.title, 'title'), authors: stringArray(item.authors, 'authors'), library: stringValue(item.library, 'library'), mediaKind: stringValue(item.media_kind, 'media_kind'), attentionCount: integerValue(item.attention_count, 'attention_count'), attention: stringValue(item.attention_state, 'attention_state'), preparation, preparationOutcomes }
+  }) }
 }
 
 export const mapAttention = (value: unknown): AttentionView => {
   if (!record(value) || !Array.isArray(value.items)) throw new ApiError(502, 'invalid_attention_response')
   const dto = value as unknown as AttentionDto; stringValue(dto.schema_version, 'schema_version')
   const query = optionalString(dto.query, 'attention_query'); const nextCursor = optionalString(dto.next_cursor, 'attention_cursor')
-  return { ...(query ? { query } : {}), ...(nextCursor ? { nextCursor } : {}), total: integerValue(dto.total, 'attention_total'), items: dto.items.map((item) => ({ id: stringValue(item.review_case_id, 'review_case_id'), destination: stringValue(item.destination, 'destination'), title: stringValue(item.title, 'title'), authors: stringArray(item.authors, 'authors'), library: stringValue(item.library, 'library'), mediaKind: stringValue(item.media_kind, 'media_kind'), notices: stringArray(item.notices, 'notices'), provenance: stringArray(item.provenance, 'provenance'), workAttentionCount: integerValue(item.work_attention_count, 'work_attention_count') })) }
+  return { ...(query ? { query } : {}), ...(nextCursor ? { nextCursor } : {}), total: integerValue(dto.total, 'attention_total'), items: dto.items.map((item) => ({ id: stringValue(item.review_case_id, 'review_case_id'), destination: stringValue(item.destination, 'destination'), title: stringValue(item.title, 'title'), authors: stringArray(item.authors, 'authors'), library: stringValue(item.library, 'library'), mediaKind: stringValue(item.media_kind, 'media_kind'), classificationReason: stringValue(item.classification_reason, 'attention_classification_reason'), notices: stringArray(item.notices, 'notices'), provenance: stringArray(item.provenance, 'provenance'), workAttentionCount: integerValue(item.work_attention_count, 'work_attention_count') })) }
 }
 
 export const mapCaseDetail = (value: unknown): CaseDetailView => {
   if (!record(value) || !record(value.target) || !Array.isArray(value.fields)) throw new ApiError(502, 'invalid_case_detail_response')
   const dto = value as unknown as CaseDetailDto; stringValue(dto.schema_version, 'schema_version'); if (typeof dto.current !== 'boolean') throw new ApiError(502, 'invalid_case_currentness')
-  return { id: stringValue(dto.review_case_id, 'review_case_id'), current: dto.current, title: stringValue(dto.target.item, 'target_item'), authors: stringArray(dto.target.authors, 'target_authors'), subtitle: `${stringValue(dto.target.library, 'target_library')} · ${stringValue(dto.target.media_kind, 'target_media_kind')} · ${stringValue(dto.target.connection, 'target_connection')}`, fields: dto.fields.map((field) => ({ destination: stringValue(field.destination, 'destination'), disposition: stringValue(field.deterministic_disposition, 'disposition'), effectCapability: stringValue(field.effect_capability, 'effect_capability'), needsAttention: field.needs_attention, manualHold: field.manual_hold, currentValue: displayValue(field.current.value), currentRaw: field.current.value, proposedValues: field.proposed_values, proposalId: stringValue(field.proposal_id, 'proposal_id'), targetFingerprint: stringValue(field.target_fingerprint, 'target_fingerprint'), humanDecision: field.human_decision, automaticDecision: field.automatic_decision, notices: stringArray(field.notices, 'notices'), provenance: stringArray(field.provenance, 'provenance'), coverConsideration: mapCoverConsideration((field as unknown as Record<string, unknown>).cover_consideration) })) }
+  return { id: stringValue(dto.review_case_id, 'review_case_id'), current: dto.current, title: stringValue(dto.target.item, 'target_item'), authors: stringArray(dto.target.authors, 'target_authors'), subtitle: `${stringValue(dto.target.library, 'target_library')} · ${stringValue(dto.target.media_kind, 'target_media_kind')} · ${stringValue(dto.target.connection, 'target_connection')}`, fields: dto.fields.map((field) => ({ classification: classificationValue(field.classification), classificationReason: stringValue(field.classification_reason, 'classification_reason'), destination: stringValue(field.destination, 'destination'), disposition: stringValue(field.deterministic_disposition, 'disposition'), editable: booleanValue(field.editable, 'editable'), effectCapability: stringValue(field.effect_capability, 'effect_capability'), needsAttention: booleanValue(field.needs_attention, 'needs_attention'), manualHold: booleanValue(field.manual_hold, 'manual_hold'), navigationRole: navigationRole(field.navigation_role), currentValue: displayValue(field.current.value), currentRaw: field.current.value, proposedValues: field.proposed_values, proposalId: stringValue(field.proposal_id, 'proposal_id'), targetFingerprint: stringValue(field.target_fingerprint, 'target_fingerprint'), humanDecision: field.human_decision, automaticDecision: field.automatic_decision, notices: stringArray(field.notices, 'notices'), provenance: stringArray(field.provenance, 'provenance'), preservationOnly: booleanValue(field.preservation_only, 'preservation_only'), corroborationSources: stringArray(field.corroboration_sources, 'corroboration_sources'), coverConsideration: mapCoverConsideration((field as unknown as Record<string, unknown>).cover_consideration) })) }
 }
 
 const mapCoverConsideration = (value: unknown): CoverConsiderationView | null => {

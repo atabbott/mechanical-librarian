@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -35,8 +36,11 @@ from mechanical_librarian.application.metadata_report import (
     TargetCover,
     TargetSnapshot,
     metadata_discovery_plan,
+    provider_observation,
+    ProviderLaneResult,
     qualify_provider_observation,
 )
+from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.domain.metadata_report import (
     MAX_CONTRIBUTIONS,
     MAX_DESCRIPTION_CHARACTERS,
@@ -54,14 +58,17 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderCandidate,
     ProviderClaim,
     ProviderEvidenceKind,
+    ProviderIdentityBinding,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
     PublicationDateRelation,
+    ReportValueError,
     TargetDestination,
     TargetFacts,
     TargetField,
     TargetFieldState,
+    complete_creator_identity_bindings,
     default_target_fields,
     isbn_family,
 )
@@ -70,7 +77,9 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState, cover_source_id,
 )
 from mechanical_librarian.domain.field_effect import FieldEffectError
-from mechanical_librarian.domain.proposal_set import POLICY_VERSION
+from mechanical_librarian.domain.proposal_set import (
+    POLICY_VERSION, ProposalOutcome, evaluate_report,
+)
 
 
 class _InterruptedProviderStream(httpx.SyncByteStream):
@@ -159,7 +168,7 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v23'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v26'", "= 'metadata-report-v1'"
         )
     )
     connection.execute(metadata_persistence._CURRENT_SQL)
@@ -174,7 +183,7 @@ def _create_prior_schema(
 ) -> None:
     statements = (
         metadata_persistence._REPORTS_SQL.replace(
-            "= 'metadata-report-v23'", f"= '{version}'"
+            "= 'metadata-report-v26'", f"= '{version}'"
         ),
         metadata_persistence._CURRENT_SQL,
         metadata_persistence._CURRENT_LINEAGE_SQL,
@@ -226,6 +235,58 @@ def _leave_hot_journal(path: Path) -> Path:
 
 
 class MetadataPersistenceTests(unittest.TestCase):
+    def test_publication_currentness_runs_once_before_the_writer_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            calls: list[None] = []
+
+            def currentness() -> bool:
+                calls.append(None)
+                return True
+
+            try:
+                repository.publish(_report(), currentness)
+            finally:
+                repository.close()
+
+        self.assertEqual(1, len(calls))
+
+    def test_package_assertion_rolls_back_a_package_pointer_race(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "reports.sqlite")
+            source = _report("Source")
+            successor = _report("Successor")
+            try:
+                repository.publish(source, lambda: True)
+                repository._connection.execute("PRAGMA ignore_check_constraints=ON")
+                repository._connection.execute(
+                    "UPDATE current_review_packages SET outcome='hostile'"
+                )
+                repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
+
+                with self.assertRaisesRegex(MetadataReportError, "review package is invalid"):
+                    repository.publish(
+                        successor,
+                        lambda: True,
+                        source.report_id,
+                        expected_package=(None, source.report_id, None, None, "report_only"),
+                    )
+
+                self.assertEqual(source.to_json(), repository.current(
+                    source.target.connection, source.target.library,
+                    source.target.item, source.file.identity,
+                ))
+                with self.assertRaisesRegex(MetadataReportError, "review package is invalid"):
+                    repository.current_review_package(
+                        source.target.connection, source.target.library, source.target.item
+                    )
+                self.assertIsNone(repository._connection.execute(
+                    "SELECT report_id FROM metadata_reports WHERE report_id=?",
+                    (successor.report_id,),
+                ).fetchone())
+            finally:
+                repository.close()
+
     def test_absent_field_effect_consent_remains_a_semantic_absence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = open_repository(Path(directory) / "reports.sqlite")
@@ -308,7 +369,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "current report schema with stale proposal policy",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v23",
+                    "metadata-report-v26",
                     "fixed-conservative-v6",
                 ),
             ),
@@ -362,10 +423,31 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ),
             ),
             (
-                "previous proposal policy v3",
+                "immediate previous v23",
                 lambda connection: _create_prior_schema(
                     connection,
                     "metadata-report-v23",
+                ),
+            ),
+            (
+                "immediate previous v24",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v24",
+                ),
+            ),
+            (
+                "immediate previous v25",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v25",
+                ),
+            ),
+            (
+                "previous proposal policy v3",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v26",
                     "fixed-conservative-v3",
                 ),
             ),
@@ -373,7 +455,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "previous proposal policy v4",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v23",
+                    "metadata-report-v26",
                     "fixed-conservative-v4",
                 ),
             ),
@@ -381,8 +463,16 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "previous proposal policy v5",
                 lambda connection: _create_prior_schema(
                     connection,
-                    "metadata-report-v23",
+                    "metadata-report-v26",
                     "fixed-conservative-v5",
+                ),
+            ),
+            (
+                "immediate previous proposal policy v7",
+                lambda connection: _create_prior_schema(
+                    connection,
+                    "metadata-report-v26",
+                    "fixed-conservative-v7",
                 ),
             ),
             (
@@ -474,6 +564,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                     ("current_metadata_report_lineages",),
                     ("current_metadata_reports",),
                     ("current_review_case_lineages",),
+                    ("current_review_packages",),
                     ("field_effect_actions",),
                     ("field_effect_authorities",),
                     ("field_effect_cleanups",),
@@ -481,6 +572,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                     ("field_effect_control",),
                     ("field_effect_events",),
                     ("field_effect_manual_holds",),
+                    ("field_effect_no_changes",),
                     ("field_effect_suspensions",),
                     ("field_effects",),
                     ("human_decision_events",),
@@ -493,10 +585,12 @@ class MetadataPersistenceTests(unittest.TestCase):
                     ("metadata_report_cover_references",),
                     ("metadata_reports",),
                     ("proposal_sets",),
+                    ("provider_recovery_outbox",),
                     ("review_case_transitions",),
                     ("review_cases",),
                     ("review_login_failures",),
                     ("review_preparation_absences",),
+                    ("review_preparation_connection_conditions",),
                     ("review_preparation_control",),
                     ("review_preparation_scans",),
                     ("review_preparation_work",),
@@ -505,13 +599,46 @@ class MetadataPersistenceTests(unittest.TestCase):
                 ],
             )
             self.assertEqual(len(rows), 2)
-            self.assertEqual(schema_version, ("metadata-report-v23",))
+            self.assertEqual(schema_version, ("metadata-report-v26",))
             self.assertEqual(current, (second.report_id,))
 
             reopened = open_repository(path)
             self.assertEqual(reopened.get(first.report_id), first.to_json())
             self.assertEqual(reopened.current("primary", "ebooks", "item-1", "a" * 64), second.to_json())
             reopened.close()
+
+    def test_provider_recovery_outbox_rejects_digest_corruption_on_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "reports.sqlite"
+            repository = open_repository(path)
+            report = _report()
+            repository.publish(report, lambda: True)
+            outbox_id = metadata_persistence._provider_recovery_outbox_id(
+                report.target.connection, report.target.library,
+                report.target.item, None, report.report_id, None, None,
+                "report_only",
+            )
+            repository._connection.execute(
+                "INSERT INTO provider_recovery_outbox(outbox_id,connection_name,"
+                "library_name,item_id,proposal_set_id,report_id,review_case_id,"
+                "checkpoint,outcome,created_at,delivered_at) "
+                "VALUES(?,?,?,?,NULL,?,NULL,NULL,'report_only',1,NULL)",
+                (outbox_id, report.target.connection, report.target.library,
+                 report.target.item, report.report_id),
+            )
+            repository._connection.commit()
+            repository.close()
+            open_repository(path).close()
+
+            connection = sqlite3.connect(path)
+            connection.execute(
+                "UPDATE provider_recovery_outbox SET outbox_id=?",
+                ("recovery_outbox_" + "0" * 64,),
+            )
+            connection.commit()
+            connection.close()
+            with self.assertRaisesRegex(MetadataReportError, "outbox"):
+                open_repository(path)
 
     def test_same_candidate_replay_converges_after_a_stale_null_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -2491,6 +2618,109 @@ class ProviderAdapterTests(unittest.TestCase):
             providers=(observation,),
         )
         self.assertEqual(report, MetadataReport.from_json(report.to_json()))
+    def test_edition_overflow_rejects_hostile_creator_identity_bindings(self) -> None:
+        rows = [{"id": index, "book_id": 10} for index in range(1, 7)]
+        base = {
+            "id": 10,
+            "title": "Anchored work",
+            "contributions": [
+                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
+            ],
+        }
+        variants = (
+            [
+                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
+                {"id": 1, "contribution": "Author", "author": {"id": 8, "name": "Bea Example"}},
+            ],
+            [
+                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
+                {"id": 2, "contribution": "Author", "author": {"id": 7, "name": "Ada Other"}},
+            ],
+            [
+                {"id": 1, "contribution": "Translator", "author": {"id": 7, "name": "Ada Example"}},
+            ],
+            [
+                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
+                {"id": 2, "contribution": "Author", "author": {"id": 8, "name": "ada example"}},
+            ],
+        )
+        for contributions in variants:
+            payload = self._envelope(rows, [{**base, "contributions": contributions}])
+            with self.subTest(contributions=contributions), self.assertRaises(ValueError):
+                hardcover_metadata._parse_edition_enrichment_overflow(
+                    json.dumps(payload).encode(), "catalogue"
+                )
+        for malformed_rows in (
+            [{"id": 1, "book_id": 10}] * 6,
+            [{"id": index, "book_id": 11} for index in range(1, 7)],
+        ):
+            with self.subTest(rows=malformed_rows), self.assertRaises(ValueError):
+                hardcover_metadata._parse_edition_enrichment_overflow(
+                    json.dumps(self._envelope(malformed_rows, [base])).encode(),
+                    "catalogue",
+                )
+
+    def test_edition_overflow_probe_has_exact_five_six_seven_boundary(self) -> None:
+        book = [{
+            "id": 10,
+            "title": "Anchored work",
+            "contributions": [{
+                "id": 1, "contribution": "Author",
+                "author": {"id": 7, "name": "Ada Example"},
+            }],
+        }]
+        for count in (5, 6, 7):
+            payload = json.dumps(self._envelope(
+                [{"id": index, "book_id": 10} for index in range(1, count + 1)],
+                book,
+            )).encode()
+            with self.subTest(count=count):
+                if count == 7:
+                    with self.assertRaises(hardcover_metadata._CandidateLimit):
+                        hardcover_metadata._parse_edition_enrichment_overflow(payload, "catalogue")
+                else:
+                    value = hardcover_metadata._parse_edition_enrichment_overflow(payload, "catalogue")
+                    self.assertEqual(count == 6, value is not None)
+
+    def test_mixed_discovery_retains_only_the_work_overflow_witness(self) -> None:
+        fields = tuple(
+            TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Ada Example",))
+            if field.destination is TargetDestination.AUTHORS else field
+            for field in default_target_fields("Current title")
+        )
+        title, isbn = self._title_claim(), self._claim()
+        plan = metadata_discovery_plan(
+            TargetSnapshot("ebook", "Current title", (), fields=fields),
+            (title, isbn),
+        )
+        witness = hardcover_metadata._parse_edition_enrichment_overflow(
+            json.dumps(self._envelope(
+                [{"id": index, "book_id": 10} for index in range(1, 7)],
+                [{"id": 10, "title": "Current title", "contributions": [{"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}}]}],
+            )).encode(),
+            "catalogue",
+        )
+        assert witness is not None
+        work = next(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK)
+        isbn_lane = next(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ISBN)
+        observation = provider_observation(
+            "catalogue",
+            (
+                ProviderLaneResult(work, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, edition_enrichment_overflow=witness),
+                ProviderLaneResult(isbn_lane, ProviderStatus.NO_MATCH),
+            ),
+        )
+        self.assertEqual(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, observation.status)
+        self.assertEqual(witness, observation.edition_enrichment_overflow)
+        self.assertEqual((), observation.candidates)
+        report = MetadataReport.create(
+            target=TargetFacts("primary", "ebooks", "item-1", fields),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(title, isbn),
+            local_reasons=("opening_matter_isbn",),
+            providers=(observation,),
+        )
+        self.assertEqual(report, MetadataReport.from_json(report.to_json()))
 
     def test_hardcover_taxonomy_and_work_publication_fail_closed(self) -> None:
         def observe(book: dict[str, object]) -> ProviderObservation:
@@ -2683,6 +2913,115 @@ class ProviderAdapterTests(unittest.TestCase):
             provider = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request, length=size: httpx.Response(200, headers={"content-type": "application/json"}, content=b"x" * length))), 262_144)
             self.assertEqual(provider.observe(_isbn_lookup((self._claim(),))).status, expected)
 
+    def test_edition_overflow_retains_only_work_scoped_witness(self) -> None:
+        rows = [
+            {
+                "id": index,
+                "book_id": 10,
+                "isbn_10": "0306406152",
+                "isbn_13": "9780306406157",
+                "title": f"Discarded edition {index}",
+                "release_date": "2001-02-03",
+                "image": f"https://example.test/edition-{index}.jpg",
+                "publisher": {"name": "Discarded publisher"},
+                "language": "en",
+            }
+            for index in range(1, 7)
+        ]
+        provider = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=self._envelope(
+                            rows,
+                            [
+                                {
+                                    "id": 10,
+                                    "title": "Anchored work",
+                                    "contributions": [
+                                        {
+                                            "id": 1,
+                                            "contribution": "Author",
+                                            "author": {
+                                                "id": 7,
+                                                "name": "Ada Example",
+                                            },
+                                        }
+                                    ],
+                                }
+                            ],
+                        ),
+                    )
+                )
+            ),
+            65_536,
+        )
+
+        observation = provider.observe(_work_lookup())
+
+        self.assertEqual(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, observation.status)
+        self.assertEqual((), provider.cover_descriptors)
+        self.assertEqual((), observation.diagnostics)
+        self.assertEqual((), observation.candidates)
+        witness = observation.edition_enrichment_overflow
+        self.assertIsNotNone(witness)
+        assert witness is not None
+        self.assertEqual("hardcover-work-0000000010", witness.work_identity)
+        self.assertEqual("Anchored work", witness.title)
+        self.assertEqual(1, len(witness.authors))
+        self.assertEqual(
+            "Ada Example", witness.authors[0].value,
+        )
+        self.assertFalse(
+            {
+                "Discarded edition 1",
+                "Discarded publisher",
+                "2001-02-03",
+                "en",
+                "9780306406157",
+            }
+            & {witness.title, *(claim.value for claim in witness.authors)}
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary", "ebooks", "item-1", tuple(
+                    TargetField(
+                        TargetDestination.AUTHORS,
+                        TargetFieldState.VALUE,
+                        ("Ada Example",),
+                    )
+                    if field.destination is TargetDestination.AUTHORS
+                    else field
+                    for field in default_target_fields("Anchored work")
+                )
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(observation,),
+        )
+        self.assertEqual(report, MetadataReport.from_json(report.to_json()))
+        for mutate in (
+            lambda document: next(
+                field.update({"value": "Other work"})
+                for field in document["target"]["fields"]
+                if field["destination"] == "title"
+            ),
+            lambda document: next(
+                field.update({"value": ["Other author"]})
+                for field in document["target"]["fields"]
+                if field["destination"] == "authors"
+            ),
+            lambda document: document["providers"][0]["edition_enrichment_overflow"].update({"title": "Anchored work (Expanded)"}),
+        ):
+            document = report.to_data()
+            mutate(document)
+            with self.assertRaises(ReportValueError):
+                MetadataReport.from_json(hardcover_metadata.canonical_json(document))
+
     def test_exact_rich_caps_and_pinned_schema_are_admitted(self) -> None:
         self.assertEqual(hardcover_metadata.HARDCOVER_SCHEMA_COMMIT, "1c5bdbd3244e02b03ccc658a792793e39cba17a8")
         self.assertIn("contributions(order_by:{id:asc},limit:17){id contribution author{id name}}", hardcover_metadata._QUERY)
@@ -2744,7 +3083,7 @@ class ProviderAdapterTests(unittest.TestCase):
                 )
             )
 
-    def test_nullable_contribution_roles_preserve_candidate_with_typed_malformed_claims(self) -> None:
+    def test_nullable_contribution_roles_preserve_neutral_identity_bound_creators(self) -> None:
         contribution = {
             "id": 1,
             "contribution": None,
@@ -2753,24 +3092,272 @@ class ProviderAdapterTests(unittest.TestCase):
         observation = self._observe_contributions([contribution])
 
         self.assertEqual(ProviderStatus.CANDIDATES, observation.status)
-        malformed = [
+        creators = [
             claim
             for claim in observation.candidates[0].claims
-            if claim.kind is ClaimKind.CONTRIBUTOR
-            and claim.state is FieldState.MALFORMED
+            if claim.kind is ClaimKind.CREATOR
+            and claim.state is FieldState.VALID
+            and claim.role is None
         ]
         self.assertEqual(
             {ClaimScope.EDITION, ClaimScope.WORK},
-            {claim.scope for claim in malformed},
+            {claim.scope for claim in creators},
+        )
+        work_creator = next(
+            claim for claim in creators if claim.scope is ClaimScope.WORK
+        )
+        self.assertEqual(
+            ((work_creator.reference, "hardcover-author-0000000001", None),),
+            tuple(
+                (binding.claim_reference, binding.identity, binding.role)
+                for binding in observation.candidates[0].identity_bindings
+            ),
+        )
+        qualified = qualify_provider_observation(
+            observation,
+            _work_lookup("Synthetic title", ("Synthetic Contributor",)),
+        )
+        self.assertEqual(ProviderStatus.CANDIDATES, qualified.status)
+        self.assertEqual(
+            (None,),
+            tuple(
+                claim.role
+                for claim in qualified.candidates[0].claims
+                if claim.kind is ClaimKind.CREATOR
+            ),
         )
         self.assertEqual(
             {ProviderEvidenceKind.FIRST_PUBLICATION_DATE},
             {evidence.kind for evidence in observation.candidates[0].evidence},
         )
+        sibling_claims = observation.candidates[0].claims
+        self.assertEqual(
+            {"Synthetic title", "9780306406157"},
+            {
+                claim.value
+                for claim in sibling_claims
+                if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
+                and claim.state is FieldState.VALID
+            },
+        )
+        self.assertIn(
+            ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+            {evidence.kind for evidence in observation.candidates[0].evidence},
+        )
+
+    def test_mixed_author_and_neutral_creators_reject_author_projection(self) -> None:
+        """A complete mixed creator collection cannot donate its typed subset."""
+        observation = self._observe_contributions(
+            [
+                {
+                    "id": 1,
+                    "contribution": "Author",
+                    "author": {"id": 1, "name": "Synthetic One"},
+                },
+                {
+                    "id": 2,
+                    "contribution": None,
+                    "author": {"id": 2, "name": "Synthetic Two"},
+                },
+            ]
+        )
+
+        qualified = qualify_provider_observation(
+            observation,
+            _work_lookup("Synthetic title", ("Synthetic One",)),
+        )
+        self.assertEqual(ProviderStatus.CANDIDATES, qualified.status)
+        candidate = qualified.candidates[0]
+        self.assertFalse(
+            any(
+                claim.scope is ClaimScope.WORK
+                and claim.kind is ClaimKind.CREATOR
+                for claim in candidate.claims
+            )
+        )
+        self.assertEqual((), candidate.identity_bindings)
+        self.assertEqual(
+            {"Synthetic title", "9780306406157"},
+            {
+                claim.value
+                for claim in candidate.claims
+                if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
+                and claim.state is FieldState.VALID
+            },
+        )
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary", "ebooks", "item-1",
+                default_target_fields("Synthetic title"),
+            ),
+            file=FileFacts(0, "a" * 64, "b" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(qualified,),
+        )
+        authors = next(
+            result
+            for result in evaluate_report(report).results
+            if result.destination is TargetDestination.AUTHORS
+        )
+        self.assertIs(ProposalOutcome.INELIGIBLE, authors.outcome)
+        self.assertEqual((), authors.alternatives)
+
+    def test_mixed_creator_candidate_with_different_typed_author_is_not_admitted(self) -> None:
+        """Mixed roles do not bypass the exact typed-author work qualification."""
+        observation = self._observe_contributions(
+            [
+                {
+                    "id": 1,
+                    "contribution": "Author",
+                    "author": {"id": 1, "name": "Completely Different"},
+                },
+                {
+                    "id": 2,
+                    "contribution": None,
+                    "author": {"id": 2, "name": "Synthetic Two"},
+                },
+            ]
+        )
+
+        qualified = qualify_provider_observation(
+            observation,
+            _work_lookup("Synthetic title", ("Synthetic One",)),
+        )
+        self.assertEqual(ProviderStatus.NO_MATCH, qualified.status)
+        self.assertEqual((), qualified.candidates)
+
+    def test_reused_neutral_creator_identity_binding_fails_qualification_locally(
+        self,
+    ) -> None:
+        observation = self._observe_contributions(
+            [
+                {
+                    "id": 1,
+                    "contribution": None,
+                    "author": {"id": 1, "name": "Synthetic One"},
+                },
+                {
+                    "id": 2,
+                    "contribution": None,
+                    "author": {"id": 1, "name": "Synthetic Two"},
+                },
+            ]
+        )
+        candidate = observation.candidates[0]
+        creators = tuple(
+            claim
+            for claim in candidate.claims
+            if claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.CREATOR
+            and claim.role is None
+        )
+        observation = replace(
+            observation,
+            candidates=(
+                replace(
+                    candidate,
+                    identity_bindings=tuple(
+                        ProviderIdentityBinding(
+                            claim.reference, "hardcover-author-0000000001",
+                            ClaimScope.WORK, None, index,
+                        )
+                        for index, claim in enumerate(creators)
+                    ),
+                ),
+            ),
+        )
+        self.assertNotEqual(
+            len({value.identity for value in observation.candidates[0].identity_bindings}),
+            len(observation.candidates[0].identity_bindings),
+        )
+        self.assertIsNotNone(
+            complete_creator_identity_bindings(
+                observation.candidates[0], creators,
+            )
+        )
+
+        qualified = qualify_provider_observation(
+            observation,
+            _work_lookup("Synthetic title", ("Synthetic One", "Synthetic Two")),
+        )
+        self.assertEqual(ProviderStatus.CANDIDATES, qualified.status)
+        self.assertEqual(
+            ("hardcover-author-0000000001", "hardcover-author-0000000001"),
+            tuple(value.identity for value in observation.candidates[0].identity_bindings),
+        )
+        self.assertEqual(
+            2,
+            len(
+                tuple(
+                    claim
+                    for claim in observation.candidates[0].claims
+                    if claim.scope is ClaimScope.WORK
+                    and claim.kind is ClaimKind.CREATOR
+                    and claim.role is None
+                )
+            ),
+        )
+        self.assertFalse(
+            any(
+                claim.kind is ClaimKind.CREATOR
+                and claim.scope is ClaimScope.WORK
+                for claim in qualified.candidates[0].claims
+            )
+        )
+        self.assertEqual((), qualified.candidates[0].identity_bindings)
+        sibling_claims = observation.candidates[0].claims
+        self.assertEqual(
+            {"Synthetic title", "9780306406157"},
+            {
+                claim.value
+                for claim in sibling_claims
+                if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
+                and claim.state is FieldState.VALID
+            },
+        )
+        self.assertIn(
+            ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+            {evidence.kind for evidence in qualified.candidates[0].evidence},
+        )
+        replayed = MetadataReport.from_json(
+            MetadataReport.create(
+                target=TargetFacts(
+                    "primary", "ebooks", "item-1",
+                    default_target_fields("Synthetic title"),
+                ),
+                file=FileFacts(0, "a" * 64, "b" * 64),
+                local_claims=(),
+                local_reasons=("no_opening_claims",),
+                providers=(qualified,),
+            ).to_json()
+        )
+        replayed_claims = replayed.providers[0].candidates[0].claims
+        self.assertEqual(
+            {"Synthetic title", "9780306406157"},
+            {
+                claim.value
+                for claim in replayed_claims
+                if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
+                and claim.state is FieldState.VALID
+            },
+        )
+        authors = next(
+            result
+            for result in evaluate_report(replayed).results
+            if result.destination is TargetDestination.AUTHORS
+        )
+        self.assertFalse(
+            any(
+                reference in {claim.reference for claim in creators}
+                for alternative in authors.alternatives
+                for reference in alternative.evidence_references
+            )
+        )
 
     def test_nullable_and_malformed_contribution_authors_are_field_local(self) -> None:
         for label, role, author, expected_kind in (
-            ("both-null", None, None, ClaimKind.CONTRIBUTOR),
+            ("both-null", None, None, ClaimKind.CREATOR),
             ("null-author", "Author", None, ClaimKind.CREATOR),
             ("malformed-author", "Translator", "invalid", ClaimKind.CONTRIBUTOR),
             ("malformed-role-and-author", {}, "invalid", ClaimKind.CONTRIBUTOR),
@@ -4662,12 +5249,16 @@ class AudiobookshelfItemTests(unittest.TestCase):
 
         with self.assertRaises(TargetNotFoundError):
             reader(404).read("item-1")
-        for status in (401, 403):
+        for status in (401, 403, 503):
             with self.subTest(status=status), self.assertRaises(
-                MetadataReportError
+                TargetConnectionError
             ) as raised:
                 reader(status).read("item-1")
             self.assertNotIsInstance(raised.exception, TargetNotFoundError)
+            self.assertEqual(
+                raised.exception.code,
+                {401: "authentication", 403: "authorization", 503: "unavailable"}[status],
+            )
 
     def test_raw_cover_accepts_matching_supported_image_signatures(self) -> None:
         client_type = httpx.Client
@@ -5443,6 +6034,7 @@ class AudiobookshelfItemTests(unittest.TestCase):
             "isMissing": False,
             "mediaType": "book",
             "relPath": "Author/Book",
+            "isFile": False,
             "media": {
                 "metadata": {"title": "Current title"},
                 "ebookFile": {
@@ -5485,6 +6077,7 @@ class AudiobookshelfItemTests(unittest.TestCase):
             "isMissing": False,
             "mediaType": "book",
             "relPath": "Author/Book",
+            "isFile": False,
             "media": {
                 "metadata": {"title": "Current title"},
                 "ebookFile": {

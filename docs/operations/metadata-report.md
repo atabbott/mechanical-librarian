@@ -50,7 +50,7 @@ provider call.
 - The container runs under a dedicated Unix identity with no untrusted
   same-identity processes. Privileged and hostile same-identity filesystem
   mutation is outside the supported unprivileged exclusion boundary.
-- The configuration uses `config-v5` and names the requested connection and
+- The configuration uses `config-v6` and names the requested connection and
   library explicitly.
 - The target secret and each enabled referenced provider secret are owner-only
   regular files.
@@ -145,8 +145,8 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v23`. Every earlier report discriminator,
-including `metadata-report-v22`, remains offline and requires a clean current
+discriminator is `metadata-report-v26`. Every earlier report discriminator,
+including immediate prior `metadata-report-v25`, remains offline and requires a clean current
 database under ADR-0013.
 
 Google Books descriptions use one inert, bounded
@@ -221,8 +221,20 @@ parsed name-to-identity bindings may treat multiple names for one provider
 identity as aliases. Incomplete bindings remain non-authoritative and direct
 complete-name comparison still applies; conflicting complete bindings,
 reordered, duplicated, multi-author-inverted or role/scope-incompatible sets
-cannot agree. Alternative
-work titles remain distinct original claims bound to the same admitted work;
+cannot agree.
+An unlabelled Hardcover creator remains a neutral, identity-bound work claim
+when its complete ordered set exactly substantiates an existing target-backed
+successful ISBN or work lookup. It never becomes author evidence by itself.
+An author-labelled creator collection that also contains neutral or other
+creator roles is rejected as a whole rather than projected as a typed subset.
+One independently qualified provider's complete explicit author set compares
+complete ordered identity bindings first. Provider-native identity namespaces are not a global
+person registry, so nonmatching namespaces fall back only to exact closed
+normalized names.
+Repeated endpoints and providers with the same authority are one source;
+partial, duplicated, reordered, mixed-role, malformed, or contradictory sets
+remain unresolved.
+Alternative work titles remain distinct original claims bound to the same admitted work;
 titles are never assembled from subtitles. Fuzzy matching, token subsets,
 variant/translation/abridgement markers, provider rank and repeated queries do
 not create agreement or independent corroboration.
@@ -289,6 +301,13 @@ bound, and provider status retains its existing neutral meaning.
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
 bounded set is `candidates`; all candidates survive in provider-identity order
 with their distinct edition identity and opaque provider-local work identity.
+When Hardcover's exact six-row edition probe has one safely qualified work, it
+records a terminal edition-enrichment overflow witness: only the provider work
+identity, validated work title, ordered author claims, and exact author
+identity bindings. It is not a candidate; it cannot enter proposal, review, or
+cover selection. Every edition identity, field, row, diagnostic, and cover is
+discarded. Any incomplete, ambiguous, duplicate, or contradictory linkage
+fails closed without a witness.
 The work lane retains only work title, complete authors, series and sequence,
 description, typed taxonomy, same-work first publication, and same-work cover
 evidence. It strips ISBN/ASIN, publisher/imprint, edition language,

@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from mechanical_librarian.application.catalogue import CatalogueEntry
+from mechanical_librarian.application.catalogue import CatalogueEntry, TargetConnectionError
 from mechanical_librarian.application.metadata_report import CredentialError
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.metadata_report import ProviderStatus
@@ -19,6 +19,7 @@ __all__ = [
     "ReviewPipelineRepository",
     "ReviewPreparationPipeline",
     "ReviewPreparationSupervisor",
+    "TargetConnectionCondition",
 ]
 
 
@@ -30,41 +31,12 @@ _STAGES = (
     "admission",
     "projection",
 )
-_TECHNICAL_PROVIDER_FAILURES = frozenset(
-    {
-        ProviderStatus.AUTHENTICATION,
-        ProviderStatus.AUTHORIZATION,
-        ProviderStatus.RATE_LIMITED,
-        ProviderStatus.UNAVAILABLE,
-        ProviderStatus.INCOMPLETE,
-        ProviderStatus.MALFORMED,
-        ProviderStatus.OVERSIZED,
-        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
-        ProviderStatus.QUERY_LIMIT_EXCEEDED,
-    }
-)
-_TRANSIENT_PROVIDER_FAILURES = frozenset(
-    {ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE}
-)
-_AUTHENTICATION_PROVIDER_FAILURES = frozenset(
-    {ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION}
-)
 
 
-def provider_failure_disposition(
-    statuses: tuple[ProviderStatus, ...],
-) -> tuple[str, bool] | None:
-    failures = _TECHNICAL_PROVIDER_FAILURES.intersection(statuses)
-    if _AUTHENTICATION_PROVIDER_FAILURES.intersection(failures):
-        return "authentication", False
-    if _TRANSIENT_PROVIDER_FAILURES.intersection(failures):
-        return "transient", True
-    if failures:
-        return "provider", False
+def _unconfigured_connection_check(_connection: str) -> None:
+    # Direct pipeline construction remains a pure test/application seam. The
+    # composed product always supplies the adapter-owned probe.
     return None
-
-
-_provider_failure_disposition = provider_failure_disposition
 
 
 class ReviewPipelineError(RuntimeError):
@@ -91,6 +63,18 @@ class PipelineProgress:
 
 
 @dataclass(frozen=True, slots=True)
+class TargetConnectionCondition:
+    """The value-free durable condition for one configured target connection."""
+
+    connection: str
+    code: str
+    state: str
+    epoch: int
+    affected: int
+    updated_at: int
+
+
+@dataclass(frozen=True, slots=True)
 class PipelineAction:
     action_id: str
     scan_id: str
@@ -109,6 +93,8 @@ class PipelineAction:
     proposal_set_id: str | None = None
     review_case_id: str | None = None
     source_fingerprint: str | None = None
+    lineage_checkpoint: int | None = None
+    policy_generation: int | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -134,6 +120,15 @@ class PipelineAction:
             or type(self.source_fingerprint) is not str
             or len(self.source_fingerprint) != 64
             or any(value not in "0123456789abcdef" for value in self.source_fingerprint)
+        ):
+            raise ReviewPipelineError("state")
+        if self.lineage_checkpoint is not None and (
+            type(self.lineage_checkpoint) is not int
+            or self.lineage_checkpoint < 1
+        ):
+            raise ReviewPipelineError("state")
+        if self.policy_generation is not None and (
+            type(self.policy_generation) is not int or self.policy_generation < 1
         ):
             raise ReviewPipelineError("state")
 
@@ -164,7 +159,20 @@ class ReviewPipelineRepository(Protocol):
 
     def set_review_pipeline_paused(self, paused: bool, updated_at: int) -> None: ...
 
+    def target_connection_conditions(self) -> tuple[TargetConnectionCondition, ...]: ...
+    def guard_target_connection(self, action: PipelineAction, checked_at: int) -> bool: ...
+    def discovery_requires_qualification(self, action: PipelineAction) -> bool: ...
+    def qualify_review_discovery(self, action: PipelineAction, qualified_at: int) -> bool: ...
+    def defer_for_target_connection(self, action: PipelineAction, code: str, updated_at: int) -> None: ...
+    def hold_target_connection(self, connection: str, code: str, updated_at: int) -> None: ...
+    def begin_target_connection_check(self, connection: str, checked_at: int) -> TargetConnectionCondition | None: ...
+    def finish_target_connection_check(self, connection: str, epoch: int, code: str | None, checked_at: int) -> bool: ...
+
     def claim_review_pipeline_action(self, claimed_at: int) -> PipelineAction | None: ...
+    def claim_review_pipeline_work(self, work_id: str, claimed_at: int) -> PipelineAction | None: ...
+    def provider_retry_work_id(self, report_id: str) -> str: ...
+    def provider_retry_complete(self, report_id: str) -> bool: ...
+    def completed_provider_retry_successor(self, source_report_id: str) -> str | None: ...
 
     def take_review_pipeline_claim(self) -> PipelineAction | None: ...
 
@@ -173,7 +181,7 @@ class ReviewPipelineRepository(Protocol):
     def rollback_review_pipeline_output(self) -> None: ...
 
     def persist_shadow_outcome(
-        self, review_case_id: str, evaluated_at: int
+        self, review_case_id: str, evaluated_at: int, *, staged_action: PipelineAction | None = None
     ) -> str: ...
 
     def complete_review_discovery(
@@ -191,6 +199,7 @@ class ReviewPipelineRepository(Protocol):
         output_id: str | None,
         completed_at: int,
         claim_next: bool = False,
+        exact_next: bool = False,
     ) -> PipelineAction | None: ...
 
     def fail_review_pipeline_action(
@@ -226,7 +235,14 @@ class ReviewPreparationPipeline:
         admit: Callable[
             [ReviewPipelineRepository, str], tuple[str, str | None]
         ],
-        project: Callable[[ReviewPipelineRepository, str], bool | str],
+        project: Callable[[ReviewPipelineRepository, PipelineAction], bool | str],
+        before_projection: Callable[[ReviewPipelineRepository, PipelineAction], None] = (
+            lambda *_args: None
+        ),
+        after_advance: Callable[
+            [ReviewPipelineRepository, PipelineAction, str | None], None
+        ] = lambda *_args: None,
+        check_connection: Callable[[str], None] = _unconfigured_connection_check,
         clock: Callable[[], int] = lambda: int(time.time()),
         timing: StageTimer | None = None,
     ) -> None:
@@ -243,6 +259,9 @@ class ReviewPreparationPipeline:
         self._propose = propose
         self._admit = admit
         self._project = project
+        self._before_projection = before_projection
+        self._after_advance = after_advance
+        self._check_connection = check_connection
         self._clock = clock
         self._timing = timing or StageTimer(None)
         self._draining = threading.Event()
@@ -355,6 +374,56 @@ class ReviewPreparationPipeline:
         finally:
             repository.close()
 
+    def connection_conditions(self) -> tuple[TargetConnectionCondition, ...]:
+        repository = self._open_repository()
+        try:
+            return repository.target_connection_conditions()
+        finally:
+            repository.close()
+
+    def check_connection(self, connection: str) -> bool:
+        """One owner-triggered, epoch-bound connection check.
+
+        A duplicate click while checking is intentionally a no-op.  A stale
+        checker cannot clear a later failure because finish compares its epoch.
+        """
+        # The durable begin/finish transitions are deliberately separate from
+        # the external probe.  Holding a SQLite connection (or the web
+        # application's serialization gate) across network I/O would make an
+        # owner check globally disruptive.
+        repository = self._open_repository()
+        try:
+            condition = repository.begin_target_connection_check(connection, self._clock())
+        finally:
+            repository.close()
+        if condition is None:
+            return False
+        code: str | None = None
+        try:
+            self._check_connection(connection)
+        except TargetConnectionError as error:
+            code = error.code
+        except Exception:
+            # A probe that did not produce a closed successful observation
+            # must never strand this connection in checking.
+            code = "unavailable"
+        repository = self._open_repository()
+        try:
+            repository.finish_target_connection_check(
+                connection, condition.epoch, code, self._clock()
+            )
+        finally:
+            repository.close()
+        return True
+
+    def hold_connection(self, connection: str, code: str) -> None:
+        """Record a retry-successor target observation as a connection hold."""
+        repository = self._open_repository()
+        try:
+            repository.hold_target_connection(connection, code, self._clock())
+        finally:
+            repository.close()
+
     def begin_drain(self) -> None:
         """Finish the current claim without admitting another one."""
         with self._claim_lock:
@@ -393,12 +462,40 @@ class ReviewPreparationPipeline:
         finally:
             repository.close()
 
+    def run_recovery_successor(
+        self, report_id: str, heartbeat: Callable[[], None] = lambda: None
+    ) -> bool:
+        """Complete one staged successor through ordinary F22 stages."""
+        if not callable(heartbeat):
+            raise ReviewPipelineError("state")
+        heartbeat()
+        repository = self._open_repository()
+        try:
+            work_id = repository.provider_retry_work_id(report_id)
+            action = repository.claim_review_pipeline_work(work_id, self._clock())
+            if action is None:
+                return repository.provider_retry_complete(report_id)
+            for index in range(4):
+                if action is None:
+                    return False
+                heartbeat()
+                action = self._run_claimed_action(
+                    repository, action, claim_next=False, exact_next=True,
+                )
+                heartbeat()
+                if action is None:
+                    return repository.provider_retry_complete(report_id)
+            return False
+        finally:
+            repository.close()
+
     def _run_claimed_action(
         self,
         repository: ReviewPipelineRepository,
         action: PipelineAction,
         *,
         claim_next: bool,
+        exact_next: bool = False,
     ) -> PipelineAction | None:
         timing = {
             "proposal": ("policy_evaluation", "none"),
@@ -407,11 +504,13 @@ class ReviewPreparationPipeline:
         }.get(action.stage)
         if timing is None:
             return self._execute_claimed_action(
-                repository, action, claim_next=claim_next
+                repository, action, claim_next=claim_next,
+                exact_next=exact_next,
             )
         with self._timing.measure(*timing):
             return self._execute_claimed_action(
-                repository, action, claim_next=claim_next
+                repository, action, claim_next=claim_next,
+                exact_next=exact_next,
             )
 
     def _execute_claimed_action(
@@ -420,11 +519,28 @@ class ReviewPreparationPipeline:
         action: PipelineAction,
         *,
         claim_next: bool,
+        exact_next: bool = False,
     ) -> PipelineAction | None:
         output_transaction = False
         try:
+            # A connection can become paused after this worker obtained its
+            # durable claim. Re-check before every target-dependent stage so
+            # the claim returns to its retained checkpoint without an item
+            # failure.
+            guard = getattr(repository, "guard_target_connection", None)
+            if guard is not None and not guard(action, self._clock()):
+                return None
             output_id: str | None = None
             if action.stage == "discovery":
+                requires_qualification = getattr(
+                    repository, "discovery_requires_qualification", None
+                )
+                if requires_qualification is not None and requires_qualification(action):
+                    self._check_connection(action.connection)
+                    if not repository.qualify_review_discovery(
+                        action, self._clock()
+                    ):
+                        return None
                 generation, fingerprint, entries = self._discover(
                     action.connection, action.library
                 )
@@ -441,11 +557,11 @@ class ReviewPreparationPipeline:
             elif action.stage == "provider":
                 if action.report_id is None:
                     raise ReviewPipelineError("state")
-                statuses = self._providers(repository, action.report_id)
-                disposition = provider_failure_disposition(statuses)
-                if disposition is not None:
-                    self._fail(repository, action, *disposition)
-                    return None
+                # The report already contains one bounded terminal observation
+                # for every configured provider lane. Proposal admission, not a
+                # sibling technical status, decides whether the complete report
+                # can form a coherent package.
+                self._providers(repository, action.report_id)
             elif action.stage == "proposal":
                 if action.report_id is None:
                     raise ReviewPipelineError("state")
@@ -460,9 +576,15 @@ class ReviewPreparationPipeline:
                 _, output_id = self._admit(repository, action.proposal_set_id)
             elif action.stage == "projection":
                 if action.review_case_id is not None:
-                    projection = self._project(repository, action.review_case_id)
+                    # Advisory cover review settles before F22's projection
+                    # transaction, so a stale or persistence failure cannot
+                    # publish a package without the required comparison.
+                    self._before_projection(repository, action)
+                    repository.begin_review_pipeline_output()
+                    output_transaction = True
+                    projection = self._project(repository, action)
                     if projection == "stale":
-                        return None
+                        raise ReviewPipelineError("stale")
                     if projection is not True and projection != "complete":
                         raise ReviewPipelineError("projection")
             return self._advance(
@@ -470,6 +592,7 @@ class ReviewPreparationPipeline:
                 action,
                 output_id,
                 claim_next=claim_next,
+                exact_next=exact_next,
             )
         except ReviewPipelineError as error:
             if output_transaction:
@@ -481,6 +604,13 @@ class ReviewPreparationPipeline:
                 error.code in {"stale", "transient"},
                 error.root,
             )
+        except TargetConnectionError as error:
+            # The action remains at its first uncommitted target-dependent
+            # checkpoint.  This is deliberately distinct from provider and
+            # item-currentness failures.
+            if output_transaction:
+                repository.rollback_review_pipeline_output()
+            repository.defer_for_target_connection(action, error.code, self._clock())
         except CredentialError as error:
             if output_transaction:
                 repository.rollback_review_pipeline_output()
@@ -521,17 +651,25 @@ class ReviewPreparationPipeline:
         output_id: str | None,
         *,
         claim_next: bool,
+        exact_next: bool = False,
     ) -> PipelineAction | None:
         try:
             if claim_next:
                 with self._claim_lock:
-                    return repository.advance_review_pipeline_action(
+                    advanced = repository.advance_review_pipeline_action(
                         action, output_id, self._clock(),
                         not self._draining.is_set(),
                     )
-            return repository.advance_review_pipeline_action(
-                action, output_id, self._clock(), False
-            )
+            elif exact_next:
+                advanced = repository.advance_review_pipeline_action(
+                    action, output_id, self._clock(), False, True,
+                )
+            else:
+                advanced = repository.advance_review_pipeline_action(
+                    action, output_id, self._clock(), False
+                )
+            self._after_advance(repository, action, output_id)
+            return advanced
         except ReviewPipelineError:
             raise
         except Exception as error:
@@ -565,6 +703,10 @@ class ReviewPreparationSupervisor:
         polling_interval_seconds: int | None = None,
         graceful_shutdown_seconds: int = 30,
         clock: Callable[[], int] = lambda: int(time.time()),
+        recovery_wake: Callable[[int], None] | None = None,
+        recovery_drain: Callable[[], None] | None = None,
+        recovery_resume: Callable[[], None] | None = None,
+        on_stop: Callable[[], None] | None = None,
     ) -> None:
         if polling_interval_seconds is not None and (
             type(polling_interval_seconds) is not int
@@ -578,6 +720,9 @@ class ReviewPreparationSupervisor:
         self._polling_interval_seconds = polling_interval_seconds
         self._graceful_shutdown_seconds = graceful_shutdown_seconds
         self._clock = clock
+        self._recovery_wake = recovery_wake
+        self._recovery_drain = recovery_drain
+        self._recovery_resume = recovery_resume
         self._schedule_lock = threading.Lock()
         self._next_schedule_at: int | None = None
         self._schedule_paused = False
@@ -585,6 +730,7 @@ class ReviewPreparationSupervisor:
         self._wake = threading.Event()
         self._stop = threading.Event()
         self._threads: tuple[threading.Thread, ...] = ()
+        self._on_stop = on_stop
 
     @property
     def libraries(self) -> tuple[tuple[str, str, str], ...]:
@@ -594,6 +740,8 @@ class ReviewPreparationSupervisor:
         if self._threads:
             return
         self._stop.clear()
+        if self._recovery_resume is not None:
+            self._recovery_resume()
         resume = getattr(self._pipeline, "resume_claiming", None)
         if resume is not None:
             resume()
@@ -617,6 +765,8 @@ class ReviewPreparationSupervisor:
         drain = getattr(self._pipeline, "begin_drain", None)
         if drain is not None:
             drain()
+        if self._recovery_drain is not None:
+            self._recovery_drain()
         self._stop.set()
         self._wake.set()
 
@@ -630,6 +780,9 @@ class ReviewPreparationSupervisor:
         self._threads = active
         if active:
             raise ReviewPipelineError("shutdown_timeout")
+        if self._on_stop is not None:
+            self._on_stop()
+            self._on_stop = None
 
     def request(self, connection: str, library: str) -> PipelineProgress:
         if self._pipeline.paused():
@@ -666,6 +819,25 @@ class ReviewPreparationSupervisor:
         if progress is None or progress.state != "completed_with_failures":
             raise ReviewPipelineError("retry")
         return self.request(connection, library)
+
+    def connection_conditions(self) -> tuple[TargetConnectionCondition, ...]:
+        return self._pipeline.connection_conditions()
+
+    def check_connection(self, connection: str) -> bool:
+        changed = self._pipeline.check_connection(connection)
+        if changed:
+            self._wake.set()
+        return changed
+
+    def hold_connection(self, connection: str, code: str) -> None:
+        self._pipeline.hold_connection(connection, code)
+        self._wake.set()
+
+    def recover_provider_once(self) -> None:
+        """Use the same durable claim path for an explicit owner invocation."""
+        if self._recovery_wake is None:
+            raise ReviewPipelineError("recovery")
+        self._recovery_wake(self._clock())
 
     def _schedule_due(self) -> None:
         with self._schedule_lock:
@@ -716,6 +888,12 @@ class ReviewPreparationSupervisor:
             self._wake.clear()
             try:
                 if lane == 0:
+                    # Recovery has no scheduler of its own.  It shares the
+                    # supervisor's clock, wake, drain and shutdown lifecycle.
+                    # A failed recovery observation is already persisted by
+                    # its runner, so it must not prevent ordinary preparation.
+                    if self._recovery_wake is not None:
+                        self._recovery_wake(self._clock())
                     self._schedule_due()
                 while not self._stop.is_set():
                     advanced = self._pipeline.run_next()

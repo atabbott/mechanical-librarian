@@ -14,6 +14,7 @@ from mechanical_librarian.application.configuration import (
     ReportLimits,
     TargetConnectionConfiguration,
 )
+from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.domain.metadata_report import (
     ClaimScope,
     ClaimKind,
@@ -23,13 +24,14 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
     MAX_CANDIDATES,
-    ProviderCandidate,
+    EditionEnrichmentOverflow, ProviderCandidate,
     ProviderEvidenceKind,
     ProviderLaneCandidate,
     ProviderLaneObservation,
     ProviderObservation,
     ProviderRequestAccounting,
     ProviderQueryKind,
+    complete_creator_identity_bindings,
     ProviderStatus,
     PublicationDateRelation,
     TargetDestination,
@@ -260,6 +262,7 @@ class ProviderLaneResult:
     status: ProviderStatus
     candidates: tuple[ProviderCandidate, ...] = ()
     accessed_at: str | None = None
+    edition_enrichment_overflow: EditionEnrichmentOverflow | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -268,6 +271,10 @@ class ProviderLaneResult:
             or type(self.candidates) is not tuple
             or any(type(value) is not ProviderCandidate for value in self.candidates)
             or (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates)
+            or (
+                self.edition_enrichment_overflow is not None
+                and (type(self.edition_enrichment_overflow) is not EditionEnrichmentOverflow or self.status is not ProviderStatus.CANDIDATE_LIMIT_EXCEEDED or self.candidates)
+            )
         ):
             raise MetadataReportError("provider lane result is invalid")
         if self.accessed_at is not None:
@@ -380,6 +387,10 @@ def provider_observation(
     candidates_by_identity: dict[str, ProviderCandidate] = {}
     conflict = False
     aggregate_failure: ProviderStatus | None = None
+    overflow_results = tuple(
+        result for result in results
+        if result.edition_enrichment_overflow is not None
+    )
     for result in results:
         for candidate in result.candidates:
             previous = candidates_by_identity.get(candidate.identity)
@@ -486,6 +497,16 @@ def provider_observation(
         )
     else:
         aggregate_status = ProviderStatus.INSUFFICIENT_INPUT
+    overflow = (
+        overflow_results[0].edition_enrichment_overflow
+        if len(overflow_results) == 1
+        and overflow_results[0].lane.kind is ProviderQueryKind.WORK
+        and overflow_results[0].status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+        and aggregate_status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+        and not candidates
+        and not any(result.candidates for result in results)
+        else None
+    )
     references = tuple(
         sorted(
             {
@@ -515,6 +536,7 @@ def provider_observation(
         accessed_at=accessed_at,
         diagnostics=diagnostics,
         request_accounting=request_accounting,
+        edition_enrichment_overflow=overflow,
     )
 
 
@@ -663,10 +685,16 @@ class ReportRepository(Protocol):
         expected_current: str | None = None,
         after_publication: Callable[[ReportRepository, MetadataReport], None]
         | None = None,
+        *,
+        expected_package: tuple[str | None, str, str | None, int | None, str] | None = None,
     ) -> str: ...
     def get(self, report_id: str) -> str: ...
     def current(self, connection: str, library: str, item: str, file_identity: str) -> str: ...
     def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None: ...
+    def current_review_package(self, connection: str, library: str, item: str) -> tuple[str | None, str, str | None, int | None, str] | None: ...
+    def current_review_package_report(self, connection: str, library: str, item: str) -> str | None: ...
+    def pending_provider_recovery_outbox(self, *, limit: int = 100) -> tuple[tuple[object, ...], ...]: ...
+    def complete_provider_recovery_outbox(self, outbox_id: str, *, delivered_at: int) -> None: ...
     def close(self) -> None: ...
 
 
@@ -736,6 +764,30 @@ def qualify_provider_observation(
             observation.authority,
             accessed_at=observation.accessed_at,
             diagnostics=observation.diagnostics,
+            request_accounting=observation.request_accounting,
+            # ISBN lanes cannot establish the exact work title and author set.
+            edition_enrichment_overflow=None,
+        )
+    if observation.edition_enrichment_overflow is not None:
+        witness = observation.edition_enrichment_overflow
+        expected_authors = tuple(normalize_title(value).casefold() for value in lookup.authors)
+        actual_authors = tuple(
+            normalize_title(author.value or "").casefold()
+            for author in witness.authors
+        )
+        qualified_witness = (
+            normalize_title(witness.title).casefold() == normalize_title(lookup.title or "").casefold()
+            and actual_authors == expected_authors
+            and not _variant_marker(witness.title)
+        )
+        return ProviderObservation(
+            observation.provider,
+            ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            (), (), ProviderQueryKind.WORK, observation.authority,
+            accessed_at=observation.accessed_at,
+            diagnostics=observation.diagnostics,
+            request_accounting=observation.request_accounting,
+            edition_enrichment_overflow=witness if qualified_witness else None,
         )
     if observation.status is not ProviderStatus.CANDIDATES:
         return ProviderObservation(
@@ -777,6 +829,17 @@ def qualify_provider_observation(
             and claim.state is FieldState.VALID
             and claim.value is not None
         )
+        untyped_creators = _complete_work_creators(candidate, None)
+        neutral_bindings = complete_creator_identity_bindings(
+            candidate,
+            tuple(
+                claim
+                for claim in candidate.claims
+                if claim.scope is ClaimScope.WORK
+                and claim.kind is ClaimKind.CREATOR
+                and claim.role is None
+            ),
+        )
         disqualifying_roles = {
             claim.role
             for claim in candidate.claims
@@ -795,8 +858,16 @@ def qualify_provider_observation(
             blocked_work_identities.add(qualification_identity)
         if (
             titles == (expected_title,)
-            and len(authors) == len(expected_authors)
-            and authors == expected_authors
+            and (
+                (
+                    len(authors) == len(expected_authors)
+                    and authors == expected_authors
+                )
+                or (
+                    untyped_creators == expected_authors
+                    and neutral_bindings is not None
+                )
+            )
             and not disqualifying_roles
             and not variant_marker
         ):
@@ -814,6 +885,33 @@ def qualify_provider_observation(
             accessed_at=observation.accessed_at,
         )
     candidate = min(next(iter(qualified.values())), key=lambda value: value.identity)
+    neutral_creators = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK
+        and claim.kind is ClaimKind.CREATOR
+        and claim.role is None
+    )
+    neutral_bindings = complete_creator_identity_bindings(candidate, neutral_creators)
+    reject_neutral_creators = (
+        neutral_bindings is not None
+        and len({binding.identity for binding in neutral_bindings})
+        != len(neutral_bindings)
+    )
+    reject_mixed_author_creators = _mixed_work_creator_roles(candidate)
+    reject_creator_authority = (
+        reject_neutral_creators or reject_mixed_author_creators
+    )
+    rejected_creator_references = {
+        claim.reference for claim in neutral_creators
+    } if reject_neutral_creators else set()
+    if reject_mixed_author_creators:
+        rejected_creator_references.update(
+            claim.reference
+            for claim in candidate.claims
+            if claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.CREATOR
+        )
     allowed_claims = {
         ClaimKind.TITLE,
         ClaimKind.CREATOR,
@@ -822,6 +920,11 @@ def qualify_provider_observation(
         ClaimKind.DESCRIPTION,
         ClaimKind.GENRE,
         ClaimKind.TAG,
+    }
+    neutral_rejection_sibling_claims = {
+        ClaimKind.ISBN,
+        ClaimKind.ASIN,
+        ClaimKind.PUBLICATION_DATE,
     }
     allowed_evidence = {
         ProviderEvidenceKind.AUTHOR_IDENTITY,
@@ -834,7 +937,16 @@ def qualify_provider_observation(
     filtered_claims = tuple(
         claim
         for claim in candidate.claims
-        if claim.scope is ClaimScope.WORK and claim.kind in allowed_claims
+        if claim.reference not in rejected_creator_references
+        and (
+            (claim.scope is ClaimScope.WORK and claim.kind in allowed_claims)
+            or (
+                reject_creator_authority
+                and claim.scope is ClaimScope.EDITION
+                and claim.kind in neutral_rejection_sibling_claims
+                and claim.state is FieldState.VALID
+            )
+        )
     )
     filtered_references = {claim.reference for claim in filtered_claims}
     filtered = ProviderCandidate(
@@ -845,21 +957,30 @@ def qualify_provider_observation(
             value
             for value in candidate.evidence
             if (
-                value.scope is ClaimScope.WORK
-                and value.kind in allowed_evidence
-            )
-            or (
-                value.scope is ClaimScope.EDITION
-                and value.kind
-                is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
-                and value.date_normalized is not None
-                and value.date_confidence is DateLinkConfidence.UNRESOLVED
+                not (
+                    reject_creator_authority
+                    and value.kind in {
+                        ProviderEvidenceKind.AUTHOR_IDENTITY,
+                        ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+                    }
+                )
                 and (
-                    not value.links
-                    or any(
-                        link.publication_date_relation
-                        is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
-                        for link in value.links
+                    value.scope is ClaimScope.WORK
+                    and value.kind in allowed_evidence
+                )
+                or (
+                    value.scope is ClaimScope.EDITION
+                    and value.kind
+                    is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                    and value.date_normalized is not None
+                    and value.date_confidence is DateLinkConfidence.UNRESOLVED
+                    and (
+                        not value.links
+                        or any(
+                            link.publication_date_relation
+                            is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+                            for link in value.links
+                        )
                     )
                 )
             )
@@ -880,6 +1001,43 @@ def qualify_provider_observation(
         accessed_at=observation.accessed_at,
         diagnostics=observation.diagnostics,
     )
+
+
+def _complete_work_creators(
+    candidate: ProviderCandidate, role: str | None
+) -> tuple[str, ...] | None:
+    """Return one closed work creator set without inferring an omitted role."""
+    creators = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
+    )
+    if (
+        not creators
+        or any(
+            claim.role != role
+            or claim.state is not FieldState.VALID
+            or claim.value is None
+            for claim in creators
+        )
+        or any(
+            claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.CONTRIBUTOR
+            for claim in candidate.claims
+        )
+    ):
+        return None
+    return tuple(normalize_title(claim.value).casefold() for claim in creators)
+
+
+def _mixed_work_creator_roles(candidate: ProviderCandidate) -> bool:
+    """A typed author set cannot be projected from a mixed creator collection."""
+    roles = {
+        claim.role
+        for claim in candidate.claims
+        if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
+    }
+    return "author" in roles and len(roles) > 1
 
 
 def _variant_marker(value: str) -> bool:
@@ -1111,6 +1269,7 @@ class GenerateMetadataReport:
                     ),
                 ),
                 observation.request_accounting,
+                observation.edition_enrichment_overflow,
             )
             observations.append(observation)
             candidate_descriptors = getattr(provider, "cover_descriptors", ())
@@ -1176,6 +1335,8 @@ class GenerateMetadataReport:
             if persisted != report.to_json() or repository.get(report.report_id) != persisted:
                 raise MetadataReportError("persisted report readback failed")
             return persisted
+        except TargetConnectionError:
+            raise
         except MetadataReportError as error:
             if str(error) in {"target or media changed", "current report changed"}:
                 raise CurrentnessError("target or media changed") from error
@@ -1189,7 +1350,7 @@ class GenerateMetadataReport:
     def _safe_read(self, item: str) -> TargetSnapshot:
         try:
             value = self._target.read(item)
-        except MetadataReportError:
+        except (MetadataReportError, TargetConnectionError):
             raise
         except Exception as error:
             raise MetadataReportError("target read failed") from error
@@ -1216,7 +1377,7 @@ def require_report_current(
         raise CurrentnessError("target or media changed")
     try:
         final = target.read(report.target.item)
-    except MetadataReportError:
+    except (MetadataReportError, TargetConnectionError):
         raise
     except Exception as error:
         raise MetadataReportError("target read failed") from error

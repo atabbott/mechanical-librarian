@@ -67,6 +67,7 @@ class CoverConsiderationStore(Protocol):
         replay_digest: str,
         supersedes_id: str | None,
         occurred_at: int,
+        preparation_kind: str = "automatic_prepared",
     ) -> str: ...
 
     def current_cover_consideration_document(self, review_case_id: str) -> str | None: ...
@@ -319,6 +320,7 @@ class CoverConsiderationService:
             replay_digest=replay_digest,
             supersedes_id=previous_id,
             occurred_at=self._clock(),
+            preparation_kind=("owner_retry_prepared" if retry else "automatic_prepared"),
         )
         return self._project(persisted, current=True)
 

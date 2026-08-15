@@ -62,6 +62,8 @@ def _work(
     case: str | None,
     attention: int,
     dispositions: list[str],
+    preparation: dict[str, object] | None = None,
+    preparation_outcomes: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     return {
         "work_id": f"library_work_{number:064d}",
@@ -77,6 +79,8 @@ def _work(
         ),
         "detail_url": f"/review/{case}" if case else None,
         "dispositions": dispositions,
+        "preparation": preparation,
+        "preparation_outcomes": preparation_outcomes or [],
     }
 
 
@@ -140,6 +144,8 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         case=None,
         attention=0,
         dispositions=[],
+        preparation={"attempt": 1, "provider": "hardcover-main", "reason": "Provider credentials need owner attention.", "recovery": "Retry review preparation after correcting the reported condition.", "recovery_attempt": 0, "stage": "provider", "status": "authentication"},
+        preparation_outcomes=[{"provider_requests": 1, "lane_kind": "work", "provider": "hardcover-main", "reason": "Provider credentials need owner attention.", "status": "authentication"}],
     ),
     _work(
         7,
@@ -226,24 +232,51 @@ def _field(
     manual_hold: bool = False,
     notices: list[str] | None = None,
     provenance: list[str] | None = None,
+    corroboration_sources: list[str] | None = None,
+    classification: str | None = None,
+    classification_reason: str | None = None,
+    editable: bool | None = None,
+    navigation_role: str | None = None,
+    preservation_only: bool | None = None,
 ) -> dict[str, object]:
+    inferred_classification = (
+        "human_recorded" if human_decision is not None
+        else "automatic_recorded" if automatic_decision is not None
+        else "needs_attention" if needs_attention
+        else "unsupported"
+    )
+    resolved_classification = classification or inferred_classification
+    inferred_reason = (
+        "This field needs your review." if needs_attention
+        else "Automatic handling recorded this field; you may inspect or override it."
+        if automatic_decision is not None
+        else "There is no owner decision available for this field."
+    )
     return {
+        "classification": resolved_classification,
+        "classification_reason": classification_reason or inferred_reason,
         "destination": destination,
         "deterministic_disposition": disposition,
         "effect_capability": "manual",
+        "editable": editable if editable is not None else (
+            (human_decision is None and automatic_decision is not None) or needs_attention
+        ),
         "needs_attention": needs_attention,
         "manual_hold": manual_hold,
         "manual_required": needs_attention,
+        "navigation_role": navigation_role or ("attention" if needs_attention else "inspect"),
         "current": {"kind": "synthetic", "value": current},
         "proposed_values": [
             {"kind": "synthetic", "value": value} for value in proposed
         ],
+        "preservation_only": preservation_only if preservation_only is not None else False,
         "proposal_id": f"proposal-{destination}",
         "target_fingerprint": "f" * 64,
         "human_decision": human_decision,
         "automatic_decision": automatic_decision,
         "notices": notices or [],
         "provenance": provenance or [],
+        "corroboration_sources": corroboration_sources or [],
         "uncertainty": [],
     }
 
@@ -267,6 +300,7 @@ def _case(case_id: str) -> dict[str, object]:
     resolved = case_id in {"case-7", "case-12"}
     automatic = case_id in {"case-5", "case-8"}
     current_only = case_id == "case-11"
+    equal_preservation = case_id == "case-equal"
     provider_evidence = [
         "Local catalogue record: current field value",
         "Project Gutenberg record: title and contributor corroboration",
@@ -278,9 +312,8 @@ def _case(case_id: str) -> dict[str, object]:
             "title",
             "Current <script> title",
             [] if current_only else [
-                "The Clockmaker's Cartography",
-                "Cartography of Impossible Libraries",
-                LONG_TITLE,
+                "Current <script> title" if equal_preservation else "The Clockmaker's Cartography",
+                *( [] if equal_preservation else ["Cartography of Impossible Libraries", LONG_TITLE] ),
             ],
             needs_attention=not (resolved or automatic or current_only),
             manual_hold=case_id == "case-4",
@@ -304,6 +337,7 @@ def _case(case_id: str) -> dict[str, object]:
                     "decision_id": "automatic-title",
                     "outcome": "keep_current",
                     "origin": "automatic_policy",
+                    "selected_value": None,
                 }
                 if automatic
                 else None
@@ -313,6 +347,7 @@ def _case(case_id: str) -> dict[str, object]:
                 "Punctuation and subtitle boundaries remain an owner choice.",
             ],
             provenance=provider_evidence,
+            preservation_only=equal_preservation,
         ),
         _field(
             "authors",
@@ -338,9 +373,13 @@ def _case(case_id: str) -> dict[str, object]:
                     "decision_id": "automatic-authors",
                     "outcome": "keep_current",
                     "origin": "automatic_policy",
+                    "selected_value": None,
                 }
                 if automatic
                 else None
+            ),
+            corroboration_sources=(
+                ["Hardcover", "Open Library"] if case_id == "case-1" else None
             ),
         ),
         _field(
@@ -350,6 +389,14 @@ def _case(case_id: str) -> dict[str, object]:
             disposition="ineligible",
             needs_attention=False,
             notices=["No eligible proposed value is supported by the retained evidence."],
+            classification="unsupported",
+            classification_reason=(
+                "There is no owner decision available for this field."
+                if current_only
+                else "This field is unavailable for the current service capability."
+            ),
+            editable=False,
+            navigation_role="inspect",
         ),
         _field(
             "series",
@@ -364,10 +411,117 @@ def _case(case_id: str) -> dict[str, object]:
                     "decision_id": "automatic-series",
                     "outcome": "keep_current",
                     "origin": "automatic_policy",
+                    "selected_value": None,
                 }
             ),
         ),
     ]
+    if case_id in {"case-1", "case-2", "case-3"}:
+        reviewer_status = {
+            "case-1": "completed",
+            "case-2": "failed",
+            "case-3": "unavailable",
+        }[case_id]
+        fields.append(
+            {
+                **_field(
+                    "cover",
+                    "cover-current-synthetic",
+                    ["cover-current-synthetic", "cover-choice-synthetic"],
+                    disposition="review",
+                    needs_attention=True,
+                    notices=["Cover comparison remains an owner choice."],
+                ),
+                "cover_consideration": {
+                    "candidates": [
+                        {
+                            "artifact_id": "cover-current-synthetic",
+                            "height": 1200,
+                            "identity": {
+                                "candidate_reference": "cover-ref-current",
+                                "evidence_references": [],
+                                "outcome": "verified_work_match",
+                                "preview_reference": "cover-preview-current",
+                                "reasons": [],
+                            },
+                            "incumbent": True,
+                            "observation": None,
+                            "original_sha256": "a" * 64,
+                            "ordinal": 0,
+                            "preview_sha256": "b" * 64,
+                            "reference": "cover-ref-current",
+                            "selectable": False,
+                            "source_kinds": ["synthetic"],
+                            "state": "available",
+                            "width": 800,
+                        },
+                        {
+                            "artifact_id": "cover-choice-synthetic",
+                            "height": 1200,
+                            "identity": {
+                                "candidate_reference": "cover-ref-choice",
+                                "evidence_references": [],
+                                "outcome": "verified_work_match",
+                                "preview_reference": "cover-preview-choice",
+                                "reasons": [],
+                            },
+                            "incumbent": False,
+                            "observation": None,
+                            "original_sha256": "c" * 64,
+                            "ordinal": 1,
+                            "preview_sha256": "d" * 64,
+                            "reference": "cover-ref-choice",
+                            "selectable": True,
+                            "source_kinds": ["synthetic"],
+                            "state": "recommended" if reviewer_status == "completed" else "available",
+                            "width": 800,
+                        },
+                    ],
+                    "consideration_id": "cover-consideration-" + reviewer_status,
+                    "current": True,
+                    "incumbent": {
+                        "reference": "cover-ref-current",
+                        "state": "available",
+                    },
+                    "omissions": [],
+                    "policy": (
+                        {
+                            "acceptable_candidate_references": [
+                                "cover-ref-current",
+                                "cover-ref-choice",
+                            ],
+                            "cover_packet_reference": "cover-packet-synthetic",
+                            "identity_classifier_reference": "cover-identity-synthetic",
+                            "identity_report_sha256": "e" * 64,
+                            "observation_report_sha256": None,
+                            "observation_taxonomy_reference": "cover-taxonomy-synthetic",
+                            "policy_reference": "cover-policy-synthetic",
+                            "reasons": ["policy_satisfied"],
+                            "recommended_candidate_reference": "cover-ref-choice",
+                            "schema_version": "cover-policy-report-v1",
+                            "status": "recommended",
+                        }
+                        if reviewer_status == "completed"
+                        else None
+                    ),
+                    "policy_preferences": {
+                        "avoid_promotional_text": False,
+                        "avoid_tie_in_branding": False,
+                        "prefer_minimal_composition": False,
+                        "schema_version": "cover-policy-v1",
+                    },
+                    "policy_reference": "cover-policy-synthetic",
+                    "reviewer_status": reviewer_status,
+                    "schema_version": "cover-consideration-v1",
+                    "supersedes_id": (
+                        "cover-consideration-historical"
+                        if reviewer_status == "failed"
+                        else None
+                    ),
+                    "target_fingerprint": "f" * 64,
+                },
+            }
+        )
     work = next((item for item in LIBRARY_WORKS if item["review_case_id"] == case_id), LIBRARY_WORKS[0])
     return {
         "schema_version": "review-case-v1",
@@ -443,6 +597,7 @@ def _attention() -> dict[str, object]:
                     "media_kind": work["media_kind"],
                     "item": work["item"],
                     "detail_url": f"/review/{work['review_case_id']}?field={destination}",
+                    "classification_reason": "This field needs your review.",
                     "notices": ["Conflicting retained evidence"],
                     "provenance": ["catalogue observation", "local exact-current value"],
                     "work_attention_count": work["attention_count"],
@@ -457,7 +612,7 @@ def _attention() -> dict[str, object]:
     }
 
 
-def _activity() -> dict[str, object]:
+def _activity(query: dict[str, list[str]]) -> dict[str, object]:
     events = [
         ("The Glass Orchard", "Spoken stories", "title", "verified", "automatic_policy", None),
         (LONG_TITLE, "Spoken stories", "authors", "applying", "human", None),
@@ -474,9 +629,15 @@ def _activity() -> dict[str, object]:
         ),
         ("Resolved work with retained history", "Research shelf", "authors", "resolved", "human", None),
         ("Automatic-only edition", "Household ebooks", "series", "running", "automatic_policy", None),
+        ("Synthetic completed cover advice", "Household ebooks", "cover", "completed", "automatic_pipeline", None),
+        ("Synthetic unavailable cover advice", "Spoken stories", "cover", "unavailable", "owner_retry", None),
+        ("Synthetic failed cover advice", "Research shelf", "cover", "failed", "owner_retry", None),
+        ("Synthetic stale cover advice", "Household ebooks", "cover", "stale", "human", "currentness"),
+        ("Synthetic superseded cover advice", "Spoken stories", "cover", "superseded", "human", None),
     ]
     return {
-        "schema_version": "continuous-field-activity-v1",
+        "schema_version": "continuous-field-activity-v2",
+        "current_waiting": None,
         "backup_ready": True,
         "paused": False,
         "configured_libraries": [
@@ -521,6 +682,14 @@ def _activity() -> dict[str, object]:
         ],
         "events": [
             {
+                "event_id": f"activity-event-{index}",
+                "event_type": (
+                    "review" if origin == "human" else "metadata"
+                ),
+                "evidence": [
+                    {"label": "Recorded origin", "value": origin},
+                    {"label": "Outcome", "value": state},
+                ],
                 "work_id": f"book-{index}",
                 "work_label": work,
                 "author_label": "Synthetic Author",
@@ -536,7 +705,24 @@ def _activity() -> dict[str, object]:
         "counts": {"verified": 1, "applying": 1, "stale": 1, "recovered": 1},
         "example": None,
         "last_failure": "readback",
+        "ledger": {
+            "event_type": query.get("event_type", ["all"])[0],
+            "page": int(query.get("page", ["1"])[0]),
+            "page_count": 1,
+            "page_size": int(query.get("page_size", ["25"])[0]),
+            "query": query.get("q", [None])[0],
+            "range_days": int(query.get("range_days", ["30"])[0]),
+            "total": len(events),
+        },
         "prepared": {"automatic": 3, "human": 6, "total": 9},
+        "provider_recovery": [
+            {"state": "waiting", "affected_count": 2, "next_eligible_at": 1_754_900_000},
+            {"state": "checking", "affected_count": 1, "next_eligible_at": None},
+            {"state": "fanout", "affected_count": 3, "next_eligible_at": None},
+            {"state": "recovered", "affected_count": 1, "next_eligible_at": None},
+            {"state": "dormant", "affected_count": 2, "next_eligible_at": None},
+            {"state": "exhausted", "affected_count": 1, "next_eligible_at": None},
+        ],
         "suspensions": [
             {"reason": "readback", "connection": "archive", "destination": "authors", "scope": "destination", "updated_at": 1_754_858_700},
             {"reason": "readback", "connection": "archive", "destination": "title", "scope": "destination", "updated_at": 1_754_858_700},
@@ -560,6 +746,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 {"blocked": 0, "checked": 12, "connection": "primary", "library": "Household ebooks", "library_id": "library-1", "ready": 5, "rescan_requested": False, "scan_id": "scan-1", "state": "ready", "total": 12},
                 {"blocked": 2, "checked": 8, "connection": "primary", "library": "Spoken stories", "library_id": "library-2", "ready": 2, "rescan_requested": False, "scan_id": "scan-2", "state": "scanning", "total": 16},
             ],
+            "connections": [{"connection": "primary", "code": "unavailable", "state": "paused", "affected": 2, "updated_at": 1}],
         }
     if path == "/api/v1/library":
         return _library(query)
@@ -720,7 +907,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             "acknowledged": False,
         }
     if path == "/api/v1/activity":
-        return _activity()
+        return _activity(query)
     raise AssertionError(f"unexpected API target: {target}")
 
 
