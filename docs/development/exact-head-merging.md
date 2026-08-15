@@ -17,14 +17,17 @@ candidate is not trusted merely because it has a familiar name or path.
 ## Tracked public gate
 
 `.github/workflows/public-gate.yml` runs when a pull request is opened,
-reopened, or receives a new head. It does not run for a ready-for-review state
-change or for the resulting push to `main`. Delivery therefore publishes one
-converged draft candidate wherever possible, then requests review explicitly
-after the exact-head jobs pass. The workflow has read-only repository contents
+reopened, or receives a new head, and again on the resulting push to `main`. It
+does not run for a ready-for-review state change. Delivery therefore publishes
+one converged draft candidate wherever possible, then requests review explicitly
+after the exact-head jobs pass; the post-merge run verifies the merged commit
+and is not a merge precondition. The workflow has read-only repository contents
 permission and:
 
-1. explicitly checks out the exact pull-request head SHA without persisting
-   credentials, rather than GitHub's synthetic pull-request merge revision;
+1. explicitly checks out
+   `github.event.pull_request.head.sha || github.sha` without persisting
+   credentials — the exact pull-request head SHA rather than GitHub's synthetic
+   pull-request merge revision, and the merged commit on a push to `main`;
 2. uses commit-pinned GitHub Actions and a version-pinned `uv` installation;
 3. rejects a stale lockfile with `uv lock --check`;
 4. snapshots that clean committed source, disables build/install caches, builds
@@ -42,13 +45,16 @@ permission and:
    path-free evidence binds the pull-request head SHA and wheel, payload, and
    command output SHA-256 values.
 
-The concurrency key is scoped to the pull request. A new head cancels obsolete
-work for that pull request. The three independent jobs remain separate because
-the earlier serial exact-installed workflow exhausted its own 825-second
-subprocess deadline on four consecutive candidates, including after internal
-sharding. No aggregate runner is maintained: the local controller requires
-passing `fast-source`, `exact-installed`, and `protected-browser` check runs on
-the exact candidate SHA.
+The concurrency key is scoped to the pull request on a pull-request event and to
+the merged commit on a push to `main`. A new head cancels obsolete work for that
+pull request; a merged commit's verification is never cancelled. The three
+independent qualification jobs remain separate because the earlier serial
+exact-installed workflow exhausted its own 825-second subprocess deadline on
+four consecutive candidates, including after internal sharding. The separate
+`container-image` job builds the shipped image at the same revision and never
+runs, loads, or pushes it. No aggregate runner is maintained: the local
+controller requires passing `fast-source`, `exact-installed`, and
+`protected-browser` check runs on the exact candidate SHA.
 
 Public CI contains no service credential, private corpus, merge permission, or
 branch-protection override. Private qualification remains local and may expose
