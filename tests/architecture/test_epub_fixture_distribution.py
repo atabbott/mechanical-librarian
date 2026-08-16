@@ -3,63 +3,73 @@ from __future__ import annotations
 import subprocess
 import tarfile
 import tempfile
-import unittest
 from pathlib import Path
 from zipfile import ZipFile
+
+import pytest
 
 ROOT = Path(__file__).parents[2]
 
 
-class EpubFixtureDistributionTests(unittest.TestCase):
-    def test_wheel_and_sdist_exclude_fixture_registry_generators_and_materialized_files(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory)
-            completed = subprocess.run(
-                (
-                    "uv",
-                    "build",
-                    "--sdist",
-                    "--wheel",
-                    "--out-dir",
-                    str(output),
-                ),
-                cwd=ROOT,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=120,
-            )
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            wheel = next(output.glob("*.whl"))
-            sdist = next(output.glob("*.tar.gz"))
-            with ZipFile(wheel) as archive:
-                wheel_names = archive.namelist()
-            with tarfile.open(sdist, "r:gz") as archive:
-                sdist_names = archive.getnames()
-        for names in (wheel_names, sdist_names):
-            serialized = "\n".join(names)
-            self.assertNotIn("tests/fixtures/epub_package", serialized)
-            self.assertNotIn("tests/support/epub_packages.py", serialized)
-            self.assertNotIn("materialize_epub_fixtures.py", serialized)
-            self.assertFalse(any(name.casefold().endswith(".epub") for name in names))
-        self.assertTrue(any(name.endswith("/frontend/package.json") for name in sdist_names))
-        self.assertTrue(
-            any(name.endswith("/scripts/build_frontend.py") for name in sdist_names)
+@pytest.fixture(scope="module")
+def distribution() -> tuple[list[str], list[str]]:
+    """The member names of one built wheel and sdist, in that order."""
+
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory)
+        completed = subprocess.run(
+            (
+                "uv",
+                "build",
+                "--sdist",
+                "--wheel",
+                "--out-dir",
+                str(output),
+            ),
+            cwd=ROOT,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
         )
-        self.assertTrue(
-            any(
-                name.endswith("/docs/reference/review-openapi-v1.json")
-                for name in sdist_names
-            )
-        )
-        self.assertFalse(any("frontend/src/generated" in name for name in sdist_names))
-        self.assertFalse(any("frontend/node_modules" in name for name in sdist_names))
-        self.assertFalse(any(name.endswith(".map") for name in wheel_names + sdist_names))
-        self.assertTrue(
-            any("interfaces/web/react_assets/assets/" in name for name in wheel_names)
-        )
+        assert completed.returncode == 0, completed.stderr
+        with ZipFile(next(output.glob("*.whl"))) as wheel:
+            wheel_names = wheel.namelist()
+        with tarfile.open(next(output.glob("*.tar.gz")), "r:gz") as sdist:
+            sdist_names = sdist.getnames()
+    return wheel_names, sdist_names
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize("index", (0, 1), ids=("wheel", "sdist"))
+def test_distribution_excludes_fixture_registry_generators_and_materialized_files(
+    distribution: tuple[list[str], list[str]], index: int
+) -> None:
+    names = distribution[index]
+    serialized = "\n".join(names)
+    assert "tests/fixtures/epub_package" not in serialized
+    assert "tests/support/epub_packages.py" not in serialized
+    assert "materialize_epub_fixtures.py" not in serialized
+    assert not any(name.casefold().endswith(".epub") for name in names)
+
+
+def test_sdist_carries_the_frontend_sources_and_no_built_or_vendored_trees(
+    distribution: tuple[list[str], list[str]]
+) -> None:
+    _, sdist_names = distribution
+    assert any(name.endswith("/frontend/package.json") for name in sdist_names)
+    assert any(name.endswith("/scripts/build_frontend.py") for name in sdist_names)
+    assert any(
+        name.endswith("/docs/reference/review-openapi-v1.json")
+        for name in sdist_names
+    )
+    assert not any("frontend/src/generated" in name for name in sdist_names)
+    assert not any("frontend/node_modules" in name for name in sdist_names)
+
+
+def test_wheel_carries_the_built_react_assets_and_neither_carries_source_maps(
+    distribution: tuple[list[str], list[str]]
+) -> None:
+    wheel_names, sdist_names = distribution
+    assert any("interfaces/web/react_assets/assets/" in name for name in wheel_names)
+    assert not any(name.endswith(".map") for name in wheel_names + sdist_names)

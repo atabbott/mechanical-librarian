@@ -7,6 +7,8 @@
 
 ## Unreleased
 
+- Convert every `TestCase` module outside `tests/unit/` to pytest, the pilot
+  stage of the suite conversion. (#697)
 - Make the application layer's error identities name the failure they report.
   The report parser refuses an unpaired surrogate as its declared type, so two
   reverted narrowings are restored; cleanup can no longer displace the failure
