@@ -1019,7 +1019,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           {work.preparation
                             ? 'Preparation failed safely'
                             : needsAttention
-                              ? `${String(work.attentionCount)} field${work.attentionCount === 1 ? '' : 's'} need attention`
+                              ? work.attentionCount === 1
+                                ? '1 field needs attention'
+                                : `${String(work.attentionCount)} fields need attention`
                               : 'No attention needed'}
                         </span>
                       </div>

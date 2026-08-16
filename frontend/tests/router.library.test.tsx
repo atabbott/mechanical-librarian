@@ -74,6 +74,21 @@ describe('Library route', () => {
     expect(screen.queryByRole('button', { name: 'Preparation unavailable' })).toBeNull()
   })
 
+  it.each([
+    [1, '1 field needs attention'],
+    [2, '2 fields need attention'],
+  ] as const)('agrees the work-card attention noun and verb for %i field(s)', async (attentionCount, copy) => {
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({ ...library, works: [{ ...firstWork, attentionCount }] })),
+    }
+    renderRoute('/library?lens=all', http)
+
+    expect(await screen.findByText(copy)).toBeVisible()
+  })
+
   it('shows bounded provider absence once at the selected-work comparison boundary', async () => {
     const http: ReviewHttp = {
       ...createHttp(),

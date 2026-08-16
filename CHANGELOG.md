@@ -35,6 +35,12 @@
   worked into the clause with their line counts, and its entry reconciles every
   bucket of both, so the measurement basis is not rediscovered by argument a
   third time. (#708)
+- Make the Library work card's attention line agree with itself. The noun
+  pluralised and the verb did not, so a work with one open field read "1 field
+  need attention". It now reads "1 field needs attention", and two or more
+  still read "2 fields need attention". No assertion covered the string, in
+  any tier, which is why three green tiers passed over it; one now pins both
+  forms. (#705)
 - Make the review-web test double produce the Attention row the repository
   actually produces, and delete the two `len(row)` guards it was propping up.
   #668 kept those guards because removing them failed nine tests whose stores
