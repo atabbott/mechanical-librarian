@@ -31,26 +31,34 @@
   consolidation clause, and since every added line replaces a deleted one it
   passes just as clearly on net-new implementation of zero. The clause's
   structure exemption is not needed to reach that verdict.
-  `tests/unit/test_provider_recovery.py` goes `+145 / -11`, a net `+134`, which
+  `tests/unit/test_provider_recovery.py` goes `+168 / -11`, a net `+157`, which
   the refactoring rule's four buckets reconcile as nothing moved in or out,
-  `+9` of structure the change required, no copies removed, and `+125` of
-  checks newly added. The structure is one `import ast`, the new test class's
-  declaration and its five method signatures, and the rewrapped signatures of
-  the connection proxy and its factory, which took a `BaseException | None`
-  where they took a `bool`. The checks are the five new tests, `+124` on their
-  own, plus `+10` net for generalising that proxy from refusing every `COMMIT`
-  to raising a supplied failure, which is what lets a test set a claim up
-  through the proxy and only then arm the error the epilogue must meet. No
-  copies were removed because the change consolidates nothing here; the new
-  class borrows the existing `_store_over` rather than copy it, so the
-  duplication it would otherwise have added never arrives. A test module that
-  grows by the checks it gains is the outcome that rule calls a success.
+  `+10` of structure the change required, no copies removed, and `+147` of
+  checks newly added. Test docstrings and comments are counted inside that
+  `+147` rather than broken out, because each documents the check it sits in;
+  the underlying three-way split is implementation `+98`, documentation `+49`
+  and structure `+10`. The `+147` is `+135` for the five new tests and `+12`
+  net for generalising the connection proxy from refusing every `COMMIT` to
+  raising a supplied failure, which is what lets a test set a claim up through
+  the proxy and only then arm the error the epilogue must meet. The `+10` of
+  structure is one `import ast`, the new class's declaration and its five
+  method signatures, and the rewrapped signatures of that proxy and its
+  factory, which now take a `BaseException | None` where they took a `bool`.
+  Counted by region instead of by bucket, the five tests are `+142` and the
+  proxy work `+15`. No copies were removed because the change consolidates
+  nothing here; the new class borrows the existing `_store_over` rather than
+  copy it, so the duplication it would otherwise have added never arrives. A
+  test module that grows by the checks it gains is the outcome that rule calls
+  a success.
   Four of those tests pin the three distinct caught sets from both ends — what
   each set wraps and what it still lets escape untouched — and the fifth pins
-  the argument at all seventeen call sites, so the six narrow ones cannot be
-  re-scoped underneath the behavioural tests. #662's mutation check still
-  bites: deleting the guarded rollback from the shared handler fails three of
-  them.
+  every one of the seventeen `_rollback_on_failure` calls against the function
+  that makes it, so the six narrow ones cannot be re-scoped underneath the
+  behavioural tests. It accumulates those calls rather than assigning them, so
+  a function holding two states both; assigning let the later call overwrite
+  the earlier, which pinned seventeen functions while claiming seventeen sites.
+  #662's mutation check still bites: deleting the guarded rollback from the
+  shared handler fails three of them.
   No SQL, transaction nesting, or caller-visible error identity changed.
   `enqueue_jobs` and `resume_fanout` keep their longhand, because adopting
   either would add or drop a type rather than name one. The helper's docstring
