@@ -7,6 +7,34 @@
 
 ## Unreleased
 
+- State which lines the code-economy consolidation test measures, so two
+  readers measuring the same change reach the same verdict. #692 required a
+  consolidation to be lighter than the copies it replaces without saying whether
+  the shared module's header, imports and declaration are part of "it", and #707
+  hit that for real: a reviewer read the clause as covering the whole module,
+  the change read it as covering the implementation, the text supported both,
+  and the same two consolidations passed on one reading and failed on the other.
+  The clause now names what its test reads — all the implementation a
+  consolidation adds, shared and forced on the former call sites alike, against
+  all the implementation it deletes — and leaves structure, and documentation a
+  governing issue's acceptance demanded, in the reporting buckets the same rule
+  already requires. Structure costs the same for a good abstraction and a bad
+  one, so charging it to the abstraction judges the module boundary rather than
+  the abstraction, and rejects the small cross-file consolidations the rule most
+  wants, every one of which needs a shared home. A physical line is
+  implementation wherever it carries an executable expression, even where it
+  also carries a declaration, so an expression-bodied helper cannot book itself
+  as structure by fitting on one line.
+  Settling this does change verdicts, and it changes exactly the two the
+  ambiguity was found on: `+7` and `+16` fail on the module total the old text
+  equally supported, and pass under the amended clause. What has not moved is
+  the test's severity. A shared implementation fatter than the copies still
+  fails, so does a thin one that pushed its bulk out to the call sites, and the
+  generalised helper carrying a configuration switch for each former call site
+  is named as the case the rule exists to stop. #662's two consolidations are
+  worked into the clause with their line counts, and its entry reconciles every
+  bucket of both, so the measurement basis is not rediscovered by argument a
+  third time. (#708)
 - Give the duplicated provider and review-surface logic one home each, and
   record where an abstraction would have cost more than the copies it removed.
   Four consolidations landed and two were declined on measurement.
@@ -51,13 +79,31 @@
   character, one failed-image set, one prepare mutation. `useCoverChoiceData`
   owns those three and no markup moved. The idempotency key both review routes
   generated now lives beside the controller that puts it on a command.
-  The browser consolidations are relocations across module boundaries, so they
-  add a header, imports and explicit parameters for what were closure captures
-  and are not required to be lighter: `+7` for the labels module across eight
-  files, `+16` for the cover module, `-1` for the idempotency key. Neither left
-  a copy behind, which is the test a move has to pass. Six frontend assertions
-  moved with the copy the casing convention deliberately changed; the suite
-  stays at 149. (#662)
+  All three browser changes are consolidations, measured on all the
+  implementation each adds against all it deletes. `labels.ts` adds 3 lines --
+  `fieldLabel`'s body, `labelWords`, and the `opaqueSource` pattern -- against 8
+  deleted with five formatter declarations and two `opaqueSource` copies, and
+  forces no plumbing at the call sites. `useCoverChoiceData` adds 17, plus one
+  `const cover = useCoverChoiceData(reviewCaseId)` in each of the two routes,
+  against the 20 they delete: 19 against 20, which passes by a single line and
+  is the thinner case of the two. The idempotency key is lighter outright.
+  The net figures reconcile bucket by bucket, which the rule requires and the
+  two commits' own messages did not do. `labels.ts` to `+7`: `+3` implementation
+  and `+1` structure in the new module, `-8` implementation and `-5` structure
+  deleted with the five declarations, `+7` for one consumer import per module,
+  `+9` for the documentation this issue's acceptance demanded, and 63 call sites
+  rewritten in place for 63. The cover module to `+16`: `+17` implementation and
+  `+2` call-site plumbing against `-20` deleted, `+7` module structure, `+5`
+  comment, `+2` consumer imports, and `+3` where Prettier re-wrapped Detail's
+  prepare button around the longer expression. These figures supersede the
+  per-bucket splits in `0dd02ffb` and `ce353997`, which reported the right net
+  deltas over incomplete buckets.
+  Review first read the two browser modules as relocations. That was wrong and
+  was withdrawn there -- every cross-file consolidation needs a shared home, so
+  the reading would have swallowed the rule it was excusing them from -- and
+  #708 now states in the rule itself which lines the test measures. Six frontend
+  assertions moved with the copy the casing convention deliberately changed; the
+  suite stays at 149. (#662)
 - Keep installed pytest plugins and oversized parameter names out of the test
   tiers. Two further defects in the engine adoption, both found in review of
   #661.

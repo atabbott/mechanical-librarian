@@ -55,7 +55,42 @@ Run the static architecture-boundary test whenever imports or packages move.
 - **Consolidation** — replacing two or more copies of the same logic — must be
   lighter than the copies it replaces. One that costs more lines than the
   longhand it consolidates is not an improvement: delete it and keep the
-  longhand.
+  longhand. Measure all the implementation it adds — the shared implementation
+  plus any plumbing it forces at the former call sites, wrappers, argument
+  mapping, conversions — against all the implementation it deletes. Two things
+  are exempt and nothing else is: the fixed structure of having a shared home,
+  which is the module's header, imports and declaration and one import line per
+  consumer; and documentation the governing issue's acceptance demanded,
+  reported with the acceptance that required it. Structure costs the same for a
+  good abstraction and a bad one, so charging it to the abstraction judges the
+  module boundary instead, and rejects the small cross-file consolidations this
+  rule most wants: every one of them needs a shared home. A line is
+  implementation where it carries any part of an executable expression, even
+  where it also carries a declaration, and structure only where it carries none
+  — an import, a header, a declaration's bare signature, a closing brace. So
+  `export const labelWords = (value: string) => value.replaceAll('_', ' ')` is
+  one line of implementation, and the same declaration wrapped across two is one
+  of each. Count both sides that way or the comparison is not a comparison: the
+  copies being deleted are counted the same, and a rule under which a
+  declaration could hide behaviour would let a helper pass on its formatting.
+  The test bites at both ends. A shared implementation fatter than the copies
+  fails it, and so does a thin one that pushed its bulk out to the call sites.
+  The generalised helper carrying a configuration switch for each former call
+  site is the case it exists to stop — it removes no duplication, it relabels
+  it: delete it and keep the longhand.
+- Worked, from #662. `frontend/src/coverChoices.ts` adds 17 lines of shared
+  implementation and one line of plumbing at each of its two call sites, against
+  the 20 lines of duplicated implementation the two routes delete: 19 against
+  20, which passes by one line. `frontend/src/labels.ts` adds 3 against the 8
+  deleted with five formatter declarations and two copied patterns, and forces
+  no plumbing. Both still grew the tree, `+16` and `+7`, on module structure,
+  seven consumer imports, a Prettier rewrap, and the nine comment lines that
+  change's acceptance demanded. #662's changelog entry reconciles every bucket
+  of both to those net figures, which is the arithmetic this rule requires and
+  the reason the example carries no bucket the entry does not account for. Both
+  would fail on module total, and both passed here. Deciding a measurement basis
+  is not a neutral act: it settles cases the ambiguity left open, and these two
+  are the cases it settles.
 - **Extraction within a boundary** — pulling a helper out of code that could
   have kept it — with a single caller has to earn its place, and it can.
   Consolidating one copy is not consolidation, so the default is to keep the
