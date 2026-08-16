@@ -73,11 +73,11 @@ Run the static architecture-boundary test whenever imports or packages move.
   of each. Count both sides that way or the comparison is not a comparison: the
   copies being deleted are counted the same, and a rule under which a
   declaration could hide behaviour would let a helper pass on its formatting.
-  The test bites at both ends. A shared implementation fatter than the copies fails it, and so does a
-  thin one that pushed its bulk out to the call sites. The generalised helper
-  carrying a configuration switch for each former call site is the case it
-  exists to stop — it removes no duplication, it relabels it: delete it and keep
-  the longhand.
+  The test bites at both ends. A shared implementation fatter than the copies
+  fails it, and so does a thin one that pushed its bulk out to the call sites.
+  The generalised helper carrying a configuration switch for each former call
+  site is the case it exists to stop — it removes no duplication, it relabels
+  it: delete it and keep the longhand.
 - Worked, from #662. `frontend/src/coverChoices.ts` adds 17 lines of shared
   implementation and one line of plumbing at each of its two call sites, against
   the 20 lines of duplicated implementation the two routes delete: 19 against
