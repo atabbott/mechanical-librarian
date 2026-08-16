@@ -64,6 +64,24 @@
   either would add or drop a type rather than name one. The helper's docstring
   names both and why, so the shared baseline is not mistaken for a module
   invariant and neither path is later widened into agreement with it. (#706)
+- Give the test client the transport Starlette now asks for, so the exact-
+  artifact qualifier stays a gate. `starlette.testclient` prefers `httpx2` and
+  warns on `StarletteDeprecationWarning` when it falls back to `httpx`, and
+  `scripts/qualify_exact_artifact.py` fails its installed-workspace probe if
+  that probe writes anything at all to stdout or stderr. One deprecation line
+  on an import is therefore a hard `exact-installed` failure, not an
+  annotation -- the Starlette upgrade below made the qualifier fail for a
+  reason that looked cosmetic and was not. `httpx2` is pinned in the `dev`
+  group, so it enters the qualified environment (which installs every group)
+  and not the shipped wheel's metadata or the container image. It does not
+  replace the runtime `httpx==0.28.1` the Audiobookshelf and metadata-provider
+  adapters call: separate distribution, separate import name, separate locked
+  closure, both installed side by side, and no adapter client, least-authority
+  `Auth` flow, or wrapped-disconnect classification moves. The closure gains
+  `httpcore2` (BSD-3-Clause) and `truststore` (MIT) at development scope, and
+  `httpx2-jsfetch`, which is gated on `sys_platform == 'emscripten'` and
+  installs on no supported platform. The qualifier's "any output fails" rule is
+  untouched; it was right, and it is what caught this.
 - Move the locked Python closure off every Starlette advisory and put
   `dependency-audit` back to reporting something. The job has been failing on
   `main` since at least `ecd70fcb` on one package, `starlette 0.47.3`, carrying

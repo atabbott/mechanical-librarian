@@ -122,6 +122,30 @@ published artifacts. All three Python-package licences are compatible with
 AGPL-3.0-or-later distribution; the browser's release inventory remains a
 qualification input and future release-SBOM concern, not runtime content.
 
+#702 added one more development-only client with the Starlette upgrade.
+`starlette.testclient` prefers `httpx2` and emits a `StarletteDeprecationWarning`
+when it falls back to `httpx`; `scripts/qualify_exact_artifact.py` fails its
+installed-workspace probe on any output at all, so that warning fails the
+`exact-installed` gate rather than merely annotating it. `httpx2` is therefore
+pinned in the `dev` group, not in `[project.dependencies]`, and does not enter
+the shipped wheel's metadata or the container image.
+
+| Package | Version | Relationship | SPDX licence | Product authority |
+| --- | --- | --- | --- | --- |
+| HTTPX2 | 2.10.0 | direct development only | BSD-3-Clause | in-process ASGI transport for `TestClient` only |
+| httpcore2 | 2.10.0 | transitive development only | BSD-3-Clause | HTTPX2 transport support only |
+| truststore | 0.10.4 | transitive development only | MIT | HTTPX2 system trust-store support; no test opens a network socket that uses it |
+
+It does not replace the runtime `httpx==0.28.1` the Audiobookshelf, Google
+Books, Open Library, and Hardcover adapters call. The two are separate
+distributions with separate import names and separate locked closures, they
+coexist in the development environment, and only `httpx` is a runtime
+dependency, so no adapter's client construction, least-authority `Auth` flow,
+or wrapped-disconnect classification moves. `httpx2-jsfetch` appears in
+`uv.lock` as an `httpx2` dependency gated on `sys_platform == 'emscripten'` and
+installs on no supported platform. All three licences are compatible with
+AGPL-3.0-or-later distribution.
+
 ## React platform build dependencies
 
 Issue #495 adds an exact resolved development/build graph. Node 24.19.0 (Krypton LTS)

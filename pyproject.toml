@@ -39,6 +39,14 @@ dependencies = [
 [dependency-groups]
 dev = [
   "hypothesis==6.165.2",
+  # `starlette.testclient` prefers `httpx2` and warns on the
+  # `StarletteDeprecationWarning` class when it has to fall back to `httpx`.
+  # `scripts/qualify_exact_artifact.py` fails its installed-workspace probe on
+  # any stdout or stderr at all, so that warning is a hard qualification
+  # failure, not cosmetic. This is the transport the test client uses; the
+  # runtime `httpx==0.28.1` the adapters call remains a separate distribution
+  # with a separate import name and is unaffected by it.
+  "httpx2==2.10.0",
   "mypy==2.3.1",
   "playwright==1.61.0",
   "pytest==9.1.1",
