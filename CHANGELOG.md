@@ -71,13 +71,20 @@
   character, one failed-image set, one prepare mutation. `useCoverChoiceData`
   owns those three and no markup moved. The idempotency key both review routes
   generated now lives beside the controller that puts it on a command.
-  The browser consolidations are relocations across module boundaries, so they
-  add a header, imports and explicit parameters for what were closure captures
-  and are not required to be lighter: `+7` for the labels module across eight
-  files, `+16` for the cover module, `-1` for the idempotency key. Neither left
-  a copy behind, which is the test a move has to pass. Six frontend assertions
-  moved with the copy the casing convention deliberately changed; the suite
-  stays at 149. (#662)
+  All three browser changes are consolidations, measured on the implementation
+  each contributes against the copies it deletes: `labels.ts` is 4 lines against
+  roughly 10 across five formatters, `useCoverChoiceData` 14 against the 17
+  duplicated in the two routes, and the idempotency key is lighter outright. The
+  net figures are `+7` for the labels module across eight files, `+16` for the
+  cover module and `-1` for the idempotency key; that growth is each module's
+  header, imports and declaration, plus the nine comment lines this issue's own
+  acceptance demanded of the casing convention and five stating what the cover
+  module owns. Review first read the two browser modules as relocations. That
+  was wrong and was withdrawn there -- every cross-file consolidation needs a
+  shared home, so the reading would have swallowed the rule it was excusing them
+  from -- and #708 now states that measurement basis in the rule itself. Six
+  frontend assertions moved with the copy the casing convention deliberately
+  changed; the suite stays at 149. (#662)
 - Keep installed pytest plugins and oversized parameter names out of the test
   tiers. Two further defects in the engine adoption, both found in review of
   #661.
