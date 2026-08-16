@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import type { SyntheticEvent } from 'react'
@@ -11,6 +11,7 @@ import type {
   LibraryView,
   LibraryWorkView,
 } from '../api/http'
+import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
 import { fieldLabel, labelWords, opaqueSource } from '../labels'
 import { detailQuery, libraryRoute, PreparationNotice, useReviewContext } from '../router'
@@ -303,10 +304,8 @@ function LibraryCoverChoicesContent({
     selectedValue?: DecisionCommand['selectedValue'],
   ) => void
 }) {
-  const { http } = useReviewContext()
-  const queryClient = useQueryClient()
+  const cover = useCoverChoiceData(reviewCaseId)
   const consideration = field.coverConsideration
-  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set())
   const [coverEvidenceState, setCoverEvidenceState] = useState<{
     work: string
     keys: ReadonlySet<string>
@@ -318,13 +317,6 @@ function LibraryCoverChoicesContent({
       work: reviewCaseId,
       keys: update(current.work === reviewCaseId ? current.keys : new Set()),
     }))
-  const prepare = useMutation({
-    mutationFn: () => http.retryCoverConsideration(reviewCaseId),
-    retry: false,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['review-case', reviewCaseId] })
-    },
-  })
   if (!consideration)
     return (
       <section aria-label="Prepare cover comparison">
@@ -333,12 +325,12 @@ function LibraryCoverChoicesContent({
         </p>
         <button
           type="button"
-          disabled={disabled || prepare.isPending}
-          onClick={() => prepare.mutate()}
+          disabled={disabled || cover.prepare.isPending}
+          onClick={() => cover.prepare.mutate()}
         >
           Prepare cover comparison
         </button>
-        {prepare.isError ? (
+        {cover.prepare.isError ? (
           <p role="alert">
             The comparison could not be prepared. The existing cover remains unchanged.
           </p>
@@ -399,7 +391,7 @@ function LibraryCoverChoicesContent({
               : fieldLabel(candidate.state)
   const card = (candidate: (typeof candidates)[number], index: number) => {
     const alternative = candidates.slice(0, index + 1).filter((item) => !item.incumbent).length
-    const source = `/api/v1/review-cases/${encodeURIComponent(reviewCaseId)}/cover-considerations/${encodeURIComponent(consideration.id)}/images/${encodeURIComponent(candidate.reference)}`
+    const source = cover.imageSource(consideration.id, candidate.reference)
     const outcome = candidate.incumbent ? 'keep_current' : 'accept'
     const value: DecisionCommand['selectedValue'] = candidate.incumbent
       ? null
@@ -425,7 +417,7 @@ function LibraryCoverChoicesContent({
           onClick={() => choose(outcome, value)}
         >
           <span className="library-cover-image">
-            {failed.has(candidate.reference) ? (
+            {cover.imageFailed(candidate.reference) ? (
               <span role="img" aria-label="Cover unavailable">
                 Image unavailable
               </span>
@@ -433,7 +425,7 @@ function LibraryCoverChoicesContent({
               <img
                 src={source}
                 alt={label}
-                onError={() => setFailed((items) => new Set(items).add(candidate.reference))}
+                onError={() => cover.markImageFailed(candidate.reference)}
               />
             )}
           </span>
@@ -503,13 +495,13 @@ function LibraryCoverChoicesContent({
         <button
           className="secondary-action"
           type="button"
-          disabled={disabled || prepare.isPending}
-          onClick={() => prepare.mutate()}
+          disabled={disabled || cover.prepare.isPending}
+          onClick={() => cover.prepare.mutate()}
         >
           Retry advisory review
         </button>
       ) : null}
-      {prepare.isError ? (
+      {cover.prepare.isError ? (
         <p role="alert">
           The advisory retry failed safely. The existing cover and manual choices are unchanged.
         </p>

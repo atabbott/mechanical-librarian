@@ -1,6 +1,6 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 
 import { displayValue } from '../api/http'
 import type {
@@ -10,6 +10,7 @@ import type {
   EvidenceView,
   HistoryView,
 } from '../api/http'
+import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
 import { fieldLabel, labelWords, opaqueSource } from '../labels'
 import { detailRoute, PreparationNotice, useReviewContext } from '../router'
@@ -91,31 +92,25 @@ function CoverChoices({
   disabled: boolean
   submit: (outcome: DecisionOutcome, selectedValue?: DecisionCommand['selectedValue']) => void
 }) {
-  const { http } = useReviewContext()
-  const queryClient = useQueryClient()
+  const cover = useCoverChoiceData(reviewCaseId)
   const consideration = field.coverConsideration
   const coverSelected = (
     outcome: DecisionOutcome,
     value: DecisionCommand['selectedValue'] = null,
   ) => automaticChoiceSelected(field.automaticDecision, outcome, value)
-  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set())
-  const retry = useMutation({
-    mutationFn: () => http.retryCoverConsideration(reviewCaseId),
-    retry: false,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['review-case', reviewCaseId] })
-    },
-  })
   if (!consideration)
     return (
       <section aria-label="Prepare cover comparison">
         <p role="status">
           No current cover consideration is available. The existing cover remains unchanged.
         </p>
-        <button disabled={disabled || retry.isPending} onClick={() => retry.mutate()}>
+        <button
+          disabled={disabled || cover.prepare.isPending}
+          onClick={() => cover.prepare.mutate()}
+        >
           Prepare cover comparison
         </button>
-        {retry.isError ? (
+        {cover.prepare.isError ? (
           <p role="alert">
             The comparison could not be prepared. The existing cover remains unchanged.
           </p>
@@ -185,7 +180,7 @@ function CoverChoices({
       ) : null}
       <div className="cover-grid">
         {consideration.candidates.map((candidate, index) => {
-          const src = `/api/v1/review-cases/${encodeURIComponent(reviewCaseId)}/cover-considerations/${encodeURIComponent(consideration.id)}/images/${encodeURIComponent(candidate.reference)}`
+          const src = cover.imageSource(consideration.id, candidate.reference)
           const observation = candidate.observation
           const alternativeNumber = consideration.candidates
             .slice(0, index + 1)
@@ -193,7 +188,7 @@ function CoverChoices({
           return (
             <article className={`cover-card cover-${candidate.state}`} key={candidate.reference}>
               <div className="cover-image-frame">
-                {failed.has(candidate.reference) ? (
+                {cover.imageFailed(candidate.reference) ? (
                   <p
                     role="img"
                     aria-label={`${candidate.incumbent ? 'Current' : 'Alternative'} cover unavailable`}
@@ -204,7 +199,7 @@ function CoverChoices({
                   <img
                     src={src}
                     alt={`${candidate.incumbent ? 'Current library' : `Alternative ${String(alternativeNumber)}`} cover`}
-                    onError={() => setFailed((values) => new Set(values).add(candidate.reference))}
+                    onError={() => cover.markImageFailed(candidate.reference)}
                   />
                 )}
               </div>
@@ -274,13 +269,13 @@ function CoverChoices({
       consideration.reviewerStatus === 'unavailable' ? (
         <button
           className="secondary-action"
-          disabled={disabled || retry.isPending}
-          onClick={() => retry.mutate()}
+          disabled={disabled || cover.prepare.isPending}
+          onClick={() => cover.prepare.mutate()}
         >
           Retry advisory review
         </button>
       ) : null}
-      {retry.isError ? (
+      {cover.prepare.isError ? (
         <p role="alert">
           The advisory retry failed safely. The existing cover and manual choices are unchanged.
         </p>
