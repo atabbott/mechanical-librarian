@@ -7,6 +7,25 @@
 
 ## Unreleased
 
+- Move review-pipeline construction, provider-recovery activation, and policy
+  resolution out of the composition root and into owned application modules.
+  `bootstrap/composition.py` was 2,418 lines in which the largest function,
+  `create_review_pipeline`, was 558 lines of decision logic wearing a bootstrap
+  hat, and the layer-boundary test constrains bootstrap to nothing, so nothing
+  arrested the drift structurally. Four application modules now own it:
+  provider-recovery evidence (which terminal statuses become durable health,
+  which lanes become retry work, how a raised failure is classified for
+  backoff), provider-recovery activation (one claimed retry member and the
+  durable cutover outbox), the nine review-pipeline stage decisions together
+  with the pipeline they assemble, and current-policy resolution beside the
+  other policy seams. All of it gains its destination layer's import
+  constraints, which is a strengthening.
+  Nothing about wiring changed. The composition root still constructs every
+  adapter, reads every secret, and opens every connection; the moved code
+  receives those as explicit dependencies. The recovery-classification table is
+  identical across all 38 inputs, policy resolution is identical, the public
+  surface is unchanged, and no configuration value, scalar, or collaborator type
+  reachable from a composed pipeline or a composed server was lost. (#660)
 - Decompose the 1,131-line `_package_report` EPUB extractor -- the largest
   function in the codebase and the one that parses the most hostile input in
   the system -- into twenty-nine named stages over four named state types, each

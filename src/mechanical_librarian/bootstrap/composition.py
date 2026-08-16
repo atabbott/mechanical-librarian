@@ -96,9 +96,7 @@ from mechanical_librarian.application.batch import (
 from mechanical_librarian.application.batch import manifest as batch_manifest
 from mechanical_librarian.application.batch_run import ForegroundBatchRun
 from mechanical_librarian.application.catalogue import (
-    CatalogueError,
     RefreshCurrentCatalogue,
-    TargetConnectionError,
 )
 from mechanical_librarian.application.configuration import (
     ConfigurationError,
@@ -114,12 +112,14 @@ from mechanical_librarian.application.cover_consideration import (
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.metadata_policy import (
+    current_resolved_policy as _current_resolved_policy,
+)
 from mechanical_librarian.application.metadata_report import (
     ArtifactAuthorityError,
     CoverReadError,
     CoverSourceChangedError,
     CoverTimeoutError,
-    CredentialError,
     CurrentnessError,
     GenerateMetadataReport,
     InspectionResult,
@@ -138,20 +138,29 @@ from mechanical_librarian.application.proposal_sets import (
     GetProposalSet,
     ProposalCurrentnessError,
 )
+from mechanical_librarian.application.provider_recovery_activation import (
+    ProviderRecoveryActivation,
+    ProviderRecoveryRepository,
+)
+from mechanical_librarian.application.provider_recovery_evidence import (
+    classify_provider_recovery_failure as _classify_provider_recovery_failure,
+)
+from mechanical_librarian.application.provider_recovery_evidence import (  # noqa: F401  # reason: the composition root keeps this established private alias so tests/integration/test_provider_recovery_composition.py reaches the relocated helper unchanged
+    provider_recovery_jobs as _provider_recovery_jobs,
+)
+from mechanical_librarian.application.provider_recovery_evidence import (  # noqa: F401  # reason: the composition root keeps this established private alias so tests/unit/test_provider_recovery.py reaches the relocated helper unchanged
+    record_provider_recovery_observations as _record_provider_recovery_observations,
+)
 from mechanical_librarian.application.provider_recovery_runner import (
     ScopedProviderRecoveryRunner,
 )
 from mechanical_librarian.application.provider_retry_successor import (
     ConfiguredProviderRetry,
-    GenerateProviderRetrySuccessor,
     ProviderRetryDisabled,
-    ProviderRetrySharedFailure,
     ProviderRetrySuccessorError,
 )
 from mechanical_librarian.application.review_application import (
-    ReviewApplicationError,
     compose_review_application,
-    prepare_cover_consideration,
 )
 from mechanical_librarian.application.review_cases import (
     AdmitReviewCase,
@@ -163,6 +172,9 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
     ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
+)
+from mechanical_librarian.application.review_pipeline_stages import (
+    ReviewPipelineStages,
 )
 from mechanical_librarian.bootstrap.contained_reviewer import run_cover_packet_reviewer
 from mechanical_librarian.domain.cover_evidence import (
@@ -182,7 +194,6 @@ from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
-    resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -196,11 +207,6 @@ from mechanical_librarian.domain.metadata_report import (
     claim_scope,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet
-from mechanical_librarian.domain.provider_recovery import ProviderRecoveryJob
-from mechanical_librarian.domain.review_case import (
-    ReviewAdmissionResult,
-    ReviewAdmissionStaleError,
-)
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
@@ -240,24 +246,25 @@ if TYPE_CHECKING:
     from mechanical_librarian.application.catalogue import CatalogueEntry
     from mechanical_librarian.application.configuration import (
         ApplicationConfiguration,
+        LibraryConfiguration,
         ReviewWebConfiguration,
+        TargetConnectionConfiguration,
     )
     from mechanical_librarian.application.continuous_field_effects import (
         ContinuousFieldEffectRepository,
     )
     from mechanical_librarian.application.field_effects import CapabilityObserver
     from mechanical_librarian.application.metadata_report import (
+        EpubInspector,
         MetadataProvider,
         ReportRepository,
+        TargetReader,
     )
     from mechanical_librarian.application.operations import StageTimer
     from mechanical_librarian.application.provider_recovery_runner import RecoveryRun
-    from mechanical_librarian.application.review_application import SerializedGate
     from mechanical_librarian.application.review_pipeline import (
         ReviewPipelineRepository,
     )
-    from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
-    from mechanical_librarian.domain.provider_recovery import ProviderRecovery
 
 
 class _PublicationReceiptRepository(Protocol):
@@ -278,10 +285,6 @@ class _PublicationReceiptRepository(Protocol):
         claim_next: bool = False,
         provider_failure_root: str | None = None,
     ) -> None: ...
-
-    def stage_provider_retry_successor(
-        self, source_report_id: str, report: MetadataReport, staged_at: int
-    ) -> str: ...
 
 
 class _ManifestEntry(TypedDict):
@@ -850,78 +853,6 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
     return run_metadata_report_loaded(configuration, database_path, artifact_store_path, connection_name, library_name, item, file_index, expected_file_identity)
 
 
-def _provider_statuses(report: MetadataReport) -> tuple[ProviderStatus, ...]:
-    return tuple(
-        status
-        for provider in report.providers
-        for status in (
-            provider.status,
-            *(lane.status for lane in provider.lanes),
-        )
-    )
-
-
-def _record_provider_recovery_observations(
-    store: SQLiteProviderRecoveryStore,
-    report: MetadataReport,
-    *,
-    adapters: dict[str, str],
-    scope: str,
-    generation: int,
-    now: int,
-) -> None:
-    """Persist only terminal F22 provider classifications; never retry them."""
-    failures = {
-        ProviderStatus.AUTHENTICATION: "authentication", ProviderStatus.AUTHORIZATION: "authorization",
-        ProviderStatus.RATE_LIMITED: "rate_limited", ProviderStatus.UNAVAILABLE: "transient",
-        ProviderStatus.INCOMPLETE: "transient",
-    }
-    for observation in report.providers:
-        statuses = (observation.status, *(lane.status for lane in observation.lanes))
-        terminal = tuple(failures[status] for status in statuses if status in failures)
-        failure = (
-            next((value for value in terminal if value in {"authentication", "authorization", "configuration"}), None)
-            or next((value for value in terminal if value in {"rate_limited", "transient"}), None)
-        )
-        if failure is not None:
-            adapter = adapters.get(observation.provider)
-            if adapter is None:
-                raise ReviewPipelineError("configuration")
-            store.observe_failure(
-                connection=observation.provider, adapter=adapter, scope=scope,
-                generation=generation, failure=failure, now=now,
-            )
-
-
-def _provider_recovery_jobs(
-    report: MetadataReport, *, package: tuple[str | None, str, str | None, int | None, str],
-    configuration: ApplicationConfiguration, scope: str,
-) -> tuple[ProviderRecoveryJob, ...]:
-    """Create bounded retry work only from a published terminal package."""
-    adapters = {provider.name: provider.adapter for provider in configuration.providers}
-    retryable = {
-        ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION,
-        ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE,
-        ProviderStatus.INCOMPLETE,
-    }
-    jobs = []
-    for observation in report.providers:
-        lane_ids = tuple(sorted(lane.identity for lane in observation.lanes if lane.status in retryable))
-        if not lane_ids:
-            continue
-        adapter = adapters.get(observation.provider)
-        if adapter is None:
-            raise ReviewPipelineError("configuration")
-        jobs.append(ProviderRecoveryJob(
-            observation.provider, adapter, scope,
-            configuration.provider_recovery_generation, report.report_id,
-            report.target.connection, report.target.library, report.target.item,
-            report.file.identity, report.report_id, *package,
-            json.dumps(lane_ids, separators=(",", ":")),
-        ))
-    return tuple(sorted(jobs, key=lambda job: (job.connection, job.adapter, job.scope, job.generation, job.member_id)))
-
-
 class _NonClosingRepository:
     """Let one composed service borrow a pipeline-owned repository connection."""
 
@@ -1173,65 +1104,6 @@ def admit_review_case_loaded(
         repository.close()
 
 
-def _current_resolved_policy(
-    configuration: ApplicationConfiguration,
-    repository: _NonClosingRepository | SQLiteMetadataReportRepository,
-    library: str,
-) -> ResolvedMetadataPolicy:
-    persisted = repository.current_resolved_metadata_policy(library)
-    profile = MetadataPolicyProfile.from_data(
-        json.loads(repository.active_metadata_policy())
-    )
-    configured = next(
-        (value for value in configuration.libraries if value.name == library),
-        None,
-    )
-    if configured is None:
-        raise ReviewCaseError("configuration")
-    configured_resolution = resolve_policy(
-        profile, library, configured.policy_override
-    )
-    if persisted is not None:
-        if persisted != configured_resolution:
-            raise ReviewCaseError("configuration")
-        return persisted
-    bound_id = repository.bind_initial_metadata_policy_resolution(
-        configured_resolution.canonical_json
-    )
-    if bound_id != configured_resolution.resolved_id:
-        raise ReviewCaseError("configuration")
-    return configured_resolution
-
-
-class _TargetConnectionHeld(CurrentnessError):
-    """Private runner signal: retain provider recovery unchanged for a target hold."""
-
-
-def _classify_provider_recovery_failure(error: Exception) -> tuple[str, int | None]:
-    if isinstance(error, _TargetConnectionHeld):
-        return "target_held", None
-    if isinstance(error, CredentialError) or (
-        isinstance(error, ProviderRetrySuccessorError)
-        and isinstance(error.__cause__, CredentialError)
-    ):
-        return "authentication", None
-    if isinstance(error, ProviderRetryDisabled):
-        return "disabled", None
-    if isinstance(error, ProviderRetrySharedFailure):
-        failure = (
-            "transient" if error.failure in {"unavailable", "incomplete"}
-            else error.failure
-        )
-        return failure, error.retry_after
-    if isinstance(error, ProviderRetrySuccessorError) and "configuration" in str(error):
-        return "configuration", None
-    if isinstance(error, ProviderRetrySuccessorError):
-        return "terminal", None
-    if isinstance(error, (CurrentnessError, TargetNotFoundError)):
-        return "stale", None
-    return "transient", None
-
-
 def create_review_pipeline(
     configuration: ApplicationConfiguration,
     database_path: Path,
@@ -1331,53 +1203,12 @@ def create_review_pipeline(
 
     pipeline_holder: dict[str, ReviewPreparationPipeline] = {}
 
-    def retry_member(
-        recovery_state: ProviderRecovery, job: ProviderRecoveryJob,
-        heartbeat: Callable[[], None],
-    ) -> None:
-        staged_report_id: str | None = None
-        repository = repository_factory()
-        try:
-            completed_report_id = repository.completed_provider_retry_successor(
-                job.source_report_id
-            )
-            if completed_report_id is not None:
-                return
-            package = repository.current_review_package(job.target_connection, job.library, job.item)
-            if package != (job.package_proposal_id, job.package_report_id, job.package_case_id, job.package_checkpoint, job.package_outcome):
-                raise CurrentnessError("target or media changed")
-            current_document = repository.current_optional(
-                job.target_connection, job.library, job.item, job.file_identity,
-            )
-            if current_document is not None:
-                current_report_id = MetadataReport.from_json(current_document).report_id
-                if current_report_id != job.source_report_id:
-                    try:
-                        repository.provider_retry_work_id(current_report_id)
-                    except MetadataReportError:
-                        raise CurrentnessError("target or media changed") from None
-                    staged_report_id = current_report_id
-        finally:
-            repository.close()
-        pipeline = pipeline_holder.get("pipeline")
-        if staged_report_id is not None:
-            if pipeline is None or not pipeline.run_recovery_successor(
-                staged_report_id, heartbeat
-            ):
-                raise ProviderRetrySuccessorError("provider retry package incomplete")
-            repository = repository_factory()
-            try:
-                package = repository.current_review_package(
-                    job.target_connection, job.library, job.item
-                )
-                if package is None or package[1] != staged_report_id:
-                    raise ProviderRetrySuccessorError("provider retry package incomplete")
-            finally:
-                repository.close()
-            return
-        connection, library, mount, _ = configuration.select(job.target_connection, job.library)
-        if mount is None:
-            raise CurrentnessError("target or media changed")
+    def retry_observers(
+        connection: TargetConnectionConfiguration,
+        library: LibraryConfiguration,
+        mount: MediaMountConfiguration,
+    ) -> tuple[TargetReader, EpubInspector]:
+        """Build one successor observation's adapters from validated selections."""
         artifacts = CoverArtifactStore(artifact_store_path, create=False)
         target = AudiobookshelfItemReader(
             client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds),
@@ -1386,69 +1217,29 @@ def create_review_pipeline(
             maximum_bytes=configuration.limits.target_response_bytes,
             timeout_seconds=configuration.limits.timeout_seconds,
         )
-        try:
-            serialized = GenerateProviderRetrySuccessor(
-                target=target, inspector=_IsolatedEpubInspector(artifacts),
-                repository_factory=cast(
-                    "Callable[[], ReportRepository]", repository_factory
-                ),
-                provider_resolver=retry_resolver,
-                mount=mount, limits=configuration.limits,
-                # The staged work id is deliberately discarded here; the seam
-                # types the hook as returning nothing.
-                after_publication=cast(
-                    "Callable[[ReportRepository, MetadataReport], None]",
-                    lambda bound, report: cast(
-                        "_PublicationReceiptRepository", bound
-                    ).stage_provider_retry_successor(
-                        job.source_report_id, report, int(time.time())
-                    ),
-                ),
-                heartbeat=heartbeat,
-            ).run(
-                job.source_report_id, tuple(json.loads(job.lane_ids)),
-                provider_name=job.connection, adapter=job.adapter,
-                generation=job.generation,
-                generation_woken=recovery_state.attempt == 0,
-            )
-        except TargetConnectionError as error:
-            if pipeline is not None:
-                pipeline.hold_connection(job.target_connection, error.code)
-            # This is a target hold, not provider evidence: retain the
-            # completed provider observation and stop successor backoff.
-            raise _TargetConnectionHeld("target connection is held") from None
-        except CurrentnessError as error:
-            # Currentness deliberately hides target details at the report
-            # boundary, but retains the closed target condition as its cause.
-            # Recover that safe taxonomy here so this successor cannot be
-            # mistaken for a provider transient/backoff condition.
-            cause = error.__cause__
-            while cause is not None and not isinstance(cause, TargetConnectionError):
-                cause = cause.__cause__
-            if isinstance(cause, TargetConnectionError):
-                if pipeline is not None:
-                    pipeline.hold_connection(job.target_connection, cause.code)
-                raise _TargetConnectionHeld("target connection is held") from None
-            raise
-        successor = MetadataReport.from_json(serialized)
-        if pipeline is None or not pipeline.run_recovery_successor(
-            successor.report_id, heartbeat
-        ):
-            raise ProviderRetrySuccessorError("provider retry package incomplete")
-        repository = repository_factory()
-        try:
-            package = repository.current_review_package(
-                job.target_connection, job.library, job.item
-            )
-            if package is None or package[1] != successor.report_id:
-                raise ProviderRetrySuccessorError("provider retry package incomplete")
-        finally:
-            repository.close()
+        return target, _IsolatedEpubInspector(artifacts)
+
+    runner_holder: dict[str, ScopedProviderRecoveryRunner] = {}
+    activation = ProviderRecoveryActivation(
+        configuration=configuration,
+        # The concrete repository carries every member of this contract; the
+        # ``publish`` hook alone declares its own protocol as ``object``, which
+        # is a variance mismatch in the seam rather than a missing capability.
+        repository_factory=cast(
+            "Callable[[], ProviderRecoveryRepository]", repository_factory
+        ),
+        observers=retry_observers,
+        provider_resolver=retry_resolver,
+        pipeline=lambda: pipeline_holder.get("pipeline"),
+        enqueue=lambda jobs: runner_holder["runner"].enqueue(jobs),
+        clock=lambda: int(time.time()),
+    )
 
     recovery_cancel = threading.Event()
     recovery_runner = ScopedProviderRecoveryRunner(
         store=provider_recovery, generation=configuration.provider_recovery_generation,
-        retry=retry_member, classify_failure=_classify_provider_recovery_failure,
+        retry=activation.retry_member,
+        classify_failure=_classify_provider_recovery_failure,
         clock=lambda: int(time.time()), cancelled=recovery_cancel.is_set,
         blocked_targets=lambda: frozenset(
             condition.connection for condition in pipeline_holder["pipeline"].connection_conditions()
@@ -1456,182 +1247,61 @@ def create_review_pipeline(
         ),
     )
 
-    def drain_provider_recovery_outbox(
-        repository: SQLiteMetadataReportRepository | None = None,
-    ) -> None:
-        """Deliver exact package cutovers idempotently into recovery state."""
-        owns_repository = repository is None
-        if repository is None:
-            repository = repository_factory()
-        try:
-            while rows := repository.pending_provider_recovery_outbox(limit=100):
-                for row in rows:
-                    # The outbox query projects exactly this column order and
-                    # nullability; see ``pending_provider_recovery_outbox``.
-                    (
-                        outbox_id, target_connection, library_name, item_id,
-                        proposal_id, report_id, case_id, checkpoint, outcome,
-                        created_at,
-                    ) = cast(
-                        "tuple[str, str, str, str, str | None, str, str | None, int | None, str, int]",
-                        row,
-                    )
-                    package = (proposal_id, report_id, case_id, checkpoint, outcome)
-                    current = repository.current_review_package(
-                        target_connection, library_name, item_id,
-                    )
-                    if current == package:
-                        report = MetadataReport.from_json(repository.get(report_id))
-                        if (
-                            report.target.connection != target_connection
-                            or report.target.library != library_name
-                            or report.target.item != item_id
-                        ):
-                            raise ReviewPipelineError("projection")
-                        jobs = _provider_recovery_jobs(
-                            report, package=package, configuration=configuration,
-                            scope=report.target.library,
-                        )
-                        if jobs:
-                            recovery_runner.enqueue(jobs)
-                    repository.complete_provider_recovery_outbox(
-                        outbox_id, delivered_at=max(int(time.time()), created_at),
-                    )
-        finally:
-            if owns_repository:
-                repository.close()
+    runner_holder["runner"] = recovery_runner
 
     def recover_provider(now: int) -> RecoveryRun:
         try:
-            drain_provider_recovery_outbox()
+            activation.drain_outbox()
             return recovery_runner.run_one(now=now)
         except ProviderRecoveryStoreError as error:
             raise ReviewPipelineError("recovery") from error
 
-    def discover(
-        connection: str, library: str
-    ) -> tuple[int, str, tuple[CatalogueEntry, ...]]:
-        with discovery_lock:
-            repository = open_catalogue(catalogue_path, create=True)
-            try:
-                service = RefreshCurrentCatalogue(reader, repository)
-                service.refresh_library(configuration, connection, library)
-                snapshot = repository.snapshot(
-                    batch_catalogue_fingerprint(configuration)
-                )
-                return snapshot.generation, snapshot.fingerprint, snapshot.entries
-            except TargetConnectionError:
-                raise
-            except CatalogueError as error:
-                raise ReviewPipelineError("transient") from error
-            finally:
-                repository.close()
-
     # The pipeline hands every stage callback back exactly the repository
-    # ``repository_factory`` above created, so each callback narrows the seam's
+    # ``repository_factory`` above created, so each of these narrows the seam's
     # ``ReviewPipelineRepository`` to that concrete adapter where it needs a
     # capability the seam does not name.
-    def extract(
-        pipeline_repository: ReviewPipelineRepository, action: PipelineAction,
-        claim_next: bool,
-    ) -> tuple[str, bool]:
-        catalogue = open_catalogue(catalogue_path, create=False)
-        try:
-            entry = catalogue.latest_entry(
-                action.catalogue_fingerprint or "",
-                (
-                    action.connection,
-                    action.library,
-                    action.library_id,
-                    action.item_id or "",
-                ),
-            )
-        except CatalogueError as error:
-            raise ReviewPipelineError("stale") from error
-        finally:
-            catalogue.close()
-        if (
-            entry is None
-            or entry.file_identity != action.file_identity
-            or entry.source_fingerprint != action.source_fingerprint
-            or not entry.eligible
-        ):
-            raise ReviewPipelineError("stale")
-        recover_artifacts_once()
-        try:
-            serialized = run_metadata_report_loaded(
-                configuration,
-                database_path,
-                artifact_store_path,
-                action.connection,
-                action.library,
-                action.item_id or "",
-                0,
-                expected_file_identity=action.file_identity,
-                open_library_pacer=open_library_pacer,
-                hardcover_pacer=hardcover_pacer,
-                review_action=action,
-                recover_artifacts=False,
-                repository_authority=database_authority,
-                pipeline_repository=cast("SQLiteMetadataReportRepository", pipeline_repository),
-                review_claim_next=claim_next,
-                timing=timing,
-            )
-        except CredentialError as error:
-            if error.provider is None:
-                raise ReviewPipelineError("authentication") from error
-            provider = next(
-                (value for value in configuration.providers if value.name == error.provider),
-                None,
-            )
-            if provider is None:
-                raise ReviewPipelineError("configuration") from error
-            provider_recovery.observe_failure(
-                connection=provider.name, adapter=provider.adapter,
-                scope=action.library,
-                generation=configuration.provider_recovery_generation,
-                failure="authentication", now=int(time.time()),
-            )
-            raise ReviewPipelineError(
-                "authentication", root=error.provider
-            ) from error
-        except (CurrentnessError, TargetNotFoundError) as error:
-            raise ReviewPipelineError("stale") from error
-        value = MetadataReport.from_json(serialized)
-        return value.report_id, True
+    def catalogue_repository(create: bool) -> SQLiteCatalogueRepository:
+        return open_catalogue(catalogue_path, create=create)
 
-    def providers(
-        pipeline_repository: ReviewPipelineRepository, report_id: str
-    ) -> tuple[ProviderStatus, ...]:
-        value = MetadataReport.from_json(cast("SQLiteMetadataReportRepository", pipeline_repository).get(report_id))
-        _record_provider_recovery_observations(
-            provider_recovery, value,
-            adapters={provider.name: provider.adapter for provider in configuration.providers},
-            scope=value.target.library,
-            generation=configuration.provider_recovery_generation, now=int(time.time()),
-        )
-        return _provider_statuses(value)
-
-    def propose(
-        pipeline_repository: ReviewPipelineRepository, report_id: str
+    def generate_report(
+        action: PipelineAction, claim_next: bool,
+        pipeline_repository: ReviewPipelineRepository,
     ) -> str:
-        try:
-            serialized = create_proposal_set_loaded(
-                configuration,
-                database_path,
-                artifact_store_path,
-                report_id,
-                database_authority,
-                cast("SQLiteMetadataReportRepository", pipeline_repository),
-            )
-        except ProposalCurrentnessError as error:
-            raise ReviewPipelineError("stale") from error
-        return ProposalSet.from_json(serialized).proposal_set_id
+        return run_metadata_report_loaded(
+            configuration,
+            database_path,
+            artifact_store_path,
+            action.connection,
+            action.library,
+            action.item_id or "",
+            0,
+            expected_file_identity=action.file_identity,
+            open_library_pacer=open_library_pacer,
+            hardcover_pacer=hardcover_pacer,
+            review_action=action,
+            recover_artifacts=False,
+            repository_authority=database_authority,
+            pipeline_repository=cast("SQLiteMetadataReportRepository", pipeline_repository),
+            review_claim_next=claim_next,
+            timing=timing,
+        )
 
-    def admit(
-        pipeline_repository: ReviewPipelineRepository, proposal_set_id: str
-    ) -> tuple[str, str | None]:
-        serialized = admit_review_case_loaded(
+    def create_proposal_set_for(
+        report_id: str, pipeline_repository: ReviewPipelineRepository
+    ) -> str:
+        return create_proposal_set_loaded(
+            configuration,
+            database_path,
+            artifact_store_path,
+            report_id,
+            database_authority,
+            cast("SQLiteMetadataReportRepository", pipeline_repository),
+        )
+
+    def admit_review_case_for(
+        proposal_set_id: str, pipeline_repository: ReviewPipelineRepository
+    ) -> str:
+        return admit_review_case_loaded(
             configuration,
             database_path,
             artifact_store_path,
@@ -1639,139 +1309,42 @@ def create_review_pipeline(
             database_authority,
             cast("SQLiteMetadataReportRepository", pipeline_repository),
         )
-        result = ReviewAdmissionResult.from_json(serialized)
-        if result.status == "stale":
-            raise ReviewPipelineError("stale")
-        return result.status, result.review_case_id
 
-    def project(
+    def cover_considerations(
         pipeline_repository: ReviewPipelineRepository,
-        action: PipelineAction | str,
-    ) -> str:
-        try:
-            if type(action) is str:
-                outcome = pipeline_repository.persist_shadow_outcome(
-                    action, int(time.time())
-                )
-                return "stale" if outcome == "stale" else "complete"
-            # The branch above already returned for an exact ``str``; mypy keeps
-            # ``str`` in the union here only because a ``str`` subclass would
-            # fail that exact test, which this seam never supplies.
-            staged = cast("PipelineAction", action)
-            if staged.review_case_id is None:
-                raise ReviewPipelineError("state")
-            outcome = pipeline_repository.persist_shadow_outcome(
-                staged.review_case_id, int(time.time()), staged_action=staged
-            )
-            if outcome == "stale":
-                return "stale"
-            return "complete"
-        except Exception as error:
-            raise ReviewPipelineError("projection") from error
-
-    def prepare_cover(
-        pipeline_repository: ReviewPipelineRepository, action: PipelineAction
-    ) -> None:
-        if action.review_case_id is None:
-            return
-        try:
-            def snapshot() -> tuple[str, str, bool] | None:
-                return cast(
-                    "SQLiteMetadataReportRepository", pipeline_repository
-                ).read_staged_cover_preparation(action)
-
-            if snapshot() is None:
-                return
-            considerations = _compose_cover_considerations(
-                cast("SQLiteMetadataReportRepository", pipeline_repository),
-                artifact_store_path,
-                # Callers reject an absent review configuration before composing.
-                cast("ReviewWebConfiguration", configuration.review),
-            )
-            prepare_cover_consideration(
-                None,
-                considerations,
-                action.review_case_id,
-                serialized=lambda call: call(),
-                snapshot=snapshot,
-                # The adapter's gate is not written generically, so it cannot
-                # structurally satisfy the return-type-preserving protocol.
-                finalize=cast(
-                    "SerializedGate",
-                    cast(
-                        "SQLiteMetadataReportRepository", pipeline_repository
-                    ).atomic_cover_preparation,
-                ),
-            )
-        except ReviewAdmissionStaleError as error:
-            raise ReviewPipelineError("stale") from error
-        except ReviewApplicationError as error:
-            raise ReviewPipelineError(error.code) from error
-        except Exception as error:
-            raise ReviewPipelineError("persistence") from error
-
-    def after_advance(
-        pipeline_repository: ReviewPipelineRepository, action: PipelineAction,
-        output_id: str | None,
-    ) -> None:
-        """Drain the durable cutover outbox after every final advancement."""
-        if not (
-            action.stage == "projection"
-            or (action.stage == "admission" and output_id is None)
-        ) or action.report_id is None:
-            return
-        drain_provider_recovery_outbox(
-            cast("SQLiteMetadataReportRepository", pipeline_repository)
+    ) -> CoverConsiderationService:
+        return _compose_cover_considerations(
+            cast("SQLiteMetadataReportRepository", pipeline_repository),
+            artifact_store_path,
+            # Callers reject an absent review configuration before composing.
+            cast("ReviewWebConfiguration", configuration.review),
         )
 
-    def check_connection(connection: str) -> None:
-        if connection not in clients:
-            raise ReviewPipelineError("library")
-        reader.probe_connection(
-            connection,
-            tuple(value for value in configuration.libraries if value.connection == connection),
-        )
-
-    pipeline = ReviewPreparationPipeline(
+    stages = ReviewPipelineStages(
+        configuration=configuration,
+        catalogue=catalogue_repository,
+        catalogue_reader=reader,
+        probe_connection=reader.probe_connection,
+        connections=frozenset(clients),
         repository_factory=repository_factory,
-        libraries=tuple(
-            (
-                library.connection,
-                library.name,
-                library.library_id,
-                batch_fingerprint(
-                    configuration,
-                    (
-                        BatchSelection(
-                            library.connection,
-                            library.name,
-                            library.library_id,
-                            "producer",
-                            None,
-                            "producer",
-                            False,
-                        ),
-                    ),
-                ),
-            )
-            for library in configuration.libraries
+        recover_artifacts=recover_artifacts_once,
+        generate_report=generate_report,
+        create_proposal_set=create_proposal_set_for,
+        admit_review_case=admit_review_case_for,
+        cover_considerations=cover_considerations,
+        recovery_observer=provider_recovery,
+        drain_outbox=lambda repository: activation.drain_outbox(
+            cast("ProviderRecoveryRepository", repository)
         ),
-        discover=discover,
-        extract=extract,
-        providers=providers,
-        propose=propose,
-        admit=admit,
-        project=project,
-        before_projection=prepare_cover,
-        after_advance=after_advance,
-        check_connection=check_connection,
-        timing=timing,
+        discovery_lock=discovery_lock,
+        clock=lambda: int(time.time()),
     )
+    pipeline = stages.pipeline(timing)
     pipeline_holder["pipeline"] = pipeline
     provider_recovery.require_generation_compatible(
         generation=configuration.provider_recovery_generation
     )
-    drain_provider_recovery_outbox()
+    activation.drain_outbox()
     provider_recovery.reconcile_generation(
         generation=configuration.provider_recovery_generation, now=int(time.time())
     )
@@ -2341,7 +1914,6 @@ def run_policy_preview(
     config_path: Path, database_path: Path, document: dict[str, object]
 ) -> dict[str, object]:
     """Compose the existing read-only policy notebook for one CLI preview."""
-    from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 
     configuration = load_configuration_file(config_path)
     repository = open_shadow_preview_repository(database_path)

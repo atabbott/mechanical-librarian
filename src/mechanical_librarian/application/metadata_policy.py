@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
+from mechanical_librarian.application.review_cases import ReviewCaseError
 from mechanical_librarian.domain.automatic_decision import (
     QUALIFIED_POLICY_OPTIONS,
     AutomaticSafetyState,
@@ -29,6 +30,9 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
     public_summary,
 )
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+
+if TYPE_CHECKING:
+    from mechanical_librarian.application.configuration import ApplicationConfiguration
 
 MAX_SHADOW_SAMPLE_RESPONSE_BYTES = 1_048_576
 
@@ -96,6 +100,58 @@ class AutomaticSafetyControls:
         except Exception as error:
             raise MetadataPolicyApplicationError("automatic safety is unavailable") from error
         return result
+
+
+class CurrentPolicyResolutionRepository(Protocol):
+    """The three durable reads and one bind current-policy resolution needs.
+
+    An annotation only: the composition root passes the concrete repository, so
+    nothing this object can also do is withheld from its other collaborators.
+    """
+
+    def current_resolved_metadata_policy(
+        self, library: str
+    ) -> ResolvedMetadataPolicy | None: ...
+
+    def active_metadata_policy(self) -> str: ...
+
+    def bind_initial_metadata_policy_resolution(self, document: str) -> str: ...
+
+
+def current_resolved_policy(
+    configuration: ApplicationConfiguration,
+    repository: CurrentPolicyResolutionRepository,
+    library: str,
+) -> ResolvedMetadataPolicy:
+    """Reconcile the configured resolution with the durably bound one.
+
+    Configuration is authoritative before the first bind and must agree with it
+    afterwards, so a library whose override has drifted from its persisted
+    resolution is a configuration failure rather than a silent re-resolution.
+    """
+    persisted = repository.current_resolved_metadata_policy(library)
+    profile = MetadataPolicyProfile.from_data(
+        json.loads(repository.active_metadata_policy())
+    )
+    configured = next(
+        (value for value in configuration.libraries if value.name == library),
+        None,
+    )
+    if configured is None:
+        raise ReviewCaseError("configuration")
+    configured_resolution = resolve_policy(
+        profile, library, configured.policy_override
+    )
+    if persisted is not None:
+        if persisted != configured_resolution:
+            raise ReviewCaseError("configuration")
+        return persisted
+    bound_id = repository.bind_initial_metadata_policy_resolution(
+        configured_resolution.canonical_json
+    )
+    if bound_id != configured_resolution.resolved_id:
+        raise ReviewCaseError("configuration")
+    return configured_resolution
 
 
 @dataclass(frozen=True, slots=True)
