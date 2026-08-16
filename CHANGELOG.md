@@ -10,8 +10,8 @@
 - Widen the provider-recovery transaction epilogue to the sites #662 left
   longhand, with every site naming the extra exception types it admits.
   `_rollback_on_failure` now takes them as `*wrapped` and concatenates them onto
-  the `sqlite3.Error, OverflowError` pair every write path shares, so the six
-  narrow sites keep their set by passing nothing, and a widening is visible in
+  the `sqlite3.Error, OverflowError` pair its adopters share, so the six narrow
+  sites keep their set by passing nothing, and a widening is visible in
   the call rather than implied by which copy was pasted. Ten sites pass
   `ProviderRecoveryError`; `complete_success`, which unpacks a health row
   positionally, also passes `AttributeError`. No site's caught set changed.
@@ -23,22 +23,39 @@
   whole body, there is no way to adopt one handler of such a pair without the
   other — each adoption removes both, which is why ten sites delete twenty-one
   guarded rollbacks.
-  `provider_recovery.py` goes 1,062 to 978, a net `-84`: implementation `-86`,
+  `provider_recovery.py` goes 1,062 to 986, a net `-76`: implementation `-86`,
   twelve lines added — one shared `except` and eleven `with` lines, each
   replacing a `try:` — against ninety-eight deleted; structure `0`, because the
-  signature is rewritten in place rather than added; and `+2` of the docstring
+  signature is rewritten in place rather than added; and `+10` of the docstring
   #706's acceptance asked for. Twelve against ninety-eight passes the
   consolidation clause, and since every added line replaces a deleted one it
   passes just as clearly on net-new implementation of zero. The clause's
   structure exemption is not needed to reach that verdict.
-  Four tests pin the three distinct caught sets from both ends — what each set
-  wraps and what it still lets escape untouched — and a fifth pins the argument
-  at all seventeen call sites, so the six narrow ones cannot be re-scoped
-  underneath the behavioural tests. #662's mutation check still bites:
-  deleting the guarded rollback from the shared handler fails three of them.
+  `tests/unit/test_provider_recovery.py` goes `+145 / -11`, a net `+134`, which
+  the refactoring rule's four buckets reconcile as nothing moved in or out,
+  `+9` of structure the change required, no copies removed, and `+125` of
+  checks newly added. The structure is one `import ast`, the new test class's
+  declaration and its five method signatures, and the rewrapped signatures of
+  the connection proxy and its factory, which took a `BaseException | None`
+  where they took a `bool`. The checks are the five new tests, `+124` on their
+  own, plus `+10` net for generalising that proxy from refusing every `COMMIT`
+  to raising a supplied failure, which is what lets a test set a claim up
+  through the proxy and only then arm the error the epilogue must meet. No
+  copies were removed because the change consolidates nothing here; the new
+  class borrows the existing `_store_over` rather than copy it, so the
+  duplication it would otherwise have added never arrives. A test module that
+  grows by the checks it gains is the outcome that rule calls a success.
+  Four of those tests pin the three distinct caught sets from both ends — what
+  each set wraps and what it still lets escape untouched — and the fifth pins
+  the argument at all seventeen call sites, so the six narrow ones cannot be
+  re-scoped underneath the behavioural tests. #662's mutation check still
+  bites: deleting the guarded rollback from the shared handler fails three of
+  them.
   No SQL, transaction nesting, or caller-visible error identity changed.
   `enqueue_jobs` and `resume_fanout` keep their longhand, because adopting
-  either would add or drop a type rather than name one. (#706)
+  either would add or drop a type rather than name one. The helper's docstring
+  names both and why, so the shared baseline is not mistaken for a module
+  invariant and neither path is later widened into agreement with it. (#706)
 - State which lines the code-economy consolidation test measures, so two
   readers measuring the same change reach the same verdict. #692 required a
   consolidation to be lighter than the copies it replaces without saying whether
