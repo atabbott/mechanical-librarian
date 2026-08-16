@@ -113,6 +113,9 @@ from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.metadata_policy import (
+    PolicyPreviewApplication,
+)
+from mechanical_librarian.application.metadata_policy import (
     current_resolved_policy as _current_resolved_policy,
 )
 from mechanical_librarian.application.metadata_report import (
@@ -1918,31 +1921,19 @@ def run_policy_preview(
     configuration = load_configuration_file(config_path)
     repository = open_shadow_preview_repository(database_path)
     try:
-        # LATENT DEFECT (typing-only unit: not repaired here).
-        # ``SQLiteShadowPreviewRepository`` implements only the read-only policy
-        # preview surface. It really does lack every session, review-case,
-        # decision, library, browser-state, and policy-mutation member these
-        # parameters name, so these are not variance mismatches: any composed
-        # operation other than ``preview_policy``/``policy.rich_qualification``
-        # below would raise ``AttributeError`` at runtime. Composition only
-        # reaches those two here, and ``operational_timings`` is omitted so the
-        # ``state_owner.operational_snapshot`` closure is never built.
-        application = compose_review_application(
-            state_owner=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks BrowserStateOwner
-            session_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks ReviewSessionStore
-            case_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks CurrentReviewCaseStore
-            decision_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks HumanDecisionStore
-            library_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks ReviewLibraryStore
-            policy_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks most of PolicyImpactRepository
-            verify_password=lambda _: False,
-            clock=lambda: int(time.time()),
-            session_lifetime_seconds=1,
-            graceful_shutdown_seconds=1,
-            close_state_owner=False,
-            policy_libraries=tuple(
-                (library.name, library.policy_override)
-                for library in getattr(configuration, "libraries", ())
-            ),
+        # ``SQLiteShadowPreviewRepository`` implements the read-only policy
+        # preview surface and nothing else, so the preview composes against
+        # exactly that contract: no session, review-case, decision, library,
+        # browser-state, or policy-mutation operation exists to reach a member
+        # it does not have.
+        policy_libraries = tuple(
+            (library.name, library.policy_override)
+            for library in getattr(configuration, "libraries", ())
+        )
+        application = PolicyPreviewApplication(
+            repository,
+            tuple(name for name, _ in policy_libraries),
+            {name: value for name, value in policy_libraries if value is not None},
         )
         profile = MetadataPolicyProfile.from_data(document)
         _, preview = application.preview_policy(
@@ -1962,7 +1953,7 @@ def run_policy_preview(
                 for item in preview.libraries
             ],
             "policy_id": profile.policy_id,
-            "rich_qualification": list(application.policy.rich_qualification(profile)),
+            "rich_qualification": list(application.rich_qualification(profile)),
             "schema_version": "metadata-policy-preview-v1",
         }
     finally:

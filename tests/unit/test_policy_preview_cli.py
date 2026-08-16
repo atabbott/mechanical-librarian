@@ -5,15 +5,111 @@ import json
 import os
 import tempfile
 import unittest
+from inspect import signature
 from pathlib import Path
+from typing import get_protocol_members, get_type_hints
 
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    SQLiteShadowPreviewRepository,
+    open_repository,
+    open_shadow_preview_repository,
+)
+from mechanical_librarian.application.metadata_policy import (
+    PolicyImpactRepository,
+    PolicyPreviewApplication,
+)
 from mechanical_librarian.bootstrap.composition import run_policy_preview
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
 )
 from mechanical_librarian.interfaces.cli import main
+
+
+class PolicyPreviewCompositionTests(unittest.TestCase):
+    """Prove the preview composes only against a contract its store satisfies.
+
+    The CLI reaches two operations, so a composition that also named session,
+    review-case, decision, library, browser-state, or policy-mutation members
+    stayed green while every one of them was a runtime `AttributeError`. These
+    two tests bound the composed surface and its store contract instead.
+    """
+
+    @staticmethod
+    def _unsatisfied(members: frozenset[str]) -> frozenset[str]:
+        return frozenset(
+            name
+            for name in members
+            if not hasattr(SQLiteShadowPreviewRepository, name)
+        )
+
+    def test_preview_composition_declares_only_the_preview_store(self) -> None:
+        parameters = signature(PolicyPreviewApplication.__init__).parameters
+        self.assertEqual(
+            {"self", "repository", "libraries", "overrides"}, set(parameters)
+        )
+        declared = get_type_hints(PolicyPreviewApplication.__init__)["repository"]
+        self.assertEqual(frozenset(), self._unsatisfied(get_protocol_members(declared)))
+        # The same computation over the contract this composition used to be
+        # given reports exactly what the shadow preview repository does not
+        # have, so the assertion above is a live check rather than a vacuous
+        # one: declaring the wider store here would fail it.
+        self.assertEqual(
+            frozenset(
+                {
+                    "acknowledge_metadata_policy_transition",
+                    "activate_metadata_policy",
+                    "activate_qualified_automatic",
+                    "create_metadata_policy_draft",
+                    "current_resolved_metadata_policy",
+                    "current_resolved_policy_id",
+                    "enter_shadow_preview",
+                    "get_metadata_policy_draft",
+                    "list_shadow_outcomes",
+                    "metadata_policy_transition",
+                    "retry_metadata_policy_transition",
+                    "shadow_posture",
+                }
+            ),
+            self._unsatisfied(get_protocol_members(PolicyImpactRepository)),
+        )
+
+    def test_composed_preview_reaches_every_operation_it_exposes(self) -> None:
+        builtin = MetadataPolicyProfile.builtin()
+        with tempfile.TemporaryDirectory() as temporary:
+            database = Path(temporary) / "state.sqlite3"
+            open_repository(database).close()
+            repository = open_shadow_preview_repository(database)
+            try:
+                application = PolicyPreviewApplication(
+                    repository, ("ebooks",), {}
+                )
+                self.assertEqual(
+                    {"preview_policy", "rich_qualification", "validate_policy"},
+                    {
+                        name
+                        for name in dir(application)
+                        if not name.startswith("_")
+                    },
+                )
+                self.assertEqual(19, len(application.rich_qualification(builtin)))
+                self.assertEqual(
+                    builtin,
+                    application.validate_policy(
+                        builtin.name,
+                        dict(builtin.options),
+                        dict(builtin.destinations),
+                    ),
+                )
+                profile, preview = application.preview_policy(
+                    builtin.name, dict(builtin.options), dict(builtin.destinations)
+                )
+                self.assertEqual(builtin, profile)
+                self.assertEqual(
+                    ("ebooks",), tuple(item.library for item in preview.libraries)
+                )
+            finally:
+                repository.close()
 
 
 class PolicyPreviewCliTests(unittest.TestCase):
