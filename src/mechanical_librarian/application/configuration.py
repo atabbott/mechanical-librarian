@@ -8,6 +8,7 @@ from ipaddress import ip_address
 from urllib.parse import urlsplit
 
 from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyError,
     MetadataPolicyProfile,
     resolve_policy,
 )
@@ -229,7 +230,12 @@ class LibraryConfiguration:
                 raise ConfigurationError("library policy override is invalid")
             try:
                 resolve_policy(MetadataPolicyProfile.builtin(), self.name, self.policy_override)
-            except Exception as error:
+            except MetadataPolicyError as error:
+                # The profile and the library name are already exact here, so
+                # the override is the only value under test and
+                # ``MetadataPolicyError`` is the only refusal ``resolve_policy``
+                # raises. Anything else is a fault in the builtin profile or in
+                # this validation, which is not an invalid override.
                 raise ConfigurationError("library policy override is invalid") from error
 
 

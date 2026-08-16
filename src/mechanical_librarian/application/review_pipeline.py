@@ -218,7 +218,27 @@ class ReviewPipelineRepository(Protocol):
 
 
 class ReviewPreparationPipeline:
-    """Advance one persisted, exact-current review-preparation action at a time."""
+    """Advance one persisted, exact-current review-preparation action at a time.
+
+    ``ReviewPipelineRepository`` is a protocol with no declared error type, and
+    the composition root binds it to a repository this layer never names, so no
+    call on it has an enumerable raisable set. Where a repository call site
+    below converts at all it follows one shape: re-raise ``ReviewPipelineError``
+    untouched, so a code the repository or a stage already chose is never
+    overwritten, then convert the remainder to
+    ``ReviewPipelineError("persistence")`` with the cause chained. The two
+    handlers that do something other than convert -- the connection probe and
+    the claimed-action epilogue -- record their own invariant where they stand.
+
+    The shape is not yet universal, and this says so rather than implying it.
+    ``check_connection``'s two durable transitions, ``hold_connection`` and
+    ``run_recovery_successor`` hold the repository open under a bare
+    ``try/finally``: they release the handle on every path but convert nothing,
+    so the bound repository's own error reaches their caller untyped. Only the
+    read above was converted, because only it is consumed by a lane a raw fault
+    ends outright; giving the other three the same shape moves an error
+    identity their callers see, which is a change of its own.
+    """
 
     def __init__(
         self,
@@ -381,6 +401,16 @@ class ReviewPreparationPipeline:
         repository = self._open_repository()
         try:
             return repository.target_connection_conditions()
+        except ReviewPipelineError:
+            raise
+        except Exception as error:
+            # This read feeds the recovery runner's blocked-target callback on
+            # the supervisor's own lane, and that lane survives only a
+            # ``ReviewPipelineError``. Left unconverted, the repository's own
+            # error ended the lane thread outright, stopping recovery and
+            # ordinary preparation with it, so the conversion this layer owes
+            # its caller is also what keeps the lane running.
+            raise ReviewPipelineError("persistence") from error
         finally:
             repository.close()
 
@@ -625,6 +655,16 @@ class ReviewPreparationPipeline:
                 error.provider,
             )
         except Exception:
+            # Terminal epilogue for one claimed action. The stages above are
+            # injected callables spanning the target, the providers, the media,
+            # and the repository, so nothing here can enumerate what they
+            # raise, and an action left claimed by an escaping fault would stall
+            # its lane for every later work. ``failed`` is the honest code for
+            # a cause this layer cannot name: it is not retryable, it does not
+            # borrow a provider or currentness meaning, and the durable record
+            # keeps the action visible for owner attention rather than
+            # discarding it. The rollback runs first so no partial output
+            # survives the failure.
             if output_transaction:
                 repository.rollback_review_pipeline_output()
             self._fail(repository, action, "failed", False)

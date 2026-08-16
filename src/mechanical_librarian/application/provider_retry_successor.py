@@ -331,6 +331,12 @@ class GenerateProviderRetrySuccessor:
                 MetadataDiscoveryPlan(plan.local_claims, selected), deadline=deadline
             )
         except Exception as error:
+            # Provider construction and the remote observation are one dispatch
+            # across a protocol that declares no error type. Either failing
+            # means the retry produced no observation, and the checks below --
+            # which reject a result that disagrees with the binding -- can only
+            # run on a dispatch that returned. The cause is chained, and the
+            # caller classifies it from the chain rather than from this code.
             raise ProviderRetrySuccessorError("provider retry dispatch failed") from error
         if type(observation) is ProviderObservation and observation.authority is None:
             observation = replace(observation, authority=provider.binding.authority)

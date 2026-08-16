@@ -35,6 +35,12 @@ def provider_attempt_diagnostics(
             category = getattr(attempt, "category", None)
             outcome = getattr(attempt, "outcome", None)
         except Exception:
+            # ``attempt`` is whatever a provider adapter put in its records, so
+            # these may be computed properties with no declared error type. A
+            # missing attribute already yields ``None``; only a property that
+            # fails reaches here, and ``None`` routes it to the same unknown
+            # bucket as a value of the wrong type on the next line. Nothing is
+            # dropped -- every attempt is still counted.
             category = None
             outcome = None
         key: tuple[FailureCategory, FailureStage, bool | None]
@@ -134,6 +140,10 @@ def provider_attempt_diagnostics(
                 try:
                     cause = getattr(record, "cause", None)
                 except Exception:
+                    # Same adapter-supplied record and the same reasoning as
+                    # the attempt loop. ``None`` fails the mapping below, which
+                    # marks the causes invalid rather than silently accepting
+                    # an aggregate built from a cause it could not read.
                     cause = None
                 mapped = cause_mapping.get(cause) if isinstance(cause, str) else None
                 if mapped is None:

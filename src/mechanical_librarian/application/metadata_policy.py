@@ -53,7 +53,15 @@ class AutomaticSafetyRepository(Protocol):
 
 
 class AutomaticSafetyControls:
-    """Owner-only durable pause/suspension controls; recovery is explicit."""
+    """Owner-only durable pause/suspension controls; recovery is explicit.
+
+    ``AutomaticSafetyRepository`` is a protocol with no declared error type, so
+    neither the read nor the write below has an enumerable raisable set. Both
+    handlers stay broad over it and report the same thing -- the durable safety
+    state could not be established -- with the cause chained. Breadth is what
+    keeps the control fail-closed: a caller that cannot read the state is never
+    told automatic work is permitted.
+    """
 
     def __init__(self, repository: AutomaticSafetyRepository) -> None:
         self._repository = repository
@@ -445,6 +453,18 @@ class PolicyNotebook:
 
     Configuration supplies only named-library sparse overrides and is never
     written here. Activation is exact-draft and exact-resolution bound.
+
+    ``PolicyImpactRepository`` is a protocol with no declared error type and
+    several optional members this class probes with ``hasattr``, so no handler
+    below can enumerate what its call may raise. Each stays broad and converts
+    with the cause chained; where a body can choose a
+    ``MetadataPolicyApplicationError`` of its own, that refusal is re-raised
+    untouched ahead of the conversion so the code it chose keeps its identity,
+    and the handlers without that clause are the ones whose body chooses none.
+    Nothing in this class discards a failure or answers from a default after
+    one. Where a body raises a bare ``ValueError``, it is that method's own
+    guard against a posture or transition the seam is not permitted to return,
+    and the broad handler is the guard's intended destination.
     """
 
     def __init__(self, repository: PolicyImpactRepository, libraries: tuple[str, ...], overrides: dict[str, dict[str, object]]) -> None:
@@ -479,6 +499,11 @@ class PolicyNotebook:
         except MetadataPolicyApplicationError:
             raise
         except Exception as error:
+            # The block spans domain validation and an undeclared draft write,
+            # and neither names its refusals in a type this layer can match on,
+            # so the qualification refusal is recognised by its message and
+            # everything else is reported as an unavailable draft. Both keep
+            # the cause chained; the message match only ever narrows the code.
             if "automatic intent is unqualified" in str(error):
                 raise MetadataPolicyApplicationError(
                     "policy automatic unqualified"
@@ -533,6 +558,15 @@ class PolicyNotebook:
             if self._repository.activate_qualified_automatic(updated_at) != "automatic":
                 raise ValueError
             return self.shadow_state()
+        except MetadataPolicyApplicationError:
+            # ``shadow_state`` runs after ``activate_qualified_automatic`` has
+            # durably succeeded, and it raises ``shadow posture is unavailable``
+            # of its own. Absorbing that into ``automatic posture is
+            # unavailable`` told the caller the activation failed when it had
+            # already happened and only the read-back did not, leaving no way to
+            # tell the two apart. The refusal keeps its own identity, as it does
+            # in ``enter_preview``.
+            raise
         except Exception as error:
             raise MetadataPolicyApplicationError("automatic posture is unavailable") from error
 
@@ -665,6 +699,15 @@ class PolicyNotebook:
         except MetadataPolicyApplicationError:
             raise
         except Exception as error:
+            # The block is wider than the activation seam: it resolves the
+            # profile against every configured library and reopens each
+            # resolution before the seam is reached, and a resolution that
+            # fails lands here too. The seam signals contention, an in-flight
+            # transition, and an unqualified resolution through message text
+            # rather than a type, so these three tests are the only narrowing
+            # available; everything else, a failed resolution included, is
+            # honestly reported as an activation that is unavailable. Each
+            # branch chains the cause, so no failure loses its origin.
             if "stale" in str(error):
                 raise MetadataPolicyApplicationError("policy activation is stale") from error
             if "processing" in str(error):
@@ -687,6 +730,9 @@ class PolicyNotebook:
         try:
             return self._repository.retry_metadata_policy_transition(transition_id, retried_at)
         except Exception as error:
+            # Same untyped seam as ``activate``: contention is recognisable only
+            # by message, and every other failure of the retry stays unavailable
+            # rather than borrowing a staleness it cannot demonstrate.
             if "stale" in str(error):
                 raise MetadataPolicyApplicationError("policy transition is stale") from error
             raise MetadataPolicyApplicationError("policy transition is unavailable") from error

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 import httpx
 from pydantic import ValidationError
@@ -132,6 +133,39 @@ class MetadataConfigurationTests(unittest.TestCase):
             path.write_text(json.dumps(source), encoding="utf-8")
             with self.assertRaises(ConfigurationError):
                 load_configuration_file(path)
+
+    def test_policy_override_validation_absorbs_only_the_policy_refusal(self) -> None:
+        """A rejected override is a configuration problem; a broken resolver is not.
+
+        The profile and the library name are already exact at this call, so the
+        override is the only value under test and `MetadataPolicyError` is the
+        only refusal `resolve_policy` raises. Catching `Exception` also blamed
+        the owner's configuration file for a fault in the builtin profile or in
+        the resolution itself, which no edit to that file can clear (#698).
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = _source(root)
+            source["libraries"][0]["policy_override"] = {
+                "options": {"date_precision": "not_an_option"},
+                "destinations": {},
+            }
+            path = root / "config.json"
+            path.write_text(json.dumps(source), encoding="utf-8")
+
+            with self.assertRaises(ConfigurationError):
+                load_configuration_file(path)
+
+            source["libraries"][0]["policy_override"]["options"] = {}
+            path.write_text(json.dumps(source), encoding="utf-8")
+            fault = RuntimeError("policy resolution is broken")
+            with patch(
+                "mechanical_librarian.application.configuration.resolve_policy",
+                side_effect=fault,
+            ):
+                with self.assertRaises(RuntimeError) as surfaced:
+                    load_configuration_file(path)
+            self.assertIs(surfaced.exception, fault)
 
     def test_duplicate_reference_unknown_field_and_implicit_old_schema_fail(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

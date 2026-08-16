@@ -1147,12 +1147,21 @@ class GenerateMetadataReport:
             except MetadataReportError:
                 raise
             except Exception as error:
+                # The inspector reads owner-supplied media off a mount, so its
+                # failures are archive, filesystem, and decoding faults it does
+                # not declare. All of them mean the same thing to a caller --
+                # this item could not be inspected -- which is a per-item
+                # outcome that leaves the rest of a batch runnable.
                 raise ItemInspectionError("EPUB inspection failed") from error
         except MetadataReportError:
             if repository is not None:
                 repository.close()
             raise
         except Exception as error:
+            # Covers the repository handle and the current-report read as well
+            # as the inspection above; neither seam declares an error type, and
+            # this layer owes its caller a ``MetadataReportError`` rather than a
+            # raw adapter fault. The repository is released on every path.
             if repository is not None:
                 repository.close()
             raise MetadataReportError("EPUB inspection failed") from error
@@ -1233,9 +1242,17 @@ class GenerateMetadataReport:
                     "provider credential unavailable", provider=binding.name
                 ) from error
             except Exception as error:
+                # The branch above already carries every credential failure the
+                # factory declares. What reaches here is a factory that broke
+                # for some other reason, and calling that a credential failure
+                # named a provider's stored secret as the cause, marked the
+                # preparation non-retryable on ``authentication``, and recorded
+                # a durable authentication fault against the provider's
+                # recovery health. Report it as what it is: the provider could
+                # not be constructed.
                 repository.close()
-                raise CredentialError(
-                    "provider credential unavailable", provider=binding.name
+                raise MetadataReportError(
+                    "provider construction failed"
                 ) from error
             try:
                 with self._timing.measure("provider_search", "provider"):
@@ -1243,13 +1260,39 @@ class GenerateMetadataReport:
                         plan, deadline=cover_aggregate_deadline
                     )
             except Exception:
+                # ``MetadataProvider`` is a protocol over remote adapters and
+                # declares no error type, so a provider that fails in any way
+                # is one unavailable lane rather than a failed report. Breadth
+                # is the contract here: the report must carry one terminal
+                # observation for every configured lane, and a provider allowed
+                # to abort the run would let one adapter deny the owner a
+                # package the remaining providers can still support.
+                #
+                # The access time is an optional diagnostic an adapter may
+                # expose as a computed property. ``getattr``'s default absorbs
+                # only ``AttributeError``, and the value it returns still has to
+                # satisfy the domain's access-time rule, so both the read and
+                # the check are guarded here: a provider whose property raises,
+                # or answers with something that is not an access time, must not
+                # take the unavailable lane this handler exists to produce.
+                # ``None`` is the recorded "not obtainable" value, as below.
+                accessed_at: str | None
+                try:
+                    reading = getattr(provider, "accessed_at", None)
+                    accessed_at = (
+                        None
+                        if reading is None
+                        else validate_provider_access_time(reading)
+                    )
+                except Exception:
+                    accessed_at = None
                 observation = provider_observation(
                     binding.name,
                     tuple(
                         ProviderLaneResult(
                             lane,
                             ProviderStatus.UNAVAILABLE,
-                            accessed_at=getattr(provider, "accessed_at", None),
+                            accessed_at=accessed_at,
                         )
                         for lane in plan.lanes
                     ),
@@ -1258,6 +1301,12 @@ class GenerateMetadataReport:
             if observation.provider != binding.name:
                 repository.close()
                 raise MetadataReportError("provider result is invalid")
+            # Both reads are optional diagnostics an adapter may expose as a
+            # computed property. A missing attribute already yields the default,
+            # so only a property that itself fails reaches these handlers, and
+            # its raisable set is the adapter's. ``None`` is the recorded "not
+            # obtainable" value and is distinct from the empty default, so the
+            # diagnostics stay truthful and the observation still stands.
             try:
                 attempt_records = getattr(provider, "attempt_records", ())
             except Exception:
@@ -1323,6 +1372,13 @@ class GenerateMetadataReport:
                 cover_sources=cover_sources,
             )
         except Exception:
+            # Cleanup only: the report assembly spans domain construction over
+            # everything the providers returned, and this handler exists to
+            # release the repository handle rather than to classify anything.
+            # The failure is re-raised unchanged, so nothing here classifies or
+            # hides it; the one thing that could displace it is a ``close``
+            # that itself fails, which is undeclared like the rest of this
+            # protocol.
             repository.close()
             raise
         try:
@@ -1358,6 +1414,12 @@ class GenerateMetadataReport:
                 raise CurrentnessError("target or media changed") from error
             raise
         except Exception as error:
+            # Publication runs the currentness guard, the injected receipt, and
+            # the durable write and read-back through one undeclared repository
+            # seam. The typed outcomes callers act on -- a lost connection and
+            # the two currentness messages -- are already re-raised above, so
+            # what remains is a publication that did not complete, whatever
+            # stopped it, and the cause is chained.
             raise MetadataReportError("report publication failed") from error
         finally:
             if repository is not None:
@@ -1369,6 +1431,10 @@ class GenerateMetadataReport:
         except (MetadataReportError, TargetConnectionError):
             raise
         except Exception as error:
+            # The target is a protocol over a remote library server and declares
+            # no error type beyond the connection failure re-raised above, so
+            # transport, decoding, and shape faults all arrive untyped. They are
+            # one outcome to every caller: the target could not be read.
             raise MetadataReportError("target read failed") from error
         if type(value) is not TargetSnapshot:
             raise MetadataReportError("target response is invalid")
@@ -1396,6 +1462,9 @@ def require_report_current(
     except (MetadataReportError, TargetConnectionError):
         raise
     except Exception as error:
+        # Same undeclared target seam as ``_safe_read``. Breadth is what keeps
+        # this revalidation fail-closed: a read that did not succeed cannot
+        # demonstrate currentness, so it must raise rather than return.
         raise MetadataReportError("target read failed") from error
     if type(final) is not TargetSnapshot:
         raise MetadataReportError("target response is invalid")

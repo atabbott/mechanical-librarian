@@ -313,6 +313,12 @@ class ReviewPipelineStages:
                 return "stale"
             return "complete"
         except Exception as error:
+            # Projection spans the untyped pipeline repository, the shadow
+            # outcome write, and the staged-action narrowing above, none of
+            # which declares what it raises. Every one of them means the same
+            # thing to the pipeline -- this package was not projected -- and
+            # ``projection`` is not retryable, so nothing is retried on a fault
+            # this layer cannot name.
             raise ReviewPipelineError("projection") from error
 
     def prepare_cover(
@@ -349,6 +355,15 @@ class ReviewPipelineStages:
         except ReviewApplicationError as error:
             raise ReviewPipelineError(error.code) from error
         except Exception as error:
+            # Last resort over the whole cover stage. Staleness and the
+            # application's own codes are carried through above, so what
+            # remains is a cover preparation that failed for a reason nothing
+            # here can name -- from the untyped repository seam, from the
+            # injected consideration factory, or from the application's own
+            # preparation between them, none of which this handler can tell
+            # apart. ``persistence`` is the code this stage answers with in
+            # that case rather than a finding about which of the three failed.
+            # It must still raise: an unprepared cover cannot be advanced past.
             raise ReviewPipelineError("persistence") from error
 
     def after_advance(
