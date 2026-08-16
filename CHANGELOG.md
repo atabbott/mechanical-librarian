@@ -7,6 +7,7 @@
 
 ## Unreleased
 
+- Format the backend with `ruff format` and gate it on every change. (#670)
 - Convert every `tests/unit/` module to pytest, completing the suite
   conversion and retiring the last shared `TestCase` base. (#697)
 - Convert every `TestCase` module outside `tests/unit/` to pytest, the pilot
