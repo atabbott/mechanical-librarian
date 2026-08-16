@@ -23,8 +23,6 @@ from mechanical_librarian.application.metadata_policy import (
     PolicyImpactRepository,
     PolicyNotebook,
     PolicyPreview,
-    PolicyPreviewNotebook,
-    PolicyPreviewRepository,
     PolicyTransition,
 )
 from mechanical_librarian.application.operations import (
@@ -214,10 +212,10 @@ class PreparationView:
         }
 
 
-class PolicyPreviewOperations:
-    """Serialized read-only policy operations; transport never receives its store."""
+class PolicyOperations:
+    """Serialized named policy operations; transport never receives its store."""
 
-    def __init__(self, notebook: PolicyPreviewNotebook, gate: SerializedGate) -> None:
+    def __init__(self, notebook: PolicyNotebook, gate: SerializedGate) -> None:
         self._notebook = notebook
         self._gate = gate
 
@@ -232,23 +230,14 @@ class PolicyPreviewOperations:
     def validate(self, profile: MetadataPolicyProfile) -> MetadataPolicyProfile:
         return self._gate(lambda: self._notebook.validate(profile))
 
-    def preview(self, profile: MetadataPolicyProfile) -> PolicyPreview:
-        return self._gate(lambda: self._notebook.preview(profile))
-
-
-class PolicyOperations(PolicyPreviewOperations):
-    """The read-only operations plus every draft, posture, and activation one."""
-
-    _notebook: PolicyNotebook
-
-    def __init__(self, notebook: PolicyNotebook, gate: SerializedGate) -> None:
-        super().__init__(notebook, gate)
-
     def create(self, name: object, options: object, destinations: object) -> MetadataPolicyProfile:
         return self._gate(lambda: self._notebook.create(name, options, destinations))
 
     def read(self, policy_id: object) -> MetadataPolicyProfile:
         return self._gate(lambda: self._notebook.read(policy_id))
+
+    def preview(self, profile: MetadataPolicyProfile) -> PolicyPreview:
+        return self._gate(lambda: self._notebook.preview(profile))
 
     def shadow_state(self) -> dict[str, object]:
         return self._gate(self._notebook.shadow_state)
@@ -322,38 +311,8 @@ class AutomaticSafetyOperations:
         )
 
 
-class PolicyPreviewApplication:
-    """The read-only draft-validation and impact-preview boundary.
-
-    Composed alone for the `policy-preview` CLI and inherited by the served
-    application, so both reach a preview through one implementation over one
-    store contract.
-    """
-
-    def __init__(self, *, policy: PolicyPreviewOperations) -> None:
-        self._policy = policy
-
-    @property
-    def policy(self) -> PolicyPreviewOperations:
-        return self._policy
-
-    def validate_policy(
-        self, name: object, options: object, destinations: object
-    ) -> MetadataPolicyProfile:
-        candidate = MetadataPolicyProfile.create(name, options, destinations)
-        return self._policy.validate(candidate)
-
-    def preview_policy(
-        self, name: object, options: object, destinations: object
-    ) -> tuple[MetadataPolicyProfile, PolicyPreview]:
-        candidate = self.validate_policy(name, options, destinations)
-        return candidate, self._policy.preview(candidate)
-
-
-class ReviewApplication(PolicyPreviewApplication):
+class ReviewApplication:
     """One deep application boundary consumed by every HTTP transport route."""
-
-    _policy: PolicyOperations
 
     def __init__(
         self,
@@ -380,7 +339,7 @@ class ReviewApplication(PolicyPreviewApplication):
         self._decisions = decisions
         self._browse = browse
         self._gate = gate
-        super().__init__(policy=PolicyOperations(policy, self.serialized))
+        self._policy = PolicyOperations(policy, self.serialized)
         self._automatic_safety = AutomaticSafetyOperations(
             automatic_safety, self.serialized
         )
@@ -493,6 +452,18 @@ class ReviewApplication(PolicyPreviewApplication):
             dict(candidate.options),
             dict(candidate.destinations),
         )
+
+    def validate_policy(
+        self, name: object, options: object, destinations: object
+    ) -> MetadataPolicyProfile:
+        candidate = MetadataPolicyProfile.create(name, options, destinations)
+        return self._policy.validate(candidate)
+
+    def preview_policy(
+        self, name: object, options: object, destinations: object
+    ) -> tuple[MetadataPolicyProfile, PolicyPreview]:
+        candidate = self.validate_policy(name, options, destinations)
+        return candidate, self._policy.preview(candidate)
 
     def case_detail(self, review_case_id: str) -> CaseDetailView:
         def read() -> CaseDetailView:
@@ -915,36 +886,6 @@ def prepare_cover_consideration(
         raise ReviewApplicationError(error.code) from error
 
 
-def compose_policy_preview_application(
-    *,
-    policy_store: PolicyPreviewRepository,
-    policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
-) -> PolicyPreviewApplication:
-    """Compose the read-only preview boundary and nothing else.
-
-    A preview reads one store and owns no session, review case, decision,
-    library, browser-state, or policy-mutation capability, so its store
-    contract names only what `preview_policy` and its validation actually
-    read. Nothing composed here can reach a member `policy_store` lacks.
-    """
-    gate = RLock()
-
-    def serialized(call: Callable[[], _Result]) -> _Result:
-        with gate:
-            return call()
-
-    return PolicyPreviewApplication(
-        policy=PolicyPreviewOperations(
-            PolicyPreviewNotebook(
-                policy_store,
-                tuple(name for name, _ in policy_libraries),
-                {name: value for name, value in policy_libraries if value is not None},
-            ),
-            serialized,
-        )
-    )
-
-
 def compose_review_application(
     *,
     state_owner: BrowserStateOwner,
@@ -1024,12 +965,9 @@ __all__ = [
     "LibraryView",
     "PreparationView",
     "PolicyOperations",
-    "PolicyPreviewApplication",
-    "PolicyPreviewOperations",
-    "ReviewPolicyStore",
     "ReviewApplication",
+    "ReviewPolicyStore",
     "ReviewApplicationError",
-    "compose_policy_preview_application",
     "compose_review_application",
     "prepare_cover_consideration",
 ]

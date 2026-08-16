@@ -33,9 +33,12 @@
   mypy stays clean without them.
   The narrowing is static only: the same repository object is passed, nothing is
   wrapped or forwarded at runtime, so no capability can be lost the way a
-  runtime facade silently removed automatic safety during #658. The served
-  application inherits the same preview implementation rather than repeating it,
-  so both paths preview through one code path over one store contract.
+  runtime facade silently removed automatic safety during #658. The preview
+  boundary stands alone rather than sitting under the served application, and
+  the three rules both paths need -- the automatic-qualification rule, the
+  public F20 disposition guard, and the named-library invariant -- moved into
+  this module's shared validation vocabulary instead of being copied, so no
+  rejection rule or its message exists in two places.
   `policy-preview` output, exit codes, and failure messages are byte-identical
   across thirteen success and failure scenarios, and the database is unchanged
   in every one. (#667)

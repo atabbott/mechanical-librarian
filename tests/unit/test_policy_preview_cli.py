@@ -14,9 +14,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
     open_shadow_preview_repository,
 )
-from mechanical_librarian.application.metadata_policy import PolicyImpactRepository
-from mechanical_librarian.application.review_application import (
-    compose_policy_preview_application,
+from mechanical_librarian.application.metadata_policy import (
+    PolicyImpactRepository,
+    PolicyPreviewApplication,
 )
 from mechanical_librarian.bootstrap.composition import run_policy_preview
 from mechanical_librarian.domain.metadata_policy import (
@@ -44,9 +44,11 @@ class PolicyPreviewCompositionTests(unittest.TestCase):
         )
 
     def test_preview_composition_declares_only_the_preview_store(self) -> None:
-        parameters = signature(compose_policy_preview_application).parameters
-        self.assertEqual({"policy_store", "policy_libraries"}, set(parameters))
-        declared = get_type_hints(compose_policy_preview_application)["policy_store"]
+        parameters = signature(PolicyPreviewApplication.__init__).parameters
+        self.assertEqual(
+            {"self", "repository", "libraries", "overrides"}, set(parameters)
+        )
+        declared = get_type_hints(PolicyPreviewApplication.__init__)["repository"]
         self.assertEqual(frozenset(), self._unsatisfied(get_protocol_members(declared)))
         # The same computation over the contract this composition used to be
         # given reports exactly what the shadow preview repository does not
@@ -79,29 +81,18 @@ class PolicyPreviewCompositionTests(unittest.TestCase):
             open_repository(database).close()
             repository = open_shadow_preview_repository(database)
             try:
-                application = compose_policy_preview_application(
-                    policy_store=repository,
-                    policy_libraries=(("ebooks", None),),
+                application = PolicyPreviewApplication(
+                    repository, ("ebooks",), {}
                 )
                 self.assertEqual(
-                    {"policy", "preview_policy", "validate_policy"},
+                    {"preview_policy", "rich_qualification", "validate_policy"},
                     {
                         name
                         for name in dir(application)
                         if not name.startswith("_")
                     },
                 )
-                self.assertEqual(
-                    {"active", "preview", "rich_qualification", "validate"},
-                    {
-                        name
-                        for name in dir(application.policy)
-                        if not name.startswith("_")
-                    },
-                )
-                self.assertEqual(builtin, application.policy.active())
-                self.assertEqual(19, len(application.policy.rich_qualification(builtin)))
-                self.assertEqual(builtin, application.policy.validate(builtin))
+                self.assertEqual(19, len(application.rich_qualification(builtin)))
                 self.assertEqual(
                     builtin,
                     application.validate_policy(
@@ -109,9 +100,6 @@ class PolicyPreviewCompositionTests(unittest.TestCase):
                         dict(builtin.options),
                         dict(builtin.destinations),
                     ),
-                )
-                self.assertEqual(
-                    builtin.policy_id, application.policy.preview(builtin).profile_id
                 )
                 profile, preview = application.preview_policy(
                     builtin.name, dict(builtin.options), dict(builtin.destinations)

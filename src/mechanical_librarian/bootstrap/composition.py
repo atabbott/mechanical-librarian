@@ -113,6 +113,9 @@ from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.metadata_policy import (
+    PolicyPreviewApplication,
+)
+from mechanical_librarian.application.metadata_policy import (
     current_resolved_policy as _current_resolved_policy,
 )
 from mechanical_librarian.application.metadata_report import (
@@ -160,7 +163,6 @@ from mechanical_librarian.application.provider_retry_successor import (
     ProviderRetrySuccessorError,
 )
 from mechanical_librarian.application.review_application import (
-    compose_policy_preview_application,
     compose_review_application,
 )
 from mechanical_librarian.application.review_cases import (
@@ -1924,12 +1926,14 @@ def run_policy_preview(
         # exactly that contract: no session, review-case, decision, library,
         # browser-state, or policy-mutation operation exists to reach a member
         # it does not have.
-        application = compose_policy_preview_application(
-            policy_store=repository,
-            policy_libraries=tuple(
-                (library.name, library.policy_override)
-                for library in getattr(configuration, "libraries", ())
-            ),
+        policy_libraries = tuple(
+            (library.name, library.policy_override)
+            for library in getattr(configuration, "libraries", ())
+        )
+        application = PolicyPreviewApplication(
+            repository,
+            tuple(name for name, _ in policy_libraries),
+            {name: value for name, value in policy_libraries if value is not None},
         )
         profile = MetadataPolicyProfile.from_data(document)
         _, preview = application.preview_policy(
@@ -1949,7 +1953,7 @@ def run_policy_preview(
                 for item in preview.libraries
             ],
             "policy_id": profile.policy_id,
-            "rich_qualification": list(application.policy.rich_qualification(profile)),
+            "rich_qualification": list(application.rich_qualification(profile)),
             "schema_version": "metadata-policy-preview-v1",
         }
     finally:
