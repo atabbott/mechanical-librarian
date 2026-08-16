@@ -988,27 +988,44 @@ _DC_FIELDS = {
 }
 
 
-def _package_report(
-    request: EpubPackageRequest,
-    package_name: str,
-    root: _Node,
-    entries: dict[str, _Entry],
-    encryption_names: set[str],
-    encryption_declarations: list[tuple[str, _Node]],
-    encryption_present: bool,
-    usage: EpubPackageUsage,
-    rootfile_node: _Node,
-    noncanonical_mimetype: bool,
-) -> EpubPackageReport:
-    if root.name != "{" + _OPF_NS + "}package":
-        raise _Rejected(EpubInspectionOutcome.UNSUPPORTED_FORMAT)
+@dataclass(frozen=True)
+class _PackageFrame:
+    """The validated ``<package>`` shell every later stage reads.
+
+    ``metadata_nodes`` already has the EPUB2 ``dc-metadata``/``x-metadata``
+    wrappers flattened away, so downstream stages never re-derive it.
+    """
+
+    version: str
+    declared_version: str
+    prefixes: dict[str, str]
+    metadata_nodes: tuple[_Node, ...]
+    manifest: _Node
+    spine: _Node
+    tours: list[_Node]
+
+
+def _package_version(root: _Node) -> tuple[str, str]:
+    """Resolve the supported package version and its declared spelling.
+
+    Rejects any version outside the OPF 2.x and EPUB 3.x families rather than
+    falling back to a nearest supported one.
+    """
     declared_version = _attribute(root, "version") or ""
     if declared_version == "1.0" or re.fullmatch(r"2(?:\.[0-9]+)+", declared_version):
-        version = "2.0"
-    elif re.fullmatch(r"3(?:\.[0-9]+)+", declared_version):
-        version = "3.0"
-    else:
-        raise _Rejected(EpubInspectionOutcome.UNSUPPORTED_VERSION)
+        return "2.0", declared_version
+    if re.fullmatch(r"3(?:\.[0-9]+)+", declared_version):
+        return "3.0", declared_version
+    raise _Rejected(EpubInspectionOutcome.UNSUPPORTED_VERSION)
+
+
+def _prefix_vocabulary(request: EpubPackageRequest, root: _Node) -> dict[str, str]:
+    """Parse ``@prefix`` into a bounded, unambiguous prefix mapping.
+
+    Rejects an odd token count, more mappings than the limit allows, a
+    malformed prefix name or vocabulary IRI, and any repeated prefix. A
+    package that declares too many mappings is rejected, never truncated.
+    """
     prefix_tokens = (_attribute(root, "prefix") or "").split()
     if (
         len(prefix_tokens) % 2
@@ -1027,6 +1044,62 @@ def _package_report(
         if name in prefixes:
             raise _Rejected(EpubInspectionOutcome.MALFORMED)
         prefixes[name] = prefix_tokens[index + 1]
+    return prefixes
+
+
+def _check_section_sequence(root: _Node, version: str) -> None:
+    """Reject any package whose top-level element sequence is unsupported.
+
+    Metadata, manifest and spine must lead in that order; only the optional
+    trailing elements each version allows may follow, in their allowed order.
+    """
+    supported_sequence = [
+        f"{{{_OPF_NS}}}metadata",
+        f"{{{_OPF_NS}}}manifest",
+        f"{{{_OPF_NS}}}spine",
+    ]
+    child_names = [node.name for node in root.children]
+    if child_names[:3] != supported_sequence:
+        raise _Rejected(EpubInspectionOutcome.MALFORMED)
+    trailing = child_names[3:]
+    guide_name = f"{{{_OPF_NS}}}guide"
+    if version == "2.0":
+        tours_name = f"{{{_OPF_NS}}}tours"
+        if trailing not in (
+            [],
+            [tours_name],
+            [guide_name],
+            [tours_name, guide_name],
+        ):
+            raise _Rejected(EpubInspectionOutcome.MALFORMED)
+        return
+    collection_name = f"{{{_OPF_NS}}}collection"
+    bindings_name = f"{{{_OPF_NS}}}bindings"
+    tours_name = f"{{{_OPF_NS}}}tours"
+    trailing = [name for name in trailing if name != tours_name]
+    position = 0
+    if position < len(trailing) and trailing[position] == guide_name:
+        position += 1
+    if position < len(trailing) and trailing[position] == bindings_name:
+        position += 1
+    while position < len(trailing) and trailing[position] == collection_name:
+        position += 1
+    if position != len(trailing):
+        raise _Rejected(EpubInspectionOutcome.MALFORMED)
+
+
+def _package_frame(request: EpubPackageRequest, root: _Node) -> _PackageFrame:
+    """Resolve and bound the package shell before any field is read.
+
+    Rejects a non-OPF root element, an unsupported version, a malformed prefix
+    vocabulary, a missing or repeated section group, an unsupported top-level
+    sequence, an empty manifest or spine, and any section whose declared node
+    count exceeds its limit. Over-bound sections are rejected, never truncated.
+    """
+    if root.name != "{" + _OPF_NS + "}package":
+        raise _Rejected(EpubInspectionOutcome.UNSUPPORTED_FORMAT)
+    version, declared_version = _package_version(root)
+    prefixes = _prefix_vocabulary(request, root)
     metadata_groups = _children(root, "metadata", _OPF_NS)
     manifest_groups = _children(root, "manifest", _OPF_NS)
     spine_groups = _children(root, "spine", _OPF_NS)
@@ -1049,79 +1122,75 @@ def _package_report(
             else (node,)
         )
     )
-    usage = replace(usage, metadata_nodes=len(metadata_nodes))
-    supported_sequence = [
-        f"{{{_OPF_NS}}}metadata",
-        f"{{{_OPF_NS}}}manifest",
-        f"{{{_OPF_NS}}}spine",
-    ]
-    child_names = [node.name for node in root.children]
-    if child_names[:3] != supported_sequence:
-        raise _Rejected(EpubInspectionOutcome.MALFORMED)
-    trailing = child_names[3:]
-    guide_name = f"{{{_OPF_NS}}}guide"
-    if version == "2.0":
-        tours_name = f"{{{_OPF_NS}}}tours"
-        if trailing not in (
-            [],
-            [tours_name],
-            [guide_name],
-            [tours_name, guide_name],
-        ):
-            raise _Rejected(EpubInspectionOutcome.MALFORMED)
-    else:
-        collection_name = f"{{{_OPF_NS}}}collection"
-        bindings_name = f"{{{_OPF_NS}}}bindings"
-        tours_name = f"{{{_OPF_NS}}}tours"
-        trailing = [name for name in trailing if name != tours_name]
-        position = 0
-        if position < len(trailing) and trailing[position] == guide_name:
-            position += 1
-        if position < len(trailing) and trailing[position] == bindings_name:
-            position += 1
-        while position < len(trailing) and trailing[position] == collection_name:
-            position += 1
-        if position != len(trailing):
-            raise _Rejected(EpubInspectionOutcome.MALFORMED)
+    _check_section_sequence(root, version)
     if not manifest.children or not spine.children:
         raise _Rejected(EpubInspectionOutcome.MALFORMED)
     if len(metadata_nodes) > request.limits.metadata_nodes:
         raise _Rejected(EpubInspectionOutcome.RESOURCE_LIMIT)
     if len(manifest.children) > request.limits.manifest_items or len(spine.children) > request.limits.spine_items:
         raise _Rejected(EpubInspectionOutcome.RESOURCE_LIMIT)
-    observations: list[EpubPackageObservation] = []
-    declarations: list[EpubPackageDeclaration] = []
+    return _PackageFrame(
+        version,
+        declared_version,
+        prefixes,
+        metadata_nodes,
+        manifest,
+        spine,
+        _children(root, "tours", _OPF_NS),
+    )
+
+
+def _archive_shape_warnings(
+    entries: dict[str, _Entry], frame: _PackageFrame, noncanonical_mimetype: bool
+) -> list[EpubPackageWarning]:
+    """Report the container-level irregularities that never reject a package.
+
+    Each is an observation about how the archive was produced, not about what
+    it declares, so none of them changes what the extractor accepts.
+    """
     warnings: list[EpubPackageWarning] = []
     if noncanonical_mimetype:
         warnings.append(EpubPackageWarning("noncanonical_mimetype"))
-    if declared_version != version:
+    if frame.declared_version != frame.version:
         warnings.append(EpubPackageWarning("noncanonical_package_version"))
     if any(
         _uses_noncanonical_zip_flags(entry.flags, entry.method)
         for entry in entries.values()
     ):
         warnings.append(EpubPackageWarning("noncanonical_zip_flags"))
-    tours = _children(root, "tours", _OPF_NS)
-    if tours:
+    if frame.tours:
         warnings.append(EpubPackageWarning("deprecated_tours"))
-    declarations.extend(
-        (
-            EpubPackageDeclaration(
-                EpubPackageDeclarationKind.ROOTFILE,
-                rootfile_node.ordinal,
-                _citation(request, _CONTAINER, EpubPackageCitationSection.PACKAGE, rootfile_node),
-                epub_resource_identity(package_name),
-                media_type="application/oebps-package+xml",
-            ),
-            EpubPackageDeclaration(
-                EpubPackageDeclarationKind.PACKAGE,
-                root.ordinal,
-                _citation(request, package_name, EpubPackageCitationSection.PACKAGE, root),
-                epub_resource_identity(package_name),
-                media_type="application/oebps-package+xml",
-            ),
-        )
-    )
+    return warnings
+
+
+def _container_declarations(
+    request: EpubPackageRequest,
+    package_name: str,
+    root: _Node,
+    rootfile_node: _Node,
+    encryption_declarations: list[tuple[str, _Node]],
+) -> list[EpubPackageDeclaration]:
+    """Declare the rootfile, the package document and every cipher reference.
+
+    These are the declarations that exist before any package field is read, so
+    a report always cites the documents it actually opened.
+    """
+    declarations = [
+        EpubPackageDeclaration(
+            EpubPackageDeclarationKind.ROOTFILE,
+            rootfile_node.ordinal,
+            _citation(request, _CONTAINER, EpubPackageCitationSection.PACKAGE, rootfile_node),
+            epub_resource_identity(package_name),
+            media_type="application/oebps-package+xml",
+        ),
+        EpubPackageDeclaration(
+            EpubPackageDeclarationKind.PACKAGE,
+            root.ordinal,
+            _citation(request, package_name, EpubPackageCitationSection.PACKAGE, root),
+            epub_resource_identity(package_name),
+            media_type="application/oebps-package+xml",
+        ),
+    ]
     for encrypted_name, encrypted_node in encryption_declarations:
         declarations.append(
             EpubPackageDeclaration(
@@ -1136,9 +1205,21 @@ def _package_report(
                 epub_resource_identity(encrypted_name),
             )
         )
-    identifiers_by_id: dict[str, _Node] = {}
+    return declarations
+
+
+def _identifier_registry(
+    request: EpubPackageRequest, package_name: str, root: _Node
+) -> tuple[dict[str, _Node], list[EpubPackageWarning]]:
+    """Map every unambiguous ``@id`` in the package to the node that owns it.
+
+    A syntactically invalid id is warned about and dropped; an id claimed by
+    more than one node is withdrawn from the registry entirely, so no later
+    stage can resolve a reference to an arbitrary one of its claimants.
+    """
     id_registry: dict[str, _Node] = {}
     ambiguous_ids: set[str] = set()
+    warnings: list[EpubPackageWarning] = []
     for node in _walk(root):
         identifier = _attribute(node, "id")
         if identifier is None:
@@ -1157,6 +1238,41 @@ def _package_report(
             warnings.append(EpubPackageWarning("ambiguous_package_id"))
             continue
         id_registry[identifier] = node
+    return id_registry, warnings
+
+
+
+def _package_report(
+    request: EpubPackageRequest,
+    package_name: str,
+    root: _Node,
+    entries: dict[str, _Entry],
+    encryption_names: set[str],
+    encryption_declarations: list[tuple[str, _Node]],
+    encryption_present: bool,
+    usage: EpubPackageUsage,
+    rootfile_node: _Node,
+    noncanonical_mimetype: bool,
+) -> EpubPackageReport:
+    frame = _package_frame(request, root)
+    version = frame.version
+    declared_version = frame.declared_version
+    prefixes = frame.prefixes
+    metadata_nodes = frame.metadata_nodes
+    manifest = frame.manifest
+    spine = frame.spine
+    tours = frame.tours
+    usage = replace(usage, metadata_nodes=len(metadata_nodes))
+    observations: list[EpubPackageObservation] = []
+    warnings: list[EpubPackageWarning] = _archive_shape_warnings(
+        entries, frame, noncanonical_mimetype
+    )
+    declarations: list[EpubPackageDeclaration] = _container_declarations(
+        request, package_name, root, rootfile_node, encryption_declarations
+    )
+    id_registry, registry_warnings = _identifier_registry(request, package_name, root)
+    warnings.extend(registry_warnings)
+    identifiers_by_id: dict[str, _Node] = {}
     standard_collection = any(
         _attribute(node, "property") == "belongs-to-collection" and bool(node.text)
         for node in metadata_nodes
