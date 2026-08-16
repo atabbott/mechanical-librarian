@@ -20,6 +20,7 @@ from mechanical_librarian.adapters.persistence.provider_recovery import (
 )
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
+    CatalogueReader,
     TargetConnectionError,
 )
 from mechanical_librarian.application.configuration import (
@@ -35,6 +36,9 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.application.proposal_sets import ProposalCurrentnessError
+from mechanical_librarian.application.provider_recovery_evidence import (
+    ProviderFailureObserver,
+)
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     PipelineProgress,
@@ -43,6 +47,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
 )
+from mechanical_librarian.application.review_pipeline_stages import ReviewPipelineStages
 from mechanical_librarian.application.review_web import BrowseReviewLibrary
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -539,6 +544,59 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
                 self.assertEqual(raised.exception.code, "persistence")
                 self.assertIs(raised.exception.__cause__, fault)
                 self.assertEqual(closed, [seam])
+
+    def test_cover_consideration_factory_fault_is_recorded_as_persistence(self) -> None:
+        """The factory is not separable from the rest of the cover stage.
+
+        The bound factory is `composition._compose_cover_considerations`, which
+        writes twice through the repository while it builds the service --
+        `bind_current_cover_policy` before construction and
+        `bind_current_cover_replay` after it. So a store failure can reach
+        `prepare_cover` from the factory call, and `persistence` is the identity
+        the stage answers with for every part of itself it cannot attribute
+        (#698).
+        """
+        fault = MetadataReportError("binding the current cover policy failed")
+
+        class _StagedRepository:
+            def read_staged_cover_preparation(
+                self, _action: PipelineAction
+            ) -> tuple[str, str, bool]:
+                return ("report_" + "1" * 64, "a" * 64, False)
+
+        def unreachable(*_arguments: object, **_keywords: object):
+            raise AssertionError
+
+        stages = ReviewPipelineStages(
+            configuration=ApplicationConfiguration((), (), (), ()),
+            catalogue=unreachable,
+            catalogue_reader=cast("CatalogueReader", unreachable),
+            probe_connection=unreachable,
+            connections=frozenset(),
+            repository_factory=unreachable,
+            recover_artifacts=unreachable,
+            generate_report=unreachable,
+            create_proposal_set=unreachable,
+            admit_review_case=unreachable,
+            cover_considerations=lambda _repository: (_ for _ in ()).throw(fault),
+            recovery_observer=cast("ProviderFailureObserver", unreachable),
+            drain_outbox=unreachable,
+            discovery_lock=threading.Lock(),
+            clock=lambda: 7,
+        )
+        action = PipelineAction(
+            "review_work_" + "a" * 64, "review_scan_" + "b" * 64, "projection", 1,
+            "primary", "fiction", "lib-1", _PRODUCER, 1, "c" * 64, "item-1",
+            "d" * 64, 1, review_case_id="review_case_" + "e" * 64,
+            source_fingerprint="f" * 64,
+        )
+
+        with self.assertRaises(ReviewPipelineError) as raised:
+            stages.prepare_cover(
+                cast("ReviewPipelineRepository", _StagedRepository()), action
+            )
+        self.assertEqual(raised.exception.code, "persistence")
+        self.assertIs(raised.exception.__cause__, fault)
 
     def test_checking_condition_allows_admission_replay_and_rejects_stale_finish_epoch(self) -> None:
         repository = open_repository(self.path)

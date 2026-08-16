@@ -1531,15 +1531,20 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             supervisor.stop()
             repository.close()
 
-    def test_composed_projection_records_a_broken_factory_as_projection(self) -> None:
-        """Building the consideration service is not the store answering badly.
+    def test_composed_projection_records_a_broken_factory_without_cover_effects(self) -> None:
+        """A broken consideration factory fails the stage and leaves nothing behind.
 
-        The cover stage converted its whole body to `persistence`, so a fault in
-        the injected factory -- this layer's own work, reaching no store
-        operation -- was durably recorded against the store. The adapter's
-        allow-list has no `persistence`, so it landed as the anonymous `failed`
-        and the owner was told nothing at all. It is `projection` now, which the
-        allow-list and the schema both carry (#698).
+        The factory `create_review_pipeline` binds is
+        `_compose_cover_considerations`, which writes through the repository
+        twice while it builds the service -- `bind_current_cover_policy` before
+        construction and `bind_current_cover_replay` after it. A fault it raises
+        is therefore not separable from the rest of the cover stage, and the
+        stage answers `persistence` for it like the rest of its body.
+        `review_preparation_work.failure_code` has no `persistence` in its
+        allow-list, so the durable record carries the anonymous `failed`: the
+        owner is told the action failed, not which side failed. Whichever code
+        it lands under, no consideration, package, or outbox row survives the
+        failure (#698).
         """
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1562,7 +1567,7 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             ):
                 self.assertTrue(pipeline.run_next(1))
             self.assertEqual(
-                ("failed", "projection", None), repository._connection.execute(
+                ("failed", "failed", None), repository._connection.execute(
                     "SELECT state,failure_code,failure_root FROM review_preparation_work "
                     "WHERE stage='projection'"
                 ).fetchone(),
