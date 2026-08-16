@@ -1242,56 +1242,39 @@ def _identifier_registry(
 
 
 
-def _package_report(
-    request: EpubPackageRequest,
-    package_name: str,
-    root: _Node,
-    entries: dict[str, _Entry],
-    encryption_names: set[str],
-    encryption_declarations: list[tuple[str, _Node]],
-    encryption_present: bool,
-    usage: EpubPackageUsage,
-    rootfile_node: _Node,
-    noncanonical_mimetype: bool,
-) -> EpubPackageReport:
-    frame = _package_frame(request, root)
-    version = frame.version
-    declared_version = frame.declared_version
-    prefixes = frame.prefixes
-    metadata_nodes = frame.metadata_nodes
-    manifest = frame.manifest
-    spine = frame.spine
-    tours = frame.tours
-    usage = replace(usage, metadata_nodes=len(metadata_nodes))
-    observations: list[EpubPackageObservation] = []
-    warnings: list[EpubPackageWarning] = _archive_shape_warnings(
-        entries, frame, noncanonical_mimetype
-    )
-    declarations: list[EpubPackageDeclaration] = _container_declarations(
-        request, package_name, root, rootfile_node, encryption_declarations
-    )
-    id_registry, registry_warnings = _identifier_registry(request, package_name, root)
-    warnings.extend(registry_warnings)
-    identifiers_by_id: dict[str, _Node] = {}
-    standard_collection = any(
-        _attribute(node, "property") == "belongs-to-collection" and bool(node.text)
-        for node in metadata_nodes
-    )
-    standard_position = any(
-        _attribute(node, "property") == "group-position"
-        and _valid_group_position(node.text)
-        for node in metadata_nodes
-    )
-    calibre: dict[str, list[tuple[str, _Node]]] = {
-        "calibre:series": [],
-        "calibre:series_index": [],
-    }
-    for node in metadata_nodes:
-        legacy_name = _attribute(node, "name")
-        if legacy_name in calibre:
-            calibre[legacy_name].append(
-                (_attribute(node, "content") or node.text, node)
-            )
+@dataclass(frozen=True)
+class _Refinements:
+    """Metadata refinements resolved once for every later metadata stage."""
+
+    standard_collection: bool
+    standard_position: bool
+    calibre: dict[str, list[tuple[str, _Node]]]
+    title_types: dict[str, tuple[str, _Node]]
+    title_sequences: dict[str, tuple[int, _Node]]
+
+
+@dataclass(frozen=True)
+class _DublinCoreValue:
+    """One Dublin Core declaration classified into its projected field."""
+
+    target_field: EpubPackageField
+    normalized: str
+    applicability: EpubObservationApplicability
+    preserve_only: bool
+    display: int | None
+    selector: str | None
+    inferred_scheme: str | None
+
+
+def _refinement_cycle_warnings(
+    metadata_nodes: tuple[_Node, ...], id_registry: dict[str, _Node]
+) -> list[EpubPackageWarning]:
+    """Report unusable ``@refines`` edges and any cycle they form.
+
+    A refinement that points at nothing resolvable is reported and dropped, so
+    a cycle is only ever reported over edges that genuinely resolve.
+    """
+    warnings: list[EpubPackageWarning] = []
     refinement_graph: dict[str, str] = {}
     for node in metadata_nodes:
         identifier = _attribute(node, "id")
@@ -1314,9 +1297,29 @@ def _package_report(
                 break
             visited.add(current)
             current = refinement_graph[current]
+    return warnings
+
+
+def _title_refinements(
+    metadata_nodes: tuple[_Node, ...],
+    prefixes: dict[str, str],
+    id_registry: dict[str, _Node],
+) -> tuple[
+    dict[str, tuple[str, _Node]],
+    dict[str, tuple[int, _Node]],
+    list[EpubPackageWarning],
+]:
+    """Resolve ``title-type`` and ``display-seq`` refinements onto their titles.
+
+    A refinement that resolves to a non-title, carries an unsupported type or
+    an out-of-range sequence, or competes with another refinement of the same
+    family for the same title, is warned about and withdrawn entirely rather
+    than resolved to an arbitrary claimant.
+    """
     title_types: dict[str, tuple[str, _Node]] = {}
     title_sequences: dict[str, tuple[int, _Node]] = {}
     duplicate_title_refinements: set[tuple[str, str]] = set()
+    warnings: list[EpubPackageWarning] = []
     for node in metadata_nodes:
         if node.name != f"{{{_OPF_NS}}}meta":
             continue
@@ -1362,294 +1365,476 @@ def _package_report(
             warnings.append(EpubPackageWarning("invalid_metadata_refinement"))
             continue
         title_sequences[key] = (display_value, node)
+    return title_types, title_sequences, warnings
+
+
+def _metadata_refinements(
+    frame: _PackageFrame, id_registry: dict[str, _Node]
+) -> tuple[_Refinements, list[EpubPackageWarning]]:
+    """Resolve every refinement the metadata stages depend on.
+
+    Reads only; it never emits an observation, so a malformed refinement can
+    downgrade a later field but can never widen what the package declares.
+    """
+    metadata_nodes = frame.metadata_nodes
+    standard_collection = any(
+        _attribute(node, "property") == "belongs-to-collection" and bool(node.text)
+        for node in metadata_nodes
+    )
+    standard_position = any(
+        _attribute(node, "property") == "group-position"
+        and _valid_group_position(node.text)
+        for node in metadata_nodes
+    )
+    calibre: dict[str, list[tuple[str, _Node]]] = {
+        "calibre:series": [],
+        "calibre:series_index": [],
+    }
     for node in metadata_nodes:
+        legacy_name = _attribute(node, "name")
+        if legacy_name in calibre:
+            calibre[legacy_name].append(
+                (_attribute(node, "content") or node.text, node)
+            )
+    warnings = _refinement_cycle_warnings(metadata_nodes, id_registry)
+    title_types, title_sequences, title_warnings = _title_refinements(
+        metadata_nodes, frame.prefixes, id_registry
+    )
+    warnings.extend(title_warnings)
+    return (
+        _Refinements(
+            standard_collection,
+            standard_position,
+            calibre,
+            title_types,
+            title_sequences,
+        ),
+        warnings,
+    )
+
+
+def _dublin_core_value(
+    request: EpubPackageRequest,
+    package_name: str,
+    node: _Node,
+    local: str,
+    identifier: str | None,
+    id_registry: dict[str, _Node],
+    identifiers_by_id: dict[str, _Node],
+    refinements: _Refinements,
+) -> tuple[_DublinCoreValue, list[EpubPackageWarning]]:
+    """Classify one Dublin Core declaration into its field and normalized value.
+
+    An identifier, date or language that fails its syntax is neither dropped
+    nor truncated: it is warned about, marked inapplicable and preserved
+    verbatim. Registers a resolvable ``dc:identifier`` in ``identifiers_by_id``
+    so the package-identity stage can select the primary one.
+    """
+    warnings: list[EpubPackageWarning] = []
+    target_field = _DC_FIELDS[local]
+    normalized = node.text.strip()
+    applicability = EpubObservationApplicability.WORK
+    preserve_only = False
+    display: int | None = None
+    selector: str | None = None
+    inferred_scheme: str | None = None
+    if local == "identifier":
+        declared_identifier_scheme = _attribute(node, "scheme", _OPF_NS)
+        normalized, applicability, inferred_scheme, invalid_identifier = (
+            _normalize_identifier(node.text, declared_identifier_scheme)
+        )
+        if identifier and id_registry.get(identifier) is node:
+            identifiers_by_id[identifier] = node
+        if invalid_identifier:
+            applicability = EpubObservationApplicability.INAPPLICABLE
+            inferred_scheme = None
+            warnings.append(
+                EpubPackageWarning(
+                    "invalid_identifier",
+                    _citation(
+                        request,
+                        package_name,
+                        EpubPackageCitationSection.METADATA,
+                        node,
+                    ),
+                )
+            )
+    if local == "date":
+        event = _attribute(node, "event", _OPF_NS)
+        date_fields = {
+            "creation": EpubPackageField.CREATION_DATE,
+            "publication": EpubPackageField.PUBLICATION_DATE,
+            "modification": EpubPackageField.MODIFICATION_DATE,
+            "copyright": EpubPackageField.COPYRIGHT_DATE,
+        }
+        target_field = date_fields.get(
+            event or "", EpubPackageField.PUBLICATION_DATE
+        )
+        supported_event = event is None or event in date_fields
+        valid_date = (
+            _valid_publication_date(normalized)
+            if target_field is EpubPackageField.PUBLICATION_DATE
+            and event in {None, "publication"}
+            else _valid_date(normalized)
+        )
+        if not supported_event or not valid_date:
+            warnings.append(
+                EpubPackageWarning(
+                    "invalid_date",
+                    _citation(request, package_name, EpubPackageCitationSection.METADATA, node),
+                )
+            )
+            applicability = EpubObservationApplicability.INAPPLICABLE
+            preserve_only = True
+    if local == "language" and not _valid_language(normalized):
+        warnings.append(
+            EpubPackageWarning(
+                "invalid_language",
+                _citation(request, package_name, EpubPackageCitationSection.METADATA, node),
+            )
+        )
+        applicability = EpubObservationApplicability.INAPPLICABLE
+        preserve_only = True
+    if local == "title":
+        title_type = refinements.title_types.get(identifier or "")
+        title_sequence = refinements.title_sequences.get(identifier or "")
+        if title_type is not None:
+            target_field = {
+                "subtitle": EpubPackageField.SUBTITLE,
+                "collection": EpubPackageField.COLLECTION,
+                "edition": EpubPackageField.EDITION,
+            }.get(title_type[0], EpubPackageField.TITLE)
+        if title_sequence is not None:
+            display = title_sequence[0]
+        selector_parts = []
+        if title_type is not None:
+            selector_parts.append(
+                f"title-type-{title_type[0]}@{title_type[1].ordinal}"
+            )
+        if title_sequence is not None:
+            selector_parts.append(f"display-seq@{title_sequence[1].ordinal}")
+        selector = ";".join(selector_parts) or None
+    return (
+        _DublinCoreValue(
+            target_field,
+            normalized,
+            applicability,
+            preserve_only,
+            display,
+            selector,
+            inferred_scheme,
+        ),
+        warnings,
+    )
+
+
+def _dublin_core_observations(
+    request: EpubPackageRequest,
+    package_name: str,
+    frame: _PackageFrame,
+    node: _Node,
+    local: str,
+    id_registry: dict[str, _Node],
+    identifiers_by_id: dict[str, _Node],
+    refinements: _Refinements,
+) -> tuple[list[EpubPackageObservation], list[EpubPackageWarning]]:
+    """Emit every observation one Dublin Core declaration contributes.
+
+    An empty element contributes nothing. Otherwise this emits the field
+    observation, an inferred identifier scheme when the file declared none,
+    and one edition observation per supported legacy qualifier attribute.
+    """
+    if not node.text:
+        return [], []
+    identifier = _attribute(node, "id")
+    value, warnings = _dublin_core_value(
+        request,
+        package_name,
+        node,
+        local,
+        identifier,
+        id_registry,
+        identifiers_by_id,
+        refinements,
+    )
+    version = frame.version
+    language = _attribute(node, "lang", _XML_NS)
+    if language is not None and not _valid_language(language):
+        warnings.append(
+            EpubPackageWarning(
+                "invalid_language",
+                _citation(request, package_name, EpubPackageCitationSection.METADATA, node),
+            )
+        )
+        language = None
+    observations = [
+        _observation(
+            request,
+            package_name,
+            version,
+            node,
+            value.target_field,
+            normalized=value.normalized,
+            applicability=value.applicability,
+            display=value.display,
+            language=language,
+            selector=value.selector,
+            preserve_only=value.preserve_only,
+        )
+    ]
+    if (
+        local == "identifier"
+        and value.inferred_scheme is not None
+        and _attribute(node, "scheme", _OPF_NS) is None
+    ):
+        observations.append(
+            _observation(
+                request,
+                package_name,
+                version,
+                _Node(
+                    node.name,
+                    node.attributes,
+                    text_parts=[value.inferred_scheme],
+                    ordinal=node.ordinal,
+                ),
+                EpubPackageField.IDENTIFIER_SCHEME,
+                applicability=value.applicability,
+                selector="inferred-identifier-type",
+            )
+        )
+    qualifiers = (
+        ("role", _OPF_NS, EpubPackageField.CREATOR_ROLE if local == "creator" else EpubPackageField.CONTRIBUTOR_ROLE),
+        ("file-as", _OPF_NS, EpubPackageField.SORT_KEY),
+        ("scheme", _OPF_NS, EpubPackageField.IDENTIFIER_SCHEME),
+        ("event", _OPF_NS, EpubPackageField.DATE_EVENT),
+    )
+    for attribute_name, namespace, qualifier_field in qualifiers:
+        qualifier = _attribute(node, attribute_name, namespace)
+        if not qualifier:
+            continue
+        if attribute_name == "role" and local not in {"creator", "contributor"}:
+            continue
+        if attribute_name == "file-as" and local not in {"creator", "contributor", "title"}:
+            continue
+        if attribute_name == "scheme" and local != "identifier":
+            continue
+        if attribute_name == "event" and local != "date":
+            continue
+        qualifier_node = _Node(node.name, node.attributes, text_parts=[qualifier], ordinal=node.ordinal)
+        observations.append(
+            _observation(
+                request,
+                package_name,
+                version,
+                qualifier_node,
+                qualifier_field,
+                applicability=EpubObservationApplicability.EDITION,
+                selector=attribute_name,
+            )
+        )
+    return observations, warnings
+
+
+def _meta_observations(
+    request: EpubPackageRequest,
+    package_name: str,
+    frame: _PackageFrame,
+    node: _Node,
+    id_registry: dict[str, _Node],
+) -> tuple[list[EpubPackageObservation], list[EpubPackageWarning]]:
+    """Emit every observation one ``<meta>`` declaration contributes.
+
+    Only the properties this extractor understands are projected. A refinement
+    that resolves to nothing or to an inapplicable target, and any other
+    declared property, is warned about and contributes no observation, so an
+    unknown vocabulary can never widen the projected field set.
+    """
+    observations: list[EpubPackageObservation] = []
+    warnings: list[EpubPackageWarning] = []
+    version = frame.version
+    property_name = _attribute(node, "property")
+    resolved_property = _resolved_property(property_name, frame.prefixes)
+    legacy_name = _attribute(node, "name")
+    content = _attribute(node, "content")
+    value = node.text or content or ""
+    if resolved_property == "dcterms:modified" and value:
+        synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
+        valid_modified = _valid_modified_date(value)
+        observations.append(
+            _observation(
+                request,
+                package_name,
+                version,
+                synthetic,
+                EpubPackageField.MODIFICATION_DATE,
+                applicability=(
+                    EpubObservationApplicability.WORK
+                    if valid_modified
+                    else EpubObservationApplicability.INAPPLICABLE
+                ),
+                preserve_only=not valid_modified,
+            )
+        )
+        if not valid_modified:
+            warnings.append(
+                EpubPackageWarning(
+                    "invalid_date",
+                    _citation(request, package_name, EpubPackageCitationSection.METADATA, node),
+                )
+            )
+    elif resolved_property in {"belongs-to-collection", "group-position"} and value:
+        if resolved_property == "group-position" and not _valid_group_position(value):
+            warnings.append(EpubPackageWarning("invalid_metadata_refinement"))
+            return observations, warnings
+        synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
+        observations.append(
+            _observation(
+                request,
+                package_name,
+                version,
+                synthetic,
+                EpubPackageField.COLLECTION if resolved_property == "belongs-to-collection" else EpubPackageField.COLLECTION_POSITION,
+                applicability=EpubObservationApplicability.EDITION,
+            )
+        )
+    elif resolved_property in {"title-type", "display-seq"}:
+        return observations, warnings
+    elif resolved_property in {
+        "role",
+        "file-as",
+        "identifier-type",
+    } and value:
+        refines = _attribute(node, "refines") or ""
+        referenced = id_registry.get(refines[1:]) if refines.startswith("#") else None
+        if referenced is None:
+            warnings.append(EpubPackageWarning("unresolved_metadata_refinement"))
+            return observations, warnings
+        allowed_targets = {
+            "role": {
+                f"{{{_DC_NS}}}creator",
+                f"{{{_DC_NS}}}contributor",
+            },
+            "file-as": {
+                f"{{{_DC_NS}}}title",
+                f"{{{_DC_NS}}}creator",
+                f"{{{_DC_NS}}}contributor",
+            },
+            "identifier-type": {f"{{{_DC_NS}}}identifier"},
+        }
+        if referenced.name not in allowed_targets[resolved_property]:
+            warnings.append(EpubPackageWarning("inapplicable_metadata_refinement"))
+            return observations, warnings
+        # Associate an EPUB3 refinement with its explicit DC target so
+        # projection never attaches it to a merely preceding person.
+        synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=referenced.ordinal)
+        observations.append(
+            _observation(
+                request,
+                package_name,
+                version,
+                synthetic,
+                (
+                    EpubPackageField.CONTRIBUTOR_ROLE
+                    if resolved_property == "role"
+                    and referenced.name == f"{{{_DC_NS}}}contributor"
+                    else EpubPackageField.CREATOR_ROLE
+                    if resolved_property == "role"
+                    else EpubPackageField.SORT_KEY
+                    if resolved_property == "file-as"
+                    else EpubPackageField.IDENTIFIER_SCHEME
+                ),
+                applicability=EpubObservationApplicability.EDITION,
+                selector=f"{resolved_property}-{node.ordinal}",
+            )
+        )
+    elif resolved_property in {
+        "schema:bookEdition",
+        "schema:bookFormat",
+        "schema:contentLocation",
+    } and value:
+        synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
+        observations.append(
+            _observation(
+                request,
+                package_name,
+                version,
+                synthetic,
+                {
+                    "schema:bookEdition": EpubPackageField.EDITION,
+                    "schema:bookFormat": EpubPackageField.FORMAT,
+                    "schema:contentLocation": EpubPackageField.REGION,
+                }[resolved_property],
+                applicability=EpubObservationApplicability.EDITION,
+            )
+        )
+    elif property_name or (
+        legacy_name
+        and legacy_name
+        not in {"calibre:series", "calibre:series_index", "cover"}
+    ):
+        warnings.append(EpubPackageWarning("unsupported_vendor_metadata", _citation(request, package_name, EpubPackageCitationSection.METADATA, node)))
+    return observations, warnings
+
+
+def _metadata_field_observations(
+    request: EpubPackageRequest,
+    package_name: str,
+    frame: _PackageFrame,
+    id_registry: dict[str, _Node],
+    identifiers_by_id: dict[str, _Node],
+    refinements: _Refinements,
+) -> tuple[list[EpubPackageObservation], list[EpubPackageWarning]]:
+    """Project the metadata section in declared order.
+
+    Dispatches each node to the Dublin Core or ``<meta>`` stage; a node that
+    is neither contributes nothing. Declared order is the report's citation
+    order, so this stage never reorders or deduplicates its inputs.
+    """
+    observations: list[EpubPackageObservation] = []
+    warnings: list[EpubPackageWarning] = []
+    for node in frame.metadata_nodes:
         local = node.name.rsplit("}", 1)[-1]
-        identifier = _attribute(node, "id")
         if node.name.startswith("{" + _DC_NS + "}") and local in _DC_FIELDS:
-            if not node.text:
-                continue
-            target_field = _DC_FIELDS[local]
-            normalized = node.text.strip()
-            applicability = EpubObservationApplicability.WORK
-            preserve_only = False
-            display: int | None = None
-            selector: str | None = None
-            inferred_scheme: str | None = None
-            if local == "identifier":
-                declared_identifier_scheme = _attribute(node, "scheme", _OPF_NS)
-                normalized, applicability, inferred_scheme, invalid_identifier = (
-                    _normalize_identifier(node.text, declared_identifier_scheme)
-                )
-                if identifier and id_registry.get(identifier) is node:
-                    identifiers_by_id[identifier] = node
-                if invalid_identifier:
-                    applicability = EpubObservationApplicability.INAPPLICABLE
-                    inferred_scheme = None
-                    warnings.append(
-                        EpubPackageWarning(
-                            "invalid_identifier",
-                            _citation(
-                                request,
-                                package_name,
-                                EpubPackageCitationSection.METADATA,
-                                node,
-                            ),
-                        )
-                    )
-            if local == "date":
-                event = _attribute(node, "event", _OPF_NS)
-                date_fields = {
-                    "creation": EpubPackageField.CREATION_DATE,
-                    "publication": EpubPackageField.PUBLICATION_DATE,
-                    "modification": EpubPackageField.MODIFICATION_DATE,
-                    "copyright": EpubPackageField.COPYRIGHT_DATE,
-                }
-                target_field = date_fields.get(
-                    event or "", EpubPackageField.PUBLICATION_DATE
-                )
-                supported_event = event is None or event in date_fields
-                valid_date = (
-                    _valid_publication_date(normalized)
-                    if target_field is EpubPackageField.PUBLICATION_DATE
-                    and event in {None, "publication"}
-                    else _valid_date(normalized)
-                )
-                if not supported_event or not valid_date:
-                    warnings.append(
-                        EpubPackageWarning(
-                            "invalid_date",
-                            _citation(request, package_name, EpubPackageCitationSection.METADATA, node),
-                        )
-                    )
-                    applicability = EpubObservationApplicability.INAPPLICABLE
-                    preserve_only = True
-            if local == "language" and not _valid_language(normalized):
-                warnings.append(
-                    EpubPackageWarning(
-                        "invalid_language",
-                        _citation(request, package_name, EpubPackageCitationSection.METADATA, node),
-                    )
-                )
-                applicability = EpubObservationApplicability.INAPPLICABLE
-                preserve_only = True
-            if local == "title":
-                title_type = title_types.get(identifier or "")
-                title_sequence = title_sequences.get(identifier or "")
-                if title_type is not None:
-                    target_field = {
-                        "subtitle": EpubPackageField.SUBTITLE,
-                        "collection": EpubPackageField.COLLECTION,
-                        "edition": EpubPackageField.EDITION,
-                    }.get(title_type[0], EpubPackageField.TITLE)
-                if title_sequence is not None:
-                    display = title_sequence[0]
-                selector_parts = []
-                if title_type is not None:
-                    selector_parts.append(
-                        f"title-type-{title_type[0]}@{title_type[1].ordinal}"
-                    )
-                if title_sequence is not None:
-                    selector_parts.append(f"display-seq@{title_sequence[1].ordinal}")
-                selector = ";".join(selector_parts) or None
-            language = _attribute(node, "lang", _XML_NS)
-            if language is not None and not _valid_language(language):
-                warnings.append(
-                    EpubPackageWarning(
-                        "invalid_language",
-                        _citation(request, package_name, EpubPackageCitationSection.METADATA, node),
-                    )
-                )
-                language = None
-            observations.append(
-                _observation(
-                    request,
-                    package_name,
-                    version,
-                    node,
-                    target_field,
-                    normalized=normalized,
-                    applicability=applicability,
-                    display=display,
-                    language=language,
-                    selector=selector,
-                    preserve_only=preserve_only,
-                )
+            node_observations, node_warnings = _dublin_core_observations(
+                request,
+                package_name,
+                frame,
+                node,
+                local,
+                id_registry,
+                identifiers_by_id,
+                refinements,
             )
-            if (
-                local == "identifier"
-                and inferred_scheme is not None
-                and _attribute(node, "scheme", _OPF_NS) is None
-            ):
-                observations.append(
-                    _observation(
-                        request,
-                        package_name,
-                        version,
-                        _Node(
-                            node.name,
-                            node.attributes,
-                            text_parts=[inferred_scheme],
-                            ordinal=node.ordinal,
-                        ),
-                        EpubPackageField.IDENTIFIER_SCHEME,
-                        applicability=applicability,
-                        selector="inferred-identifier-type",
-                    )
-                )
-            qualifiers = (
-                ("role", _OPF_NS, EpubPackageField.CREATOR_ROLE if local == "creator" else EpubPackageField.CONTRIBUTOR_ROLE),
-                ("file-as", _OPF_NS, EpubPackageField.SORT_KEY),
-                ("scheme", _OPF_NS, EpubPackageField.IDENTIFIER_SCHEME),
-                ("event", _OPF_NS, EpubPackageField.DATE_EVENT),
-            )
-            for attribute_name, namespace, qualifier_field in qualifiers:
-                qualifier = _attribute(node, attribute_name, namespace)
-                if not qualifier:
-                    continue
-                if attribute_name == "role" and local not in {"creator", "contributor"}:
-                    continue
-                if attribute_name == "file-as" and local not in {"creator", "contributor", "title"}:
-                    continue
-                if attribute_name == "scheme" and local != "identifier":
-                    continue
-                if attribute_name == "event" and local != "date":
-                    continue
-                qualifier_node = _Node(node.name, node.attributes, text_parts=[qualifier], ordinal=node.ordinal)
-                observations.append(
-                    _observation(
-                        request,
-                        package_name,
-                        version,
-                        qualifier_node,
-                        qualifier_field,
-                        applicability=EpubObservationApplicability.EDITION,
-                        selector=attribute_name,
-                    )
-                )
         elif node.name == f"{{{_OPF_NS}}}meta":
-            property_name = _attribute(node, "property")
-            resolved_property = _resolved_property(property_name, prefixes)
-            legacy_name = _attribute(node, "name")
-            content = _attribute(node, "content")
-            value = node.text or content or ""
-            if resolved_property == "dcterms:modified" and value:
-                synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
-                valid_modified = _valid_modified_date(value)
-                observations.append(
-                    _observation(
-                        request,
-                        package_name,
-                        version,
-                        synthetic,
-                        EpubPackageField.MODIFICATION_DATE,
-                        applicability=(
-                            EpubObservationApplicability.WORK
-                            if valid_modified
-                            else EpubObservationApplicability.INAPPLICABLE
-                        ),
-                        preserve_only=not valid_modified,
-                    )
-                )
-                if not valid_modified:
-                    warnings.append(
-                        EpubPackageWarning(
-                            "invalid_date",
-                            _citation(request, package_name, EpubPackageCitationSection.METADATA, node),
-                        )
-                    )
-            elif resolved_property in {"belongs-to-collection", "group-position"} and value:
-                if resolved_property == "group-position" and not _valid_group_position(value):
-                    warnings.append(EpubPackageWarning("invalid_metadata_refinement"))
-                    continue
-                synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
-                observations.append(
-                    _observation(
-                        request,
-                        package_name,
-                        version,
-                        synthetic,
-                        EpubPackageField.COLLECTION if resolved_property == "belongs-to-collection" else EpubPackageField.COLLECTION_POSITION,
-                        applicability=EpubObservationApplicability.EDITION,
-                    )
-                )
-            elif resolved_property in {"title-type", "display-seq"}:
-                continue
-            elif resolved_property in {
-                "role",
-                "file-as",
-                "identifier-type",
-            } and value:
-                refines = _attribute(node, "refines") or ""
-                referenced = id_registry.get(refines[1:]) if refines.startswith("#") else None
-                if referenced is None:
-                    warnings.append(EpubPackageWarning("unresolved_metadata_refinement"))
-                    continue
-                allowed_targets = {
-                    "role": {
-                        f"{{{_DC_NS}}}creator",
-                        f"{{{_DC_NS}}}contributor",
-                    },
-                    "file-as": {
-                        f"{{{_DC_NS}}}title",
-                        f"{{{_DC_NS}}}creator",
-                        f"{{{_DC_NS}}}contributor",
-                    },
-                    "identifier-type": {f"{{{_DC_NS}}}identifier"},
-                }
-                if referenced.name not in allowed_targets[resolved_property]:
-                    warnings.append(EpubPackageWarning("inapplicable_metadata_refinement"))
-                    continue
-                # Associate an EPUB3 refinement with its explicit DC target so
-                # projection never attaches it to a merely preceding person.
-                synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=referenced.ordinal)
-                observations.append(
-                    _observation(
-                        request,
-                        package_name,
-                        version,
-                        synthetic,
-                        (
-                            EpubPackageField.CONTRIBUTOR_ROLE
-                            if resolved_property == "role"
-                            and referenced.name == f"{{{_DC_NS}}}contributor"
-                            else EpubPackageField.CREATOR_ROLE
-                            if resolved_property == "role"
-                            else EpubPackageField.SORT_KEY
-                            if resolved_property == "file-as"
-                            else EpubPackageField.IDENTIFIER_SCHEME
-                        ),
-                        applicability=EpubObservationApplicability.EDITION,
-                        selector=f"{resolved_property}-{node.ordinal}",
-                    )
-                )
-            elif resolved_property in {
-                "schema:bookEdition",
-                "schema:bookFormat",
-                "schema:contentLocation",
-            } and value:
-                synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
-                observations.append(
-                    _observation(
-                        request,
-                        package_name,
-                        version,
-                        synthetic,
-                        {
-                            "schema:bookEdition": EpubPackageField.EDITION,
-                            "schema:bookFormat": EpubPackageField.FORMAT,
-                            "schema:contentLocation": EpubPackageField.REGION,
-                        }[resolved_property],
-                        applicability=EpubObservationApplicability.EDITION,
-                    )
-                )
-            elif property_name or (
-                legacy_name
-                and legacy_name
-                not in {"calibre:series", "calibre:series_index", "cover"}
-            ):
-                warnings.append(EpubPackageWarning("unsupported_vendor_metadata", _citation(request, package_name, EpubPackageCitationSection.METADATA, node)))
-    series_values = calibre["calibre:series"]
-    position_values = calibre["calibre:series_index"]
+            node_observations, node_warnings = _meta_observations(
+                request, package_name, frame, node, id_registry
+            )
+        else:
+            continue
+        observations.extend(node_observations)
+        warnings.extend(node_warnings)
+    return observations, warnings
+
+
+def _calibre_series_observations(
+    request: EpubPackageRequest,
+    package_name: str,
+    frame: _PackageFrame,
+    refinements: _Refinements,
+) -> tuple[list[EpubPackageObservation], list[EpubPackageWarning]]:
+    """Project the legacy Calibre series pair as a fallback collection.
+
+    A position is projected only when it pairs with a non-empty series at the
+    same index, so an unpaired or ragged pair is reported rather than guessed.
+    When the package also carries the standard vocabulary these observations
+    are preserved verbatim instead of normalized, so they cannot outrank it.
+    """
+    observations: list[EpubPackageObservation] = []
+    warnings: list[EpubPackageWarning] = []
+    version = frame.version
+    series_values = refinements.calibre["calibre:series"]
+    position_values = refinements.calibre["calibre:series_index"]
     for value, node in series_values:
         if not value.strip():
             continue
@@ -1665,7 +1850,7 @@ def _package_report(
                 EpubPackageField.COLLECTION,
                 applicability=EpubObservationApplicability.EDITION,
                 selector="calibre-fallback",
-                preserve_only=standard_collection,
+                preserve_only=refinements.standard_collection,
             )
         )
     for index, (value, node) in enumerate(position_values):
@@ -1687,7 +1872,7 @@ def _package_report(
                 EpubPackageField.COLLECTION_POSITION,
                 applicability=EpubObservationApplicability.EDITION,
                 selector="calibre-fallback",
-                preserve_only=standard_position,
+                preserve_only=refinements.standard_position,
             )
         )
     if (
@@ -1696,6 +1881,18 @@ def _package_report(
         or any(not value.strip() for value, _node in position_values)
     ) and (series_values or position_values):
         warnings.append(EpubPackageWarning("incomplete_calibre_series"))
+    return observations, warnings
+
+
+def _required_field_warnings(
+    observations: list[EpubPackageObservation], version: str
+) -> list[EpubPackageWarning]:
+    """Report the required fields the metadata section failed to supply.
+
+    Reads only the observations projected from the metadata section, so a
+    field synthesized by a later stage never satisfies a metadata requirement.
+    """
+    warnings: list[EpubPackageWarning] = []
     required = {EpubPackageField.TITLE, EpubPackageField.LANGUAGE, EpubPackageField.IDENTIFIER}
     applicable_fields = {
         item.field
@@ -1706,6 +1903,25 @@ def _package_report(
         warnings.append(EpubPackageWarning("incomplete_required_metadata"))
     if version == "3.0" and EpubPackageField.MODIFICATION_DATE not in applicable_fields:
         warnings.append(EpubPackageWarning("missing_modification_date"))
+    return warnings
+
+
+def _package_identity_observations(
+    request: EpubPackageRequest,
+    package_name: str,
+    frame: _PackageFrame,
+    root: _Node,
+    identifiers_by_id: dict[str, _Node],
+) -> tuple[list[EpubPackageObservation], list[EpubPackageWarning]]:
+    """Project the package's own identity: its primary identifier and version.
+
+    The primary identifier is the one ``unique-identifier`` names. When it
+    names nothing, a single candidate is inferred and reported as inferred;
+    two or more candidates are reported as missing rather than guessed.
+    """
+    observations: list[EpubPackageObservation] = []
+    warnings: list[EpubPackageWarning] = []
+    version = frame.version
     unique_identifier = _attribute(root, "unique-identifier")
     primary = identifiers_by_id.get(unique_identifier or "")
     if primary is None and len(identifiers_by_id) == 1:
@@ -1734,8 +1950,58 @@ def _package_report(
                 selector="primary-identifier",
             )
         )
-    version_node = _Node(root.name, root.attributes, text_parts=[declared_version], ordinal=root.ordinal)
+    version_node = _Node(root.name, root.attributes, text_parts=[frame.declared_version], ordinal=root.ordinal)
     observations.append(_observation(request, package_name, version, version_node, EpubPackageField.PACKAGE_VERSION, applicability=EpubObservationApplicability.FILE))
+    return observations, warnings
+
+
+def _package_report(
+    request: EpubPackageRequest,
+    package_name: str,
+    root: _Node,
+    entries: dict[str, _Entry],
+    encryption_names: set[str],
+    encryption_declarations: list[tuple[str, _Node]],
+    encryption_present: bool,
+    usage: EpubPackageUsage,
+    rootfile_node: _Node,
+    noncanonical_mimetype: bool,
+) -> EpubPackageReport:
+    frame = _package_frame(request, root)
+    version = frame.version
+    metadata_nodes = frame.metadata_nodes
+    manifest = frame.manifest
+    spine = frame.spine
+    tours = frame.tours
+    usage = replace(usage, metadata_nodes=len(metadata_nodes))
+    observations: list[EpubPackageObservation] = []
+    warnings: list[EpubPackageWarning] = _archive_shape_warnings(
+        entries, frame, noncanonical_mimetype
+    )
+    declarations: list[EpubPackageDeclaration] = _container_declarations(
+        request, package_name, root, rootfile_node, encryption_declarations
+    )
+    id_registry, registry_warnings = _identifier_registry(request, package_name, root)
+    warnings.extend(registry_warnings)
+    identifiers_by_id: dict[str, _Node] = {}
+    refinements, refinement_warnings = _metadata_refinements(frame, id_registry)
+    warnings.extend(refinement_warnings)
+    field_observations, field_warnings = _metadata_field_observations(
+        request, package_name, frame, id_registry, identifiers_by_id, refinements
+    )
+    observations.extend(field_observations)
+    warnings.extend(field_warnings)
+    calibre_observations, calibre_warnings = _calibre_series_observations(
+        request, package_name, frame, refinements
+    )
+    observations.extend(calibre_observations)
+    warnings.extend(calibre_warnings)
+    warnings.extend(_required_field_warnings(observations, version))
+    identity_observations, identity_warnings = _package_identity_observations(
+        request, package_name, frame, root, identifiers_by_id
+    )
+    observations.extend(identity_observations)
+    warnings.extend(identity_warnings)
     manifest_ids: dict[str, str] = {}
     manifest_nodes: dict[str, _Node] = {}
     manifest_media_types: dict[str, str] = {}
