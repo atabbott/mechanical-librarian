@@ -77,13 +77,17 @@ Run the static architecture-boundary test whenever imports or packages move.
   thin one that pushed its bulk out to the call sites. The generalised helper
   carrying a configuration switch for each former call site is the case it
   exists to stop — it removes no duplication, it relabels it: delete it and keep
-  the longhand. Worked, from #662.
-  `coverChoices.ts` is 14 lines of implementation against 17 duplicated across
-  two routes, so it passes, at a cost of 9 lines of header, import and
-  declaration and 5 of comment — net `+16`. `labels.ts` is 4 lines against
-  roughly 10 across five formatters, plus the 9 lines of casing convention its
-  acceptance demanded — net `+7`. Both grew the tree; both are lighter where the
-  rule measures.
+  the longhand.
+- Worked, from #662. `frontend/src/coverChoices.ts` adds 17 lines of shared
+  implementation and one line of plumbing at each of its two call sites, against
+  the 20 lines of duplicated implementation the two routes delete: 19 against
+  20, which passes by one line. `frontend/src/labels.ts` adds 3 against the 8
+  deleted with five formatter declarations and two copied patterns, and forces
+  no plumbing. Both still grew the tree, `+16` and `+7`, on module structure,
+  seven consumer imports, a Prettier rewrap, and the nine comment lines that
+  change's acceptance demanded. #662's changelog entry reconciles every bucket
+  of both to those net figures, which is the arithmetic this rule requires and
+  the reason the example carries no bucket the entry does not account for.
 - **Extraction within a boundary** — pulling a helper out of code that could
   have kept it — with a single caller has to earn its place, and it can.
   Consolidating one copy is not consolidation, so the default is to keep the

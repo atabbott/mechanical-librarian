@@ -71,20 +71,31 @@
   character, one failed-image set, one prepare mutation. `useCoverChoiceData`
   owns those three and no markup moved. The idempotency key both review routes
   generated now lives beside the controller that puts it on a command.
-  All three browser changes are consolidations, measured on the implementation
-  each contributes against the copies it deletes: `labels.ts` is 4 lines against
-  roughly 10 across five formatters, `useCoverChoiceData` 14 against the 17
-  duplicated in the two routes, and the idempotency key is lighter outright. The
-  net figures are `+7` for the labels module across eight files, `+16` for the
-  cover module and `-1` for the idempotency key; that growth is each module's
-  header, imports and declaration, plus the nine comment lines this issue's own
-  acceptance demanded of the casing convention and five stating what the cover
-  module owns. Review first read the two browser modules as relocations. That
-  was wrong and was withdrawn there -- every cross-file consolidation needs a
-  shared home, so the reading would have swallowed the rule it was excusing them
-  from -- and #708 now states that measurement basis in the rule itself. Six
-  frontend assertions moved with the copy the casing convention deliberately
-  changed; the suite stays at 149. (#662)
+  All three browser changes are consolidations, measured on all the
+  implementation each adds against all it deletes. `labels.ts` adds 3 lines --
+  `fieldLabel`'s body, `labelWords`, and the `opaqueSource` pattern -- against 8
+  deleted with five formatter declarations and two `opaqueSource` copies, and
+  forces no plumbing at the call sites. `useCoverChoiceData` adds 17, plus one
+  `const cover = useCoverChoiceData(reviewCaseId)` in each of the two routes,
+  against the 20 they delete: 19 against 20, which passes by a single line and
+  is the thinner case of the two. The idempotency key is lighter outright.
+  The net figures reconcile bucket by bucket, which the rule requires and the
+  two commits' own messages did not do. `labels.ts` to `+7`: `+3` implementation
+  and `+1` structure in the new module, `-8` implementation and `-5` structure
+  deleted with the five declarations, `+7` for one consumer import per module,
+  `+9` for the documentation this issue's acceptance demanded, and 63 call sites
+  rewritten in place for 63. The cover module to `+16`: `+17` implementation and
+  `+2` call-site plumbing against `-20` deleted, `+7` module structure, `+5`
+  comment, `+2` consumer imports, and `+3` where Prettier re-wrapped Detail's
+  prepare button around the longer expression. These figures supersede the
+  per-bucket splits in `0dd02ffb` and `ce353997`, which reported the right net
+  deltas over incomplete buckets.
+  Review first read the two browser modules as relocations. That was wrong and
+  was withdrawn there -- every cross-file consolidation needs a shared home, so
+  the reading would have swallowed the rule it was excusing them from -- and
+  #708 now states in the rule itself which lines the test measures. Six frontend
+  assertions moved with the copy the casing convention deliberately changed; the
+  suite stays at 149. (#662)
 - Keep installed pytest plugins and oversized parameter names out of the test
   tiers. Two further defects in the engine adoption, both found in review of
   #661.
