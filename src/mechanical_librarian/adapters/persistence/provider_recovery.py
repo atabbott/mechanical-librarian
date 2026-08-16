@@ -100,15 +100,23 @@ class SQLiteProviderRecoveryStore:
     def _rollback_on_failure(self, *wrapped: type[Exception]) -> Iterator[None]:
         """Abandon an open transaction and normalise the escaping failure.
 
-        Every write path wraps ``sqlite3.Error`` and ``OverflowError``; the
-        set is otherwise a property of the caller, not of this helper, so each
+        Every caller of this helper wraps ``sqlite3.Error`` and
+        ``OverflowError``; past those the set belongs to the caller, so each
         one names the extra types it admits — ``ProviderRecoveryError`` where a
         domain value can still be rejected inside the transaction, and
         ``AttributeError`` additionally where a row is unpacked positionally.
-        Passing nothing keeps the narrow set, which is what makes widening
+        Passing nothing keeps the narrow set, which is what makes a widening
         visible at the call site rather than implied by which copy was pasted.
-        The rollback is guarded because a handler may run after the
-        transaction has already ended.
+
+        That baseline binds the adopters and is not an invariant of the module.
+        ``resume_fanout`` wraps ``ProviderRecoveryError`` but not
+        ``OverflowError``, and ``enqueue_jobs`` wraps this exact pair but lets a
+        ``ProviderRecoveryStoreError`` past without a rollback.  Both keep their
+        epilogue longhand because adopting this one would change what they
+        report, so neither should be widened to match the paragraph above.
+
+        The rollback is guarded because a handler may run after the transaction
+        has already ended.
         """
         try:
             yield
