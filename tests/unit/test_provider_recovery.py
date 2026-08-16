@@ -1122,46 +1122,64 @@ class EpilogueCaughtSetTests(unittest.TestCase):
             store.close()
 
     def test_every_call_site_names_the_set_it_wrapped_before(self) -> None:
-        """Pin the argument at all seventeen sites, the six narrow ones too.
+        """Pin every ``_rollback_on_failure`` call, not merely every caller.
 
         The behavioural tests above cover one representative site per set; this
         covers the rest, so adopting the helper somewhere new — or adding a type
-        to an existing call — cannot quietly re-scope a site under them.
+        to an existing call — cannot quietly re-scope a site under them.  Each
+        value is a list of argument lists rather than one argument list: a
+        function may hold more than one call, and keying by function alone
+        would let a second call overwrite the first and assert nothing about
+        it.
         """
         module = ast.parse(Path(recovery_persistence.__file__).read_text())
-        sites: dict[str, list[str]] = {}
+
+        def adopts(node: ast.AST) -> bool:
+            return (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "_rollback_on_failure"
+            )
+
+        sites: dict[str, list[list[str]]] = {}
         for parent in ast.walk(module):
             if not isinstance(parent, ast.FunctionDef):
                 continue
             for node in ast.walk(parent):
-                if (
-                    isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "_rollback_on_failure"
-                ):
-                    sites[parent.name] = [ast.unparse(a) for a in node.args]
+                if adopts(node):
+                    sites.setdefault(parent.name, []).append(
+                        [ast.unparse(argument) for argument in node.args]
+                    )
+        # Every call must be attributed to exactly one function. Walking each
+        # function separately counts a call inside a nested function twice and
+        # a call outside any function not at all; the module has neither today,
+        # and this is what fails if either arrives.
+        self.assertEqual(
+            len([node for node in ast.walk(module) if adopts(node)]),
+            sum(len(calls) for calls in sites.values()),
+        )
         self.assertEqual(
             {
                 # The six #662 consolidated. Their set stays narrow.
-                "_reconcile_generation": [],
-                "claim_job": [],
-                "renew_job": [],
-                "complete_job": [],
-                "complete_stale_job": [],
-                "release_target_hold": [],
+                "_reconcile_generation": [[]],
+                "claim_job": [[]],
+                "renew_job": [[]],
+                "complete_job": [[]],
+                "complete_stale_job": [[]],
+                "release_target_hold": [[]],
                 # The ten this change adopted.
-                "complete_missing_jobs": ["ProviderRecoveryError"],
-                "_complete": ["ProviderRecoveryError"],
-                "_record": ["ProviderRecoveryError"],
-                "_observe_failure": ["ProviderRecoveryError"],
-                "_claim_one": ["ProviderRecoveryError"],
-                "complete_exhausted_scope": ["ProviderRecoveryError"],
-                "complete_canary_failure": ["ProviderRecoveryError"],
-                "authorize_fanout": ["ProviderRecoveryError"],
-                "finish_fanout": ["ProviderRecoveryError"],
-                "interrupt_fanout": ["ProviderRecoveryError"],
+                "complete_missing_jobs": [["ProviderRecoveryError"]],
+                "_complete": [["ProviderRecoveryError"]],
+                "_record": [["ProviderRecoveryError"]],
+                "_observe_failure": [["ProviderRecoveryError"]],
+                "_claim_one": [["ProviderRecoveryError"]],
+                "complete_exhausted_scope": [["ProviderRecoveryError"]],
+                "complete_canary_failure": [["ProviderRecoveryError"]],
+                "authorize_fanout": [["ProviderRecoveryError"]],
+                "finish_fanout": [["ProviderRecoveryError"]],
+                "interrupt_fanout": [["ProviderRecoveryError"]],
                 # The one that also admits a positional row unpack.
-                "complete_success": ["ProviderRecoveryError", "AttributeError"],
+                "complete_success": [["ProviderRecoveryError", "AttributeError"]],
             },
             sites,
         )
