@@ -7,6 +7,26 @@
 
 ## Unreleased
 
+- State which lines the code-economy consolidation test measures, so two
+  readers measuring the same change reach the same verdict. #692 required a
+  consolidation to be lighter than the copies it replaces without saying whether
+  the shared module's header, imports and declaration are part of "it", and #707
+  hit that for real: a reviewer read the clause as covering the whole module,
+  the change read it as covering the implementation, the text supported both,
+  and the same two consolidations passed on one reading and failed on the other.
+  The clause now names the bucket its test reads — the shared implementation
+  against the implementation it deletes — and leaves structure, and
+  documentation a governing issue's acceptance demanded, in the reporting
+  buckets the same rule already requires. Structure costs the same for a good
+  abstraction and a bad one, so charging it to the abstraction judges the module
+  boundary rather than the abstraction, and rejects the small cross-file
+  consolidations the rule most wants, every one of which needs a shared home.
+  Nothing that failed the rule now passes: a shared implementation fatter than
+  the copies it replaces still fails, and the generalised helper carrying a
+  configuration switch for each former call site is named as the case the rule
+  exists to stop. #662's two consolidations are worked into the clause with
+  their line counts, so the measurement basis is not rediscovered by argument a
+  third time. (#708)
 - Give the duplicated provider and review-surface logic one home each, and
   record where an abstraction would have cost more than the copies it removed.
   Four consolidations landed and two were declined on measurement.

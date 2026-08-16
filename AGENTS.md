@@ -55,7 +55,24 @@ Run the static architecture-boundary test whenever imports or packages move.
 - **Consolidation** — replacing two or more copies of the same logic — must be
   lighter than the copies it replaces. One that costs more lines than the
   longhand it consolidates is not an improvement: delete it and keep the
-  longhand.
+  longhand. Measure the shared implementation against the implementation it
+  deletes. The shared module's header, imports and declaration are structure,
+  reported in that bucket rather than charged to the abstraction, as is
+  documentation the governing issue's acceptance demanded — report it with the
+  acceptance that required it. Structure costs the same for a good abstraction
+  and a bad one, so charging it to the abstraction judges the module boundary
+  instead, and rejects the small cross-file consolidations this rule most wants:
+  every one of them needs a shared home. The test still bites where it is meant
+  to. A shared implementation fatter than the copies it replaces fails it, and
+  the generalised helper carrying a configuration switch for each former call
+  site is the case it exists to stop — that helper removes no duplication, it
+  relabels it: delete it and keep the longhand. Worked, from #662.
+  `coverChoices.ts` is 14 lines of implementation against 17 duplicated across
+  two routes, so it passes, at a cost of 9 lines of header, import and
+  declaration and 5 of comment — net `+16`. `labels.ts` is 4 lines against
+  roughly 10 across five formatters, plus the 9 lines of casing convention its
+  acceptance demanded — net `+7`. Both grew the tree; both are lighter where the
+  rule measures.
 - **Extraction within a boundary** — pulling a helper out of code that could
   have kept it — with a single caller has to earn its place, and it can.
   Consolidating one copy is not consolidation, so the default is to keep the
