@@ -204,18 +204,33 @@ class PolicyActivation:
     transition: PolicyTransition | None
 
 
-class PolicyImpactRepository(Protocol):
+class PolicyPreviewRepository(Protocol):
+    """Every durable read the draft-policy impact projection performs.
+
+    The read-only preview surface is composed against exactly this seam, so a
+    store that implements it can serve a preview without reaching a member it
+    does not have.
+    """
+
     def current_unapplied_count(self, library: str) -> int: ...
 
     def current_policy_impact_pairs(
         self, library: str, limit: int
     ) -> tuple[int, tuple[tuple[MetadataReport, ProposalSet], ...]]: ...
 
+    def active_metadata_policy(self) -> str: ...
+
+    def metadata_policy_resolution_for_preview(self, library: str) -> ResolvedMetadataPolicy | None: ...
+
+    def metadata_policy_preview_baseline(
+        self, libraries: tuple[str, ...]
+    ) -> tuple[str, tuple[tuple[str, ResolvedMetadataPolicy | None], ...]]: ...
+
+
+class PolicyImpactRepository(PolicyPreviewRepository, Protocol):
     def create_metadata_policy_draft(self, document: str) -> str: ...
 
     def get_metadata_policy_draft(self, policy_id: str) -> str: ...
-
-    def active_metadata_policy(self) -> str: ...
 
     def activate_metadata_policy(
         self,
@@ -235,12 +250,6 @@ class PolicyImpactRepository(Protocol):
 
     def current_resolved_metadata_policy(self, library: str) -> ResolvedMetadataPolicy | None: ...
 
-    def metadata_policy_resolution_for_preview(self, library: str) -> ResolvedMetadataPolicy | None: ...
-
-    def metadata_policy_preview_baseline(
-        self, libraries: tuple[str, ...]
-    ) -> tuple[str, tuple[tuple[str, ResolvedMetadataPolicy | None], ...]]: ...
-
     def shadow_posture(self) -> str: ...
 
     def enter_shadow_preview(self, updated_at: int) -> str: ...
@@ -249,7 +258,7 @@ class PolicyImpactRepository(Protocol):
     def list_shadow_outcomes(self, limit: int) -> tuple[tuple[str, int], ...]: ...
 
 
-def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], overrides: dict[str, dict[str, object]], repository: PolicyImpactRepository) -> PolicyPreview:
+def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], overrides: dict[str, dict[str, object]], repository: PolicyPreviewRepository) -> PolicyPreview:
     if type(profile) is not MetadataPolicyProfile or type(libraries) is not tuple or libraries != tuple(sorted(set(libraries))):
         raise MetadataPolicyApplicationError("policy preview is invalid")
     impacts: list[LibraryPolicyImpact] = []
@@ -366,14 +375,15 @@ def bind_proposal_policy(proposal_set_id: object, policy: ResolvedMetadataPolicy
     return ProposalPolicyBinding(proposal_set_id, policy.resolved_id)
 
 
-class PolicyNotebook:
-    """Read-only policy notebook plus immutable draft creation.
+class PolicyPreviewNotebook:
+    """Draft validation and impact projection over the read-only seam.
 
-    Configuration supplies only named-library sparse overrides and is never
-    written here. Activation is exact-draft and exact-resolution bound.
+    Every operation here reads through ``PolicyPreviewRepository`` alone, so a
+    preview-scoped composition can hold one without acquiring the draft,
+    activation, posture, or shadow-sample operations below it.
     """
 
-    def __init__(self, repository: PolicyImpactRepository, libraries: tuple[str, ...], overrides: dict[str, dict[str, object]]) -> None:
+    def __init__(self, repository: PolicyPreviewRepository, libraries: tuple[str, ...], overrides: dict[str, dict[str, object]]) -> None:
         if type(libraries) is not tuple or libraries != tuple(sorted(set(libraries))) or any(type(value) is not str for value in libraries):
             raise MetadataPolicyApplicationError("policy notebook is invalid")
         self._repository = repository
@@ -418,6 +428,27 @@ class PolicyNotebook:
             raise MetadataPolicyApplicationError("policy automatic unqualified")
         return profile
 
+    def preview(self, profile: MetadataPolicyProfile) -> PolicyPreview:
+        return preview_policy(
+            self.validate(profile),
+            self._libraries,
+            self._overrides,
+            self._repository,
+        )
+
+
+class PolicyNotebook(PolicyPreviewNotebook):
+    """Read-only policy notebook plus immutable draft creation.
+
+    Configuration supplies only named-library sparse overrides and is never
+    written here. Activation is exact-draft and exact-resolution bound.
+    """
+
+    _repository: PolicyImpactRepository
+
+    def __init__(self, repository: PolicyImpactRepository, libraries: tuple[str, ...], overrides: dict[str, dict[str, object]]) -> None:
+        super().__init__(repository, libraries, overrides)
+
     def create(self, name: object, options: object, destinations: object) -> MetadataPolicyProfile:
         try:
             profile = self.validate(
@@ -448,14 +479,6 @@ class PolicyNotebook:
             raise
         except Exception as error:
             raise MetadataPolicyApplicationError("policy draft is unavailable") from error
-
-    def preview(self, profile: MetadataPolicyProfile) -> PolicyPreview:
-        return preview_policy(
-            self.validate(profile),
-            self._libraries,
-            self._overrides,
-            self._repository,
-        )
 
     def shadow_state(self) -> dict[str, object]:
         try:
@@ -651,4 +674,4 @@ class PolicyNotebook:
             raise MetadataPolicyApplicationError("policy transition is unavailable") from error
 
 
-__all__ = ["LibraryPolicyImpact", "MAX_SHADOW_SAMPLE_RESPONSE_BYTES", "MetadataPolicyApplicationError", "PolicyActivation", "PolicyImpactRepository", "PolicyNotebook", "PolicyPreview", "PolicyTransition", "ProposalPolicyBinding", "bind_proposal_policy", "preview_policy"]
+__all__ = ["LibraryPolicyImpact", "MAX_SHADOW_SAMPLE_RESPONSE_BYTES", "MetadataPolicyApplicationError", "PolicyActivation", "PolicyImpactRepository", "PolicyNotebook", "PolicyPreview", "PolicyPreviewNotebook", "PolicyPreviewRepository", "PolicyTransition", "ProposalPolicyBinding", "bind_proposal_policy", "preview_policy"]

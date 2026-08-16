@@ -160,6 +160,7 @@ from mechanical_librarian.application.provider_retry_successor import (
     ProviderRetrySuccessorError,
 )
 from mechanical_librarian.application.review_application import (
+    compose_policy_preview_application,
     compose_review_application,
 )
 from mechanical_librarian.application.review_cases import (
@@ -1918,27 +1919,13 @@ def run_policy_preview(
     configuration = load_configuration_file(config_path)
     repository = open_shadow_preview_repository(database_path)
     try:
-        # LATENT DEFECT (typing-only unit: not repaired here).
-        # ``SQLiteShadowPreviewRepository`` implements only the read-only policy
-        # preview surface. It really does lack every session, review-case,
-        # decision, library, browser-state, and policy-mutation member these
-        # parameters name, so these are not variance mismatches: any composed
-        # operation other than ``preview_policy``/``policy.rich_qualification``
-        # below would raise ``AttributeError`` at runtime. Composition only
-        # reaches those two here, and ``operational_timings`` is omitted so the
-        # ``state_owner.operational_snapshot`` closure is never built.
-        application = compose_review_application(
-            state_owner=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks BrowserStateOwner
-            session_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks ReviewSessionStore
-            case_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks CurrentReviewCaseStore
-            decision_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks HumanDecisionStore
-            library_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks ReviewLibraryStore
-            policy_store=repository,  # type: ignore[arg-type]  # reason: see the note above; shadow preview lacks most of PolicyImpactRepository
-            verify_password=lambda _: False,
-            clock=lambda: int(time.time()),
-            session_lifetime_seconds=1,
-            graceful_shutdown_seconds=1,
-            close_state_owner=False,
+        # ``SQLiteShadowPreviewRepository`` implements the read-only policy
+        # preview surface and nothing else, so the preview composes against
+        # exactly that contract: no session, review-case, decision, library,
+        # browser-state, or policy-mutation operation exists to reach a member
+        # it does not have.
+        application = compose_policy_preview_application(
+            policy_store=repository,
             policy_libraries=tuple(
                 (library.name, library.policy_override)
                 for library in getattr(configuration, "libraries", ())
