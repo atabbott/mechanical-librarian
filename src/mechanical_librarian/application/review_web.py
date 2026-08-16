@@ -82,7 +82,9 @@ class ReviewLibrarySnapshot:
 
 @dataclass(frozen=True, slots=True)
 class ReviewAttentionSnapshot:
-    rows: tuple[tuple[str, str, str, int], ...]
+    rows: tuple[
+        tuple[str, str, str, int, str | None, ReviewFieldCause | None], ...
+    ]
     total: int
 
 
@@ -715,6 +717,10 @@ class BrowseReviewLibrary:
                     raw_total = snapshot.total
                 for row in raw_rows:
                     case_document, report_document, destination, work_attention_count = row[:4]
+                    # The declared row carries both trailing columns, but these
+                    # two guards still run: a store that reports only the four
+                    # attention columns reaches here and must keep paging
+                    # rather than fail the whole read on an index.
                     automatic_outcome = row[4] if len(row) > 4 else None
                     cause = row[5] if len(row) > 5 else None
                     item = _attention_item(

@@ -25,7 +25,10 @@ from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBind
 from mechanical_librarian.adapters.persistence.schema import _validate_report_row
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.catalogue import TargetConnectionError
-from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.metadata_report import (
+    MetadataReportError,
+    ReportRepository,
+)
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ReportValueError,
@@ -52,13 +55,13 @@ class SQLiteReportRepository(ConnectionScoped):
         report: MetadataReport,
         currentness: Callable[[], bool],
         expected_current: str | None = None,
-        after_publication: Callable[[object, MetadataReport], None] | None = None,
+        after_publication: Callable[[ReportRepository, MetadataReport], None] | None = None,
         *,
         expected_package: tuple[str | None, str, str | None, int | None, str] | None = None,
-        # The object handed to `after_publication`. That callback receives the
-        # bound repository and calls review-pipeline methods on it, so the
+        # The repository handed to `after_publication`. That callback receives
+        # the bound repository and calls review-pipeline methods on it, so the
         # composing facade supplies itself rather than this aggregate.
-        bound: object,
+        bound: ReportRepository,
     ) -> str:
         if type(report) is not MetadataReport or not callable(currentness):
             raise MetadataReportError("report publication failed")
