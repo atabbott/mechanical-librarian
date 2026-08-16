@@ -14,18 +14,26 @@
   hit that for real: a reviewer read the clause as covering the whole module,
   the change read it as covering the implementation, the text supported both,
   and the same two consolidations passed on one reading and failed on the other.
-  The clause now names the bucket its test reads — the shared implementation
-  against the implementation it deletes — and leaves structure, and
-  documentation a governing issue's acceptance demanded, in the reporting
-  buckets the same rule already requires. Structure costs the same for a good
-  abstraction and a bad one, so charging it to the abstraction judges the module
-  boundary rather than the abstraction, and rejects the small cross-file
-  consolidations the rule most wants, every one of which needs a shared home.
-  Nothing that failed the rule now passes: a shared implementation fatter than
-  the copies it replaces still fails, and the generalised helper carrying a
-  configuration switch for each former call site is named as the case the rule
-  exists to stop. #662's two consolidations are worked into the clause with
-  their line counts, so the measurement basis is not rediscovered by argument a
+  The clause now names what its test reads — all the implementation a
+  consolidation adds, shared and forced on the former call sites alike, against
+  all the implementation it deletes — and leaves structure, and documentation a
+  governing issue's acceptance demanded, in the reporting buckets the same rule
+  already requires. Structure costs the same for a good abstraction and a bad
+  one, so charging it to the abstraction judges the module boundary rather than
+  the abstraction, and rejects the small cross-file consolidations the rule most
+  wants, every one of which needs a shared home. A physical line is
+  implementation wherever it carries an executable expression, even where it
+  also carries a declaration, so an expression-bodied helper cannot book itself
+  as structure by fitting on one line.
+  Settling this does change verdicts, and it changes exactly the two the
+  ambiguity was found on: `+7` and `+16` fail on the module total the old text
+  equally supported, and pass under the amended clause. What has not moved is
+  the test's severity. A shared implementation fatter than the copies still
+  fails, so does a thin one that pushed its bulk out to the call sites, and the
+  generalised helper carrying a configuration switch for each former call site
+  is named as the case the rule exists to stop. #662's two consolidations are
+  worked into the clause with their line counts, and its entry reconciles every
+  bucket of both, so the measurement basis is not rediscovered by argument a
   third time. (#708)
 - Give the duplicated provider and review-surface logic one home each, and
   record where an abstraction would have cost more than the copies it removed.

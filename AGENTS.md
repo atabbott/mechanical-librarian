@@ -87,7 +87,10 @@ Run the static architecture-boundary test whenever imports or packages move.
   seven consumer imports, a Prettier rewrap, and the nine comment lines that
   change's acceptance demanded. #662's changelog entry reconciles every bucket
   of both to those net figures, which is the arithmetic this rule requires and
-  the reason the example carries no bucket the entry does not account for.
+  the reason the example carries no bucket the entry does not account for. Both
+  would fail on module total, and both passed here. Deciding a measurement basis
+  is not a neutral act: it settles cases the ambiguity left open, and these two
+  are the cases it settles.
 - **Extraction within a boundary** — pulling a helper out of code that could
   have kept it — with a single caller has to earn its place, and it can.
   Consolidating one copy is not consolidation, so the default is to keep the
