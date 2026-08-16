@@ -168,6 +168,7 @@ def test_a_later_shutdown_failure_is_kept_on_the_one_that_propagates(
     shutting the server down saw one lane's failure and no sign that a
     second background lane was also still running (#698).
     """
+
     class _FailingPreparation:
         def begin_drain(self) -> None:
             raise RuntimeError("drain lane did not stop")
@@ -194,8 +195,7 @@ def test_a_later_shutdown_failure_is_kept_on_the_one_that_propagates(
 
     assert str(raised.value) == "drain lane did not stop"
     assert getattr(raised.value, "__notes__", []) == [
-        "further shutdown failure: "
-        "RuntimeError('preparation lane did not stop')"
+        "further shutdown failure: RuntimeError('preparation lane did not stop')"
     ]
 
 
@@ -286,11 +286,16 @@ def test_connection_probe_does_not_hold_the_global_application_gate(
 
     preparation = BlockingPreparation()
     application = compose_review_application(
-        state_owner=repository, session_store=repository,
-        case_store=repository, decision_store=repository,
-        library_store=repository, policy_store=repository,
-        verify_password=lambda _: True, clock=lambda: _NOW,
-        session_lifetime_seconds=600, graceful_shutdown_seconds=30,
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
         preparation=preparation,
     )
     probe = threading.Thread(
@@ -301,7 +306,10 @@ def test_connection_probe_does_not_hold_the_global_application_gate(
     browse = threading.Thread(
         # The tuple sequences the browse call and the `set()` signal inside one
         # lambda, so the discarded `None` element is the point, not a mistake.
-        target=lambda: (application.library(lens="all", search=None, limit=20, cursor=None), browse_finished.set())  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
+        target=lambda: (
+            application.library(lens="all", search=None, limit=20, cursor=None),
+            browse_finished.set(),  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
+        )
     )
     browse.start()
     assert browse_finished.wait(1)

@@ -43,10 +43,7 @@ def test_placeholder_report_and_nonmutating_proposal_replay_exactly() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         root.chmod(0o700)
-        fields = {
-            field.destination: field
-            for field in default_target_fields("Title")
-        }
+        fields = {field.destination: field for field in default_target_fields("Title")}
         fields[TargetDestination.AUTHORS] = TargetField(
             TargetDestination.AUTHORS,
             TargetFieldState.MISSING,
@@ -69,10 +66,7 @@ def test_placeholder_report_and_nonmutating_proposal_replay_exactly() -> None:
                 "primary",
                 "ebooks",
                 "item-1",
-                tuple(
-                    fields[destination]
-                    for destination in TargetDestination
-                ),
+                tuple(fields[destination] for destination in TargetDestination),
             ),
             file=FileFacts(0, "a" * 64, "b" * 64),
             local_claims=(claim,),
@@ -134,9 +128,7 @@ def test_prior_policy_store_schema_is_rejected_without_mutation() -> None:
         repository.close()
 
         connection = sqlite3.connect(path)
-        connection.execute(
-            "ALTER TABLE proposal_sets DROP COLUMN policy_version"
-        )
+        connection.execute("ALTER TABLE proposal_sets DROP COLUMN policy_version")
         connection.commit()
         connection.close()
         before = path.read_bytes()
@@ -186,15 +178,11 @@ def test_report_and_pointer_recheck_are_the_final_queries_before_insert() -> Non
             if statement.startswith(
                 "SELECT report_id,connection_name,library_name,item_id,"
             )
-            or statement.startswith(
-                "SELECT report_id FROM current_metadata_reports"
-            )
+            or statement.startswith("SELECT report_id FROM current_metadata_reports")
             or statement.startswith("INSERT INTO proposal_sets")
         )
         assert 3 == len(relevant)
         assert relevant[0].startswith("SELECT report_id,")
-        assert relevant[1].startswith(
-            "SELECT report_id FROM current_metadata_reports"
-        )
+        assert relevant[1].startswith("SELECT report_id FROM current_metadata_reports")
         assert relevant[2].startswith("INSERT INTO proposal_sets")
         repository.close()

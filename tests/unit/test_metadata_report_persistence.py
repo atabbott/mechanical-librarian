@@ -80,21 +80,32 @@ def test_package_assertion_rolls_back_a_package_pointer_race() -> None:
                     successor,
                     lambda: True,
                     source.report_id,
-                    expected_package=(None, source.report_id, None, None, "report_only"),
+                    expected_package=(
+                        None,
+                        source.report_id,
+                        None,
+                        None,
+                        "report_only",
+                    ),
                 )
 
             assert source.to_json() == repository.current(
-                source.target.connection, source.target.library,
-                source.target.item, source.file.identity,
+                source.target.connection,
+                source.target.library,
+                source.target.item,
+                source.file.identity,
             )
             with pytest.raises(MetadataReportError, match="review package is invalid"):
                 repository.current_review_package(
                     source.target.connection, source.target.library, source.target.item
                 )
-            assert repository._connection.execute(
-                "SELECT report_id FROM metadata_reports WHERE report_id=?",
-                (successor.report_id,),
-            ).fetchone() is None
+            assert (
+                repository._connection.execute(
+                    "SELECT report_id FROM metadata_reports WHERE report_id=?",
+                    (successor.report_id,),
+                ).fetchone()
+                is None
+            )
         finally:
             repository.close()
 
@@ -104,9 +115,7 @@ def test_absent_field_effect_consent_remains_a_semantic_absence() -> None:
         repository = open_repository(Path(directory) / "reports.sqlite")
         try:
             with pytest.raises(FieldEffectError) as raised:
-                repository.current_field_effect_consent(
-                    "primary", "ebooks", "title"
-                )
+                repository.current_field_effect_consent("primary", "ebooks", "title")
         finally:
             repository.close()
 
@@ -332,7 +341,9 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "intermediate extra column",
             lambda connection: (
                 connection.execute(persistence_schema._REPORTS_SQL),
-                connection.execute("ALTER TABLE metadata_reports ADD COLUMN intermediate TEXT"),
+                connection.execute(
+                    "ALTER TABLE metadata_reports ADD COLUMN intermediate TEXT"
+                ),
             ),
         ),
     ),
@@ -364,62 +375,71 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
         repository.close()
 
         connection = sqlite3.connect(path)
-        tables = connection.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").fetchall()
+        tables = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
         schema_version = connection.execute(
             "SELECT schema_version FROM metadata_reports"
         ).fetchone()
-        rows = connection.execute("SELECT report_id FROM metadata_reports ORDER BY report_id").fetchall()
-        current = connection.execute("SELECT report_id FROM current_metadata_reports").fetchone()
+        rows = connection.execute(
+            "SELECT report_id FROM metadata_reports ORDER BY report_id"
+        ).fetchall()
+        current = connection.execute(
+            "SELECT report_id FROM current_metadata_reports"
+        ).fetchone()
         connection.close()
         assert tables == [
-                ("automatic_decisions",),
-                ("automatic_safety_state",),
-                ("cover_consideration_events",),
-                ("cover_considerations",),
-                ("current_cover_considerations",),
-                ("current_metadata_report_lineages",),
-                ("current_metadata_reports",),
-                ("current_review_case_lineages",),
-                ("current_review_packages",),
-                ("field_effect_actions",),
-                ("field_effect_authorities",),
-                ("field_effect_cleanups",),
-                ("field_effect_consents",),
-                ("field_effect_control",),
-                ("field_effect_events",),
-                ("field_effect_manual_holds",),
-                ("field_effect_no_changes",),
-                ("field_effect_suspensions",),
-                ("field_effects",),
-                ("human_decision_events",),
-                ("human_decisions",),
-                ("metadata_policy_drafts",),
-                ("metadata_policy_resolutions",),
-                ("metadata_policy_state",),
-                ("metadata_policy_transition_items",),
-                ("metadata_policy_transitions",),
-                ("metadata_report_cover_references",),
-                ("metadata_reports",),
-                ("proposal_sets",),
-                ("provider_recovery_outbox",),
-                ("review_case_transitions",),
-                ("review_cases",),
-                ("review_login_failures",),
-                ("review_preparation_absences",),
-                ("review_preparation_connection_conditions",),
-                ("review_preparation_control",),
-                ("review_preparation_scans",),
-                ("review_preparation_work",),
-                ("review_sessions",),
-                ("shadow_decision_outcomes",),
-            ]
+            ("automatic_decisions",),
+            ("automatic_safety_state",),
+            ("cover_consideration_events",),
+            ("cover_considerations",),
+            ("current_cover_considerations",),
+            ("current_metadata_report_lineages",),
+            ("current_metadata_reports",),
+            ("current_review_case_lineages",),
+            ("current_review_packages",),
+            ("field_effect_actions",),
+            ("field_effect_authorities",),
+            ("field_effect_cleanups",),
+            ("field_effect_consents",),
+            ("field_effect_control",),
+            ("field_effect_events",),
+            ("field_effect_manual_holds",),
+            ("field_effect_no_changes",),
+            ("field_effect_suspensions",),
+            ("field_effects",),
+            ("human_decision_events",),
+            ("human_decisions",),
+            ("metadata_policy_drafts",),
+            ("metadata_policy_resolutions",),
+            ("metadata_policy_state",),
+            ("metadata_policy_transition_items",),
+            ("metadata_policy_transitions",),
+            ("metadata_report_cover_references",),
+            ("metadata_reports",),
+            ("proposal_sets",),
+            ("provider_recovery_outbox",),
+            ("review_case_transitions",),
+            ("review_cases",),
+            ("review_login_failures",),
+            ("review_preparation_absences",),
+            ("review_preparation_connection_conditions",),
+            ("review_preparation_control",),
+            ("review_preparation_scans",),
+            ("review_preparation_work",),
+            ("review_sessions",),
+            ("shadow_decision_outcomes",),
+        ]
         assert len(rows) == 2
         assert schema_version == ("metadata-report-v26",)
         assert current == (second.report_id,)
 
         reopened = open_repository(path)
         assert reopened.get(first.report_id) == first.to_json()
-        assert reopened.current("primary", "ebooks", "item-1", "a" * 64) == second.to_json()
+        assert (
+            reopened.current("primary", "ebooks", "item-1", "a" * 64)
+            == second.to_json()
+        )
         reopened.close()
 
 
@@ -430,8 +450,13 @@ def test_provider_recovery_outbox_rejects_digest_corruption_on_restart() -> None
         report = synthetic_report()
         repository.publish(report, lambda: True)
         outbox_id = persistence_schema._provider_recovery_outbox_id(
-            report.target.connection, report.target.library,
-            report.target.item, None, report.report_id, None, None,
+            report.target.connection,
+            report.target.library,
+            report.target.item,
+            None,
+            report.report_id,
+            None,
+            None,
             "report_only",
         )
         repository._connection.execute(
@@ -439,8 +464,13 @@ def test_provider_recovery_outbox_rejects_digest_corruption_on_restart() -> None
             "library_name,item_id,proposal_set_id,report_id,review_case_id,"
             "checkpoint,outcome,created_at,delivered_at) "
             "VALUES(?,?,?,?,NULL,?,NULL,NULL,'report_only',1,NULL)",
-            (outbox_id, report.target.connection, report.target.library,
-             report.target.item, report.report_id),
+            (
+                outbox_id,
+                report.target.connection,
+                report.target.library,
+                report.target.item,
+                report.report_id,
+            ),
         )
         repository._connection.commit()
         repository.close()
@@ -462,7 +492,10 @@ def test_same_candidate_replay_converges_after_a_stale_null_baseline() -> None:
         repository = open_repository(Path(directory) / "reports.sqlite")
         report = synthetic_report()
         repository.publish(report, lambda: True)
-        assert repository.publish(report, lambda: True, expected_current=None) == report.to_json()
+        assert (
+            repository.publish(report, lambda: True, expected_current=None)
+            == report.to_json()
+        )
         changed = synthetic_report("Changed title")
         with pytest.raises(MetadataReportError, match="current report changed"):
             repository.publish(changed, lambda: True, expected_current=None)
@@ -494,10 +527,8 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change() -> None:
         ).fetchone()
         assert row is not None
         old_sql = row[0].replace(
-            " AND json_extract(document,'$.schema_version')="
-            "'shadow-outcome-set-v3'",
-            " AND json_extract(document,'$.schema_version')="
-            "'shadow-outcome-set-v2'",
+            " AND json_extract(document,'$.schema_version')='shadow-outcome-set-v3'",
+            " AND json_extract(document,'$.schema_version')='shadow-outcome-set-v2'",
         )
         assert row[0] != old_sql
         connection.execute("PRAGMA writable_schema=ON")
@@ -506,9 +537,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change() -> None:
             "AND name='shadow_decision_outcomes'",
             (old_sql,),
         )
-        schema_version = connection.execute(
-            "PRAGMA schema_version"
-        ).fetchone()[0]
+        schema_version = connection.execute("PRAGMA schema_version").fetchone()[0]
         connection.execute(f"PRAGMA schema_version={schema_version + 1}")
         connection.execute("PRAGMA writable_schema=OFF")
         connection.commit()
@@ -533,13 +562,18 @@ def test_preview_digest_requires_exact_report_binding() -> None:
         )
         report = synthetic_report()
         report = MetadataReport.create(
-            target=report.target, file=report.file, local_claims=report.local_claims,
-            local_reasons=report.local_reasons, providers=report.providers,
+            target=report.target,
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=report.providers,
             cover_sources=(source,),
         )
         repository = open_repository(path)
         repository.publish(report, lambda: True)
-        assert artifact.preview_digest == repository.preview_digest(report.report_id, artifact.artifact_id, artifact.preview_variant)
+        assert artifact.preview_digest == repository.preview_digest(
+            report.report_id, artifact.artifact_id, artifact.preview_variant
+        )
         assert repository.artifact_is_referenced(artifact.original_digest)
         repository._connection.execute(
             "DROP TRIGGER metadata_report_cover_references_no_delete"
@@ -551,7 +585,9 @@ def test_preview_digest_requires_exact_report_binding() -> None:
         with pytest.raises(MetadataReportError, match="cover references"):
             repository.artifact_is_referenced(artifact.original_digest)
         with pytest.raises(MetadataReportError):
-            repository.preview_digest(report.report_id, "cover_" + "0" * 64, artifact.preview_variant)
+            repository.preview_digest(
+                report.report_id, "cover_" + "0" * 64, artifact.preview_variant
+            )
         repository.close()
 
 
@@ -569,12 +605,16 @@ def test_corrupt_document_and_envelope_disagreement_fail_closed() -> None:
             "UPDATE metadata_reports SET document=?,document_digest=?",
             (report.to_json(), hashlib.sha256(report.to_json().encode()).hexdigest()),
         )
-        repository._connection.execute("UPDATE metadata_reports SET connection_name='other'")
+        repository._connection.execute(
+            "UPDATE metadata_reports SET connection_name='other'"
+        )
         with pytest.raises(MetadataReportError):
             repository.get(report.report_id)
         unsafe = json.loads(report.to_json())
         unsafe["local"]["claims"][0]["canonical"] = "/Users/private/title"
-        document = json.dumps(unsafe, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        document = json.dumps(
+            unsafe, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        )
         repository._connection.execute(
             "UPDATE metadata_reports SET connection_name=?,document=?,document_digest=?",
             ("primary", document, hashlib.sha256(document.encode()).hexdigest()),
@@ -603,16 +643,30 @@ def test_existing_schema_rejects_unexpected_objects_without_mutation(
         connection = sqlite3.connect(path)
         connection.execute(statement)
         connection.commit()
-        expected_objects = connection.execute("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").fetchall()
-        expected_counts = connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone()
+        expected_objects = connection.execute(
+            "SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+        ).fetchall()
+        expected_counts = connection.execute(
+            "SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)"
+        ).fetchone()
         connection.close()
         before = path.read_bytes()
         with pytest.raises(MetadataReportError):
             open_repository(path)
         assert path.read_bytes() == before
         connection = sqlite3.connect(path)
-        assert connection.execute("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").fetchall() == expected_objects
-        assert connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone() == expected_counts
+        assert (
+            connection.execute(
+                "SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+            ).fetchall()
+            == expected_objects
+        )
+        assert (
+            connection.execute(
+                "SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)"
+            ).fetchone()
+            == expected_counts
+        )
         connection.close()
 
 
@@ -646,40 +700,71 @@ def test_existing_schema_rejects_persistent_sqlite_master_system_objects_without
         if kind == "analyze":
             connection.execute("ANALYZE")
         elif kind == "sequence":
-            connection.execute("CREATE TABLE fixture_sequence(id INTEGER PRIMARY KEY AUTOINCREMENT)")
+            connection.execute(
+                "CREATE TABLE fixture_sequence(id INTEGER PRIMARY KEY AUTOINCREMENT)"
+            )
             connection.execute("DROP TABLE fixture_sequence")
         else:
             connection.execute("CREATE TABLE fixture_extra(value TEXT)")
             connection.execute("PRAGMA writable_schema=ON")
-            connection.execute("UPDATE sqlite_master SET name='sqlite_fixture_extra',tbl_name='sqlite_fixture_extra',sql='CREATE TABLE sqlite_fixture_extra(value TEXT)' WHERE name='fixture_extra'")
+            connection.execute(
+                "UPDATE sqlite_master SET name='sqlite_fixture_extra',tbl_name='sqlite_fixture_extra',sql='CREATE TABLE sqlite_fixture_extra(value TEXT)' WHERE name='fixture_extra'"
+            )
             connection.execute("PRAGMA writable_schema=OFF")
         connection.commit()
-        expected_objects = connection.execute("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").fetchall()
-        expected_counts = connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone()
+        expected_objects = connection.execute(
+            "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+        ).fetchall()
+        expected_counts = connection.execute(
+            "SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)"
+        ).fetchone()
         connection.close()
         before = path.read_bytes()
         with pytest.raises(MetadataReportError):
             open_repository(path)
         assert path.read_bytes() == before
         connection = sqlite3.connect(path)
-        assert connection.execute("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").fetchall() == expected_objects
-        assert connection.execute("SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)").fetchone() == expected_counts
+        assert (
+            connection.execute(
+                "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+            ).fetchall()
+            == expected_objects
+        )
+        assert (
+            connection.execute(
+                "SELECT (SELECT COUNT(*) FROM metadata_reports),(SELECT COUNT(*) FROM current_metadata_reports)"
+            ).fetchone()
+            == expected_counts
+        )
         connection.close()
 
 
-def test_exact_schema_isolates_unselected_history_and_validates_selected_rows_and_pointers() -> None:
+def test_exact_schema_isolates_unselected_history_and_validates_selected_rows_and_pointers() -> (
+    None
+):
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "reports.sqlite"
         repository = open_repository(path)
         primary = synthetic_report()
-        other = MetadataReport.create(target=TargetFacts("secondary", "ebooks", "item-2", default_target_fields("Other title")), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+        other = MetadataReport.create(
+            target=TargetFacts(
+                "secondary", "ebooks", "item-2", default_target_fields("Other title")
+            ),
+            file=FileFacts(0, "c" * 64, "d" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(),
+        )
         repository.publish(primary, lambda: True)
         repository.publish(other, lambda: True)
         repository.close()
         connection = sqlite3.connect(path)
         connection.execute("DROP TRIGGER metadata_reports_no_update")
         document = "{}"
-        connection.execute("UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?", (document, hashlib.sha256(document.encode()).hexdigest(), other.report_id))
+        connection.execute(
+            "UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?",
+            (document, hashlib.sha256(document.encode()).hexdigest(), other.report_id),
+        )
         connection.execute(persistence_schema._NO_UPDATE_SQL)
         connection.commit()
         connection.close()
@@ -690,22 +775,49 @@ def test_exact_schema_isolates_unselected_history_and_validates_selected_rows_an
         repository.close()
 
 
-def test_selected_corrupt_pointer_blocks_only_its_publication_without_mutation() -> None:
+def test_selected_corrupt_pointer_blocks_only_its_publication_without_mutation() -> (
+    None
+):
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "reports.sqlite"
         repository = open_repository(path)
         primary = synthetic_report()
-        other = MetadataReport.create(target=TargetFacts("secondary", "ebooks", "item-2", default_target_fields("Other title")), file=FileFacts(0, "c" * 64, "d" * 64), local_claims=(), local_reasons=("no_opening_claims",), providers=())
+        other = MetadataReport.create(
+            target=TargetFacts(
+                "secondary", "ebooks", "item-2", default_target_fields("Other title")
+            ),
+            file=FileFacts(0, "c" * 64, "d" * 64),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(),
+        )
         repository.publish(primary, lambda: True)
         repository.publish(other, lambda: True)
         repository.close()
         connection = sqlite3.connect(path)
-        connection.execute("UPDATE current_metadata_reports SET report_id=? WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?", (other.report_id, primary.target.connection, primary.target.library, primary.target.item, primary.file.identity))
+        connection.execute(
+            "UPDATE current_metadata_reports SET report_id=? WHERE connection_name=? AND library_name=? AND item_id=? AND file_identity=?",
+            (
+                other.report_id,
+                primary.target.connection,
+                primary.target.library,
+                primary.target.item,
+                primary.file.identity,
+            ),
+        )
         connection.commit()
         connection.close()
         before = path.read_bytes()
         repository = open_repository(path)
-        assert repository.current(other.target.connection, other.target.library, other.target.item, other.file.identity) == other.to_json()
+        assert (
+            repository.current(
+                other.target.connection,
+                other.target.library,
+                other.target.item,
+                other.file.identity,
+            )
+            == other.to_json()
+        )
         successor = synthetic_report("Successor")
         with pytest.raises(MetadataReportError):
             repository.publish(successor, lambda: True)
@@ -722,7 +834,9 @@ def test_pointer_failure_rolls_back_new_report() -> None:
         )
         with pytest.raises(MetadataReportError):
             repository.publish(synthetic_report(), lambda: True)
-        assert repository._connection.execute("SELECT COUNT(*) FROM metadata_reports").fetchone() == (0,)
+        assert repository._connection.execute(
+            "SELECT COUNT(*) FROM metadata_reports"
+        ).fetchone() == (0,)
         repository.close()
 
 
@@ -738,11 +852,11 @@ def test_external_precondition_failure_precedes_report_transaction() -> None:
             )
         assert calls == [False]
         assert repository._connection.execute(
-                "SELECT COUNT(*) FROM metadata_reports"
-            ).fetchone() == (0,)
+            "SELECT COUNT(*) FROM metadata_reports"
+        ).fetchone() == (0,)
         assert repository._connection.execute(
-                "SELECT COUNT(*) FROM current_metadata_reports"
-            ).fetchone() == (0,)
+            "SELECT COUNT(*) FROM current_metadata_reports"
+        ).fetchone() == (0,)
         repository.close()
 
 
@@ -811,11 +925,14 @@ def test_path_swap_to_symlink_cannot_bind_or_write_alternate_database() -> None:
             return real_connect(*args, **kwargs)
 
         try:
-            with patch.object(
-                persistence_schema.sqlite3,
-                "connect",
-                side_effect=swapping_connect,
-            ), pytest.raises(MetadataReportError):
+            with (
+                patch.object(
+                    persistence_schema.sqlite3,
+                    "connect",
+                    side_effect=swapping_connect,
+                ),
+                pytest.raises(MetadataReportError),
+            ):
                 open_repository(path)
         finally:
             if path.is_symlink():
@@ -825,7 +942,9 @@ def test_path_swap_to_symlink_cannot_bind_or_write_alternate_database() -> None:
         assert alternate.read_bytes() == alternate_before
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux descriptor proof")
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux descriptor proof"
+)
 def test_double_path_swap_cannot_hide_the_alternate_sqlite_connection() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -870,7 +989,9 @@ def test_double_path_swap_cannot_hide_the_alternate_sqlite_connection() -> None:
         assert alternate.read_bytes() == alternate_before
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux descriptor proof")
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux descriptor proof"
+)
 def test_linux_descriptor_binding_allows_ordinary_open_and_reopen() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -908,19 +1029,26 @@ def test_linux_descriptor_binding_allows_ordinary_open_and_reopen() -> None:
         assert not competitor.is_alive()
         assert [] == reopen_failures
         assert [True] == reopened_after_close
-        assert tuple(
+        assert (
+            tuple(
                 value.name
                 for value in root.iterdir()
                 if value.name.startswith(".metadata-report-binding-")
-            ) == ()
+            )
+            == ()
+        )
         reopened = open_repository(path)
         assert reopened.get(report.report_id) == report.to_json()
         reopened.close()
         assert tuple(value.name for value in root.iterdir()) == ("reports.sqlite",)
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux descriptor proof")
-def test_linux_descriptor_reuse_during_journal_churn_keeps_bound_open_available() -> None:
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux descriptor proof"
+)
+def test_linux_descriptor_reuse_during_journal_churn_keeps_bound_open_available() -> (
+    None
+):
     """A journal-close may reuse a descriptor number held before SQLite opens."""
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "reports.sqlite"
@@ -937,14 +1065,19 @@ def test_linux_descriptor_reuse_during_journal_churn_keeps_bound_open_available(
                 descriptor,
                 lambda: os.close(churned_descriptor),
             )
-            assert connection.execute("PRAGMA database_list").fetchone()[1:] == ("main", str(path.absolute()))
+            assert connection.execute("PRAGMA database_list").fetchone()[1:] == (
+                "main",
+                str(path.absolute()),
+            )
         finally:
             if connection is not None:
                 connection.close()
             os.close(descriptor)
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux descriptor proof")
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux descriptor proof"
+)
 def test_linux_raced_configured_hot_journal_cannot_control_alias_open() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -963,11 +1096,14 @@ def test_linux_raced_configured_hot_journal_cannot_control_alias_open() -> None:
                 raced["journal"] = journal.read_bytes()
             return real_connect(database, *args, **kwargs)
 
-        with patch.object(
-            persistence_schema.sqlite3,
-            "connect",
-            side_effect=racing_connect,
-        ), pytest.raises(MetadataReportError):
+        with (
+            patch.object(
+                persistence_schema.sqlite3,
+                "connect",
+                side_effect=racing_connect,
+            ),
+            pytest.raises(MetadataReportError),
+        ):
             open_repository(path)
         journal = Path(f"{path}-journal")
         assert len(observed_uris) == 2
@@ -976,10 +1112,15 @@ def test_linux_raced_configured_hot_journal_cannot_control_alias_open() -> None:
         assert str(path.absolute()) not in observed_uris[1]
         assert path.read_bytes() == raced["main"]
         assert journal.read_bytes() == raced["journal"]
-        assert set(value.name for value in root.iterdir()) == {"reports.sqlite", "reports.sqlite-journal"}
+        assert set(value.name for value in root.iterdir()) == {
+            "reports.sqlite",
+            "reports.sqlite-journal",
+        }
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux descriptor proof")
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux descriptor proof"
+)
 def test_linux_publication_requires_configured_sidecars_to_remain_absent() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -990,14 +1131,19 @@ def test_linux_publication_requires_configured_sidecars_to_remain_absent() -> No
         with pytest.raises(MetadataReportError):
             repository.publish(synthetic_report(), lambda: True)
         assert repository._connection.execute(
-                "SELECT COUNT(*) FROM metadata_reports"
-            ).fetchone() == (0,)
+            "SELECT COUNT(*) FROM metadata_reports"
+        ).fetchone() == (0,)
         repository.close()
         assert sidecar.read_bytes() == b"configured-path-race"
-        assert set(value.name for value in root.iterdir()) == {"reports.sqlite", "reports.sqlite-journal"}
+        assert set(value.name for value in root.iterdir()) == {
+            "reports.sqlite",
+            "reports.sqlite-journal",
+        }
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux descriptor proof")
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux descriptor proof"
+)
 def test_linux_parent_replacement_at_final_precommit_check_rolls_back() -> None:
     with tempfile.TemporaryDirectory() as directory:
         outer = Path(directory) / "outer"
@@ -1023,19 +1169,22 @@ def test_linux_parent_replacement_at_final_precommit_check_rolls_back() -> None:
                 path.write_bytes(replacement_bytes)
             require_current()
 
-        with patch.object(
-            binding,
-            "require_current",
-            side_effect=replace_parent_at_final_check,
-        ), pytest.raises(MetadataReportError):
+        with (
+            patch.object(
+                binding,
+                "require_current",
+                side_effect=replace_parent_at_final_check,
+            ),
+            pytest.raises(MetadataReportError),
+        ):
             repository.publish(synthetic_report(), lambda: True)
         assert calls == 2
         assert repository._connection.execute(
-                "SELECT COUNT(*) FROM metadata_reports"
-            ).fetchone() == (0,)
+            "SELECT COUNT(*) FROM metadata_reports"
+        ).fetchone() == (0,)
         assert repository._connection.execute(
-                "SELECT COUNT(*) FROM current_metadata_reports"
-            ).fetchone() == (0,)
+            "SELECT COUNT(*) FROM current_metadata_reports"
+        ).fetchone() == (0,)
         assert (displaced / "reports.sqlite").read_bytes() == original_bytes
         assert path.read_bytes() == replacement_bytes
         repository.close()
@@ -1053,7 +1202,9 @@ def test_linux_parent_replacement_at_final_precommit_check_rolls_back() -> None:
         reopened.close()
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux descriptor proof")
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux descriptor proof"
+)
 def test_linux_database_authority_allows_same_process_derived_connection() -> None:
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "reports.sqlite"
@@ -1069,7 +1220,9 @@ def test_linux_database_authority_allows_same_process_derived_connection() -> No
         owner.close()
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux descriptor proof")
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux descriptor proof"
+)
 def test_linux_database_parent_must_be_owner_only() -> None:
     with tempfile.TemporaryDirectory() as directory:
         parent = Path(directory) / "shared"
@@ -1085,7 +1238,9 @@ def test_linux_database_parent_must_be_owner_only() -> None:
         assert tuple(value.name for value in parent.iterdir()) == ("reports.sqlite",)
 
 
-@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux descriptor proof")
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux descriptor proof"
+)
 def test_linux_database_ancestor_must_exclude_other_users() -> None:
     with tempfile.TemporaryDirectory() as directory:
         shared = Path(directory) / "shared"
@@ -1109,7 +1264,9 @@ def test_current_pointer_scope_must_agree_with_decoded_report() -> None:
         repository = open_repository(path)
         primary = synthetic_report("Primary title")
         other = MetadataReport.create(
-            target=TargetFacts("secondary", "other", "item-2", default_target_fields("Other title")),
+            target=TargetFacts(
+                "secondary", "other", "item-2", default_target_fields("Other title")
+            ),
             file=FileFacts(0, "c" * 64, "d" * 64),
             local_claims=(),
             local_reasons=("no_opening_claims",),

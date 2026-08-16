@@ -73,7 +73,9 @@ from tests.support.metadata_report_doubles import (
 )
 
 
-def test_lookup_prefers_one_isbn_family_and_otherwise_requires_complete_target_authors() -> None:
+def test_lookup_prefers_one_isbn_family_and_otherwise_requires_complete_target_authors() -> (
+    None
+):
     def target(
         title: str | None,
         authors: TargetField,
@@ -93,11 +95,11 @@ def test_lookup_prefers_one_isbn_family_and_otherwise_requires_complete_target_a
         ),
     )
     assert MetadataLookup(
-            ProviderQueryKind.WORK,
-            (),
-            "The Example",
-            ("Ada Author", "Ben Writer"),
-        ) == metadata_lookup(complete, ())
+        ProviderQueryKind.WORK,
+        (),
+        "The Example",
+        ("Ada Author", "Ben Writer"),
+    ) == metadata_lookup(complete, ())
     for state in (
         TargetFieldState.MISSING,
         TargetFieldState.NULL,
@@ -153,16 +155,18 @@ def test_lookup_prefers_one_isbn_family_and_otherwise_requires_complete_target_a
         applicability_basis="not_applicable",
         scope=ClaimScope.WORK,
     )
-    plan = metadata_discovery_plan(
-        complete, (target_title, isbn, competing)
-    )
+    plan = metadata_discovery_plan(complete, (target_title, isbn, competing))
     assert not plan.overflow
-    assert [ProviderQueryKind.ISBN, ProviderQueryKind.ISBN, ProviderQueryKind.WORK] == sorted((lane.kind for lane in plan.lanes), key=lambda value: value.value)
+    assert [
+        ProviderQueryKind.ISBN,
+        ProviderQueryKind.ISBN,
+        ProviderQueryKind.WORK,
+    ] == sorted((lane.kind for lane in plan.lanes), key=lambda value: value.value)
     assert {"9780306406157", "9780140328721"} == {
-            lane.matched_family
-            for lane in plan.lanes
-            if lane.kind is ProviderQueryKind.ISBN
-        }
+        lane.matched_family
+        for lane in plan.lanes
+        if lane.kind is ProviderQueryKind.ISBN
+    }
 
 
 def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
@@ -195,9 +199,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
         checksum="valid_isbn_10",
         applicability_basis="print",
         basis="opening_matter",
-        rear_provenance=RearClaimProvenance(
-            "a" * 64, 1, 1, "also_by", "rear.xhtml"
-        ),
+        rear_provenance=RearClaimProvenance("a" * 64, 1, 1, "also_by", "rear.xhtml"),
     )
     fields = tuple(
         TargetField(
@@ -213,39 +215,33 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
         TargetSnapshot("ebook", "The Example", (), fields=fields),
         (title, isbn_13, isbn_10),
     )
-    isbn_lane = next(
-        lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ISBN
+    isbn_lane = next(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ISBN)
+    work_lane = next(lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK)
+    assert (
+        tuple(sorted((isbn_13.reference, isbn_10.reference)))
+        == isbn_lane.input_references
     )
-    work_lane = next(
-        lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK
-    )
-    assert tuple(sorted((isbn_13.reference, isbn_10.reference))) == isbn_lane.input_references
     candidate = ProviderCandidate("edition-1", "work-1", ())
     observation = provider_observation(
         "catalogue",
         (
-            ProviderLaneResult(
-                isbn_lane, ProviderStatus.CANDIDATES, (candidate,)
-            ),
-            ProviderLaneResult(
-                work_lane, ProviderStatus.CANDIDATES, (candidate,)
-            ),
+            ProviderLaneResult(isbn_lane, ProviderStatus.CANDIDATES, (candidate,)),
+            ProviderLaneResult(work_lane, ProviderStatus.CANDIDATES, (candidate,)),
         ),
     )
     assert 1 == len(observation.candidates)
     assert 2 == len(observation.lanes)
     assert 1 == len(observation.convergence)
-    assert tuple(sorted(lane.identity for lane in plan.lanes)) == observation.convergence[0].lane_identities
+    assert (
+        tuple(sorted(lane.identity for lane in plan.lanes))
+        == observation.convergence[0].lane_identities
+    )
     lane_references = {
-        value.reference
-        for lane in observation.lanes
-        for value in lane.candidates
+        value.reference for lane in observation.lanes for value in lane.candidates
     }
     assert 2 == len(lane_references)
     report = MetadataReport.create(
-        target=TargetFacts(
-            "primary", "ebooks", "item-1", fields
-        ),
+        target=TargetFacts("primary", "ebooks", "item-1", fields),
         file=FileFacts(0, "b" * 64, "c" * 64),
         local_claims=(title, isbn_13, isbn_10),
         local_reasons=("opening_matter_isbn",),
@@ -278,29 +274,27 @@ def aggregate_lanes() -> tuple[MetadataDiscoveryLane, ...]:
             "9780439554930",
         )
     )
-    return metadata_discovery_plan(
-        TargetSnapshot("ebook", None, ()), claims
-    ).lanes
+    return metadata_discovery_plan(TargetSnapshot("ebook", None, ()), claims).lanes
 
 
-def _overflow_lane_results(lanes: tuple[MetadataDiscoveryLane, ...]) -> tuple[ProviderLaneResult, ...]:
+def _overflow_lane_results(
+    lanes: tuple[MetadataDiscoveryLane, ...],
+) -> tuple[ProviderLaneResult, ...]:
     candidates = tuple(
         ProviderCandidate(f"edition-{index}", f"work-{index}", ())
         for index in range(MAX_CANDIDATES + 1)
     )
     return (
-        ProviderLaneResult(
-            lanes[0], ProviderStatus.CANDIDATES, candidates[:3]
-        ),
-        ProviderLaneResult(
-            lanes[1], ProviderStatus.CANDIDATES, candidates[3:]
-        ),
+        ProviderLaneResult(lanes[0], ProviderStatus.CANDIDATES, candidates[:3]),
+        ProviderLaneResult(lanes[1], ProviderStatus.CANDIDATES, candidates[3:]),
         ProviderLaneResult(lanes[2], ProviderStatus.RATE_LIMITED),
         ProviderLaneResult(lanes[3], ProviderStatus.NO_MATCH),
     )
 
 
-def _conflicting_lane_results(lanes: tuple[MetadataDiscoveryLane, ...]) -> tuple[ProviderLaneResult, ...]:
+def _conflicting_lane_results(
+    lanes: tuple[MetadataDiscoveryLane, ...],
+) -> tuple[ProviderLaneResult, ...]:
     return (
         ProviderLaneResult(
             lanes[0],
@@ -332,18 +326,16 @@ def _conflicting_lane_results(lanes: tuple[MetadataDiscoveryLane, ...]) -> tuple
 )
 def test_aggregate_candidate_failures_preserve_independent_lane_statuses(
     aggregate_lanes: tuple[MetadataDiscoveryLane, ...],
-    build: Callable[[tuple[MetadataDiscoveryLane, ...]], tuple[ProviderLaneResult, ...]],
+    build: Callable[
+        [tuple[MetadataDiscoveryLane, ...]], tuple[ProviderLaneResult, ...]
+    ],
     expected: ProviderStatus,
 ) -> None:
     lanes = aggregate_lanes
     results = build(lanes)
     observation = provider_observation("catalogue", results)
-    replayed_order = provider_observation(
-        "catalogue", tuple(reversed(results))
-    )
-    by_identity = {
-        lane.identity: lane.status for lane in observation.lanes
-    }
+    replayed_order = provider_observation("catalogue", tuple(reversed(results)))
+    by_identity = {lane.identity: lane.status for lane in observation.lanes}
     assert expected == observation.status
     assert () == observation.candidates
     assert expected == by_identity[lanes[0].identity]
@@ -377,9 +369,7 @@ def test_discovery_plan_reports_exact_family_overflow_without_subset() -> None:
                 applicability_basis="unlabelled",
             )
         )
-    plan = metadata_discovery_plan(
-        TargetSnapshot("ebook", None, ()), tuple(claims)
-    )
+    plan = metadata_discovery_plan(TargetSnapshot("ebook", None, ()), tuple(claims))
     assert plan.overflow
     assert () == plan.lanes
 
@@ -410,26 +400,21 @@ def test_discovery_plan_reports_exact_family_overflow_without_subset() -> None:
             "books",
             ("catalogue",),
         ),
-        mount=MediaMountConfiguration(
-            "books", "/media", "/library", True
-        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
         limits=ReportLimits(),
     )
     report = MetadataReport.from_json(service.run("item-1", 0))
     assert ProviderStatus.QUERY_LIMIT_EXCEEDED == report.providers[0].status
     assert [
-            {
-                "category": "lookup_construction",
-                "component": "provider",
-                "count": 1,
-                "current": None,
-                "retryable": False,
-                "stage": "lookup",
-            }
-        ] == [
-            diagnostic.to_data()
-            for diagnostic in report.providers[0].diagnostics
-        ]
+        {
+            "category": "lookup_construction",
+            "component": "provider",
+            "count": 1,
+            "current": None,
+            "retryable": False,
+            "stage": "lookup",
+        }
+    ] == [diagnostic.to_data() for diagnostic in report.providers[0].diagnostics]
 
 
 def test_work_lookup_admits_one_exact_work_and_strips_edition_authority() -> None:
@@ -489,7 +474,9 @@ def test_work_lookup_admits_one_exact_work_and_strips_edition_authority() -> Non
                 2,
                 "author",
             ),
-            claim(identity, ClaimKind.DESCRIPTION, "Work description", ClaimScope.WORK, 3),
+            claim(
+                identity, ClaimKind.DESCRIPTION, "Work description", ClaimScope.WORK, 3
+            ),
         ),
         tuple(
             sorted(
@@ -533,18 +520,19 @@ def test_work_lookup_admits_one_exact_work_and_strips_edition_authority() -> Non
         lookup,
     )
     assert ProviderStatus.CANDIDATES == qualified.status
-    assert {ClaimKind.TITLE, ClaimKind.CREATOR, ClaimKind.DESCRIPTION} == {value.kind for value in qualified.candidates[0].claims}
+    assert {ClaimKind.TITLE, ClaimKind.CREATOR, ClaimKind.DESCRIPTION} == {
+        value.kind for value in qualified.candidates[0].claims
+    }
     assert {
-            ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
-            ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
-            ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
-        } == {value.kind for value in qualified.candidates[0].evidence}
+        ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+        ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+        ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+    } == {value.kind for value in qualified.candidates[0].evidence}
     assert linked_publication == next(
-            value
-            for value in qualified.candidates[0].evidence
-            if value.kind
-            is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
-        )
+        value
+        for value in qualified.candidates[0].evidence
+        if value.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+    )
 
 
 def test_generate_report_preserves_only_work_lane_date_explanations() -> None:
@@ -570,9 +558,7 @@ def test_generate_report_preserves_only_work_lane_date_explanations() -> None:
         else field
         for field in default_target_fields("The Example")
     )
-    snapshot = TargetSnapshot(
-        "ebook", "The Example", (selected,), fields=target_fields
-    )
+    snapshot = TargetSnapshot("ebook", "The Example", (selected,), fields=target_fields)
 
     class Provider:
         cover_descriptors = ()
@@ -641,9 +627,7 @@ def test_generate_report_preserves_only_work_lane_date_explanations() -> None:
                     ),
                     query_kind=lane.kind,
                 )
-                qualified = qualify_provider_observation(
-                    physical, lookup
-                )
+                qualified = qualify_provider_observation(physical, lookup)
                 results.append(
                     ProviderLaneResult(
                         lane,
@@ -657,9 +641,7 @@ def test_generate_report_preserves_only_work_lane_date_explanations() -> None:
     repository = FakeReportRepository()
     service = GenerateMetadataReport(
         target=FakeTarget([snapshot, snapshot]),
-        inspector=FakeInspector(
-            InspectionResult("b" * 64, (creator,))
-        ),
+        inspector=FakeInspector(InspectionResult("b" * 64, (creator,))),
         repository_factory=lambda: cast(ReportRepository, repository),
         providers=tuple(
             ProviderBinding(
@@ -683,9 +665,7 @@ def test_generate_report_preserves_only_work_lane_date_explanations() -> None:
             "books",
             names,
         ),
-        mount=MediaMountConfiguration(
-            "books", "/media", "/library", True
-        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
         limits=ReportLimits(),
     )
     report = MetadataReport.from_json(service.run("item-1", 0))
@@ -696,15 +676,16 @@ def test_generate_report_preserves_only_work_lane_date_explanations() -> None:
         retained = next(
             value
             for value in candidate.evidence
-            if value.kind
-            is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+            if value.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
         )
-        assert PublicationDateRelation.MANIFESTATION_INCOMPATIBLE == retained.links[0].publication_date_relation
+        assert (
+            PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+            == retained.links[0].publication_date_relation
+        )
         assert all(
-                value.scope is ClaimScope.WORK
-                or value is retained
-                for value in candidate.evidence
-            )
+            value.scope is ClaimScope.WORK or value is retained
+            for value in candidate.evidence
+        )
 
 
 def _assert_timestamp_voting_report(
@@ -730,9 +711,7 @@ def _assert_timestamp_voting_report(
         date_event=DateEvent.MANIFESTATION_PUBLICATION,
         date_precision=DatePrecision.TIMESTAMP,
     )
-    names = tuple(
-        f"catalogue_{index}" for index in range(1, provider_count + 1)
-    )
+    names = tuple(f"catalogue_{index}" for index in range(1, provider_count + 1))
     repository = FakeReportRepository()
     service = GenerateMetadataReport(
         target=FakeTarget([snapshot, snapshot]),
@@ -767,9 +746,7 @@ def _assert_timestamp_voting_report(
             "books",
             names,
         ),
-        mount=MediaMountConfiguration(
-            "books", "/media", "/library", True
-        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
         limits=ReportLimits(),
     )
     serialized = service.run("item-1", 0)
@@ -788,9 +765,9 @@ def _assert_timestamp_voting_report(
     assert expected_local == retained_local
     if local_present:
         assert voting == publication_date_is_voting(
-                retained_local[0].observed,
-                retained_local[0].date_precision,
-            )
+            retained_local[0].observed,
+            retained_local[0].date_precision,
+        )
     provider_dates = tuple(
         claim
         for provider in report.providers
@@ -824,14 +801,10 @@ def _assert_timestamp_voting_report(
     }
     source_references = {
         *(value.reference for value in provider_dates),
-        *(
-            (retained_local[0].reference,)
-            if local_present
-            else ()
-        ),
+        *((retained_local[0].reference,) if local_present else ()),
     }
     if voting:
-        assert (source_references <= publication_references)
+        assert source_references <= publication_references
     else:
         assert source_references.isdisjoint(publication_references)
 
@@ -922,11 +895,11 @@ def test_generate_report_uses_source_lexical_timestamp_voting_matrix() -> None:
         ("2001-02-03T04:05:06+01:00:01", False),
         ("2001-02-03T04:05:06+01:00:00.5", False),
     )
-    assert normalize_date_value(lexical_cases[1][0]) == normalize_date_value(lexical_cases[2][0])
+    assert normalize_date_value(lexical_cases[1][0]) == normalize_date_value(
+        lexical_cases[2][0]
+    )
     for lexical, voting in lexical_cases:
-        assert voting == publication_date_is_voting(
-                lexical, DatePrecision.TIMESTAMP
-            )
+        assert voting == publication_date_is_voting(lexical, DatePrecision.TIMESTAMP)
         for provider_count in (1, 2):
             for local_present in (False, True):
                 _assert_timestamp_voting_report(
@@ -1069,9 +1042,7 @@ def test_work_lookup_fails_closed_for_competing_work_or_variant_markers() -> Non
             ProviderStatus.NO_MATCH,
             id="same_set_wrong_order",
         ),
-        pytest.param(
-            ("Zed Author",), ProviderStatus.NO_MATCH, id="missing_author"
-        ),
+        pytest.param(("Zed Author",), ProviderStatus.NO_MATCH, id="missing_author"),
         pytest.param(
             ("Zed Author", "Ada Author", "Ada Author"),
             ProviderStatus.NO_MATCH,

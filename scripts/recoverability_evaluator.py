@@ -12,17 +12,32 @@ from typing import Any, cast
 INPUT_SCHEMA = "recoverability-evaluator-v4"
 OUTPUT_SCHEMA = "recoverability-aggregate-v4"
 SUPPORTED = (
-    "title", "subtitle", "creator", "contributor", "publisher", "language",
-    "publication_date", "identifier", "collection", "collection_position",
+    "title",
+    "subtitle",
+    "creator",
+    "contributor",
+    "publisher",
+    "language",
+    "publication_date",
+    "identifier",
+    "collection",
+    "collection_position",
 )
 EXPLORATORY = ("edition", "rights")
 CATEGORIES = (
-    "absent_in_source", "inspection_failure", "extracted_not_projected",
-    "normalization_mismatch", "semantic_mismatch", "matched_partial",
+    "absent_in_source",
+    "inspection_failure",
+    "extracted_not_projected",
+    "normalization_mismatch",
+    "semantic_mismatch",
+    "matched_partial",
     "matched_complete",
 )
 EXCLUDED = (
-    "unknown", "known_empty", "not_applicable", "accepted_unsupported",
+    "unknown",
+    "known_empty",
+    "not_applicable",
+    "accepted_unsupported",
     "unexplained_failure",
 )
 ISBN_RELATIONS = ("accepted", "associated", "unrelated", "invalid", "unresolved")
@@ -34,33 +49,60 @@ OBSERVATION_TUPLES = {
     "unresolved": ("unavailable", "none", False, True, True),
 }
 GOLD_FIELDS = {
-    "title": (50, 49), "subtitle": (10, 10), "creator": (50, 49),
-    "contributor": (36, 36), "publisher": (47, 46), "language": (50, 49),
-    "publication_date": (50, 49), "identifier": (47, 46),
-    "collection": (36, 35), "collection_position": (29, 28),
-    "edition": (47, 46), "rights": (47, 46),
+    "title": (50, 49),
+    "subtitle": (10, 10),
+    "creator": (50, 49),
+    "contributor": (36, 36),
+    "publisher": (47, 46),
+    "language": (50, 49),
+    "publication_date": (50, 49),
+    "identifier": (47, 46),
+    "collection": (36, 35),
+    "collection_position": (29, 28),
+    "edition": (47, 46),
+    "rights": (47, 46),
 }
 SYNTHETIC_FIELDS = {
-    "title": (2, 1), "creator": (2, 1), "publisher": (2, 1),
-    "subtitle": (1, 1), "language": (1, 1), "collection": (1, 1),
-    "identifier": (2, 1), "edition": (3, 3), "rights": (4, 3),
-    "contributor": (0, 0), "publication_date": (0, 0),
+    "title": (2, 1),
+    "creator": (2, 1),
+    "publisher": (2, 1),
+    "subtitle": (1, 1),
+    "language": (1, 1),
+    "collection": (1, 1),
+    "identifier": (2, 1),
+    "edition": (3, 3),
+    "rights": (4, 3),
+    "contributor": (0, 0),
+    "publication_date": (0, 0),
     "collection_position": (0, 0),
 }
 PROFILES = {
-    "synthetic-v1": {"fields": SYNTHETIC_FIELDS, "identifier_targets": 6,
-                     "identifier_observations": 6, "candidate_rows": 5,
-                     "negative_rows": 2},
-    "gold-50-v1": {"fields": GOLD_FIELDS, "identifier_targets": 47,
-                    "identifier_observations": 68, "observed_identifier_targets": 44, "candidate_rows": 344,
-                    "negative_rows": 82},
+    "synthetic-v1": {
+        "fields": SYNTHETIC_FIELDS,
+        "identifier_targets": 6,
+        "identifier_observations": 6,
+        "candidate_rows": 5,
+        "negative_rows": 2,
+    },
+    "gold-50-v1": {
+        "fields": GOLD_FIELDS,
+        "identifier_targets": 47,
+        "identifier_observations": 68,
+        "observed_identifier_targets": 44,
+        "candidate_rows": 344,
+        "negative_rows": 82,
+    },
 }
 # These are frozen lower/upper bounds, while current metrics are derived from
 # the matrices and candidate evidence supplied to this run.
 FROZEN_BASELINE = {
-    "title_matches": 47, "creator_matches": 47, "language_matches": 48,
-    "identifier_matches": 41, "matched_rows": 257,
-    "precision": (801775, 1_000_000), "false_positive": (85366, 1_000_000),
+    "title_matches": 47,
+    "creator_matches": 47,
+    "language_matches": 48,
+    "identifier_matches": 41,
+    "matched_rows": 257,
+    "precision": (801775, 1_000_000),
+    "false_positive": (85366, 1_000_000),
 }
 MAX_BYTES = 1_000_000
 MAX_ROWS = 2_000
@@ -111,7 +153,12 @@ def load(path: Path) -> dict[str, Any]:
             parse_float=_raise_number,
             parse_constant=_raise_number,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as error:
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ) as error:
         raise ValueError("invalid input") from error
     _check_depth(parsed)
     if not isinstance(parsed, dict):
@@ -127,7 +174,10 @@ def _category(row: dict[str, Any]) -> str:
     comparison = row["comparison"]
     if inspection == "failure":
         if (source, extraction, projection, comparison) != (
-            "unavailable", "not_attempted", "not_projected", "none"
+            "unavailable",
+            "not_attempted",
+            "not_projected",
+            "none",
         ):
             raise ValueError("invalid whole-item inspection failure")
         return "inspection_failure"
@@ -169,8 +219,11 @@ def _rate(numerator: int, denominator: int) -> dict[str, int]:
 
 
 def _view(
-    name: str, fields: tuple[str, ...], matrix: dict[str, dict[str, int]],
-    field_totals: Counter[str], expected: dict[str, tuple[int, int]],
+    name: str,
+    fields: tuple[str, ...],
+    matrix: dict[str, dict[str, int]],
+    field_totals: Counter[str],
+    expected: dict[str, tuple[int, int]],
 ) -> dict[str, Any]:
     readable = 0
     population = 0
@@ -196,7 +249,9 @@ def _view(
 
 
 def _identifier_metrics(
-    targets: Any, observations: Any, profile: dict[str, Any],
+    targets: Any,
+    observations: Any,
+    profile: dict[str, Any],
 ) -> dict[str, Any]:
     if not isinstance(targets, list) or not isinstance(observations, list):
         raise ValueError("invalid identifier evidence")
@@ -222,35 +277,55 @@ def _identifier_metrics(
     observation_slots: set[int] = set()
     observed_by_evidence: set[int] = set()
     required = {
-        "slot", "target_slot", "relation", "basis", "provider_scope",
-        "same_work", "non_corroborating", "source_present",
+        "slot",
+        "target_slot",
+        "relation",
+        "basis",
+        "provider_scope",
+        "same_work",
+        "non_corroborating",
+        "source_present",
     }
     for observation in observations:
         if not isinstance(observation, dict) or set(observation) != required:
             raise ValueError("invalid identifier observation")
         slot = observation["slot"]
         target_slot = observation["target_slot"]
-        if (type(slot) is not int or type(target_slot) is not int or slot < 0
-                or target_slot not in observed_targets or slot in observation_slots):
+        if (
+            type(slot) is not int
+            or type(target_slot) is not int
+            or slot < 0
+            or target_slot not in observed_targets
+            or slot in observation_slots
+        ):
             raise ValueError("detached identifier observation")
         relation = observation["relation"]
         evidence = (
-            observation["basis"], observation["provider_scope"],
-            observation["same_work"], observation["non_corroborating"],
+            observation["basis"],
+            observation["provider_scope"],
+            observation["same_work"],
+            observation["non_corroborating"],
             observation["source_present"],
         )
-        if relation not in OBSERVATION_TUPLES or evidence != OBSERVATION_TUPLES[relation]:
+        if (
+            relation not in OBSERVATION_TUPLES
+            or evidence != OBSERVATION_TUPLES[relation]
+        ):
             raise ValueError("invalid identifier relation evidence")
-        if any(type(observation[key]) is not bool for key in (
-            "same_work", "non_corroborating", "source_present"
-        )):
+        if any(
+            type(observation[key]) is not bool
+            for key in ("same_work", "non_corroborating", "source_present")
+        ):
             raise ValueError("invalid identifier observation")
         observation_slots.add(slot)
         observed_by_evidence.add(target_slot)
         counts[relation] += 1
-    if (observation_slots != set(range(len(observations)))
-            or observed_by_evidence != observed_targets
-            or len(observed_targets) != profile.get("observed_identifier_targets", len(observed_targets))):
+    if (
+        observation_slots != set(range(len(observations)))
+        or observed_by_evidence != observed_targets
+        or len(observed_targets)
+        != profile.get("observed_identifier_targets", len(observed_targets))
+    ):
         raise ValueError("identifier observations are detached")
     observation_denominator = len(observations)
     target_denominator = len(targets)
@@ -259,7 +334,13 @@ def _identifier_metrics(
         "observation_denominator": observation_denominator,
         "target_denominator": target_denominator,
         "accepted_recall": _rate(
-            len({item["target_slot"] for item in observations if item["relation"] == "accepted"}),
+            len(
+                {
+                    item["target_slot"]
+                    for item in observations
+                    if item["relation"] == "accepted"
+                }
+            ),
             target_denominator,
         ),
         "associated_yield": _rate(counts["associated"], observation_denominator),
@@ -270,13 +351,20 @@ def _identifier_metrics(
 
 
 def _regression(
-    supported: dict[str, Any], candidate_rows: Any, negative_rows: Any,
+    supported: dict[str, Any],
+    candidate_rows: Any,
+    negative_rows: Any,
     profile: dict[str, Any],
 ) -> dict[str, Any]:
-    if (not isinstance(candidate_rows, list)
-            or len(candidate_rows) != profile["candidate_rows"]):
+    if (
+        not isinstance(candidate_rows, list)
+        or len(candidate_rows) != profile["candidate_rows"]
+    ):
         raise ValueError("candidate evidence denominator drift")
-    if not isinstance(negative_rows, list) or len(negative_rows) != profile["negative_rows"]:
+    if (
+        not isinstance(negative_rows, list)
+        or len(negative_rows) != profile["negative_rows"]
+    ):
         raise ValueError("negative evidence denominator drift")
     matched_candidates = 0
     false_positives = 0
@@ -294,11 +382,16 @@ def _regression(
         false_positives += row["has_candidate"]
     by_field = supported["by_field"]
     controls = {
-        "title_matches": by_field["title"]["matched_complete"] + by_field["title"]["matched_partial"],
-        "creator_matches": by_field["creator"]["matched_complete"] + by_field["creator"]["matched_partial"],
-        "language_matches": by_field["language"]["matched_complete"] + by_field["language"]["matched_partial"],
-        "identifier_matches": by_field["identifier"]["matched_complete"] + by_field["identifier"]["matched_partial"],
-        "matched_rows": supported["categories"]["matched_complete"] + supported["categories"]["matched_partial"],
+        "title_matches": by_field["title"]["matched_complete"]
+        + by_field["title"]["matched_partial"],
+        "creator_matches": by_field["creator"]["matched_complete"]
+        + by_field["creator"]["matched_partial"],
+        "language_matches": by_field["language"]["matched_complete"]
+        + by_field["language"]["matched_partial"],
+        "identifier_matches": by_field["identifier"]["matched_complete"]
+        + by_field["identifier"]["matched_partial"],
+        "matched_rows": supported["categories"]["matched_complete"]
+        + supported["categories"]["matched_partial"],
         "candidate_matches": matched_candidates,
         "candidate_denominator": len(candidate_rows),
         "false_positives": false_positives,
@@ -309,7 +402,8 @@ def _regression(
         "title": controls["title_matches"] >= FROZEN_BASELINE["title_matches"],
         "creator": controls["creator_matches"] >= FROZEN_BASELINE["creator_matches"],
         "language": controls["language_matches"] >= FROZEN_BASELINE["language_matches"],
-        "identifier": controls["identifier_matches"] >= FROZEN_BASELINE["identifier_matches"],
+        "identifier": controls["identifier_matches"]
+        >= FROZEN_BASELINE["identifier_matches"],
         "matched-rows": controls["matched_rows"] >= FROZEN_BASELINE["matched_rows"],
         "candidate-precision": (
             controls["candidate_matches"] * FROZEN_BASELINE["precision"][1]
@@ -331,12 +425,20 @@ def _regression(
 
 def evaluate(document: dict[str, Any]) -> dict[str, Any]:
     required = {
-        "schema", "profile", "rows", "identifier_targets",
-        "identifier_observations", "candidate_rows", "negative_rows",
+        "schema",
+        "profile",
+        "rows",
+        "identifier_targets",
+        "identifier_observations",
+        "candidate_rows",
+        "negative_rows",
     }
-    if (not isinstance(document, dict) or set(document) != required
-            or document.get("schema") != INPUT_SCHEMA
-            or document.get("profile") not in PROFILES):
+    if (
+        not isinstance(document, dict)
+        or set(document) != required
+        or document.get("schema") != INPUT_SCHEMA
+        or document.get("profile") not in PROFILES
+    ):
         raise ValueError("invalid document")
     rows = document["rows"]
     if not isinstance(rows, list) or len(rows) > MAX_ROWS:
@@ -362,11 +464,21 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
             excluded[state] += 1
             continue
         expected_keys = {
-            "field", "state", "readable", "inspection", "source", "extraction",
-            "projection", "comparison",
+            "field",
+            "state",
+            "readable",
+            "inspection",
+            "source",
+            "extraction",
+            "projection",
+            "comparison",
         }
-        if (state != "value" or set(row) != expected_keys or row["readable"] is not True
-                or any(type(row[key]) is not str for key in expected_keys - {"readable"})):
+        if (
+            state != "value"
+            or set(row) != expected_keys
+            or row["readable"] is not True
+            or any(type(row[key]) is not str for key in expected_keys - {"readable"})
+        ):
             raise ValueError("invalid value row")
         target = "supported" if field in SUPPORTED else "exploratory"
         if row["source"] == "present":
@@ -374,14 +486,24 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
         category = _category(row)
         matrices[target][field][category] += 1
         if category == "inspection_failure":
-            failure_subtypes["whole_item" if row["inspection"] == "failure" else "extraction_stage"] += 1
+            failure_subtypes[
+                "whole_item" if row["inspection"] == "failure" else "extraction_stage"
+            ] += 1
     # PROFILES entries are heterogeneous literals, so mypy widens each value
     # to object; "fields" is the field-bound mapping _view declares.
     expected_fields = cast("dict[str, tuple[int, int]]", profile["fields"])
     if not set(field_totals) <= set(expected_fields):
         raise ValueError("unexpected profile field")
-    supported = _view("supported", SUPPORTED, matrices["supported"], field_totals, expected_fields)
-    exploratory = _view("exploratory", EXPLORATORY, matrices["exploratory"], field_totals, expected_fields)
+    supported = _view(
+        "supported", SUPPORTED, matrices["supported"], field_totals, expected_fields
+    )
+    exploratory = _view(
+        "exploratory",
+        EXPLORATORY,
+        matrices["exploratory"],
+        field_totals,
+        expected_fields,
+    )
     if sum(failure_subtypes.values()) != (
         supported["categories"]["inspection_failure"]
         + exploratory["categories"]["inspection_failure"]
@@ -403,15 +525,19 @@ def evaluate(document: dict[str, Any]) -> dict[str, Any]:
     recommendations = []
     for field, values in supported["by_field"].items():
         for category in (
-            "extracted_not_projected", "normalization_mismatch", "semantic_mismatch"
+            "extracted_not_projected",
+            "normalization_mismatch",
+            "semantic_mismatch",
         ):
             if values[category]:
-                recommendations.append({
-                    "field": field,
-                    "category": category,
-                    "scope": "bounded-diagnosis",
-                    "count": values[category],
-                })
+                recommendations.append(
+                    {
+                        "field": field,
+                        "category": category,
+                        "scope": "bounded-diagnosis",
+                        "count": values[category],
+                    }
+                )
     return {
         "schema": OUTPUT_SCHEMA,
         "profile": document["profile"],

@@ -12,7 +12,10 @@ class _ConsentRepository(Protocol):
     """Persistence seam the guarded consent adapter reads."""
 
     def current_field_effect_consent(
-        self, connection: str, library: str, destination: str,
+        self,
+        connection: str,
+        library: str,
+        destination: str,
     ) -> EffectConsent: ...
     def field_effect_consent_is_current(self, consent: EffectConsent) -> bool: ...
 
@@ -33,8 +36,9 @@ class PersistedEffectConsent:
     def __init__(self, repository: _ConsentRepository) -> None:
         self._repository = repository
 
-    def resolve(self, *, connection: str, library: str,
-                destination: str) -> EffectConsent:
+    def resolve(
+        self, *, connection: str, library: str, destination: str
+    ) -> EffectConsent:
         return self._repository.current_field_effect_consent(
             connection, library, destination
         )

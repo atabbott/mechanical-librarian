@@ -223,9 +223,7 @@ def test_malformed_optional_attempt_records_fail_closed_to_unknown() -> None:
     )
     assert 1 == len(malformed_collection)
     assert FailureCategory.UNKNOWN == malformed_collection[0].category
-    assert "credential" not in "".join(
-        value.to_json() for value in diagnostics
-    )
+    assert "credential" not in "".join(value.to_json() for value in diagnostics)
 
 
 def test_incomplete_causes_are_closed_truthful_and_redacted() -> None:
@@ -267,9 +265,7 @@ def test_incomplete_causes_fail_closed_when_absent_or_malformed(
     diagnostics = provider_attempt_diagnostics(
         (), status="incomplete", incomplete_causes=causes
     )
-    assert (FailureCategory.UNKNOWN,) == tuple(
-        value.category for value in diagnostics
-    )
+    assert (FailureCategory.UNKNOWN,) == tuple(value.category for value in diagnostics)
 
 
 def test_provider_signal_mappings_cover_every_declared_signal() -> None:

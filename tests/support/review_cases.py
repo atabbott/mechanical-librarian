@@ -5,7 +5,6 @@ builder by importing it from another module's tests. It lives here so a
 cohort can build a review case without importing a sibling cohort.
 """
 
-
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,

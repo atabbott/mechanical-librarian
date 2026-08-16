@@ -130,9 +130,7 @@ def _source(
         candidate,
         tuple(claims),
         authority=(
-            name
-            if name in {"google_books", "hardcover", "open_library"}
-            else None
+            name if name in {"google_books", "hardcover", "open_library"} else None
         ),
     )
 
@@ -163,12 +161,12 @@ def test_title_to_subtitle_is_one_explicit_complete_combination() -> None:
     assert 1 == len(proposal.bibliographic_combinations)
     selections = proposal.bibliographic_combinations[0].selections
     assert tuple(
-            (
-                TargetDestination.TITLE,
-                TargetDestination.SUBTITLE,
-                TargetDestination.SERIES,
-            )
-        ) == tuple(value.destination for value in selections)
+        (
+            TargetDestination.TITLE,
+            TargetDestination.SUBTITLE,
+            TargetDestination.SERIES,
+        )
+    ) == tuple(value.destination for value in selections)
     assert "candidate" == selections[0].kind.value
     assert "candidate" == selections[1].kind.value
     assert "preserve_target" == selections[2].kind.value
@@ -250,7 +248,9 @@ def test_independently_supported_clean_title_can_pair_with_series() -> None:
     }
 
     assert "Secret History" in {values_by_id[value] for value in selected_titles}
-    assert "Secret History: A Mistborn Novella" not in {values_by_id[value] for value in selected_titles}
+    assert "Secret History: A Mistborn Novella" not in {
+        values_by_id[value] for value in selected_titles
+    }
 
 
 @pytest.mark.parametrize(
@@ -283,8 +283,7 @@ def test_ambiguous_work_titles_remain_provenance_not_title_candidates(
     )
 
     assert all(
-        alternative.value.value not in titles
-        for alternative in title.alternatives
+        alternative.value.value not in titles for alternative in title.alternatives
     )
     assert set(titles) == {
         claim.value
@@ -316,10 +315,10 @@ def test_component_work_title_cannot_replace_manifestation_title() -> None:
 
     assert "Component Story" not in {value.value.value for value in title.alternatives}
     assert "Component Story" in {
-            claim.value
-            for claim in report.providers[0].candidates[0].claims
-            if claim.kind is ClaimKind.TITLE
-        }
+        claim.value
+        for claim in report.providers[0].candidates[0].claims
+        if claim.kind is ClaimKind.TITLE
+    }
 
 
 def test_no_safe_combination_leaves_affected_results_unresolved() -> None:
@@ -341,14 +340,13 @@ def test_no_safe_combination_leaves_affected_results_unresolved() -> None:
     affected = {
         value.destination: value
         for value in proposal.results
-        if value.destination
-        in {TargetDestination.TITLE, TargetDestination.SERIES}
+        if value.destination in {TargetDestination.TITLE, TargetDestination.SERIES}
     }
     assert all(
-            value.outcome is ProposalOutcome.UNRESOLVED_CHOICE
-            and value.reasons == ("no_safe_bibliographic_combination",)
-            for value in affected.values()
-        )
+        value.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+        and value.reasons == ("no_safe_bibliographic_combination",)
+        for value in affected.values()
+    )
 
 
 def test_sequence_only_duplication_is_also_withheld() -> None:
@@ -369,46 +367,138 @@ def test_sequence_only_duplication_is_also_withheld() -> None:
 
     assert () == proposal.bibliographic_combinations
     assert ("no_safe_bibliographic_combination",) == next(
-            value
-            for value in proposal.results
-            if value.destination is TargetDestination.SERIES
-        ).reasons
+        value
+        for value in proposal.results
+        if value.destination is TargetDestination.SERIES
+    ).reasons
 
 
 def test_action_catalogue_partitions_candidates_by_allowed_combination() -> None:
-    report = _bibliographic_report(current_title='Synthetic Title', providers=(_source('catalogue', 'edition-1', titles=('Synthetic Title',), subtitle='Synthetic Subtitle'), _source('other', 'edition-2', titles=('Synthetic Title',), series='Synthetic Series', sequence='1')))
+    report = _bibliographic_report(
+        current_title="Synthetic Title",
+        providers=(
+            _source(
+                "catalogue",
+                "edition-1",
+                titles=("Synthetic Title",),
+                subtitle="Synthetic Subtitle",
+            ),
+            _source(
+                "other",
+                "edition-2",
+                titles=("Synthetic Title",),
+                series="Synthetic Series",
+                sequence="1",
+            ),
+        ),
+    )
     proposal = evaluate_report(report)
     case = ReviewCase.create(proposal, report)
     packet = ShadowReviewPacket.create(case, proposal, report)
     catalogue = compile_shadow_review_actions(packet)
-    constrained_candidates = [action for action in catalogue.actions if len(action.combination_ids) == 1 and action.destination in {TargetDestination.SERIES.value, TargetDestination.SUBTITLE.value} and (action.recommendation == 'recommend_candidate')]
+    constrained_candidates = [
+        action
+        for action in catalogue.actions
+        if len(action.combination_ids) == 1
+        and action.destination
+        in {TargetDestination.SERIES.value, TargetDestination.SUBTITLE.value}
+        and (action.recommendation == "recommend_candidate")
+    ]
     assert 2 == len(constrained_candidates)
-    expected = {value['combination_id'] for value in packet.bibliographic_combinations}
+    expected = {value["combination_id"] for value in packet.bibliographic_combinations}
     assert expected == {action.combination_ids[0] for action in constrained_candidates}
 
 
 def test_no_safe_combination_requires_manual_catalogue_actions() -> None:
-    report = _bibliographic_report(current_title='Mistborn Secret History', providers=(_source('catalogue', 'edition-1', titles=(), series='Mistborn'),))
+    report = _bibliographic_report(
+        current_title="Mistborn Secret History",
+        providers=(_source("catalogue", "edition-1", titles=(), series="Mistborn"),),
+    )
     proposal = evaluate_report(report)
     case = ReviewCase.create(proposal, report)
-    title_result = next((value for value in proposal.results if value.destination is TargetDestination.TITLE))
+    title_result = next(
+        (
+            value
+            for value in proposal.results
+            if value.destination is TargetDestination.TITLE
+        )
+    )
     assert () == title_result.alternatives
     assert ProposalOutcome.DEFER is title_result.outcome
-    assert all((value['manual_required'] for value in case.proposals if value['destination'] in {TargetDestination.TITLE.value, TargetDestination.SUBTITLE.value, TargetDestination.SERIES.value}))
+    assert all(
+        (
+            value["manual_required"]
+            for value in case.proposals
+            if value["destination"]
+            in {
+                TargetDestination.TITLE.value,
+                TargetDestination.SUBTITLE.value,
+                TargetDestination.SERIES.value,
+            }
+        )
+    )
     packet = ShadowReviewPacket.create(case, proposal, report)
-    assert {TargetDestination.TITLE.value, TargetDestination.SUBTITLE.value, TargetDestination.SERIES.value} == {value['destination'] for value in packet.proposals}
-    assert [] == next((value['candidates'] for value in packet.proposals if value['destination'] == TargetDestination.TITLE.value))
-    title_packet = next((value for value in packet.proposals if value['destination'] == TargetDestination.TITLE.value))
-    assert {'evidence_sufficiency': 'manual', 'target_only_preservation': 1} == title_packet['decision_summary']
-    assert all((value['outcome'] == ProposalOutcome.UNRESOLVED_CHOICE.value and value['reasons'] == ['no_safe_bibliographic_combination'] for value in packet.proposals))
+    assert {
+        TargetDestination.TITLE.value,
+        TargetDestination.SUBTITLE.value,
+        TargetDestination.SERIES.value,
+    } == {value["destination"] for value in packet.proposals}
+    assert [] == next(
+        (
+            value["candidates"]
+            for value in packet.proposals
+            if value["destination"] == TargetDestination.TITLE.value
+        )
+    )
+    title_packet = next(
+        (
+            value
+            for value in packet.proposals
+            if value["destination"] == TargetDestination.TITLE.value
+        )
+    )
+    assert {
+        "evidence_sufficiency": "manual",
+        "target_only_preservation": 1,
+    } == title_packet["decision_summary"]
+    assert all(
+        (
+            value["outcome"] == ProposalOutcome.UNRESOLVED_CHOICE.value
+            and value["reasons"] == ["no_safe_bibliographic_combination"]
+            for value in packet.proposals
+        )
+    )
     catalogue = compile_shadow_review_actions(packet)
-    affected_proposal_ids = {value['proposal_id'] for value in packet.proposals if 'no_safe_bibliographic_combination' in cast(list[str], value['reasons'])}
-    assert not any((action.proposal_id in affected_proposal_ids and action.recommendation != 'manual' for action in catalogue.actions))
-    assert all(('no_safe_bibliographic_combination' in exclusion.reasons for exclusion in catalogue.exclusions if exclusion.proposal_id in affected_proposal_ids))
+    affected_proposal_ids = {
+        value["proposal_id"]
+        for value in packet.proposals
+        if "no_safe_bibliographic_combination" in cast(list[str], value["reasons"])
+    }
+    assert not any(
+        (
+            action.proposal_id in affected_proposal_ids
+            and action.recommendation != "manual"
+            for action in catalogue.actions
+        )
+    )
+    assert all(
+        (
+            "no_safe_bibliographic_combination" in exclusion.reasons
+            for exclusion in catalogue.exclusions
+            if exclusion.proposal_id in affected_proposal_ids
+        )
+    )
 
 
 def test_combination_identity_round_trips_canonically() -> None:
-    report = _bibliographic_report(current_title='Secret History: Mistborn', providers=(_source('catalogue', 'edition-1', titles=('Secret History',), series='Mistborn'),))
+    report = _bibliographic_report(
+        current_title="Secret History: Mistborn",
+        providers=(
+            _source(
+                "catalogue", "edition-1", titles=("Secret History",), series="Mistborn"
+            ),
+        ),
+    )
     proposal = evaluate_report(report)
     replay = ProposalSet.from_json(proposal.to_json())
     assert proposal == replay
@@ -416,46 +506,110 @@ def test_combination_identity_round_trips_canonically() -> None:
 
 
 def test_relationships_do_not_change_per_destination_proposal_ids() -> None:
-    report = _bibliographic_report(current_title='Secret History: Mistborn', providers=(_source('catalogue', 'edition-1', titles=('Secret History',), series='Mistborn'),))
+    report = _bibliographic_report(
+        current_title="Secret History: Mistborn",
+        providers=(
+            _source(
+                "catalogue", "edition-1", titles=("Secret History",), series="Mistborn"
+            ),
+        ),
+    )
     with_relationships = evaluate_report(report)
-    without_relationships = ProposalSet.create(report_id=with_relationships.report_id, target_fingerprint=with_relationships.target_fingerprint, results=with_relationships.results, resolved_policy_id=with_relationships.resolved_policy_id)
+    without_relationships = ProposalSet.create(
+        report_id=with_relationships.report_id,
+        target_fingerprint=with_relationships.target_fingerprint,
+        results=with_relationships.results,
+        resolved_policy_id=with_relationships.resolved_policy_id,
+    )
     assert with_relationships.proposal_set_id != without_relationships.proposal_set_id
     case_with_relationships = ReviewCase.create(with_relationships, report)
     case_without_relationships = ReviewCase.create(without_relationships, report)
-    assert case_with_relationships.review_case_id != case_without_relationships.review_case_id
-    assert {value['destination']: value['proposal_id'] for value in case_with_relationships.proposals} == {value['destination']: value['proposal_id'] for value in case_without_relationships.proposals}
-    packet_with_relationships = ShadowReviewPacket.create(case_with_relationships, with_relationships, report)
-    packet_without_relationships = ShadowReviewPacket.create(case_without_relationships, without_relationships, report)
+    assert (
+        case_with_relationships.review_case_id
+        != case_without_relationships.review_case_id
+    )
+    assert {
+        value["destination"]: value["proposal_id"]
+        for value in case_with_relationships.proposals
+    } == {
+        value["destination"]: value["proposal_id"]
+        for value in case_without_relationships.proposals
+    }
+    packet_with_relationships = ShadowReviewPacket.create(
+        case_with_relationships, with_relationships, report
+    )
+    packet_without_relationships = ShadowReviewPacket.create(
+        case_without_relationships, without_relationships, report
+    )
     assert packet_with_relationships.to_json() != packet_without_relationships.to_json()
 
 
 def test_confirmed_current_title_is_a_preserve_member() -> None:
-    report = _bibliographic_report(current_title='secret history', providers=(_source('catalogue', 'edition-1', titles=('Secret History',), subtitle='A Mistborn Novella'),))
+    report = _bibliographic_report(
+        current_title="secret history",
+        providers=(
+            _source(
+                "catalogue",
+                "edition-1",
+                titles=("Secret History",),
+                subtitle="A Mistborn Novella",
+            ),
+        ),
+    )
     proposal = evaluate_report(report)
     assert proposal == ProposalSet.from_json(proposal.to_json())
     assert 1 == len(proposal.bibliographic_combinations)
     combination = proposal.bibliographic_combinations[0]
-    title_selection = next((value for value in combination.selections if value.destination is TargetDestination.TITLE))
-    assert 'preserve_target' == title_selection.kind.value
+    title_selection = next(
+        (
+            value
+            for value in combination.selections
+            if value.destination is TargetDestination.TITLE
+        )
+    )
+    assert "preserve_target" == title_selection.kind.value
     assert title_selection.alternative_id is None
     assert title_selection.target_field_fingerprint is not None
     assert 1 == len(combination.source_representations)
     case = ReviewCase.create(proposal, report)
     assert case == ReviewCase.from_json(case.to_json())
     packet = ShadowReviewPacket.create(case, proposal, report)
-    title_packet = next((value for value in packet.proposals if value['destination'] == TargetDestination.TITLE.value))
-    assert title_packet['current']['value'] != title_packet['candidates'][0]['value']['value']
-    assert {'evidence_sufficiency': 'keep_current', 'target_only_preservation': 0} == title_packet['decision_summary']
+    title_packet = next(
+        (
+            value
+            for value in packet.proposals
+            if value["destination"] == TargetDestination.TITLE.value
+        )
+    )
+    assert (
+        title_packet["current"]["value"]
+        != title_packet["candidates"][0]["value"]["value"]
+    )
+    assert {
+        "evidence_sufficiency": "keep_current",
+        "target_only_preservation": 0,
+    } == title_packet["decision_summary"]
     assert packet == ShadowReviewPacket.from_json(packet.to_json(), report)
     catalogue = compile_shadow_review_actions(packet)
-    keep = catalogue.action_for(title_packet['proposal_id'], 'recommend_keep_current', None)
+    keep = catalogue.action_for(
+        title_packet["proposal_id"], "recommend_keep_current", None
+    )
     assert keep is not None
     assert keep is not None
-    assert (packet.bibliographic_combinations[0]['combination_id'],) == keep.combination_ids
+    assert (
+        packet.bibliographic_combinations[0]["combination_id"],
+    ) == keep.combination_ids
 
 
 def test_packet_and_actions_bind_one_allowed_combination() -> None:
-    report = _bibliographic_report(current_title='Secret History: Mistborn', providers=(_source('catalogue', 'edition-1', titles=('Secret History',), series='Mistborn'),))
+    report = _bibliographic_report(
+        current_title="Secret History: Mistborn",
+        providers=(
+            _source(
+                "catalogue", "edition-1", titles=("Secret History",), series="Mistborn"
+            ),
+        ),
+    )
     proposal = evaluate_report(report)
     case = ReviewCase.create(proposal, report)
     packet = ShadowReviewPacket.create(case, proposal, report)
@@ -463,19 +617,44 @@ def test_packet_and_actions_bind_one_allowed_combination() -> None:
     assert packet == ShadowReviewPacket.from_json(packet.to_json(), report)
     combination = packet.bibliographic_combinations[0]
     catalogue = compile_shadow_review_actions(packet)
-    for selection in combination['selections']:
-        if selection['kind'] != 'candidate':
+    for selection in combination["selections"]:
+        if selection["kind"] != "candidate":
             continue
-        candidate = next((candidate for proposal_entry in packet.proposals for candidate in proposal_entry['candidates'] if candidate['candidate_id'] == selection['alternative_id']))
-        assert [combination['combination_id']] == candidate['decision_summary']['bibliographic_compatibility_ids']
+        candidate = next(
+            (
+                candidate
+                for proposal_entry in packet.proposals
+                for candidate in proposal_entry["candidates"]
+                if candidate["candidate_id"] == selection["alternative_id"]
+            )
+        )
+        assert [combination["combination_id"]] == candidate["decision_summary"][
+            "bibliographic_compatibility_ids"
+        ]
     forged_packet = json.loads(packet.to_json())
-    constrained_candidate = next((candidate for proposal_entry in forged_packet['proposals'] for candidate in proposal_entry['candidates'] if candidate['decision_summary']['bibliographic_compatibility_ids']))
-    constrained_candidate['decision_summary']['bibliographic_compatibility_ids'] = []
+    constrained_candidate = next(
+        (
+            candidate
+            for proposal_entry in forged_packet["proposals"]
+            for candidate in proposal_entry["candidates"]
+            if candidate["decision_summary"]["bibliographic_compatibility_ids"]
+        )
+    )
+    constrained_candidate["decision_summary"]["bibliographic_compatibility_ids"] = []
     with pytest.raises(ShadowReviewValueError):
         ShadowReviewPacket.from_json(canonical_json(forged_packet), report)
-    candidate_actions = [action for action in catalogue.actions if action.recommendation == 'recommend_candidate' and action.combination_ids]
+    candidate_actions = [
+        action
+        for action in catalogue.actions
+        if action.recommendation == "recommend_candidate" and action.combination_ids
+    ]
     assert candidate_actions
-    assert all((action.combination_ids == (combination['combination_id'],) for action in candidate_actions))
+    assert all(
+        (
+            action.combination_ids == (combination["combination_id"],)
+            for action in candidate_actions
+        )
+    )
 
 
 @pytest.mark.parametrize(
@@ -489,18 +668,38 @@ def test_packet_and_actions_bind_one_allowed_combination() -> None:
 def test_combination_representations_reject_mixed_members_as_packet_errors(
     corrupt: Callable[[list[object]], list[object]],
 ) -> None:
-    report = _bibliographic_report(current_title='Secret History: Mistborn', providers=(_source('catalogue', 'edition-1', titles=('Secret History',), series='Mistborn'),))
+    report = _bibliographic_report(
+        current_title="Secret History: Mistborn",
+        providers=(
+            _source(
+                "catalogue", "edition-1", titles=("Secret History",), series="Mistborn"
+            ),
+        ),
+    )
     proposal = evaluate_report(report)
-    packet = ShadowReviewPacket.create(ReviewCase.create(proposal, report), proposal, report)
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
 
     def rebuild(document: dict[str, object]) -> ShadowReviewPacket:
-        return ShadowReviewPacket(document['review_case_id'], tuple(document['proposals']), tuple(document['citations']), tuple(document['correlations']), document['schema_version'], document['bibliographic_relationship_schema_version'], tuple(document['bibliographic_combinations']))
+        return ShadowReviewPacket(
+            document["review_case_id"],
+            tuple(document["proposals"]),
+            tuple(document["citations"]),
+            tuple(document["correlations"]),
+            document["schema_version"],
+            document["bibliographic_relationship_schema_version"],
+            tuple(document["bibliographic_combinations"]),
+        )
+
     assert packet == rebuild(json.loads(packet.to_json()))
-    representations = json.loads(packet.to_json())['bibliographic_combinations'][0]['source_representations']
+    representations = json.loads(packet.to_json())["bibliographic_combinations"][0][
+        "source_representations"
+    ]
     # The identity pattern already rejected a list of only non-str members,
     # so only a mixed list reached the sorted comparison and raised there.
     document = json.loads(packet.to_json())
-    document['bibliographic_combinations'][0]['source_representations'] = corrupt(
+    document["bibliographic_combinations"][0]["source_representations"] = corrupt(
         representations
     )
     with pytest.raises(ShadowReviewValueError):

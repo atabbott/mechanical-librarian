@@ -29,7 +29,9 @@ class CoverDecodeTimeout(CoverDecodeError):
 class CoverDecodeRejected(CoverDecodeError):
     """The hostile image is unsupported or outside the closed bounds."""
 
-    def __init__(self, state: CoverSourceState = CoverSourceState.DECODE_FAILED) -> None:
+    def __init__(
+        self, state: CoverSourceState = CoverSourceState.DECODE_FAILED
+    ) -> None:
         self.state = state
         super().__init__("cover decode rejected")
 
@@ -42,11 +44,19 @@ class DecodedCover:
 
 def decode_cover(original: bytes, *, deadline: float | None = None) -> DecodedCover:
     """Decode one bounded image in a fresh child with no inherited environment."""
-    if type(original) is not bytes or not original or len(original) > _MAX_ORIGINAL_BYTES:
+    if (
+        type(original) is not bytes
+        or not original
+        or len(original) > _MAX_ORIGINAL_BYTES
+    ):
         raise CoverDecodeRejected(CoverSourceState.OVERSIZED)
-    timeout = _WALL_SECONDS if deadline is None else min(
-        _WALL_SECONDS,
-        max(0.0, deadline - time.monotonic()),
+    timeout = (
+        _WALL_SECONDS
+        if deadline is None
+        else min(
+            _WALL_SECONDS,
+            max(0.0, deadline - time.monotonic()),
+        )
     )
     if timeout <= 0:
         raise CoverDecodeTimeout("cover decode timed out")
@@ -63,7 +73,12 @@ def decode_cover(original: bytes, *, deadline: float | None = None) -> DecodedCo
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
-            env={"LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "PYTHONDONTWRITEBYTECODE": "1", "PYTHONUTF8": "1"},
+            env={
+                "LANG": "C.UTF-8",
+                "LC_ALL": "C.UTF-8",
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "PYTHONUTF8": "1",
+            },
             cwd="/",
             start_new_session=True,
         )
@@ -90,13 +105,23 @@ def decode_cover(original: bytes, *, deadline: float | None = None) -> DecodedCo
         if set(value) != {"state", "format", "height", "preview", "width"}:
             raise ValueError
         preview = base64.b64decode(value["preview"], validate=True)
-        if type(value["format"]) is not str or type(value["width"]) is not int or type(value["height"]) is not int or len(preview) > _MAX_PREVIEW_BYTES:
+        if (
+            type(value["format"]) is not str
+            or type(value["width"]) is not int
+            or type(value["height"]) is not int
+            or len(preview) > _MAX_PREVIEW_BYTES
+        ):
             raise ValueError
     except CoverDecodeRejected:
         raise
     except (ValueError, TypeError, json.JSONDecodeError) as error:
         raise CoverDecodeRejected(CoverSourceState.DECODE_FAILED) from error
-    return DecodedCover(CoverArtifact.create(original, preview, value["format"], value["width"], value["height"]), preview)
+    return DecodedCover(
+        CoverArtifact.create(
+            original, preview, value["format"], value["width"], value["height"]
+        ),
+        preview,
+    )
 
 
 __all__ = [

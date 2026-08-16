@@ -16,7 +16,9 @@ from mechanical_librarian.domain.metadata_policy import (
 )
 
 
-def test_qualified_automatic_canonical_draft_reopens_and_unqualified_intent_is_rejected() -> None:
+def test_qualified_automatic_canonical_draft_reopens_and_unqualified_intent_is_rejected() -> (
+    None
+):
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "state.sqlite"
         repository = open_repository(path)
@@ -32,21 +34,28 @@ def test_qualified_automatic_canonical_draft_reopens_and_unqualified_intent_is_r
             assert "automatic" == repository.shadow_posture()
             policy_id = repository.create_metadata_policy_draft(profile.canonical_json)
             assert profile.policy_id == policy_id
-            assert profile.canonical_json == repository.get_metadata_policy_draft(policy_id)
+            assert profile.canonical_json == repository.get_metadata_policy_draft(
+                policy_id
+            )
             with pytest.raises(MetadataReportError):
                 repository.create_metadata_policy_draft(profile.canonical_json + " ")
             unqualified_options = dict(DEFAULT_OPTIONS)
             unqualified_options["publisher_preference"] = "imprint"
             unqualified = MetadataPolicyProfile.create(
-                "Unqualified automatic draft", unqualified_options,
+                "Unqualified automatic draft",
+                unqualified_options,
                 {**destinations, "publisher_preference": "automatic"},
             )
-            with pytest.raises(MetadataReportError, match="automatic intent is unqualified"):
+            with pytest.raises(
+                MetadataReportError, match="automatic intent is unqualified"
+            ):
                 repository.create_metadata_policy_draft(unqualified.canonical_json)
         finally:
             repository.close()
         reopened = open_repository(path, create=False)
         try:
-            assert profile.canonical_json == reopened.get_metadata_policy_draft(profile.policy_id)
+            assert profile.canonical_json == reopened.get_metadata_policy_draft(
+                profile.policy_id
+            )
         finally:
             reopened.close()

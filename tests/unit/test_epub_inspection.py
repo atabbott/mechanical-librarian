@@ -31,9 +31,13 @@ def test_rear_limit_disposition_is_boolean_success_only_and_canonical() -> None:
     malformed = json.loads(serialized)
     malformed["rear_resource_limit"] = "rear_resource_limit"
     with pytest.raises(ValueError):
-        EpubInspection.from_json(json.dumps(malformed, separators=(",", ":"), sort_keys=True))
+        EpubInspection.from_json(
+            json.dumps(malformed, separators=(",", ":"), sort_keys=True)
+        )
     with pytest.raises(ValueError):
-        EpubInspection(EpubInspectionOutcome.RESOURCE_LIMIT, None, rear_resource_limit=True)
+        EpubInspection(
+            EpubInspectionOutcome.RESOURCE_LIMIT, None, rear_resource_limit=True
+        )
 
 
 def test_isbn_support_is_distinct_from_observed_and_canonical_values() -> None:
@@ -138,9 +142,7 @@ def test_date_event_precision_and_contextual_credit_are_canonical() -> None:
 def test_valid_date_facts_bind_observed_canonical_and_precision_at_ipc(
     field: EpubInspectionField, event: DateEvent, observed: str
 ) -> None:
-    source = Fingerprint(
-        "sha256", SchemaVersion("source-v1"), "e" * 64
-    )
+    source = Fingerprint("sha256", SchemaVersion("source-v1"), "e" * 64)
     canonical, precision = normalize_date_value(observed)
     fact = EpubInspectionFact(
         field,
@@ -213,9 +215,7 @@ _NONVALID_STATE_OBSERVATIONS = (
 def test_nonvalid_date_facts_cannot_retain_canonical_values_or_precision(
     field: EpubInspectionField, event: DateEvent, state: str, observed: str
 ) -> None:
-    source = Fingerprint(
-        "sha256", SchemaVersion("source-v1"), "e" * 64
-    )
+    source = Fingerprint("sha256", SchemaVersion("source-v1"), "e" * 64)
     fact = EpubInspectionFact(
         field,
         source,

@@ -126,8 +126,7 @@ class PipelineAction:
         ):
             raise ReviewPipelineError("state")
         if self.lineage_checkpoint is not None and (
-            type(self.lineage_checkpoint) is not int
-            or self.lineage_checkpoint < 1
+            type(self.lineage_checkpoint) is not int or self.lineage_checkpoint < 1
         ):
             raise ReviewPipelineError("state")
         if self.policy_generation is not None and (
@@ -163,19 +162,37 @@ class ReviewPipelineRepository(Protocol):
     def set_review_pipeline_paused(self, paused: bool, updated_at: int) -> None: ...
 
     def target_connection_conditions(self) -> tuple[TargetConnectionCondition, ...]: ...
-    def guard_target_connection(self, action: PipelineAction, checked_at: int) -> bool: ...
+    def guard_target_connection(
+        self, action: PipelineAction, checked_at: int
+    ) -> bool: ...
     def discovery_requires_qualification(self, action: PipelineAction) -> bool: ...
-    def qualify_review_discovery(self, action: PipelineAction, qualified_at: int) -> bool: ...
-    def defer_for_target_connection(self, action: PipelineAction, code: str, updated_at: int) -> None: ...
-    def hold_target_connection(self, connection: str, code: str, updated_at: int) -> None: ...
-    def begin_target_connection_check(self, connection: str, checked_at: int) -> TargetConnectionCondition | None: ...
-    def finish_target_connection_check(self, connection: str, epoch: int, code: str | None, checked_at: int) -> bool: ...
+    def qualify_review_discovery(
+        self, action: PipelineAction, qualified_at: int
+    ) -> bool: ...
+    def defer_for_target_connection(
+        self, action: PipelineAction, code: str, updated_at: int
+    ) -> None: ...
+    def hold_target_connection(
+        self, connection: str, code: str, updated_at: int
+    ) -> None: ...
+    def begin_target_connection_check(
+        self, connection: str, checked_at: int
+    ) -> TargetConnectionCondition | None: ...
+    def finish_target_connection_check(
+        self, connection: str, epoch: int, code: str | None, checked_at: int
+    ) -> bool: ...
 
-    def claim_review_pipeline_action(self, claimed_at: int) -> PipelineAction | None: ...
-    def claim_review_pipeline_work(self, work_id: str, claimed_at: int) -> PipelineAction | None: ...
+    def claim_review_pipeline_action(
+        self, claimed_at: int
+    ) -> PipelineAction | None: ...
+    def claim_review_pipeline_work(
+        self, work_id: str, claimed_at: int
+    ) -> PipelineAction | None: ...
     def provider_retry_work_id(self, report_id: str) -> str: ...
     def provider_retry_complete(self, report_id: str) -> bool: ...
-    def completed_provider_retry_successor(self, source_report_id: str) -> str | None: ...
+    def completed_provider_retry_successor(
+        self, source_report_id: str
+    ) -> str | None: ...
 
     def take_review_pipeline_claim(self) -> PipelineAction | None: ...
 
@@ -184,7 +201,11 @@ class ReviewPipelineRepository(Protocol):
     def rollback_review_pipeline_output(self) -> None: ...
 
     def persist_shadow_outcome(
-        self, review_case_id: str, evaluated_at: int, *, staged_action: PipelineAction | None = None
+        self,
+        review_case_id: str,
+        evaluated_at: int,
+        *,
+        staged_action: PipelineAction | None = None,
     ) -> str: ...
 
     def complete_review_discovery(
@@ -248,9 +269,7 @@ class ReviewPreparationPipeline:
         *,
         repository_factory: Callable[[], ReviewPipelineRepository],
         libraries: tuple[tuple[str, str, str, str], ...],
-        discover: Callable[
-            [str, str], tuple[int, str, tuple[CatalogueEntry, ...]]
-        ],
+        discover: Callable[[str, str], tuple[int, str, tuple[CatalogueEntry, ...]]],
         extract: Callable[
             [ReviewPipelineRepository, PipelineAction, bool], tuple[str, bool]
         ],
@@ -258,13 +277,11 @@ class ReviewPreparationPipeline:
             [ReviewPipelineRepository, str], tuple[ProviderStatus, ...]
         ],
         propose: Callable[[ReviewPipelineRepository, str], str],
-        admit: Callable[
-            [ReviewPipelineRepository, str], tuple[str, str | None]
-        ],
+        admit: Callable[[ReviewPipelineRepository, str], tuple[str, str | None]],
         project: Callable[[ReviewPipelineRepository, PipelineAction], bool | str],
-        before_projection: Callable[[ReviewPipelineRepository, PipelineAction], None] = (
-            lambda *_args: None
-        ),
+        before_projection: Callable[
+            [ReviewPipelineRepository, PipelineAction], None
+        ] = (lambda *_args: None),
         after_advance: Callable[
             [ReviewPipelineRepository, PipelineAction, str | None], None
         ] = lambda *_args: None,
@@ -429,7 +446,9 @@ class ReviewPreparationPipeline:
         # owner check globally disruptive.
         repository = self._open_repository()
         try:
-            condition = repository.begin_target_connection_check(connection, self._clock())
+            condition = repository.begin_target_connection_check(
+                connection, self._clock()
+            )
         except ReviewPipelineError:
             raise
         except Exception as error:
@@ -500,8 +519,9 @@ class ReviewPreparationPipeline:
                 next_action = self._run_claimed_action(
                     repository,
                     action,
-                    claim_next=(index + 1 < maximum_actions
-                                and not self._draining.is_set()),
+                    claim_next=(
+                        index + 1 < maximum_actions and not self._draining.is_set()
+                    ),
                 )
                 if next_action is None:
                     return True
@@ -528,7 +548,10 @@ class ReviewPreparationPipeline:
                     return False
                 heartbeat()
                 action = self._run_claimed_action(
-                    repository, action, claim_next=False, exact_next=True,
+                    repository,
+                    action,
+                    claim_next=False,
+                    exact_next=True,
                 )
                 heartbeat()
                 if action is None:
@@ -556,12 +579,16 @@ class ReviewPreparationPipeline:
         }.get(action.stage)
         if timing is None:
             return self._execute_claimed_action(
-                repository, action, claim_next=claim_next,
+                repository,
+                action,
+                claim_next=claim_next,
                 exact_next=exact_next,
             )
         with self._timing.measure(*timing):
             return self._execute_claimed_action(
-                repository, action, claim_next=claim_next,
+                repository,
+                action,
+                claim_next=claim_next,
                 exact_next=exact_next,
             )
 
@@ -587,11 +614,11 @@ class ReviewPreparationPipeline:
                 requires_qualification = getattr(
                     repository, "discovery_requires_qualification", None
                 )
-                if requires_qualification is not None and requires_qualification(action):
+                if requires_qualification is not None and requires_qualification(
+                    action
+                ):
                     self._check_connection(action.connection)
-                    if not repository.qualify_review_discovery(
-                        action, self._clock()
-                    ):
+                    if not repository.qualify_review_discovery(action, self._clock()):
                         return None
                 generation, fingerprint, entries = self._discover(
                     action.connection, action.library
@@ -719,12 +746,18 @@ class ReviewPreparationPipeline:
             if claim_next:
                 with self._claim_lock:
                     advanced = repository.advance_review_pipeline_action(
-                        action, output_id, self._clock(),
+                        action,
+                        output_id,
+                        self._clock(),
                         not self._draining.is_set(),
                     )
             elif exact_next:
                 advanced = repository.advance_review_pipeline_action(
-                    action, output_id, self._clock(), False, True,
+                    action,
+                    output_id,
+                    self._clock(),
+                    False,
+                    True,
                 )
             else:
                 advanced = repository.advance_review_pipeline_action(
@@ -775,8 +808,10 @@ class ReviewPreparationSupervisor:
             or not 60 <= polling_interval_seconds <= 86_400
         ):
             raise ReviewPipelineError("configuration")
-        if (type(graceful_shutdown_seconds) is not int
-                or not 1 <= graceful_shutdown_seconds <= 300):
+        if (
+            type(graceful_shutdown_seconds) is not int
+            or not 1 <= graceful_shutdown_seconds <= 300
+        ):
             raise ReviewPipelineError("configuration")
         self._pipeline = pipeline
         self._polling_interval_seconds = polling_interval_seconds
@@ -923,8 +958,7 @@ class ReviewPreparationSupervisor:
                 self.libraries, progresses, strict=True
             ):
                 only_actionable_failures = only_actionable_failures and (
-                    progress is not None
-                    and progress.state == "completed_with_failures"
+                    progress is not None and progress.state == "completed_with_failures"
                 )
                 if progress is None or (
                     progress.state == "completed"

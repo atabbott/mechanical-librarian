@@ -100,10 +100,7 @@ def validate_provider_access_time(value: object) -> str:
         observed = datetime.fromisoformat(value[:-1] + "+00:00")
     except ValueError:
         raise ReportValueError("provider access time is invalid") from None
-    if (
-        observed.isoformat(timespec="microseconds").replace("+00:00", "Z")
-        != value
-    ):
+    if observed.isoformat(timespec="microseconds").replace("+00:00", "Z") != value:
         raise ReportValueError("provider access time is invalid")
     return value
 
@@ -150,9 +147,7 @@ class ProviderEvidenceKind(StrEnum):
     COPYRIGHT_DATE = "copyright_date"
     PUBLICATION_DATE_TEXT = "publication_date_text"
     EDITION_WORK_RELATION = "edition_work_relation"
-    EDITION_WORK_RELATION_CONTRADICTION = (
-        "edition_work_relation_contradiction"
-    )
+    EDITION_WORK_RELATION_CONTRADICTION = "edition_work_relation_contradiction"
     FIRST_PUBLICATION_DATE = "first_publication_date"
     EDITION_COVER_ID = "edition_cover_id"
     WORK_COVER_ID = "work_cover_id"
@@ -273,10 +268,15 @@ class TargetField:
             TargetDestination.GENRES,
             TargetDestination.TAGS,
         }:
-            maximum = MAX_CONTRIBUTIONS if self.destination in {
-                TargetDestination.AUTHORS,
-                TargetDestination.NARRATORS,
-            } else MAX_TAGS
+            maximum = (
+                MAX_CONTRIBUTIONS
+                if self.destination
+                in {
+                    TargetDestination.AUTHORS,
+                    TargetDestination.NARRATORS,
+                }
+                else MAX_TAGS
+            )
             if (
                 type(self.value) is not tuple
                 or not self.value
@@ -285,9 +285,7 @@ class TargetField:
             ):
                 raise ReportValueError("target list field is invalid")
             for item in self.value:
-                _projection_text(
-                    item, "target list value", MAX_SCALAR_CHARACTERS
-                )
+                _projection_text(item, "target list value", MAX_SCALAR_CHARACTERS)
             return
         if type(self.value) is not str or not self.value:
             raise ReportValueError("target scalar field is invalid")
@@ -305,8 +303,7 @@ class TargetField:
         # non-empty tuple of TargetSeries.
         if self.destination is TargetDestination.SERIES and self.value is not None:
             value = [
-                item.to_data()
-                for item in cast("tuple[TargetSeries, ...]", self.value)
+                item.to_data() for item in cast("tuple[TargetSeries, ...]", self.value)
             ]
         elif type(self.value) is tuple:
             value = list(self.value)
@@ -339,13 +336,25 @@ class RearClaimProvenance:
     citation: str
 
     def __post_init__(self) -> None:
-        if (_DIGEST.fullmatch(self.resource_identity) is None or type(self.spine_ordinal) is not int or self.spine_ordinal < 1 or type(self.tail_slot) is not int or not 1 <= self.tail_slot <= 8):
+        if (
+            _DIGEST.fullmatch(self.resource_identity) is None
+            or type(self.spine_ordinal) is not int
+            or self.spine_ordinal < 1
+            or type(self.tail_slot) is not int
+            or not 1 <= self.tail_slot <= 8
+        ):
             raise ReportValueError("rear claim provenance is invalid")
         _projection_text(self.marker, "rear marker", 64)
         _projection_text(self.citation, "rear citation", 280)
 
     def to_data(self) -> dict[str, object]:
-        return {"citation": self.citation, "marker": self.marker, "resource_identity": self.resource_identity, "spine_ordinal": self.spine_ordinal, "tail_slot": self.tail_slot}
+        return {
+            "citation": self.citation,
+            "marker": self.marker,
+            "resource_identity": self.resource_identity,
+            "spine_ordinal": self.spine_ordinal,
+            "tail_slot": self.tail_slot,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -359,11 +368,22 @@ class FieldResult:
     def __post_init__(self) -> None:
         if type(self.kind) is not ClaimKind or type(self.state) is not FieldState:
             raise ReportValueError("field result is invalid")
-        if type(self.sources) is not tuple or any(type(value) is not FieldSourceResult for value in self.sources) or (self.sources and tuple(value.source for value in self.sources) != tuple(FieldSource)):
+        if (
+            type(self.sources) is not tuple
+            or any(type(value) is not FieldSourceResult for value in self.sources)
+            or (
+                self.sources
+                and tuple(value.source for value in self.sources) != tuple(FieldSource)
+            )
+        ):
             raise ReportValueError("field result sources are invalid")
 
     def to_data(self) -> dict[str, object]:
-        return {"kind": self.kind.value, "state": self.state.value, "sources": [value.to_data() for value in self.sources]}
+        return {
+            "kind": self.kind.value,
+            "state": self.state.value,
+            "sources": [value.to_data() for value in self.sources],
+        }
 
 
 class ProviderStatus(StrEnum):
@@ -394,15 +414,20 @@ class ProviderRequestAccounting:
 
     def __post_init__(self) -> None:
         values = (
-            self.logical_requests, self.initial_dispatches,
-            self.retry_dispatches, self.replays, self.undispatched_incomplete,
+            self.logical_requests,
+            self.initial_dispatches,
+            self.retry_dispatches,
+            self.replays,
+            self.undispatched_incomplete,
         )
         if any(type(value) is not int or value < 0 for value in values):
             raise ReportValueError("provider request accounting is invalid")
         if self.logical_requests != (
             self.initial_dispatches + self.replays + self.undispatched_incomplete
         ):
-            raise ReportValueError("provider logical request accounting is inconsistent")
+            raise ReportValueError(
+                "provider logical request accounting is inconsistent"
+            )
         if self.retry_dispatches and not self.initial_dispatches:
             raise ReportValueError("provider retry request accounting is inconsistent")
 
@@ -516,7 +541,9 @@ class IdentifierEvidence:
             or type(self.related_references) is not tuple
             or tuple(sorted(set(self.related_references))) != self.related_references
             or self.reference in self.related_references
-            or any(_REFERENCE.fullmatch(value) is None for value in self.related_references)
+            or any(
+                _REFERENCE.fullmatch(value) is None for value in self.related_references
+            )
         ):
             raise ReportValueError("identifier evidence is invalid")
         provider_values = (
@@ -526,7 +553,9 @@ class IdentifierEvidence:
         )
         if self.reference.startswith("local_"):
             if any(value is not None for value in provider_values):
-                raise ReportValueError("local identifier evidence has provider identity")
+                raise ReportValueError(
+                    "local identifier evidence has provider identity"
+                )
         elif not self.reference.startswith("provider_") or any(
             value is None for value in provider_values
         ):
@@ -571,44 +600,41 @@ class ComparisonLink:
         if date_relation is None:
             date_valid = date_precision is None
         else:
-            date_valid = (
-                type(date_relation) is PublicationDateRelation
-                and (
-                    (
-                        date_relation is PublicationDateRelation.EXACT
-                        and date_precision
-                        in {
-                            DatePrecision.YEAR,
-                            DatePrecision.MONTH,
-                            DatePrecision.DAY,
-                        }
-                    )
-                    or (
-                        date_relation is PublicationDateRelation.FINER_CONFLICT
-                        and date_precision
-                        in {
-                            None,
-                            DatePrecision.YEAR,
-                            DatePrecision.MONTH,
-                            DatePrecision.DAY,
-                        }
-                    )
-                    or (
-                        date_relation is PublicationDateRelation.MONTH_COMPATIBLE
-                        and date_precision is DatePrecision.MONTH
-                    )
-                    or (
-                        date_relation is PublicationDateRelation.YEAR_COMPATIBLE
-                        and date_precision is DatePrecision.YEAR
-                    )
-                    or (
-                        date_relation
-                        in {
-                            PublicationDateRelation.EVENT_INCOMPATIBLE,
-                            PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
-                        }
-                        and date_precision is None
-                    )
+            date_valid = type(date_relation) is PublicationDateRelation and (
+                (
+                    date_relation is PublicationDateRelation.EXACT
+                    and date_precision
+                    in {
+                        DatePrecision.YEAR,
+                        DatePrecision.MONTH,
+                        DatePrecision.DAY,
+                    }
+                )
+                or (
+                    date_relation is PublicationDateRelation.FINER_CONFLICT
+                    and date_precision
+                    in {
+                        None,
+                        DatePrecision.YEAR,
+                        DatePrecision.MONTH,
+                        DatePrecision.DAY,
+                    }
+                )
+                or (
+                    date_relation is PublicationDateRelation.MONTH_COMPATIBLE
+                    and date_precision is DatePrecision.MONTH
+                )
+                or (
+                    date_relation is PublicationDateRelation.YEAR_COMPATIBLE
+                    and date_precision is DatePrecision.YEAR
+                )
+                or (
+                    date_relation
+                    in {
+                        PublicationDateRelation.EVENT_INCOMPATIBLE,
+                        PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+                    }
+                    and date_precision is None
                 )
             )
         if (
@@ -683,7 +709,9 @@ def _comparison_reference_sort_key(value: str | None) -> tuple[int, str]:
 
 def canonical_json(value: object) -> str:
     try:
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+        return json.dumps(
+            value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        )
     except (TypeError, ValueError, RecursionError) as error:
         raise ReportValueError("report value is not serializable") from error
 
@@ -691,7 +719,9 @@ def canonical_json(value: object) -> str:
 def stable_reference(prefix: str, value: object) -> str:
     if prefix not in {"local", "provider"}:
         raise ReportValueError("claim reference prefix is invalid")
-    return f"{prefix}_{hashlib.sha256(canonical_json(value).encode('utf-8')).hexdigest()}"
+    return (
+        f"{prefix}_{hashlib.sha256(canonical_json(value).encode('utf-8')).hexdigest()}"
+    )
 
 
 def provider_lane_candidate_reference(
@@ -700,16 +730,19 @@ def provider_lane_candidate_reference(
     edition_identity: str,
     work_identity: str,
 ) -> str:
-    return "lane_candidate_" + hashlib.sha256(
-        canonical_json(
-            {
-                "edition_identity": edition_identity,
-                "lane_identity": lane_identity,
-                "provider": provider,
-                "work_identity": work_identity,
-            }
-        ).encode("utf-8")
-    ).hexdigest()
+    return (
+        "lane_candidate_"
+        + hashlib.sha256(
+            canonical_json(
+                {
+                    "edition_identity": edition_identity,
+                    "lane_identity": lane_identity,
+                    "provider": provider,
+                    "work_identity": work_identity,
+                }
+            ).encode("utf-8")
+        ).hexdigest()
+    )
 
 
 def normalize_title(value: str) -> str:
@@ -732,9 +765,7 @@ def normalize_date_value(value: str) -> tuple[str, DatePrecision]:
         raise ReportValueError("date lexical value is invalid") from error
 
 
-def publication_date_is_voting(
-    value: str, precision: DatePrecision
-) -> bool:
+def publication_date_is_voting(value: str, precision: DatePrecision) -> bool:
     """Accept only source lexicals whose retained precision can vote."""
     if type(precision) is not DatePrecision:
         raise ReportValueError("date precision is inconsistent")
@@ -808,7 +839,9 @@ class TargetFacts:
         try:
             value = _object(raw, {"connection", "fields", "item", "library"})
             return cls(
-                value["connection"], value["library"], value["item"],
+                value["connection"],
+                value["library"],
+                value["item"],
                 tuple(_target_field_from_data(item) for item in _list(value["fields"])),
             )
         except (KeyError, TypeError, ValueError, ReportValueError) as error:
@@ -839,9 +872,15 @@ class FileFacts:
     format: str = "epub"
 
     def __post_init__(self) -> None:
-        if type(self.selected_index) is not int or not 0 <= self.selected_index <= 10_000:
+        if (
+            type(self.selected_index) is not int
+            or not 0 <= self.selected_index <= 10_000
+        ):
             raise ReportValueError("selected file index is invalid")
-        if _DIGEST.fullmatch(self.identity) is None or _DIGEST.fullmatch(self.content_digest) is None:
+        if (
+            _DIGEST.fullmatch(self.identity) is None
+            or _DIGEST.fullmatch(self.content_digest) is None
+        ):
             raise ReportValueError("selected file identity is invalid")
         if self.format != "epub":
             raise ReportValueError("selected file format is unsupported")
@@ -875,9 +914,15 @@ class LocalClaim:
     date_precision: DatePrecision | None = None
 
     def __post_init__(self) -> None:
-        if _REFERENCE.fullmatch(self.reference) is None or not self.reference.startswith("local_"):
+        if _REFERENCE.fullmatch(
+            self.reference
+        ) is None or not self.reference.startswith("local_"):
             raise ReportValueError("local claim reference is invalid")
-        if type(self.kind) is not ClaimKind or type(self.state) is not FieldState or type(self.scope) is not ClaimScope:
+        if (
+            type(self.kind) is not ClaimKind
+            or type(self.state) is not FieldState
+            or type(self.scope) is not ClaimScope
+        ):
             raise ReportValueError("local claim kind is invalid")
         if self.basis == "target_metadata" and self.kind is not ClaimKind.TITLE:
             raise ReportValueError("target metadata claim kind is invalid")
@@ -892,7 +937,10 @@ class LocalClaim:
                 validate_role_projection(self.role)
             except EvidenceValueError as error:
                 raise ReportValueError("local claim role is invalid") from error
-        if self.rear_provenance is not None and type(self.rear_provenance) is not RearClaimProvenance:
+        if (
+            self.rear_provenance is not None
+            and type(self.rear_provenance) is not RearClaimProvenance
+        ):
             raise ReportValueError("rear claim provenance is invalid")
         rear_kinds = {
             ClaimKind.TITLE,
@@ -912,20 +960,43 @@ class LocalClaim:
             raise ReportValueError("rear claim provenance is inapplicable")
         if type(self.occurrence) is not int or not 0 <= self.occurrence <= 1_000_000:
             raise ReportValueError("local claim occurrence is invalid")
-        maximum = 512 if self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.DESCRIPTION} else 280
+        maximum = (
+            512
+            if self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.DESCRIPTION}
+            else 280
+        )
         _projection_text(self.observed, "observed claim", maximum)
         if self.canonical is not None:
             _projection_text(self.canonical, "canonical claim", 512)
         _projection_text(self.excerpt, "claim excerpt", maximum)
         if self.observed not in self.excerpt:
             raise ReportValueError("claim excerpt does not support its observation")
-        if self.applicability not in {"ebook", "print", "unknown", "ambiguous", "not_applicable"}:
+        if self.applicability not in {
+            "ebook",
+            "print",
+            "unknown",
+            "ambiguous",
+            "not_applicable",
+        }:
             raise ReportValueError("claim applicability is invalid")
         if self.basis not in {"opening_matter", "package_metadata", "target_metadata"}:
             raise ReportValueError("claim basis is invalid")
-        if self.checksum not in {"valid_isbn_10", "valid_isbn_13", "invalid", "not_applicable"}:
+        if self.checksum not in {
+            "valid_isbn_10",
+            "valid_isbn_13",
+            "invalid",
+            "not_applicable",
+        }:
             raise ReportValueError("claim checksum is invalid")
-        if self.applicability_basis not in {"ebook", "paperback", "hardcover", "print", "unlabelled", "ambiguous", "not_applicable"}:
+        if self.applicability_basis not in {
+            "ebook",
+            "paperback",
+            "hardcover",
+            "print",
+            "unlabelled",
+            "ambiguous",
+            "not_applicable",
+        }:
             raise ReportValueError("claim applicability basis is invalid")
         if self.kind is not ClaimKind.ISBN and (
             self.checksum != "not_applicable"
@@ -939,26 +1010,31 @@ class LocalClaim:
             or self.applicability_basis == "not_applicable"
         ):
             raise ReportValueError("ISBN claim typing is inconsistent")
-        if self.kind is ClaimKind.ISBN and self.canonical is not None and not _valid_isbn(self.canonical, self.checksum):
+        if (
+            self.kind is ClaimKind.ISBN
+            and self.canonical is not None
+            and not _valid_isbn(self.canonical, self.checksum)
+        ):
             raise ReportValueError("ISBN claim checksum is inconsistent")
         is_date = self.kind in {ClaimKind.PUBLICATION_DATE, ClaimKind.DATE_EVENT}
         if is_date != (type(self.date_event) is DateEvent):
             raise ReportValueError("local date claim typing is inconsistent")
         if (
-            is_date
-            and self.state is FieldState.VALID
-            and (
-                type(self.date_precision) is not DatePrecision
-                or self.canonical is None
+            (
+                is_date
+                and self.state is FieldState.VALID
+                and (
+                    type(self.date_precision) is not DatePrecision
+                    or self.canonical is None
+                )
             )
-        ) or (
-            is_date
-            and self.state is not FieldState.VALID
-            and (
-                self.canonical is not None
-                or self.date_precision is not None
+            or (
+                is_date
+                and self.state is not FieldState.VALID
+                and (self.canonical is not None or self.date_precision is not None)
             )
-        ) or (not is_date and self.date_precision is not None):
+            or (not is_date and self.date_precision is not None)
+        ):
             raise ReportValueError("local date precision is inconsistent")
         if is_date and self.state is FieldState.VALID:
             try:
@@ -968,9 +1044,7 @@ class LocalClaim:
                     "local date precision is inconsistent"
                 ) from error
             if normalized_date != (self.canonical, self.date_precision):
-                raise ReportValueError(
-                    "local date precision is inconsistent"
-                )
+                raise ReportValueError("local date precision is inconsistent")
         if (
             self.kind is ClaimKind.PUBLICATION_DATE
             and self.date_event is not DateEvent.MANIFESTATION_PUBLICATION
@@ -979,9 +1053,15 @@ class LocalClaim:
         if is_date and self.scope is not claim_scope(self.kind, self.date_event):
             raise ReportValueError("local date claim scope is inconsistent")
         sentinel = _sentinel_state(self.observed)
-        if sentinel is not None and (self.state is not sentinel or self.canonical is not None):
+        if sentinel is not None and (
+            self.state is not sentinel or self.canonical is not None
+        ):
             raise ReportValueError("source sentinel claim is inconsistent")
-        if self.state is FieldState.VALID and self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE} and self.canonical != normalize_title(self.observed):
+        if (
+            self.state is FieldState.VALID
+            and self.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}
+            and self.canonical != normalize_title(self.observed)
+        ):
             raise ReportValueError("title claim normalization is inconsistent")
         expected = stable_reference("local", self._reference_data())
         if self.reference != expected:
@@ -1007,9 +1087,7 @@ class LocalClaim:
         date_event: DateEvent | None = None,
         date_precision: DatePrecision | None = None,
     ) -> Self:
-        resolved_scope = (
-            scope if scope is not None else claim_scope(kind, date_event)
-        )
+        resolved_scope = scope if scope is not None else claim_scope(kind, date_event)
         value = {
             "applicability": applicability,
             "basis": basis,
@@ -1021,19 +1099,36 @@ class LocalClaim:
             "applicability_basis": applicability_basis,
             "state": state.value if type(state) is FieldState else "",
             "scope": (
-                resolved_scope.value
-                if type(resolved_scope) is ClaimScope
-                else ""
+                resolved_scope.value if type(resolved_scope) is ClaimScope else ""
             ),
             "role": role,
-            "rear_provenance": None if rear_provenance is None else rear_provenance.to_data(),
+            "rear_provenance": None
+            if rear_provenance is None
+            else rear_provenance.to_data(),
             "occurrence": occurrence,
             "date_event": None if date_event is None else date_event.value,
             "date_precision": (
                 None if date_precision is None else date_precision.value
             ),
         }
-        return cls(stable_reference("local", value), kind, observed, canonical, excerpt, applicability, basis, checksum, applicability_basis, resolved_scope, state, role, rear_provenance, occurrence, date_event, date_precision)
+        return cls(
+            stable_reference("local", value),
+            kind,
+            observed,
+            canonical,
+            excerpt,
+            applicability,
+            basis,
+            checksum,
+            applicability_basis,
+            resolved_scope,
+            state,
+            role,
+            rear_provenance,
+            occurrence,
+            date_event,
+            date_precision,
+        )
 
     def _reference_data(self) -> dict[str, object]:
         return {
@@ -1048,18 +1143,22 @@ class LocalClaim:
             "state": self.state.value,
             "scope": self.scope.value,
             "role": self.role,
-            "rear_provenance": None if self.rear_provenance is None else self.rear_provenance.to_data(),
+            "rear_provenance": None
+            if self.rear_provenance is None
+            else self.rear_provenance.to_data(),
             "occurrence": self.occurrence,
-            "date_event": (
-                None if self.date_event is None else self.date_event.value
-            ),
+            "date_event": (None if self.date_event is None else self.date_event.value),
             "date_precision": (
                 None if self.date_precision is None else self.date_precision.value
             ),
         }
 
     def to_data(self) -> dict[str, object]:
-        return {"reference": self.reference, "state": self.state.value, **self._reference_data()}
+        return {
+            "reference": self.reference,
+            "state": self.state.value,
+            **self._reference_data(),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -1079,11 +1178,22 @@ class ProviderClaim:
     date_confidence: DateLinkConfidence | None = None
 
     def __post_init__(self) -> None:
-        if _REFERENCE.fullmatch(self.reference) is None or not self.reference.startswith("provider_"):
+        if _REFERENCE.fullmatch(
+            self.reference
+        ) is None or not self.reference.startswith("provider_"):
             raise ReportValueError("provider claim reference is invalid")
         if type(self.kind) is not ClaimKind:
             raise ReportValueError("provider claim is invalid")
-        if self.applicability not in {"ebook", "print", "unknown", "ambiguous", "not_applicable"} or type(self.state) is not FieldState or type(self.raw_order) is not int or self.raw_order < 0 or type(self.scope) is not ClaimScope or type(self.links) is not tuple or any(type(link) is not ComparisonLink for link in self.links):
+        if (
+            self.applicability
+            not in {"ebook", "print", "unknown", "ambiguous", "not_applicable"}
+            or type(self.state) is not FieldState
+            or type(self.raw_order) is not int
+            or self.raw_order < 0
+            or type(self.scope) is not ClaimScope
+            or type(self.links) is not tuple
+            or any(type(link) is not ComparisonLink for link in self.links)
+        ):
             raise ReportValueError("provider claim scope is invalid")
         if self.role is not None:
             if self.kind not in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}:
@@ -1098,13 +1208,19 @@ class ProviderClaim:
             _projection_text(
                 self.value,
                 "provider claim value",
-                MAX_DESCRIPTION_CHARACTERS if self.kind is ClaimKind.DESCRIPTION else MAX_SCALAR_CHARACTERS,
+                MAX_DESCRIPTION_CHARACTERS
+                if self.kind is ClaimKind.DESCRIPTION
+                else MAX_SCALAR_CHARACTERS,
             )
         elif self.value is not None:
             raise ReportValueError("nonvalid provider claim has a value")
-        if self.kind is ClaimKind.ISBN and self.value is not None and not (
-            _valid_isbn(self.value, "valid_isbn_10")
-            or _valid_isbn(self.value, "valid_isbn_13")
+        if (
+            self.kind is ClaimKind.ISBN
+            and self.value is not None
+            and not (
+                _valid_isbn(self.value, "valid_isbn_10")
+                or _valid_isbn(self.value, "valid_isbn_13")
+            )
         ):
             raise ReportValueError("provider ISBN claim is invalid")
         if (
@@ -1144,8 +1260,7 @@ class ProviderClaim:
         ):
             raise ReportValueError("provider comparison links are invalid")
         if any(
-            (link.publication_date_relation is None) == is_date
-            for link in self.links
+            (link.publication_date_relation is None) == is_date for link in self.links
         ):
             raise ReportValueError("provider date comparison links are inconsistent")
 
@@ -1168,11 +1283,7 @@ class ProviderClaim:
         date_lexical: str | None = None,
         date_confidence: DateLinkConfidence | None = None,
     ) -> Self:
-        if (
-            kind is ClaimKind.ASIN
-            and state is FieldState.VALID
-            and type(value) is str
-        ):
+        if kind is ClaimKind.ASIN and state is FieldState.VALID and type(value) is str:
             value = value.upper()
         if kind is ClaimKind.PUBLICATION_DATE:
             date_event = (
@@ -1234,9 +1345,7 @@ class ProviderClaim:
             "scope": self.scope.value,
             "links": [link.to_data() for link in self.links],
             "value": self.value,
-            "date_event": (
-                None if self.date_event is None else self.date_event.value
-            ),
+            "date_event": (None if self.date_event is None else self.date_event.value),
             "date_precision": (
                 None if self.date_precision is None else self.date_precision.value
             ),
@@ -1262,7 +1371,10 @@ class ProviderEvidence:
     taxonomy_type: str | None = None
 
     def __post_init__(self) -> None:
-        if type(self.kind) is not ProviderEvidenceKind or type(self.scope) is not ClaimScope:
+        if (
+            type(self.kind) is not ProviderEvidenceKind
+            or type(self.scope) is not ClaimScope
+        ):
             raise ReportValueError("provider rich evidence is invalid")
         if (
             type(self.source_ordinal) is not int
@@ -1278,26 +1390,29 @@ class ProviderEvidence:
             )
         ):
             raise ReportValueError("provider rich evidence source ordinal is invalid")
-        _projection_text(self.value, "provider rich evidence value", MAX_SCALAR_CHARACTERS)
+        _projection_text(
+            self.value, "provider rich evidence value", MAX_SCALAR_CHARACTERS
+        )
         if self.kind is ProviderEvidenceKind.TAXONOMY:
-            _projection_text(self.taxonomy_type, "provider taxonomy type", MAX_SCALAR_CHARACTERS)
+            _projection_text(
+                self.taxonomy_type, "provider taxonomy type", MAX_SCALAR_CHARACTERS
+            )
         elif self.taxonomy_type is not None:
             raise ReportValueError("provider taxonomy type is invalid")
         if (
-            self.kind
-            is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+            self.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
             and self.value != "contradictory_or_multiple"
         ):
-            raise ReportValueError(
-                "provider work relation contradiction is invalid"
-            )
+            raise ReportValueError("provider work relation contradiction is invalid")
         if self.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY:
             if self.role is None:
                 raise ReportValueError("provider rich evidence role is invalid")
             try:
                 validate_role_projection(self.role)
             except EvidenceValueError as error:
-                raise ReportValueError("provider rich evidence role is invalid") from error
+                raise ReportValueError(
+                    "provider rich evidence role is invalid"
+                ) from error
         elif self.role is not None:
             raise ReportValueError("provider rich evidence role is invalid")
         date_events = {
@@ -1307,15 +1422,15 @@ class ProviderEvidence:
             ),
             ProviderEvidenceKind.LAST_MODIFIED: DateEvent.MODIFICATION,
         }
-        is_publication_text = (
-            self.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
-        )
+        is_publication_text = self.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
         expected_event = date_events.get(self.kind)
         if is_publication_text and self.date_event is None:
             expected_event = DateEvent.UNKNOWN
         if expected_event is not None and self.date_event is None:
             object.__setattr__(self, "date_event", expected_event)
-        if (expected_event is not None or is_publication_text) and self.date_confidence is None:
+        if (
+            expected_event is not None or is_publication_text
+        ) and self.date_confidence is None:
             object.__setattr__(
                 self,
                 "date_confidence",
@@ -1325,7 +1440,9 @@ class ProviderEvidence:
                     else DateLinkConfidence.EXPLICIT
                 ),
             )
-        if (expected_event is not None or is_publication_text) and self.date_normalized is None:
+        if (
+            expected_event is not None or is_publication_text
+        ) and self.date_normalized is None:
             try:
                 normalized, precision = normalize_date_value(self.value)
             except ReportValueError:
@@ -1352,10 +1469,7 @@ class ProviderEvidence:
                         DateEvent.MANIFESTATION_PUBLICATION,
                     }
                 )
-                or (
-                    not is_publication_text
-                    and self.date_event is not expected_event
-                )
+                or (not is_publication_text and self.date_event is not expected_event)
                 or self.date_confidence is not expected_confidence
                 or (self.date_precision is None) != (self.date_normalized is None)
                 or (
@@ -1374,9 +1488,9 @@ class ProviderEvidence:
             )
         ):
             raise ReportValueError("provider date evidence is inconsistent")
-        if any(
-            link.publication_date_relation is None for link in self.links
-        ) or (not is_date and self.links):
+        if any(link.publication_date_relation is None for link in self.links) or (
+            not is_date and self.links
+        ):
             raise ReportValueError("provider date evidence links are inconsistent")
         if any(link.local_reference is None for link in self.links) and not (
             is_publication_text
@@ -1393,9 +1507,7 @@ class ProviderEvidence:
             "role": self.role,
             "scope": self.scope.value,
             "value": self.value,
-            "date_event": (
-                None if self.date_event is None else self.date_event.value
-            ),
+            "date_event": (None if self.date_event is None else self.date_event.value),
             "date_precision": (
                 None if self.date_precision is None else self.date_precision.value
             ),
@@ -1434,7 +1546,9 @@ class ProviderIdentityBinding:
             try:
                 validate_role_projection(self.role)
             except EvidenceValueError as error:
-                raise ReportValueError("provider identity binding role is invalid") from error
+                raise ReportValueError(
+                    "provider identity binding role is invalid"
+                ) from error
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -1469,22 +1583,26 @@ class EditionEnrichmentOverflow:
                 or value.role != "author"
                 for value in self.authors
             )
-            or tuple(value.raw_order for value in self.authors) != tuple(range(len(self.authors)))
+            or tuple(value.raw_order for value in self.authors)
+            != tuple(range(len(self.authors)))
             or type(self.identity_bindings) is not tuple
             or len(self.identity_bindings) != len(self.authors)
         ):
             raise ReportValueError("edition overflow authors are invalid")
         expected = tuple(
-            ProviderIdentityBinding(author.reference, binding.identity, ClaimScope.WORK, "author", index)
-            for index, (author, binding) in enumerate(zip(self.authors, self.identity_bindings, strict=True))
+            ProviderIdentityBinding(
+                author.reference, binding.identity, ClaimScope.WORK, "author", index
+            )
+            for index, (author, binding) in enumerate(
+                zip(self.authors, self.identity_bindings, strict=True)
+            )
         )
         if self.identity_bindings != expected:
             raise ReportValueError("edition overflow identity bindings are invalid")
         references = tuple(author.reference for author in self.authors)
         identities = tuple(binding.identity for binding in self.identity_bindings)
         names = tuple(
-            normalize_title(author.value or "").casefold()
-            for author in self.authors
+            normalize_title(author.value or "").casefold() for author in self.authors
         )
         if (
             len(set(references)) != len(references)
@@ -1513,13 +1631,19 @@ class ProviderCandidate:
     def __post_init__(self) -> None:
         _text(self.identity, "provider candidate identity", 128)
         _text(self.work_identity, "provider candidate work identity", 128)
-        if type(self.claims) is not tuple or any(type(value) is not ProviderClaim for value in self.claims):
+        if type(self.claims) is not tuple or any(
+            type(value) is not ProviderClaim for value in self.claims
+        ):
             raise ReportValueError("provider candidate claims are invalid")
         references = tuple(value.reference for value in self.claims)
         if len(set(references)) != len(references):
             raise ReportValueError("provider candidate claim references are duplicated")
-        if tuple(value.raw_order for value in self.claims) != tuple(sorted(value.raw_order for value in self.claims)):
-            raise ReportValueError("provider candidate claims are not in raw source order")
+        if tuple(value.raw_order for value in self.claims) != tuple(
+            sorted(value.raw_order for value in self.claims)
+        ):
+            raise ReportValueError(
+                "provider candidate claims are not in raw source order"
+            )
         claims_by_reference = {value.reference: value for value in self.claims}
         if (
             type(self.identity_bindings) is not tuple
@@ -1529,9 +1653,7 @@ class ProviderCandidate:
                 for value in self.identity_bindings
             )
             or len(set(self.identity_bindings)) != len(self.identity_bindings)
-            or len(
-                {value.claim_reference for value in self.identity_bindings}
-            )
+            or len({value.claim_reference for value in self.identity_bindings})
             != len(self.identity_bindings)
             or len(
                 {
@@ -1604,8 +1726,7 @@ class ProviderCandidate:
         work_relation_contradictions = tuple(
             value
             for value in self.evidence
-            if value.kind
-            is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+            if value.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
         )
         if (
             len(work_relations) > 1
@@ -1614,14 +1735,8 @@ class ProviderCandidate:
             or (
                 work_relation_contradictions
                 and (
-                    any(
-                        value.scope is ClaimScope.WORK
-                        for value in self.claims
-                    )
-                    or any(
-                        value.scope is ClaimScope.WORK
-                        for value in self.evidence
-                    )
+                    any(value.scope is ClaimScope.WORK for value in self.claims)
+                    or any(value.scope is ClaimScope.WORK for value in self.evidence)
                     or any(
                         value.scope is ClaimScope.WORK
                         for value in self.identity_bindings
@@ -1629,14 +1744,8 @@ class ProviderCandidate:
                 )
             )
             or any(
-                (
-                    value.kind in edition_only
-                    and value.scope is not ClaimScope.EDITION
-                )
-                or (
-                    value.kind in work_only
-                    and value.scope is not ClaimScope.WORK
-                )
+                (value.kind in edition_only and value.scope is not ClaimScope.EDITION)
+                or (value.kind in work_only and value.scope is not ClaimScope.WORK)
                 or (
                     value.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
                     and value.value != self.work_identity
@@ -1659,11 +1768,7 @@ class ProviderCandidate:
                         value.kind.value,
                         value.value,
                         value.role or "",
-                        (
-                            ""
-                            if value.date_event is None
-                            else value.date_event.value
-                        ),
+                        ("" if value.date_event is None else value.date_event.value),
                         (
                             ""
                             if value.date_precision is None
@@ -1688,9 +1793,7 @@ class ProviderCandidate:
             "claims": [value.to_data() for value in self.claims],
             "evidence": [value.to_data() for value in self.evidence],
             "identity": self.identity,
-            "identity_bindings": [
-                value.to_data() for value in self.identity_bindings
-            ],
+            "identity_bindings": [value.to_data() for value in self.identity_bindings],
             "work_identity": self.work_identity,
         }
 
@@ -1751,7 +1854,9 @@ class ProviderLaneObservation:
             raise ReportValueError("provider work lane is invalid")
         if (
             type(self.candidates) is not tuple
-            or any(type(value) is not ProviderLaneCandidate for value in self.candidates)
+            or any(
+                type(value) is not ProviderLaneCandidate for value in self.candidates
+            )
             or tuple(value.reference for value in self.candidates)
             != tuple(sorted({value.reference for value in self.candidates}))
             or (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates)
@@ -1780,7 +1885,10 @@ class ProviderConvergence:
             type(self.lane_identities) is not tuple
             or len(self.lane_identities) < 2
             or tuple(sorted(set(self.lane_identities))) != self.lane_identities
-            or any(_LANE_IDENTITY.fullmatch(value) is None for value in self.lane_identities)
+            or any(
+                _LANE_IDENTITY.fullmatch(value) is None
+                for value in self.lane_identities
+            )
         ):
             raise ReportValueError("provider convergence is invalid")
 
@@ -1827,7 +1935,8 @@ class ProviderObservation:
         if (
             type(self.status) is not ProviderStatus
             or type(self.query_kind) is not ProviderQueryKind
-            or self.authority not in {
+            or self.authority
+            not in {
                 None,
                 "google_books",
                 "hardcover",
@@ -1846,16 +1955,26 @@ class ProviderObservation:
             for value in self.diagnostics
         ):
             raise ReportValueError("provider diagnostics are invalid")
-        if type(self.input_references) is not tuple or tuple(sorted(set(self.input_references))) != self.input_references or any(
-            _REFERENCE.fullmatch(value) is None or not value.startswith("local_")
-            for value in self.input_references
+        if (
+            type(self.input_references) is not tuple
+            or tuple(sorted(set(self.input_references))) != self.input_references
+            or any(
+                _REFERENCE.fullmatch(value) is None or not value.startswith("local_")
+                for value in self.input_references
+            )
         ):
             raise ReportValueError("provider input references are invalid")
-        if type(self.candidates) is not tuple or len(self.candidates) > MAX_CANDIDATES or any(type(value) is not ProviderCandidate for value in self.candidates):
+        if (
+            type(self.candidates) is not tuple
+            or len(self.candidates) > MAX_CANDIDATES
+            or any(type(value) is not ProviderCandidate for value in self.candidates)
+        ):
             raise ReportValueError("provider candidates are invalid")
         identities = tuple(value.identity for value in self.candidates)
         if identities != tuple(sorted(set(identities))):
-            raise ReportValueError("provider candidates are not in canonical identity order")
+            raise ReportValueError(
+                "provider candidates are not in canonical identity order"
+            )
         if (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates):
             raise ReportValueError("provider status and candidates disagree")
         if self.edition_enrichment_overflow is not None and (
@@ -1863,14 +1982,19 @@ class ProviderObservation:
             or self.status is not ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
             or self.candidates
             or self.convergence
-            or (self.lanes and len(
-                tuple(
-                    lane for lane in self.lanes
-                    if lane.kind is ProviderQueryKind.WORK
-                    and lane.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
-                    and not lane.candidates
+            or (
+                self.lanes
+                and len(
+                    tuple(
+                        lane
+                        for lane in self.lanes
+                        if lane.kind is ProviderQueryKind.WORK
+                        and lane.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+                        and not lane.candidates
+                    )
                 )
-            ) != 1)
+                != 1
+            )
             or any(lane.candidates for lane in self.lanes)
         ):
             raise ReportValueError("edition overflow witness is invalid")
@@ -1890,8 +2014,13 @@ class ProviderObservation:
             )
             for author in self.edition_enrichment_overflow.authors
         ):
-            raise ReportValueError("edition overflow witness references are inconsistent")
-        if self.status in {ProviderStatus.DISABLED, ProviderStatus.INSUFFICIENT_INPUT} and self.input_references:
+            raise ReportValueError(
+                "edition overflow witness references are inconsistent"
+            )
+        if (
+            self.status in {ProviderStatus.DISABLED, ProviderStatus.INSUFFICIENT_INPUT}
+            and self.input_references
+        ):
             raise ReportValueError("inactive provider cannot claim inputs")
         if any(
             claim.reference
@@ -1947,9 +2076,7 @@ class ProviderObservation:
             ):
                 raise ReportValueError("provider aggregate inputs are inconsistent")
         lane_references = tuple(
-            candidate.reference
-            for lane in self.lanes
-            for candidate in lane.candidates
+            candidate.reference for lane in self.lanes for candidate in lane.candidates
         )
         if len(set(lane_references)) != len(lane_references):
             raise ReportValueError("provider lane candidate references are duplicated")
@@ -2009,7 +2136,8 @@ class ProviderObservation:
             "request_accounting": self.request_accounting.to_data(),
             "lanes": [value.to_data() for value in self.lanes],
             "edition_enrichment_overflow": (
-                None if self.edition_enrichment_overflow is None
+                None
+                if self.edition_enrichment_overflow is None
                 else self.edition_enrichment_overflow.to_data()
             ),
         }
@@ -2019,10 +2147,7 @@ def _target_backed_work_lookup(
     target: TargetFacts,
     provider: ProviderObservation,
 ) -> bool:
-    if (
-        provider.query_kind is not ProviderQueryKind.WORK
-        or provider.input_references
-    ):
+    if provider.query_kind is not ProviderQueryKind.WORK or provider.input_references:
         return False
     fields = {field.destination: field for field in target.fields}
     title = fields[TargetDestination.TITLE]
@@ -2084,25 +2209,42 @@ class MetadataReport:
     comparison_version: str = COMPARISON_VERSION
 
     def __post_init__(self) -> None:
-        if _REPORT_ID.fullmatch(self.report_id) is None or type(self.target) is not TargetFacts or type(self.file) is not FileFacts:
+        if (
+            _REPORT_ID.fullmatch(self.report_id) is None
+            or type(self.target) is not TargetFacts
+            or type(self.file) is not FileFacts
+        ):
             raise ReportValueError("report identity or target is invalid")
         if self.schema_version != REPORT_SCHEMA:
             raise ReportValueError("report schema is unsupported")
         if self.comparison_version != COMPARISON_VERSION:
             raise ReportValueError("report comparison version is unsupported")
-        if type(self.local_claims) is not tuple or any(type(value) is not LocalClaim for value in self.local_claims):
+        if type(self.local_claims) is not tuple or any(
+            type(value) is not LocalClaim for value in self.local_claims
+        ):
             raise ReportValueError("local claims are invalid")
         references = tuple(value.reference for value in self.local_claims)
         if len(set(references)) != len(references):
             raise ReportValueError("local claim references are duplicated")
-        has_opening_candidate = any(value.basis == "opening_matter" for value in self.local_claims)
-        if self.local_status not in {"candidate", "no_candidate"} or (self.local_status == "candidate") != has_opening_candidate:
+        has_opening_candidate = any(
+            value.basis == "opening_matter" for value in self.local_claims
+        )
+        if (
+            self.local_status not in {"candidate", "no_candidate"}
+            or (self.local_status == "candidate") != has_opening_candidate
+        ):
             raise ReportValueError("local candidate status is invalid")
-        if type(self.local_reasons) is not tuple or not self.local_reasons or tuple(sorted(set(self.local_reasons))) != self.local_reasons:
+        if (
+            type(self.local_reasons) is not tuple
+            or not self.local_reasons
+            or tuple(sorted(set(self.local_reasons))) != self.local_reasons
+        ):
             raise ReportValueError("local reasons are invalid")
         for value in self.local_reasons:
             _name(value, "local reason")
-        if type(self.providers) is not tuple or any(type(value) is not ProviderObservation for value in self.providers):
+        if type(self.providers) is not tuple or any(
+            type(value) is not ProviderObservation for value in self.providers
+        ):
             raise ReportValueError("provider observations are invalid")
         names = tuple(value.provider for value in self.providers)
         if names != tuple(sorted(set(names))):
@@ -2129,8 +2271,9 @@ class MetadataReport:
                 or tuple(
                     normalize_title(author.value or "").casefold()
                     for author in witness.authors
-                # An AUTHORS target field only ever holds a tuple of strings.
-                ) != tuple(
+                    # An AUTHORS target field only ever holds a tuple of strings.
+                )
+                != tuple(
                     normalize_title(author).casefold()
                     for author in cast("tuple[str, ...]", authors)
                 )
@@ -2160,7 +2303,10 @@ class MetadataReport:
         except CoverEvidenceError as error:
             raise ReportValueError("cover evidence is invalid") from error
         known = set(references)
-        if any(not set(provider.input_references).issubset(known) for provider in self.providers):
+        if any(
+            not set(provider.input_references).issubset(known)
+            for provider in self.providers
+        ):
             raise ReportValueError("provider inputs do not reference local claims")
         if any(
             not set(lane.input_references).issubset(known)
@@ -2174,8 +2320,11 @@ class MetadataReport:
             for candidate in provider.candidates
             for claim in candidate.claims
         )
-        if len({claim.reference for claim in provider_claims}) != len(provider_claims) or any(
-            not {link.local_reference for link in claim.links}.issubset(known) for claim in provider_claims
+        if len({claim.reference for claim in provider_claims}) != len(
+            provider_claims
+        ) or any(
+            not {link.local_reference for link in claim.links}.issubset(known)
+            for claim in provider_claims
         ):
             raise ReportValueError("provider candidate claim references are invalid")
         if any(
@@ -2191,7 +2340,9 @@ class MetadataReport:
             for evidence in candidate.evidence
             for link in evidence.links
         ):
-            raise ReportValueError("provider evidence comparison references are invalid")
+            raise ReportValueError(
+                "provider evidence comparison references are invalid"
+            )
         expected: ProviderCandidate | str
         for provider in self.providers:
             for candidate in provider.candidates:
@@ -2204,9 +2355,7 @@ class MetadataReport:
                     ),
                 )
                 if candidate != expected:
-                    raise ReportValueError(
-                        "provider comparison links are inconsistent"
-                    )
+                    raise ReportValueError("provider comparison links are inconsistent")
         expected = f"report_{hashlib.sha256(canonical_json(self._identity_data()).encode('utf-8')).hexdigest()}"
         if self.report_id != expected:
             raise ReportValueError("report identity is inconsistent")
@@ -2226,7 +2375,11 @@ class MetadataReport:
         identifier_evidence: tuple[IdentifierEvidence, ...] | None = None,
         cover_sources: tuple[CoverSource, ...] = (),
     ) -> Self:
-        local_status = "candidate" if any(value.basis == "opening_matter" for value in local_claims) else "no_candidate"
+        local_status = (
+            "candidate"
+            if any(value.basis == "opening_matter" for value in local_claims)
+            else "no_candidate"
+        )
         providers = tuple(
             replace(
                 provider,
@@ -2244,12 +2397,44 @@ class MetadataReport:
             )
             for provider in providers
         )
-        results = field_results if field_results is not None else derive_field_results(local_claims)
-        identifiers = identifier_evidence if identifier_evidence is not None else derive_identifier_evidence(local_claims, providers)
-        data = _report_data("", target, file, local_claims, local_status, local_reasons, providers, results, identifiers, cover_sources)
+        results = (
+            field_results
+            if field_results is not None
+            else derive_field_results(local_claims)
+        )
+        identifiers = (
+            identifier_evidence
+            if identifier_evidence is not None
+            else derive_identifier_evidence(local_claims, providers)
+        )
+        data = _report_data(
+            "",
+            target,
+            file,
+            local_claims,
+            local_status,
+            local_reasons,
+            providers,
+            results,
+            identifiers,
+            cover_sources,
+        )
         data.pop("report_id")
-        identity = f"report_{hashlib.sha256(canonical_json(data).encode('utf-8')).hexdigest()}"
-        return cls(identity, target, file, local_claims, local_status, local_reasons, providers, results, identifiers, cover_sources)
+        identity = (
+            f"report_{hashlib.sha256(canonical_json(data).encode('utf-8')).hexdigest()}"
+        )
+        return cls(
+            identity,
+            target,
+            file,
+            local_claims,
+            local_status,
+            local_reasons,
+            providers,
+            results,
+            identifiers,
+            cover_sources,
+        )
 
     def _identity_data(self) -> dict[str, object]:
         value = self.to_data()
@@ -2257,7 +2442,18 @@ class MetadataReport:
         return value
 
     def to_data(self) -> dict[str, object]:
-        return _report_data(self.report_id, self.target, self.file, self.local_claims, self.local_status, self.local_reasons, self.providers, self.field_results, self.identifier_evidence, self.cover_sources)
+        return _report_data(
+            self.report_id,
+            self.target,
+            self.file,
+            self.local_claims,
+            self.local_status,
+            self.local_reasons,
+            self.providers,
+            self.field_results,
+            self.identifier_evidence,
+            self.cover_sources,
+        )
 
     def to_json(self) -> str:
         return canonical_json(self.to_data())
@@ -2270,7 +2466,11 @@ class MetadataReport:
             # ``UnicodeEncodeError``, and outside this block that escaped as
             # itself and made the declared ``ReportValueError`` contract a
             # half-truth callers could not narrow to.
-            if type(serialized) is not str or not serialized or len(serialized.encode("utf-8")) > MAX_REPORT_BYTES:
+            if (
+                type(serialized) is not str
+                or not serialized
+                or len(serialized.encode("utf-8")) > MAX_REPORT_BYTES
+            ):
                 raise ReportValueError("report document is invalid")
             source = json.loads(
                 serialized,
@@ -2280,19 +2480,33 @@ class MetadataReport:
             report = _report_from_data(source)
         except ReportValueError:
             raise
-        except (KeyError, TypeError, ValueError, UnicodeError, RecursionError, json.JSONDecodeError) as error:
+        except (
+            KeyError,
+            TypeError,
+            ValueError,
+            UnicodeError,
+            RecursionError,
+            json.JSONDecodeError,
+        ) as error:
             raise ReportValueError("report document is invalid") from error
         if report.to_json() != serialized:
             raise ReportValueError("report document is not canonical")
         return report
 
 
-def derive_field_results(local_claims: tuple[LocalClaim, ...]) -> tuple[FieldResult, ...]:
+def derive_field_results(
+    local_claims: tuple[LocalClaim, ...],
+) -> tuple[FieldResult, ...]:
     """Summarise observed field states without making claims a decision surface."""
     precedence = (
-        FieldState.MALFORMED, FieldState.OVERSIZED, FieldState.UNSUPPORTED,
-        FieldState.UNTYPED, FieldState.INAPPLICABLE, FieldState.VALID,
+        FieldState.MALFORMED,
+        FieldState.OVERSIZED,
+        FieldState.UNSUPPORTED,
+        FieldState.UNTYPED,
+        FieldState.INAPPLICABLE,
+        FieldState.VALID,
     )
+
     def source_state(kind: ClaimKind, source: FieldSource) -> FieldState:
         if source is FieldSource.TARGET_METADATA and kind is not ClaimKind.TITLE:
             return FieldState.UNSUPPORTED
@@ -2304,7 +2518,11 @@ def derive_field_results(local_claims: tuple[LocalClaim, ...]) -> tuple[FieldRes
                 if any(
                     claim.kind is kind
                     and claim.state is state
-                    and ((claim.basis == basis) if basis is not None else claim.basis != "target_metadata")
+                    and (
+                        (claim.basis == basis)
+                        if basis is not None
+                        else claim.basis != "target_metadata"
+                    )
                     for claim in local_claims
                 )
             ),
@@ -2314,8 +2532,21 @@ def derive_field_results(local_claims: tuple[LocalClaim, ...]) -> tuple[FieldRes
     return tuple(
         FieldResult(
             kind,
-            next((state for state in precedence if any(claim.kind is kind and claim.state is state for claim in local_claims)), FieldState.ABSENT),
-            tuple(FieldSourceResult(source, source_state(kind, source)) for source in FieldSource),
+            next(
+                (
+                    state
+                    for state in precedence
+                    if any(
+                        claim.kind is kind and claim.state is state
+                        for claim in local_claims
+                    )
+                ),
+                FieldState.ABSENT,
+            ),
+            tuple(
+                FieldSourceResult(source, source_state(kind, source))
+                for source in FieldSource
+            ),
         )
         for kind in ClaimKind
     )
@@ -2334,9 +2565,7 @@ def derive_identifier_evidence(
     providers: tuple[ProviderObservation, ...],
 ) -> tuple[IdentifierEvidence, ...]:
     """Classify every ISBN claim without discarding its original evidence."""
-    local_isbns = tuple(
-        claim for claim in local_claims if claim.kind is ClaimKind.ISBN
-    )
+    local_isbns = tuple(claim for claim in local_claims if claim.kind is ClaimKind.ISBN)
     provider_isbns = tuple(
         (provider.provider, candidate, claim)
         for provider in providers
@@ -2369,20 +2598,14 @@ def derive_identifier_evidence(
     local_acceptance: dict[str, IdentifierEvidenceBasis] = {}
     for family, claims in family_local_claims.items():
         for claim in claims:
-            if (
-                claim.applicability == "ebook"
-                and claim.applicability_basis == "ebook"
-            ):
+            if claim.applicability == "ebook" and claim.applicability_basis == "ebook":
                 local_acceptance[claim.reference] = (
                     IdentifierEvidenceBasis.EXPLICIT_EBOOK
                 )
-        if (
-            family_sources[family] >= {"package_metadata", "opening_matter"}
-            and all(
-                claim.applicability == "unknown"
-                and claim.applicability_basis == "unlabelled"
-                for claim in claims
-            )
+        if family_sources[family] >= {"package_metadata", "opening_matter"} and all(
+            claim.applicability == "unknown"
+            and claim.applicability_basis == "unlabelled"
+            for claim in claims
         ):
             for claim in claims:
                 local_acceptance[claim.reference] = (
@@ -2391,30 +2614,24 @@ def derive_identifier_evidence(
 
     accepted_local_references = {
         family: [
-            claim.reference
-            for claim in claims
-            if claim.reference in local_acceptance
+            claim.reference for claim in claims if claim.reference in local_acceptance
         ]
         for family, claims in family_local_claims.items()
     }
     accepted_local_families = {
-        family
-        for family, references in accepted_local_references.items()
-        if references
+        family for family, references in accepted_local_references.items() if references
     }
 
-    accepted_family_works: dict[
-        tuple[str, str], dict[str, list[str]]
-    ] = {}
+    accepted_family_works: dict[tuple[str, str], dict[str, list[str]]] = {}
     for provider, candidate, claim in provider_isbns:
         family = provider_families.get(claim.reference)
         if (
             family in accepted_local_families
             and candidate.work_identity != "unresolved"
         ):
-            accepted_family_works.setdefault(
-                (provider, family), {}
-            ).setdefault(candidate.work_identity, []).append(claim.reference)
+            accepted_family_works.setdefault((provider, family), {}).setdefault(
+                candidate.work_identity, []
+            ).append(claim.reference)
 
     accepted_works: dict[str, set[str]] = {}
     provider_work_anchor_references: dict[tuple[str, str], list[str]] = {}
@@ -2427,7 +2644,9 @@ def derive_identifier_evidence(
             (provider, work_identity), []
         ).extend(references)
 
-    provider_by_family: dict[str, list[tuple[str, ProviderCandidate, ProviderClaim]]] = {}
+    provider_by_family: dict[
+        str, list[tuple[str, ProviderCandidate, ProviderClaim]]
+    ] = {}
     for provider, candidate, claim in provider_isbns:
         family = provider_families.get(claim.reference)
         if family is not None:
@@ -2625,9 +2844,7 @@ def _provider_reference_data(
         "date_event": None if date_event is None else date_event.value,
         "date_precision": None if date_precision is None else date_precision.value,
         "date_lexical": date_lexical,
-        "date_confidence": (
-            None if date_confidence is None else date_confidence.value
-        ),
+        "date_confidence": (None if date_confidence is None else date_confidence.value),
     }
 
 
@@ -2639,16 +2856,26 @@ def claim_scope(
         raise ReportValueError("claim kind is invalid")
     if date_event is not None and type(date_event) is not DateEvent:
         raise ReportValueError("date event is invalid")
-    if (
-        kind is ClaimKind.DATE_EVENT
-        and date_event
-        in {
-            DateEvent.WORK_FIRST_PUBLICATION,
-            DateEvent.CREATION,
-        }
-    ):
+    if kind is ClaimKind.DATE_EVENT and date_event in {
+        DateEvent.WORK_FIRST_PUBLICATION,
+        DateEvent.CREATION,
+    }:
         return ClaimScope.WORK
-    return ClaimScope.EDITION if kind in {ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLICATION_DATE, ClaimKind.DATE_EVENT, ClaimKind.CONTEXTUAL_CREDIT, ClaimKind.PUBLISHER, ClaimKind.IMPRINT, ClaimKind.LANGUAGE} else ClaimScope.WORK
+    return (
+        ClaimScope.EDITION
+        if kind
+        in {
+            ClaimKind.ISBN,
+            ClaimKind.ASIN,
+            ClaimKind.PUBLICATION_DATE,
+            ClaimKind.DATE_EVENT,
+            ClaimKind.CONTEXTUAL_CREDIT,
+            ClaimKind.PUBLISHER,
+            ClaimKind.IMPRINT,
+            ClaimKind.LANGUAGE,
+        }
+        else ClaimScope.WORK
+    )
 
 
 def publication_date_relation(
@@ -2695,9 +2922,7 @@ def publication_date_relation(
     return PublicationDateRelation.FINER_CONFLICT, shared
 
 
-def _date_components(
-    value: str, precision: DatePrecision
-) -> tuple[str, ...]:
+def _date_components(value: str, precision: DatePrecision) -> tuple[str, ...]:
     normalized, actual = normalize_date_value(value)
     if actual is not precision:
         raise ReportValueError("date precision is inconsistent")
@@ -2756,9 +2981,7 @@ def _publication_date_links(
             or claim.canonical is None
             or type(claim.date_event) is not DateEvent
             or type(claim.date_precision) is not DatePrecision
-            or not publication_date_is_voting(
-                claim.observed, claim.date_precision
-            )
+            or not publication_date_is_voting(claim.observed, claim.date_precision)
         ):
             continue
         relation, shared = publication_date_relation(
@@ -2772,8 +2995,7 @@ def _publication_date_links(
         )
         links.append(_date_comparison_link(claim.reference, relation, shared))
     if not links and (
-        event is not DateEvent.MANIFESTATION_PUBLICATION
-        or not manifestation_compatible
+        event is not DateEvent.MANIFESTATION_PUBLICATION or not manifestation_compatible
     ):
         relation = (
             PublicationDateRelation.EVENT_INCOMPATIBLE
@@ -2803,21 +3025,20 @@ def _publication_date_links(
             )
         elif (
             allow_unbound_manifestation_link
-            and relation
-            is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+            and relation is PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
         ):
             links.append(_date_comparison_link(None, relation, None))
     return tuple(
         sorted(
             links,
-            key=lambda link: _comparison_reference_sort_key(
-                link.local_reference
-            ),
+            key=lambda link: _comparison_reference_sort_key(link.local_reference),
         )
     )
 
 
-def comparison_links(provider: ProviderClaim, local: tuple[LocalClaim, ...]) -> tuple[ComparisonLink, ...]:
+def comparison_links(
+    provider: ProviderClaim, local: tuple[LocalClaim, ...]
+) -> tuple[ComparisonLink, ...]:
     """Compute one immutable comparison outcome for each same-kind local claim."""
     if provider.kind is ClaimKind.PUBLICATION_DATE:
         if (
@@ -2947,14 +3168,12 @@ def manifestation_publication_compatible(
     if any(
         evidence.kind is ProviderEvidenceKind.PHYSICAL_FORMAT
         and evidence.scope is ClaimScope.EDITION
-        and normalize_title(evidence.value).casefold()
-        in _PRINT_FORMAT_CONTRADICTIONS
+        and normalize_title(evidence.value).casefold() in _PRINT_FORMAT_CONTRADICTIONS
         for evidence in candidate.evidence
     ):
         return False
     if any(
-        evidence.kind
-        is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+        evidence.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
         for evidence in candidate.evidence
     ):
         return False
@@ -2996,9 +3215,7 @@ def finalize_candidate_comparisons(
             and type(claim.date_event) is DateEvent
             and type(claim.date_precision) is DatePrecision
             and type(claim.date_lexical) is str
-            and publication_date_is_voting(
-                claim.date_lexical, claim.date_precision
-            )
+            and publication_date_is_voting(claim.date_lexical, claim.date_precision)
         ):
             retained_claims.append(claim)
             continue
@@ -3023,9 +3240,7 @@ def finalize_candidate_comparisons(
             and type(value.date_precision) is DatePrecision
             and compatible
             and provider is not None
-            and publication_date_is_voting(
-                value.value, value.date_precision
-            )
+            and publication_date_is_voting(value.value, value.date_precision)
         ):
             retained_claims.append(
                 ProviderClaim.create(
@@ -3070,9 +3285,7 @@ def finalize_candidate_comparisons(
                     precision=value.date_precision,
                     local=(
                         local
-                        if publication_date_is_voting(
-                            value.value, value.date_precision
-                        )
+                        if publication_date_is_voting(value.value, value.date_precision)
                         else tuple(
                             claim
                             for claim in local
@@ -3085,14 +3298,12 @@ def finalize_candidate_comparisons(
                     ),
                     manifestation_compatible=(
                         compatible
-                        if value.kind
-                        is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                        if value.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
                         else True
                     ),
                     allow_unbound_manifestation_link=(
                         allow_unbound_manifestation_link
-                        and value.kind
-                        is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                        and value.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
                     ),
                 ),
             )
@@ -3102,9 +3313,7 @@ def finalize_candidate_comparisons(
 
     provisional = replace(
         candidate,
-        claims=tuple(
-            sorted(retained_claims, key=lambda value: value.raw_order)
-        ),
+        claims=tuple(sorted(retained_claims, key=lambda value: value.raw_order)),
         evidence=tuple(
             sorted(
                 promoted_evidence,
@@ -3113,11 +3322,7 @@ def finalize_candidate_comparisons(
                     value.kind.value,
                     value.value,
                     value.role or "",
-                    (
-                        ""
-                        if value.date_event is None
-                        else value.date_event.value
-                    ),
+                    ("" if value.date_event is None else value.date_event.value),
                     (
                         ""
                         if value.date_precision is None
@@ -3164,9 +3369,9 @@ def _creator_comparison_links(
     local_groups: dict[tuple[str, ClaimScope, str | None], list[LocalClaim]] = {}
     for claim in local:
         if claim.kind is ClaimKind.CREATOR:
-            local_groups.setdefault(
-                (claim.basis, claim.scope, claim.role), []
-            ).append(claim)
+            local_groups.setdefault((claim.basis, claim.scope, claim.role), []).append(
+                claim
+            )
     agreements: dict[str, ComparisonMethod] = {}
     if (
         provider.role == "author"
@@ -3209,9 +3414,7 @@ def _creator_comparison_links(
                     local_index, method = bound_match
                     agreements[group[local_index].reference] = method
             else:
-                methods = _creator_sequence_methods(
-                    provider_values, local_values
-                )
+                methods = _creator_sequence_methods(provider_values, local_values)
                 if methods:
                     provider_index = compatible_provider.index(provider)
                     agreements[group[provider_index].reference] = methods[
@@ -3248,12 +3451,8 @@ def _bound_creator_sequence_match(
     provider_claims: tuple[ProviderClaim, ...],
     local_values: tuple[str, ...],
 ) -> dict[str, tuple[int, ComparisonMethod]]:
-    claims_by_reference = {
-        claim.reference: claim for claim in provider_claims
-    }
-    bindings = complete_creator_identity_bindings(
-        candidate, provider_claims
-    )
+    claims_by_reference = {claim.reference: claim for claim in provider_claims}
+    bindings = complete_creator_identity_bindings(candidate, provider_claims)
     if bindings is None:
         return {}
     ordered_identities: list[str] = []
@@ -3310,8 +3509,7 @@ def _bound_creator_sequence_match(
             if claim.value is not None
         }
         if not any(
-            method is not ComparisonMethod.NONE
-            for method in alias_methods.values()
+            method is not ComparisonMethod.NONE for method in alias_methods.values()
         ):
             return {}
         matches.update(
@@ -3340,8 +3538,7 @@ def complete_creator_identity_bindings(
             (
                 binding
                 for binding in candidate.identity_bindings
-                if binding.scope is claims[0].scope
-                and binding.role == claims[0].role
+                if binding.scope is claims[0].scope and binding.role == claims[0].role
             ),
             key=lambda binding: (
                 binding.source_ordinal,
@@ -3350,11 +3547,9 @@ def complete_creator_identity_bindings(
             ),
         )
     )
-    if (
-        len(bindings) != len(claims)
-        or {binding.claim_reference for binding in bindings}
-        != {claim.reference for claim in claims}
-    ):
+    if len(bindings) != len(claims) or {
+        binding.claim_reference for binding in bindings
+    } != {claim.reference for claim in claims}:
         return None
     return bindings
 
@@ -3433,9 +3628,7 @@ def _comparison_method(
     return ComparisonMethod.NONE
 
 
-def _has_title_variant_marker(
-    value: str, typographic: str | None
-) -> bool:
+def _has_title_variant_marker(value: str, typographic: str | None) -> bool:
     return (
         _TITLE_VARIANT_MARKER.search(value) is not None
         or typographic is not None
@@ -3445,11 +3638,7 @@ def _has_title_variant_marker(
 
 def _comparison_text(value: str) -> str:
     normalized = unicodedata.normalize("NFC", value).casefold()
-    return " ".join(
-        part
-        for part in re.split(r"[\t\n\r\f\v ]+", normalized)
-        if part
-    )
+    return " ".join(part for part in re.split(r"[\t\n\r\f\v ]+", normalized) if part)
 
 
 def _typographic_text(value: str) -> str | None:
@@ -3483,9 +3672,7 @@ def creator_comparison_key(value: str) -> str:
 
 
 def _has_creator_duplicates(values: tuple[str, ...]) -> bool:
-    return len({creator_comparison_key(value) for value in values}) != len(
-        values
-    )
+    return len({creator_comparison_key(value) for value in values}) != len(values)
 
 
 def _comma_inverted(value: str) -> str | None:
@@ -3494,9 +3681,7 @@ def _comma_inverted(value: str) -> str | None:
     typographic = _typographic_text(value)
     if typographic is None or typographic.count(",") != 1:
         return None
-    family, given = (
-        _comparison_text(part) for part in typographic.split(",", 1)
-    )
+    family, given = (_comparison_text(part) for part in typographic.split(",", 1))
     if (
         not family
         or not given
@@ -3530,7 +3715,9 @@ def _personal_name_side(value: str) -> bool:
 
 def _comparison_value(kind: ClaimKind, value: str) -> str:
     if kind is ClaimKind.ISBN:
-        return "".join(character for character in value if character.isdigit() or character in "Xx").upper()
+        return "".join(
+            character for character in value if character.isdigit() or character in "Xx"
+        ).upper()
     if kind is ClaimKind.PUBLICATION_DATE:
         normalized, precision = normalize_date_value(value)
         if precision is DatePrecision.TIMESTAMP:
@@ -3547,7 +3734,18 @@ def _comparison_value(kind: ClaimKind, value: str) -> str:
     return normalize_title(value).casefold()
 
 
-def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_claims: tuple[LocalClaim, ...], local_status: str, local_reasons: tuple[str, ...], providers: tuple[ProviderObservation, ...], field_results: tuple[FieldResult, ...], identifier_evidence: tuple[IdentifierEvidence, ...], cover_sources: tuple[CoverSource, ...]) -> dict[str, object]:
+def _report_data(
+    report_id: str,
+    target: TargetFacts,
+    file: FileFacts,
+    local_claims: tuple[LocalClaim, ...],
+    local_status: str,
+    local_reasons: tuple[str, ...],
+    providers: tuple[ProviderObservation, ...],
+    field_results: tuple[FieldResult, ...],
+    identifier_evidence: tuple[IdentifierEvidence, ...],
+    cover_sources: tuple[CoverSource, ...],
+) -> dict[str, object]:
     return {
         "file": file.to_data(),
         "field_results": [value.to_data() for value in field_results],
@@ -3567,7 +3765,21 @@ def _report_data(report_id: str, target: TargetFacts, file: FileFacts, local_cla
 
 
 def _report_from_data(value: object) -> MetadataReport:
-    root = _object(value, {"comparison_version", "covers", "field_results", "file", "identifier_evidence", "local", "providers", "report_id", "schema_version", "target"})
+    root = _object(
+        value,
+        {
+            "comparison_version",
+            "covers",
+            "field_results",
+            "file",
+            "identifier_evidence",
+            "local",
+            "providers",
+            "report_id",
+            "schema_version",
+            "target",
+        },
+    )
     target = _object(
         root["target"],
         {
@@ -3577,12 +3789,19 @@ def _report_from_data(value: object) -> MetadataReport:
             "library",
         },
     )
-    file = _object(root["file"], {"content_digest", "format", "identity", "selected_index"})
+    file = _object(
+        root["file"], {"content_digest", "format", "identity", "selected_index"}
+    )
     local = _object(root["local"], {"claims", "reasons", "status"})
     claims = tuple(_local_claim_from_data(item) for item in _list(local["claims"]))
     providers = tuple(_provider_from_data(item) for item in _list(root["providers"]))
-    field_results = tuple(_field_result_from_data(item) for item in _list(root["field_results"]))
-    identifier_evidence = tuple(_identifier_evidence_from_data(item) for item in _list(root["identifier_evidence"]))
+    field_results = tuple(
+        _field_result_from_data(item) for item in _list(root["field_results"])
+    )
+    identifier_evidence = tuple(
+        _identifier_evidence_from_data(item)
+        for item in _list(root["identifier_evidence"])
+    )
     reasons = tuple(_strings(local["reasons"]))
     covers = tuple(_cover_source_from_data(item) for item in _list(root["covers"]))
     target_facts = TargetFacts(
@@ -3594,14 +3813,21 @@ def _report_from_data(value: object) -> MetadataReport:
     return MetadataReport(
         root["report_id"],
         target_facts,
-        FileFacts(file["selected_index"], file["identity"], file["content_digest"], file["format"]),
+        FileFacts(
+            file["selected_index"],
+            file["identity"],
+            file["content_digest"],
+            file["format"],
+        ),
         claims,
         local["status"],
         reasons,
         providers,
         field_results,
         identifier_evidence,
-        covers, root["schema_version"], root["comparison_version"],
+        covers,
+        root["schema_version"],
+        root["comparison_version"],
     )
 
 
@@ -3610,9 +3836,7 @@ def _target_field_from_data(value: object) -> TargetField:
     destination = TargetDestination(item["destination"])
     state = TargetFieldState(item["state"])
     raw = item["value"]
-    parsed: (
-        str | bool | tuple[str, ...] | tuple[TargetSeries, ...] | None
-    ) = None
+    parsed: str | bool | tuple[str, ...] | tuple[TargetSeries, ...] | None = None
     if state is TargetFieldState.VALUE:
         if destination is TargetDestination.SERIES:
             parsed = tuple(
@@ -3639,7 +3863,16 @@ def _target_field_from_data(value: object) -> TargetField:
 
 def _field_result_from_data(value: object) -> FieldResult:
     item = _object(value, {"kind", "state", "sources"})
-    return FieldResult(ClaimKind(item["kind"]), FieldState(item["state"]), tuple(FieldSourceResult(FieldSource(source["source"]), FieldState(source["state"])) for source in _list(item["sources"])))
+    return FieldResult(
+        ClaimKind(item["kind"]),
+        FieldState(item["state"]),
+        tuple(
+            FieldSourceResult(
+                FieldSource(source["source"]), FieldState(source["state"])
+            )
+            for source in _list(item["sources"])
+        ),
+    )
 
 
 def _identifier_evidence_from_data(value: object) -> IdentifierEvidence:
@@ -3680,7 +3913,20 @@ def _cover_source_from_data(value: object) -> CoverSource:
     )
     artifact = None
     if item["artifact"] is not None:
-        artifact = CoverArtifact(**_object(item["artifact"], {"artifact_id", "height", "media_type", "original_digest", "preview_digest", "preview_variant", "width"}))
+        artifact = CoverArtifact(
+            **_object(
+                item["artifact"],
+                {
+                    "artifact_id",
+                    "height",
+                    "media_type",
+                    "original_digest",
+                    "preview_digest",
+                    "preview_variant",
+                    "width",
+                },
+            )
+        )
     provenance = None
     if item["provenance"] is not None:
         source = _object(
@@ -3705,8 +3951,7 @@ def _cover_source_from_data(value: object) -> CoverSource:
                     context["value"],
                 )
                 for context in (
-                    _object(value, {"field", "value"})
-                    for value in source["context"]
+                    _object(value, {"field", "value"}) for value in source["context"]
                 )
             ),
             (
@@ -3726,9 +3971,61 @@ def _cover_source_from_data(value: object) -> CoverSource:
 
 
 def _local_claim_from_data(value: object) -> LocalClaim:
-    item = _object(value, {"applicability", "applicability_basis", "basis", "canonical", "checksum", "date_event", "date_precision", "excerpt", "kind", "observed", "reference", "state", "scope", "role", "rear_provenance", "occurrence"})
+    item = _object(
+        value,
+        {
+            "applicability",
+            "applicability_basis",
+            "basis",
+            "canonical",
+            "checksum",
+            "date_event",
+            "date_precision",
+            "excerpt",
+            "kind",
+            "observed",
+            "reference",
+            "state",
+            "scope",
+            "role",
+            "rear_provenance",
+            "occurrence",
+        },
+    )
     provenance = item["rear_provenance"]
-    return LocalClaim(item["reference"], ClaimKind(item["kind"]), item["observed"], item["canonical"], item["excerpt"], item["applicability"], item["basis"], item["checksum"], item["applicability_basis"], ClaimScope(item["scope"]), FieldState(item["state"]), item["role"], None if provenance is None else RearClaimProvenance(**_object(provenance, {"citation", "marker", "resource_identity", "spine_ordinal", "tail_slot"})), item["occurrence"], None if item["date_event"] is None else DateEvent(item["date_event"]), None if item["date_precision"] is None else DatePrecision(item["date_precision"]))
+    return LocalClaim(
+        item["reference"],
+        ClaimKind(item["kind"]),
+        item["observed"],
+        item["canonical"],
+        item["excerpt"],
+        item["applicability"],
+        item["basis"],
+        item["checksum"],
+        item["applicability_basis"],
+        ClaimScope(item["scope"]),
+        FieldState(item["state"]),
+        item["role"],
+        None
+        if provenance is None
+        else RearClaimProvenance(
+            **_object(
+                provenance,
+                {
+                    "citation",
+                    "marker",
+                    "resource_identity",
+                    "spine_ordinal",
+                    "tail_slot",
+                },
+            )
+        ),
+        item["occurrence"],
+        None if item["date_event"] is None else DateEvent(item["date_event"]),
+        None
+        if item["date_precision"] is None
+        else DatePrecision(item["date_precision"]),
+    )
 
 
 def _provider_from_data(value: object) -> ProviderObservation:
@@ -3749,7 +4046,9 @@ def _provider_from_data(value: object) -> ProviderObservation:
             "status",
         },
     )
-    candidates = tuple(_candidate_from_data(candidate) for candidate in _list(item["candidates"]))
+    candidates = tuple(
+        _candidate_from_data(candidate) for candidate in _list(item["candidates"])
+    )
     return ProviderObservation(
         item["provider"],
         ProviderStatus(item["status"]),
@@ -3771,7 +4070,9 @@ def _provider_from_data(value: object) -> ProviderObservation:
         (
             None
             if item["edition_enrichment_overflow"] is None
-            else _edition_enrichment_overflow_from_data(item["edition_enrichment_overflow"])
+            else _edition_enrichment_overflow_from_data(
+                item["edition_enrichment_overflow"]
+            )
         ),
     )
 
@@ -3779,17 +4080,27 @@ def _provider_from_data(value: object) -> ProviderObservation:
 def _edition_enrichment_overflow_from_data(value: object) -> EditionEnrichmentOverflow:
     item = _object(value, {"authors", "identity_bindings", "title", "work_identity"})
     return EditionEnrichmentOverflow(
-        item["work_identity"], item["title"],
+        item["work_identity"],
+        item["title"],
         tuple(_provider_claim_from_data(author) for author in _list(item["authors"])),
-        tuple(_provider_identity_binding_from_data(binding) for binding in _list(item["identity_bindings"])),
+        tuple(
+            _provider_identity_binding_from_data(binding)
+            for binding in _list(item["identity_bindings"])
+        ),
     )
 
 
 def _request_accounting(value: object) -> ProviderRequestAccounting:
-    item = _object(value, {
-        "initial_dispatches", "logical_requests", "replays", "retry_dispatches",
-        "undispatched_incomplete",
-    })
+    item = _object(
+        value,
+        {
+            "initial_dispatches",
+            "logical_requests",
+            "replays",
+            "retry_dispatches",
+            "undispatched_incomplete",
+        },
+    )
     try:
         return ProviderRequestAccounting(**item)
     except (TypeError, ReportValueError):
@@ -3822,9 +4133,7 @@ def _provider_lane_from_data(value: object) -> ProviderLaneObservation:
 
 
 def _provider_lane_candidate_from_data(value: object) -> ProviderLaneCandidate:
-    item = _object(
-        value, {"edition_identity", "reference", "work_identity"}
-    )
+    item = _object(value, {"edition_identity", "reference", "work_identity"})
     return ProviderLaneCandidate(
         item["reference"], item["edition_identity"], item["work_identity"]
     )
@@ -3852,7 +4161,10 @@ def _candidate_from_data(value: object) -> ProviderCandidate:
         item["identity"],
         item["work_identity"],
         tuple(_provider_claim_from_data(claim) for claim in _list(item["claims"])),
-        tuple(_provider_evidence_from_data(evidence) for evidence in _list(item["evidence"])),
+        tuple(
+            _provider_evidence_from_data(evidence)
+            for evidence in _list(item["evidence"])
+        ),
         tuple(
             _provider_identity_binding_from_data(binding)
             for binding in _list(item["identity_bindings"])
@@ -3861,7 +4173,24 @@ def _candidate_from_data(value: object) -> ProviderCandidate:
 
 
 def _provider_claim_from_data(value: object) -> ProviderClaim:
-    item = _object(value, {"applicability", "date_confidence", "date_event", "date_lexical", "date_precision", "kind", "links", "raw_order", "reference", "role", "scope", "state", "value"})
+    item = _object(
+        value,
+        {
+            "applicability",
+            "date_confidence",
+            "date_event",
+            "date_lexical",
+            "date_precision",
+            "kind",
+            "links",
+            "raw_order",
+            "reference",
+            "role",
+            "scope",
+            "state",
+            "value",
+        },
+    )
     links = tuple(_comparison_link_from_data(link) for link in _list(item["links"]))
     return ProviderClaim(
         item["reference"],
@@ -3874,7 +4203,9 @@ def _provider_claim_from_data(value: object) -> ProviderClaim:
         item["raw_order"],
         links,
         None if item["date_event"] is None else DateEvent(item["date_event"]),
-        None if item["date_precision"] is None else DatePrecision(item["date_precision"]),
+        None
+        if item["date_precision"] is None
+        else DatePrecision(item["date_precision"]),
         item["date_lexical"],
         (
             None
@@ -3907,14 +4238,31 @@ def _provider_identity_binding_from_data(
 
 
 def _provider_evidence_from_data(value: object) -> ProviderEvidence:
-    item = _object(value, {"date_confidence", "date_event", "date_normalized", "date_precision", "kind", "links", "role", "scope", "source_ordinal", "taxonomy_type", "value"})
+    item = _object(
+        value,
+        {
+            "date_confidence",
+            "date_event",
+            "date_normalized",
+            "date_precision",
+            "kind",
+            "links",
+            "role",
+            "scope",
+            "source_ordinal",
+            "taxonomy_type",
+            "value",
+        },
+    )
     return ProviderEvidence(
         ProviderEvidenceKind(item["kind"]),
         item["value"],
         ClaimScope(item["scope"]),
         item["role"],
         None if item["date_event"] is None else DateEvent(item["date_event"]),
-        None if item["date_precision"] is None else DatePrecision(item["date_precision"]),
+        None
+        if item["date_precision"] is None
+        else DatePrecision(item["date_precision"]),
         item["date_normalized"],
         (
             None
@@ -3993,7 +4341,16 @@ def _name(value: object, label: str) -> None:
 
 
 def _text(value: object, label: str, maximum: int) -> None:
-    if type(value) is not str or not value or len(value) > maximum or value.strip() != value or "\x00" in value or any(unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value):
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > maximum
+        or value.strip() != value
+        or "\x00" in value
+        or any(
+            unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value
+        )
+    ):
         raise ReportValueError(f"{label} is invalid")
 
 
@@ -4013,31 +4370,92 @@ def _sentinel_state(value: str) -> FieldState | None:
 
 
 def _valid_isbn(value: str, checksum: str) -> bool:
-    if checksum == "valid_isbn_13" and len(value) == 13 and value.isascii() and value.isdigit():
-        expected = (10 - sum((1 if index % 2 == 0 else 3) * int(character) for index, character in enumerate(value[:12])) % 10) % 10
+    if (
+        checksum == "valid_isbn_13"
+        and len(value) == 13
+        and value.isascii()
+        and value.isdigit()
+    ):
+        expected = (
+            10
+            - sum(
+                (1 if index % 2 == 0 else 3) * int(character)
+                for index, character in enumerate(value[:12])
+            )
+            % 10
+        ) % 10
         return int(value[-1]) == expected
-    if checksum == "valid_isbn_10" and len(value) == 10 and value[:9].isascii() and value[:9].isdigit() and (value[-1].isascii() and value[-1].isdigit() or value[-1] == "X"):
-        return sum((10 - index) * (10 if character == "X" else int(character)) for index, character in enumerate(value)) % 11 == 0
+    if (
+        checksum == "valid_isbn_10"
+        and len(value) == 10
+        and value[:9].isascii()
+        and value[:9].isdigit()
+        and (value[-1].isascii() and value[-1].isdigit() or value[-1] == "X")
+    ):
+        return (
+            sum(
+                (10 - index) * (10 if character == "X" else int(character))
+                for index, character in enumerate(value)
+            )
+            % 11
+            == 0
+        )
     return False
 
 
 __all__ = [
-    "ClaimKind", "ClaimScope", "COMPARISON_VERSION", "Comparison", "ComparisonLink", "ComparisonMethod", "EditionEnrichmentOverflow", "FieldResult", "FieldState", "FileFacts", "LocalClaim", "MAX_CANDIDATES",
-    "IdentifierEvidence", "IdentifierEvidenceBasis", "IdentifierRelation",
-    "MAX_REPORT_BYTES", "MetadataReport", "ProviderCandidate", "ProviderClaim",
-    "ProviderEvidence", "ProviderEvidenceKind", "ProviderIdentityBinding", "DateLinkConfidence", "PublicationDateRelation",
-    "ProviderConvergence", "ProviderLaneCandidate", "ProviderLaneObservation",
-    "ProviderObservation", "ProviderQueryKind", "ProviderStatus",
-    "REPORT_SCHEMA", "ReportValueError",
-    "TargetDestination", "TargetFacts", "TargetField", "TargetFieldState",
-    "TargetSeries", "canonical_json", "claim_scope", "comparison_links",
+    "ClaimKind",
+    "ClaimScope",
+    "COMPARISON_VERSION",
+    "Comparison",
+    "ComparisonLink",
+    "ComparisonMethod",
+    "EditionEnrichmentOverflow",
+    "FieldResult",
+    "FieldState",
+    "FileFacts",
+    "LocalClaim",
+    "MAX_CANDIDATES",
+    "IdentifierEvidence",
+    "IdentifierEvidenceBasis",
+    "IdentifierRelation",
+    "MAX_REPORT_BYTES",
+    "MetadataReport",
+    "ProviderCandidate",
+    "ProviderClaim",
+    "ProviderEvidence",
+    "ProviderEvidenceKind",
+    "ProviderIdentityBinding",
+    "DateLinkConfidence",
+    "PublicationDateRelation",
+    "ProviderConvergence",
+    "ProviderLaneCandidate",
+    "ProviderLaneObservation",
+    "ProviderObservation",
+    "ProviderQueryKind",
+    "ProviderStatus",
+    "REPORT_SCHEMA",
+    "ReportValueError",
+    "TargetDestination",
+    "TargetFacts",
+    "TargetField",
+    "TargetFieldState",
+    "TargetSeries",
+    "canonical_json",
+    "claim_scope",
+    "comparison_links",
     "complete_creator_identity_bindings",
     "creator_comparison_key",
     "finalize_candidate_comparisons",
     "manifestation_publication_compatible",
     "publication_date_relation",
     "default_target_fields",
-    "derive_identifier_evidence", "isbn_family", "normalize_date_value", "normalize_title", "publication_date_is_voting",
-    "provider_lane_candidate_reference", "stable_reference",
+    "derive_identifier_evidence",
+    "isbn_family",
+    "normalize_date_value",
+    "normalize_title",
+    "publication_date_is_voting",
+    "provider_lane_candidate_reference",
+    "stable_reference",
     "validate_observed_title",
 ]

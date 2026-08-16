@@ -41,10 +41,19 @@ def _port(value: str) -> int:
 
 def _read_profile(path: Path) -> bytes:
     """Read one bounded regular profile file without following links."""
-    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0))
+    descriptor = os.open(
+        path,
+        os.O_RDONLY
+        | os.O_NONBLOCK
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
     try:
         information = os.fstat(descriptor)
-        if not stat.S_ISREG(information.st_mode) or not 1 <= information.st_size <= _MAX_PROFILE_BYTES:
+        if (
+            not stat.S_ISREG(information.st_mode)
+            or not 1 <= information.st_size <= _MAX_PROFILE_BYTES
+        ):
             raise ValueError("profile is invalid")
         payload = os.read(descriptor, information.st_size + 1)
         if len(payload) != information.st_size:
@@ -55,16 +64,24 @@ def _read_profile(path: Path) -> bytes:
 
 
 def _parser() -> _Parser:
-    parser = _Parser(prog="mechanical-librarian", description="Mechanical Librarian runtime")
+    parser = _Parser(
+        prog="mechanical-librarian", description="Mechanical Librarian runtime"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
-    review_serve = commands.add_parser("review-serve", help="serve the authenticated owner review interface")
+    review_serve = commands.add_parser(
+        "review-serve", help="serve the authenticated owner review interface"
+    )
     review_serve.add_argument("--config", required=True, metavar="PATH", type=Path)
     review_serve.add_argument("--database", required=True, metavar="PATH", type=Path)
     review_serve.add_argument("--catalogue", required=True, metavar="PATH", type=Path)
     review_serve.add_argument("--artifacts", required=True, metavar="PATH", type=Path)
-    review_serve.add_argument("--host", choices=("127.0.0.1", "::1", "0.0.0.0", "::"), default="127.0.0.1")
+    review_serve.add_argument(
+        "--host", choices=("127.0.0.1", "::1", "0.0.0.0", "::"), default="127.0.0.1"
+    )
     review_serve.add_argument("--port", type=_port, default=8080)
-    preview = commands.add_parser("policy-preview", help="preview one canonical metadata policy without mutation")
+    preview = commands.add_parser(
+        "policy-preview", help="preview one canonical metadata policy without mutation"
+    )
     preview.add_argument("--config", required=True, metavar="PATH", type=Path)
     preview.add_argument("--database", required=True, metavar="PATH", type=Path)
     preview.add_argument("--profile", required=True, metavar="PATH", type=Path)
@@ -85,7 +102,9 @@ def _parser() -> _Parser:
     )
     activity.add_argument("--config", required=True, metavar="PATH", type=Path)
     activity.add_argument("--database", required=True, metavar="PATH", type=Path)
-    recovery = commands.add_parser("provider-recovery", help="run one durable provider recovery claim")
+    recovery = commands.add_parser(
+        "provider-recovery", help="run one durable provider recovery claim"
+    )
     recovery.add_argument("--config", required=True, metavar="PATH", type=Path)
     recovery.add_argument("--database", required=True, metavar="PATH", type=Path)
     recovery.add_argument("--catalogue", required=True, metavar="PATH", type=Path)
@@ -93,12 +112,17 @@ def _parser() -> _Parser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None, *, review_serve_runner: ReviewServeRunner | None = None,
-         policy_preview_runner: PolicyPreviewRunner | None = None,
-         cover_review_runner: CoverReviewRunner | None = None,
-         review_activity_runner: ReviewActivityRunner | None = None,
-         provider_recovery_runner: ProviderRecoveryRunner | None = None,
-         stdout: TextIO | None = None, stderr: TextIO | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    review_serve_runner: ReviewServeRunner | None = None,
+    policy_preview_runner: PolicyPreviewRunner | None = None,
+    cover_review_runner: CoverReviewRunner | None = None,
+    review_activity_runner: ReviewActivityRunner | None = None,
+    provider_recovery_runner: ProviderRecoveryRunner | None = None,
+    stdout: TextIO | None = None,
+    stderr: TextIO | None = None,
+) -> int:
     """Run the closed installed operations without exposing workbench tools."""
     output = sys.stdout if stdout is None else stdout
     errors = sys.stderr if stderr is None else stderr
@@ -125,7 +149,12 @@ def main(argv: Sequence[str] | None = None, *, review_serve_runner: ReviewServeR
         if arguments.command == "provider-recovery":
             if provider_recovery_runner is None:
                 raise RuntimeError("runtime composition unavailable")
-            provider_recovery_runner(arguments.config, arguments.database, arguments.catalogue, arguments.artifacts)
+            provider_recovery_runner(
+                arguments.config,
+                arguments.database,
+                arguments.catalogue,
+                arguments.artifacts,
+            )
             return 0
         if arguments.command == "cover-review":
             if cover_review_runner is None:
@@ -134,7 +163,8 @@ def main(argv: Sequence[str] | None = None, *, review_serve_runner: ReviewServeR
                 (arguments.action == "select") != (arguments.artifact is not None)
                 or (arguments.action in {"show", "history"})
                 != (arguments.idempotency_key is None)
-                or arguments.action not in {"show", "history"} and not (
+                or arguments.action not in {"show", "history"}
+                and not (
                     isinstance(arguments.idempotency_key, str)
                     and 16 <= len(arguments.idempotency_key.encode("utf-8")) <= 128
                 )
@@ -162,15 +192,32 @@ def main(argv: Sequence[str] | None = None, *, review_serve_runner: ReviewServeR
         if arguments.command == "policy-preview":
             if policy_preview_runner is None:
                 raise RuntimeError("runtime composition unavailable")
-            value = json.loads(_read_profile(arguments.profile).decode("utf-8", "strict"))
+            value = json.loads(
+                _read_profile(arguments.profile).decode("utf-8", "strict")
+            )
             if type(value) is not dict:
                 raise ValueError
             MetadataPolicyProfile.from_data(value)
-            output.write(json.dumps(policy_preview_runner(arguments.config, arguments.database, value), ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n")
+            output.write(
+                json.dumps(
+                    policy_preview_runner(arguments.config, arguments.database, value),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
             return 0
         if review_serve_runner is None:
             raise RuntimeError("runtime composition unavailable")
-        review_serve_runner(arguments.config, arguments.database, arguments.catalogue, arguments.artifacts, arguments.host, arguments.port)
+        review_serve_runner(
+            arguments.config,
+            arguments.database,
+            arguments.catalogue,
+            arguments.artifacts,
+            arguments.host,
+            arguments.port,
+        )
     except ConfigurationError:
         errors.write("Review server failed: configuration unavailable.\n")
         return 3

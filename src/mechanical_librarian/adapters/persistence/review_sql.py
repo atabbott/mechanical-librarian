@@ -51,9 +51,13 @@ _AUTOMATIC_SAFETY_ATTENTION_SQL = (
 )
 _REVIEW_FIELD_ATTENTION_SQL = (
     "(json_extract(result.value,'$.outcome')='unresolved_choice' "
-    "OR " + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
-    + " OR " + _AUTOMATIC_SAFETY_ATTENTION_SQL
-    + " OR " + _SHADOW_ABSTENTION_SQL + ") AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
+    "OR "
+    + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
+    + " OR "
+    + _AUTOMATIC_SAFETY_ATTENTION_SQL
+    + " OR "
+    + _SHADOW_ABSTENTION_SQL
+    + ") AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
     "AND decision.destination=json_extract(result.value,'$.destination')) "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "

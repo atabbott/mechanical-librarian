@@ -93,40 +93,70 @@ class AutomaticSafetyControls:
         try:
             return self._repository.automatic_safety_state()
         except Exception as error:
-            raise MetadataPolicyApplicationError("automatic safety is unavailable") from error
+            raise MetadataPolicyApplicationError(
+                "automatic safety is unavailable"
+            ) from error
 
     def pause(self, paused: bool, updated_at: int) -> AutomaticSafetyState:
         current = self.state()
-        result = AutomaticSafetyState(paused, current.global_suspension, current.category_suspensions)
+        result = AutomaticSafetyState(
+            paused, current.global_suspension, current.category_suspensions
+        )
         try:
             self._repository.set_automatic_safety_state(result, updated_at)
         except Exception as error:
-            raise MetadataPolicyApplicationError("automatic safety is unavailable") from error
+            raise MetadataPolicyApplicationError(
+                "automatic safety is unavailable"
+            ) from error
         return result
 
-    def suspend(self, reason: str, updated_at: int, category: str | None = None) -> AutomaticSafetyState:
-        if type(reason) is not str or not reason or (category is not None and (type(category) is not str or not category)):
+    def suspend(
+        self, reason: str, updated_at: int, category: str | None = None
+    ) -> AutomaticSafetyState:
+        if (
+            type(reason) is not str
+            or not reason
+            or (category is not None and (type(category) is not str or not category))
+        ):
             raise MetadataPolicyApplicationError("automatic safety is invalid")
         current = self.state()
         categories = dict(current.category_suspensions)
         if category is None:
-            result = AutomaticSafetyState(current.paused, reason, current.category_suspensions)
+            result = AutomaticSafetyState(
+                current.paused, reason, current.category_suspensions
+            )
         else:
             categories[category] = reason
-            result = AutomaticSafetyState(current.paused, current.global_suspension, tuple(sorted(categories.items())))
+            result = AutomaticSafetyState(
+                current.paused,
+                current.global_suspension,
+                tuple(sorted(categories.items())),
+            )
         try:
             self._repository.set_automatic_safety_state(result, updated_at)
         except Exception as error:
-            raise MetadataPolicyApplicationError("automatic safety is unavailable") from error
+            raise MetadataPolicyApplicationError(
+                "automatic safety is unavailable"
+            ) from error
         return result
 
-    def recover(self, updated_at: int, category: str | None = None) -> AutomaticSafetyState:
+    def recover(
+        self, updated_at: int, category: str | None = None
+    ) -> AutomaticSafetyState:
         current = self.state()
-        result = AutomaticSafetyState(current.paused, None if category is None else current.global_suspension, tuple(value for value in current.category_suspensions if value[0] != category))
+        result = AutomaticSafetyState(
+            current.paused,
+            None if category is None else current.global_suspension,
+            tuple(
+                value for value in current.category_suspensions if value[0] != category
+            ),
+        )
         try:
             self._repository.set_automatic_safety_state(result, updated_at)
         except Exception as error:
-            raise MetadataPolicyApplicationError("automatic safety is unavailable") from error
+            raise MetadataPolicyApplicationError(
+                "automatic safety is unavailable"
+            ) from error
         return result
 
 
@@ -167,9 +197,7 @@ def current_resolved_policy(
     )
     if configured is None:
         raise ReviewCaseError("configuration")
-    configured_resolution = resolve_policy(
-        profile, library, configured.policy_override
-    )
+    configured_resolution = resolve_policy(profile, library, configured.policy_override)
     if persisted is not None:
         if persisted != configured_resolution:
             raise ReviewCaseError("configuration")
@@ -248,7 +276,9 @@ class PolicyPreviewRepository(Protocol):
 
     def active_metadata_policy(self) -> str: ...
 
-    def metadata_policy_resolution_for_preview(self, library: str) -> ResolvedMetadataPolicy | None: ...
+    def metadata_policy_resolution_for_preview(
+        self, library: str
+    ) -> ResolvedMetadataPolicy | None: ...
 
     def metadata_policy_preview_baseline(
         self, libraries: tuple[str, ...]
@@ -270,13 +300,19 @@ class PolicyImpactRepository(PolicyPreviewRepository, Protocol):
 
     def metadata_policy_transition(self) -> PolicyTransition | None: ...
 
-    def retry_metadata_policy_transition(self, transition_id: str, retried_at: int) -> PolicyTransition: ...
+    def retry_metadata_policy_transition(
+        self, transition_id: str, retried_at: int
+    ) -> PolicyTransition: ...
 
-    def acknowledge_metadata_policy_transition(self, transition_id: str, acknowledged_at: int) -> PolicyTransition: ...
+    def acknowledge_metadata_policy_transition(
+        self, transition_id: str, acknowledged_at: int
+    ) -> PolicyTransition: ...
 
     def current_resolved_policy_id(self, library: str) -> str: ...
 
-    def current_resolved_metadata_policy(self, library: str) -> ResolvedMetadataPolicy | None: ...
+    def current_resolved_metadata_policy(
+        self, library: str
+    ) -> ResolvedMetadataPolicy | None: ...
 
     def shadow_posture(self) -> str: ...
 
@@ -286,8 +322,17 @@ class PolicyImpactRepository(PolicyPreviewRepository, Protocol):
     def list_shadow_outcomes(self, limit: int) -> tuple[tuple[str, int], ...]: ...
 
 
-def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], overrides: dict[str, dict[str, object]], repository: PolicyPreviewRepository) -> PolicyPreview:
-    if type(profile) is not MetadataPolicyProfile or type(libraries) is not tuple or libraries != tuple(sorted(set(libraries))):
+def preview_policy(
+    profile: MetadataPolicyProfile,
+    libraries: tuple[str, ...],
+    overrides: dict[str, dict[str, object]],
+    repository: PolicyPreviewRepository,
+) -> PolicyPreview:
+    if (
+        type(profile) is not MetadataPolicyProfile
+        or type(libraries) is not tuple
+        or libraries != tuple(sorted(set(libraries)))
+    ):
         raise MetadataPolicyApplicationError("policy preview is invalid")
     impacts: list[LibraryPolicyImpact] = []
     remaining_cases = MAX_RICH_PREVIEW_CASES
@@ -348,7 +393,12 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
                 if hasattr(repository, "current_policy_impact_pairs")
                 else (0, ())
             )
-            if type(pairs_total) is not int or pairs_total < 0 or type(pairs) is not tuple or len(pairs) > 20:
+            if (
+                type(pairs_total) is not int
+                or pairs_total < 0
+                or type(pairs) is not tuple
+                or len(pairs) > 20
+            ):
                 raise MetadataPolicyApplicationError("policy preview is unavailable")
             if hasattr(repository, "current_policy_impact_pairs"):
                 count = pairs_total
@@ -361,9 +411,7 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
                 or proposal.target_fingerprint != report.target.fingerprint
                 for report, proposal in pairs
             ):
-                raise MetadataPolicyApplicationError(
-                    "policy preview is unavailable"
-                )
+                raise MetadataPolicyApplicationError("policy preview is unavailable")
             cases = tuple(
                 compile_rich_metadata_preview(
                     resolved,
@@ -380,32 +428,47 @@ def preview_policy(profile: MetadataPolicyProfile, libraries: tuple[str, ...], o
             work_labels = tuple(
                 report.target.current_title or "Untitled" for report, _ in pairs
             )
-            impacts.append(LibraryPolicyImpact(
-                library=library,
-                affected_categories=categories,
-                current_unapplied_count=count,
-                resolved_policy_id=resolved.resolved_id,
-                cases=cases,
-                cases_total=pairs_total,
-                cases_truncated=pairs_total > len(pairs),
-                work_labels=work_labels,
-            ))
+            impacts.append(
+                LibraryPolicyImpact(
+                    library=library,
+                    affected_categories=categories,
+                    current_unapplied_count=count,
+                    resolved_policy_id=resolved.resolved_id,
+                    cases=cases,
+                    cases_total=pairs_total,
+                    cases_truncated=pairs_total > len(pairs),
+                    work_labels=work_labels,
+                )
+            )
     except MetadataPolicyApplicationError:
         raise
     except (MetadataPolicyError, Exception) as error:
         raise MetadataPolicyApplicationError("policy preview is unavailable") from error
-    return PolicyPreview(profile.policy_id, active_profile.policy_id, (), tuple(impacts))
+    return PolicyPreview(
+        profile.policy_id, active_profile.policy_id, (), tuple(impacts)
+    )
 
 
-def bind_proposal_policy(proposal_set_id: object, policy: ResolvedMetadataPolicy) -> ProposalPolicyBinding:
-    if type(proposal_set_id) is not str or not proposal_set_id.startswith("proposal_set_") or len(proposal_set_id) != 77 or type(policy) is not ResolvedMetadataPolicy:
+def bind_proposal_policy(
+    proposal_set_id: object, policy: ResolvedMetadataPolicy
+) -> ProposalPolicyBinding:
+    if (
+        type(proposal_set_id) is not str
+        or not proposal_set_id.startswith("proposal_set_")
+        or len(proposal_set_id) != 77
+        or type(policy) is not ResolvedMetadataPolicy
+    ):
         raise MetadataPolicyApplicationError("proposal policy binding is invalid")
     return ProposalPolicyBinding(proposal_set_id, policy.resolved_id)
 
 
 def require_named_libraries(libraries: tuple[str, ...]) -> tuple[str, ...]:
     """Accept only a sorted, unique, exact-`str` library tuple."""
-    if type(libraries) is not tuple or libraries != tuple(sorted(set(libraries))) or any(type(value) is not str for value in libraries):
+    if (
+        type(libraries) is not tuple
+        or libraries != tuple(sorted(set(libraries)))
+        or any(type(value) is not str for value in libraries)
+    ):
         raise MetadataPolicyApplicationError("policy notebook is invalid")
     return libraries
 
@@ -417,7 +480,9 @@ def rich_qualification(profile: MetadataPolicyProfile) -> tuple[dict[str, object
     return public_summary()
 
 
-def require_qualified_automatic(profile: MetadataPolicyProfile) -> MetadataPolicyProfile:
+def require_qualified_automatic(
+    profile: MetadataPolicyProfile,
+) -> MetadataPolicyProfile:
     """Allow Automatic intent only while it is separately qualified."""
     if type(profile) is not MetadataPolicyProfile:
         raise MetadataPolicyApplicationError("policy validation is invalid")
@@ -429,8 +494,7 @@ def require_qualified_automatic(profile: MetadataPolicyProfile) -> MetadataPolic
     rich_requested = {
         f"{field}:{option}"
         for field, option in profile.options
-        if field in F20_RICH_FIELDS
-        and dict(profile.destinations)[field] == "automatic"
+        if field in F20_RICH_FIELDS and dict(profile.destinations)[field] == "automatic"
     }
     if (
         requested and not requested.issubset(QUALIFIED_POLICY_OPTIONS)
@@ -447,7 +511,12 @@ class PolicyPreviewApplication:
     name.
     """
 
-    def __init__(self, repository: PolicyPreviewRepository, libraries: tuple[str, ...], overrides: dict[str, dict[str, object]]) -> None:
+    def __init__(
+        self,
+        repository: PolicyPreviewRepository,
+        libraries: tuple[str, ...],
+        overrides: dict[str, dict[str, object]],
+    ) -> None:
         self._repository = repository
         self._libraries = require_named_libraries(libraries)
         self._overrides = overrides
@@ -455,12 +524,16 @@ class PolicyPreviewApplication:
 
     rich_qualification = staticmethod(rich_qualification)
 
-    def validate_policy(self, name: object, options: object, destinations: object) -> MetadataPolicyProfile:
+    def validate_policy(
+        self, name: object, options: object, destinations: object
+    ) -> MetadataPolicyProfile:
         candidate = MetadataPolicyProfile.create(name, options, destinations)
         with self._gate:
             return require_qualified_automatic(candidate)
 
-    def preview_policy(self, name: object, options: object, destinations: object) -> tuple[MetadataPolicyProfile, PolicyPreview]:
+    def preview_policy(
+        self, name: object, options: object, destinations: object
+    ) -> tuple[MetadataPolicyProfile, PolicyPreview]:
         candidate = self.validate_policy(name, options, destinations)
         with self._gate:
             return candidate, preview_policy(
@@ -490,7 +563,12 @@ class PolicyNotebook:
     and the broad handler is the guard's intended destination.
     """
 
-    def __init__(self, repository: PolicyImpactRepository, libraries: tuple[str, ...], overrides: dict[str, dict[str, object]]) -> None:
+    def __init__(
+        self,
+        repository: PolicyImpactRepository,
+        libraries: tuple[str, ...],
+        overrides: dict[str, dict[str, object]],
+    ) -> None:
         self._repository = repository
         self._libraries = require_named_libraries(libraries)
         self._overrides = overrides
@@ -503,19 +581,25 @@ class PolicyNotebook:
                 json.loads(self._repository.active_metadata_policy())
             )
         except Exception as error:
-            raise MetadataPolicyApplicationError("active policy is unavailable") from error
+            raise MetadataPolicyApplicationError(
+                "active policy is unavailable"
+            ) from error
 
     rich_qualification = staticmethod(rich_qualification)
 
     def validate(self, profile: MetadataPolicyProfile) -> MetadataPolicyProfile:
         return require_qualified_automatic(profile)
 
-    def create(self, name: object, options: object, destinations: object) -> MetadataPolicyProfile:
+    def create(
+        self, name: object, options: object, destinations: object
+    ) -> MetadataPolicyProfile:
         try:
             profile = self.validate(
                 MetadataPolicyProfile.create(name, options, destinations)
             )
-            policy_id = self._repository.create_metadata_policy_draft(profile.canonical_json)
+            policy_id = self._repository.create_metadata_policy_draft(
+                profile.canonical_json
+            )
             if policy_id != profile.policy_id:
                 raise MetadataPolicyApplicationError("policy draft is unavailable")
             return profile
@@ -531,20 +615,26 @@ class PolicyNotebook:
                 raise MetadataPolicyApplicationError(
                     "policy automatic unqualified"
                 ) from error
-            raise MetadataPolicyApplicationError("policy draft is unavailable") from error
+            raise MetadataPolicyApplicationError(
+                "policy draft is unavailable"
+            ) from error
 
     def read(self, policy_id: object) -> MetadataPolicyProfile:
         if type(policy_id) is not str or not policy_id.startswith("policy_"):
             raise MetadataPolicyApplicationError("policy draft is unavailable")
         try:
-            profile = MetadataPolicyProfile.from_data(json.loads(self._repository.get_metadata_policy_draft(policy_id)))
+            profile = MetadataPolicyProfile.from_data(
+                json.loads(self._repository.get_metadata_policy_draft(policy_id))
+            )
             if profile.policy_id != policy_id:
                 raise MetadataPolicyApplicationError("policy draft is unavailable")
             return profile
         except MetadataPolicyApplicationError:
             raise
         except Exception as error:
-            raise MetadataPolicyApplicationError("policy draft is unavailable") from error
+            raise MetadataPolicyApplicationError(
+                "policy draft is unavailable"
+            ) from error
 
     def preview(self, profile: MetadataPolicyProfile) -> PolicyPreview:
         return preview_policy(
@@ -591,7 +681,9 @@ class PolicyNotebook:
             # in ``enter_preview``.
             raise
         except Exception as error:
-            raise MetadataPolicyApplicationError("automatic posture is unavailable") from error
+            raise MetadataPolicyApplicationError(
+                "automatic posture is unavailable"
+            ) from error
 
     def enter_preview(self, updated_at: object) -> dict[str, object]:
         if type(updated_at) is not int or updated_at < 0:
@@ -641,9 +733,7 @@ class PolicyNotebook:
             raise MetadataPolicyApplicationError("shadow sample is invalid")
         try:
             items: list[dict[str, object]] = []
-            for document, evaluated_at in self._repository.list_shadow_outcomes(
-                limit
-            ):
+            for document, evaluated_at in self._repository.list_shadow_outcomes(limit):
                 candidate = {
                     **ShadowOutcomeSet.from_json(document).to_data(),
                     "evaluated_at": evaluated_at,
@@ -709,7 +799,9 @@ class PolicyNotebook:
             requested = {
                 f"{category}:{dict(resolved.options)[category]}"
                 for _, _, document in resolutions
-                for resolved in (ResolvedMetadataPolicy.from_data(json.loads(document)),)
+                for resolved in (
+                    ResolvedMetadataPolicy.from_data(json.loads(document)),
+                )
                 for category, destination in resolved.destinations
                 if destination == "automatic"
             }
@@ -742,37 +834,77 @@ class PolicyNotebook:
             # included, is honestly reported as an activation that is
             # unavailable. Both branches chain the cause, so no failure loses
             # its origin.
-            raise MetadataPolicyApplicationError("policy activation is unavailable") from error
+            raise MetadataPolicyApplicationError(
+                "policy activation is unavailable"
+            ) from error
 
     def transition(self) -> PolicyTransition | None:
         try:
             return self._repository.metadata_policy_transition()
         except Exception as error:
-            raise MetadataPolicyApplicationError("policy transition is unavailable") from error
+            raise MetadataPolicyApplicationError(
+                "policy transition is unavailable"
+            ) from error
 
     def retry(self, transition_id: object, retried_at: object) -> PolicyTransition:
-        if type(transition_id) is not str or type(retried_at) is not int or retried_at < 0:
+        if (
+            type(transition_id) is not str
+            or type(retried_at) is not int
+            or retried_at < 0
+        ):
             raise MetadataPolicyApplicationError("policy transition is invalid")
         try:
-            return self._repository.retry_metadata_policy_transition(transition_id, retried_at)
+            return self._repository.retry_metadata_policy_transition(
+                transition_id, retried_at
+            )
         except PolicyContentionError as error:
             # Same seam as ``activate``, and staleness is the only condition it
             # signals here. Any other condition would be a contention this retry
             # cannot act on, so it stays unavailable rather than borrowing a
             # staleness it cannot demonstrate.
             if error.condition == "stale":
-                raise MetadataPolicyApplicationError("policy transition is stale") from error
-            raise MetadataPolicyApplicationError("policy transition is unavailable") from error
+                raise MetadataPolicyApplicationError(
+                    "policy transition is stale"
+                ) from error
+            raise MetadataPolicyApplicationError(
+                "policy transition is unavailable"
+            ) from error
         except Exception as error:
-            raise MetadataPolicyApplicationError("policy transition is unavailable") from error
+            raise MetadataPolicyApplicationError(
+                "policy transition is unavailable"
+            ) from error
 
-    def acknowledge(self, transition_id: object, acknowledged_at: object) -> PolicyTransition:
-        if type(transition_id) is not str or type(acknowledged_at) is not int or acknowledged_at < 0:
+    def acknowledge(
+        self, transition_id: object, acknowledged_at: object
+    ) -> PolicyTransition:
+        if (
+            type(transition_id) is not str
+            or type(acknowledged_at) is not int
+            or acknowledged_at < 0
+        ):
             raise MetadataPolicyApplicationError("policy transition is invalid")
         try:
-            return self._repository.acknowledge_metadata_policy_transition(transition_id, acknowledged_at)
+            return self._repository.acknowledge_metadata_policy_transition(
+                transition_id, acknowledged_at
+            )
         except Exception as error:
-            raise MetadataPolicyApplicationError("policy transition is unavailable") from error
+            raise MetadataPolicyApplicationError(
+                "policy transition is unavailable"
+            ) from error
 
 
-__all__ = ["LibraryPolicyImpact", "MAX_SHADOW_SAMPLE_RESPONSE_BYTES", "MetadataPolicyApplicationError", "PolicyActivation", "PolicyImpactRepository", "PolicyNotebook", "PolicyPreview", "PolicyPreviewApplication", "PolicyPreviewRepository", "PolicyTransition", "ProposalPolicyBinding", "bind_proposal_policy", "preview_policy"]
+__all__ = [
+    "LibraryPolicyImpact",
+    "MAX_SHADOW_SAMPLE_RESPONSE_BYTES",
+    "MetadataPolicyApplicationError",
+    "PolicyActivation",
+    "PolicyImpactRepository",
+    "PolicyNotebook",
+    "PolicyPreview",
+    "PolicyPreviewApplication",
+    "PolicyPreviewRepository",
+    "PolicyTransition",
+    "ProposalPolicyBinding",
+    "bind_proposal_policy",
+    "preview_policy",
+]

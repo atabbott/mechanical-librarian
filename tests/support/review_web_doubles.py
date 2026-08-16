@@ -122,7 +122,9 @@ class FakeReviewRepository:
             return MetadataPolicyProfile.builtin().canonical_json
         return self.policy_documents[self.active_policy_id]
 
-    def activate_metadata_policy(self, policy_id, expected_active_policy_id, resolutions, activated_at):
+    def activate_metadata_policy(
+        self, policy_id, expected_active_policy_id, resolutions, activated_at
+    ):
         if expected_active_policy_id != self.active_policy_id:
             # The real seam signals contention with a typed condition, and this
             # double only ever satisfied the old message search by accident of
@@ -133,8 +135,15 @@ class FakeReviewRepository:
         previous = self.active_policy_id
         self.active_policy_id = policy_id
         self.policy_transition = PolicyTransition(
-            "policy_transition_" + "a" * 64, previous, policy_id, 2,
-            "completed", 0, 0, 0, False,
+            "policy_transition_" + "a" * 64,
+            previous,
+            policy_id,
+            2,
+            "completed",
+            0,
+            0,
+            0,
+            False,
         )
         return self.policy_transition
 
@@ -147,14 +156,23 @@ class FakeReviewRepository:
     def acknowledge_metadata_policy_transition(self, transition_id, acknowledged_at):
         value = cast(PolicyTransition, self.policy_transition)
         self.policy_transition = PolicyTransition(
-            value.transition_id, value.from_policy_id, value.to_policy_id,
-            value.generation, value.state, value.completed, value.total,
-            value.failed, True,
+            value.transition_id,
+            value.from_policy_id,
+            value.to_policy_id,
+            value.generation,
+            value.state,
+            value.completed,
+            value.total,
+            value.failed,
+            True,
         )
         return self.policy_transition
 
     def current_resolved_policy_id(self, library):
-        return resolve_policy(MetadataPolicyProfile.from_data(json.loads(self.active_metadata_policy())), library).resolved_id
+        return resolve_policy(
+            MetadataPolicyProfile.from_data(json.loads(self.active_metadata_policy())),
+            library,
+        ).resolved_id
 
     def shadow_posture(self):
         return self.shadow_mode
@@ -167,17 +185,23 @@ class FakeReviewRepository:
         return self.shadow_outcomes[:limit]
 
     def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
-        self.failures = [value for value in self.failures if value >= now - window_seconds]
+        self.failures = [
+            value for value in self.failures if value >= now - window_seconds
+        ]
         permitted = len(self.failures) < maximum_failures
         if permitted:
             self.failures.append(now)
         return permitted
 
-    def create_review_session(self, session_digest: str, csrf_digest: str, created_at: int, expires_at: int) -> None:
+    def create_review_session(
+        self, session_digest: str, csrf_digest: str, created_at: int, expires_at: int
+    ) -> None:
         self.sessions[session_digest] = ("owner", csrf_digest, expires_at, None)
         self.failures.clear()
 
-    def authenticate_review_session(self, session_digest: str, now: int) -> tuple[str, str, int]:
+    def authenticate_review_session(
+        self, session_digest: str, now: int
+    ) -> tuple[str, str, int]:
         actor, csrf, expires, revoked = self.sessions[session_digest]
         if revoked is not None or expires <= now:
             raise RuntimeError
@@ -233,7 +257,9 @@ class FakeReviewRepository:
             sort_keys=True,
         )
 
-    def get_review_case_history(self, review_case_id: str, limit: int) -> tuple[dict[str, object], ...]:
+    def get_review_case_history(
+        self, review_case_id: str, limit: int
+    ) -> tuple[dict[str, object], ...]:
         return (
             {
                 "checkpoint": 1,
@@ -290,20 +316,14 @@ class FakeReviewRepository:
         )
 
     @staticmethod
-    def _field_attention(
-        case: ReviewCase, proposal: dict[str, object]
-    ) -> bool:
+    def _field_attention(case: ReviewCase, proposal: dict[str, object]) -> bool:
         result = proposal["result"]
         assert isinstance(result, dict)
-        return (
-            result["outcome"] == "unresolved_choice"
-            or (
-                proposal["destination"] in {"title", "subtitle", "series"}
-                and any(
-                    sibling["result"]["reasons"]
-                    == ["no_safe_bibliographic_combination"]
-                    for sibling in case.proposals
-                )
+        return result["outcome"] == "unresolved_choice" or (
+            proposal["destination"] in {"title", "subtitle", "series"}
+            and any(
+                sibling["result"]["reasons"] == ["no_safe_bibliographic_combination"]
+                for sibling in case.proposals
             )
         )
 
@@ -386,9 +406,7 @@ class FakeReviewRepository:
             for case, report in rows[offset : offset + limit]
         )
 
-    def count_current_review_cases(
-        self, search: str | None
-    ) -> tuple[int, int]:
+    def count_current_review_cases(self, search: str | None) -> tuple[int, int]:
         rows = self.list_current_review_case_documents(search, 100_000, 0, None)
         return len(rows), sum(
             case_document is not None
@@ -403,9 +421,7 @@ class FakeReviewRepository:
         offset: int,
         attention: bool | None,
     ) -> ReviewLibrarySnapshot:
-        rows = self.list_current_review_case_documents(
-            search, limit, offset, attention
-        )
+        rows = self.list_current_review_case_documents(search, limit, offset, attention)
         total, attention_total = self.count_current_review_cases(search)
         return ReviewLibrarySnapshot(
             # The fake deliberately emits the short five-element row that
@@ -439,16 +455,9 @@ class FakeReviewRepository:
                 case.to_json(),
                 report.to_json(),
                 cast(str, proposal["destination"]),
-                sum(
-                    self._field_attention(case, other)
-                    for other in case.proposals
-                ),
-                self.attention_dispositions.get(
-                    cast(str, proposal["destination"])
-                ),
-                self.attention_causes.get(
-                    cast(str, proposal["destination"])
-                ),
+                sum(self._field_attention(case, other) for other in case.proposals),
+                self.attention_dispositions.get(cast(str, proposal["destination"])),
+                self.attention_causes.get(cast(str, proposal["destination"])),
             )
             for case, report in self._searched(search)
             for proposal in case.proposals
@@ -553,25 +562,90 @@ class FakeActivityApplication(ContinuousGuardedApplication):
         return {
             "backup_ready": True,
             "configured_libraries": [
-                {"connection": "primary", "library": "fiction", "prepared": {"automatic": 1, "human": 1, "total": 2}},
-                {"connection": "primary", "library": "history", "prepared": {"automatic": 1, "human": 0, "total": 1}},
+                {
+                    "connection": "primary",
+                    "library": "fiction",
+                    "prepared": {"automatic": 1, "human": 1, "total": 2},
+                },
+                {
+                    "connection": "primary",
+                    "library": "history",
+                    "prepared": {"automatic": 1, "human": 0, "total": 1},
+                },
             ],
-            "consented_libraries": [{"connection": "primary", "library": library} for library in sorted(self.enabled_libraries)],
+            "consented_libraries": [
+                {"connection": "primary", "library": library}
+                for library in sorted(self.enabled_libraries)
+            ],
             "capabilities": [
-                {"connection": "primary", "library": "fiction", "state": "allowed",
-                 "destinations": [{"destination": "title", "state": "allowed",
-                                   "consented": "fiction" in self.enabled_libraries}]},
-                {"connection": "primary", "library": "history", "state": "allowed",
-                 "destinations": [{"destination": "title", "state": "allowed",
-                                   "consented": "history" in self.enabled_libraries}]},
+                {
+                    "connection": "primary",
+                    "library": "fiction",
+                    "state": "allowed",
+                    "destinations": [
+                        {
+                            "destination": "title",
+                            "state": "allowed",
+                            "consented": "fiction" in self.enabled_libraries,
+                        }
+                    ],
+                },
+                {
+                    "connection": "primary",
+                    "library": "history",
+                    "state": "allowed",
+                    "destinations": [
+                        {
+                            "destination": "title",
+                            "state": "allowed",
+                            "consented": "history" in self.enabled_libraries,
+                        }
+                    ],
+                },
             ],
-            "counts": {}, "enabled_libraries": [{"connection": "primary", "library": library} for library in sorted(self.enabled_libraries)],
-            "events": [{"destination": "title", "event_id": "event-1", "event_type": "metadata", "evidence": [{"label": "Recorded automatic decision", "value": "verified"}], "failure": None, "library": "fiction", "occurred_at": 1, "origin": "automatic_policy", "state": "verified", "work_id": "book-1"}], "example": {"after": "After", "before": "Before", "destination": "title", "library": "fiction", "work_id": "book-1"},
-            "last_failure": None, "paused": self.paused,
-            "ledger": {"event_type": query.get("event_type", "all"), "page": query.get("page", 1), "page_count": 1, "page_size": query.get("page_size", 25), "query": query.get("search"), "range_days": query.get("range_days", 30), "total": 1},
+            "counts": {},
+            "enabled_libraries": [
+                {"connection": "primary", "library": library}
+                for library in sorted(self.enabled_libraries)
+            ],
+            "events": [
+                {
+                    "destination": "title",
+                    "event_id": "event-1",
+                    "event_type": "metadata",
+                    "evidence": [
+                        {"label": "Recorded automatic decision", "value": "verified"}
+                    ],
+                    "failure": None,
+                    "library": "fiction",
+                    "occurred_at": 1,
+                    "origin": "automatic_policy",
+                    "state": "verified",
+                    "work_id": "book-1",
+                }
+            ],
+            "example": {
+                "after": "After",
+                "before": "Before",
+                "destination": "title",
+                "library": "fiction",
+                "work_id": "book-1",
+            },
+            "last_failure": None,
+            "paused": self.paused,
+            "ledger": {
+                "event_type": query.get("event_type", "all"),
+                "page": query.get("page", 1),
+                "page_count": 1,
+                "page_size": query.get("page_size", 25),
+                "query": query.get("search"),
+                "range_days": query.get("range_days", 30),
+                "total": 1,
+            },
             "current_waiting": None,
             "prepared": {"automatic": 1, "human": 1, "total": 2},
-            "schema_version": "continuous-field-activity-v2", "suspensions": [],
+            "schema_version": "continuous-field-activity-v2",
+            "suspensions": [],
         }
 
     def enable(self, grants):
@@ -656,9 +730,7 @@ def review_web_context(
     # so a test that advances the field is seen by the running application.
     context: ReviewWebContext[RepositoryT]
     client = TestClient(
-        create_transport_test_app(
-            repository, configuration, clock=lambda: context.now
-        ),
+        create_transport_test_app(repository, configuration, clock=lambda: context.now),
         base_url="https://review.test",
     )
     context = ReviewWebContext(

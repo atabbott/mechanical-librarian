@@ -57,7 +57,15 @@ _POLICY_CATEGORY_BY_DESTINATION = {
     "explicit": "explicit",
 }
 _DISPOSITIONS = frozenset(
-    {"abstention", "candidate", "conflict", "ignore", "keep_current", "manual", "unsupported"}
+    {
+        "abstention",
+        "candidate",
+        "conflict",
+        "ignore",
+        "keep_current",
+        "manual",
+        "unsupported",
+    }
 )
 _CONFLICT_REASONS = frozenset(
     {"ambiguous_eligible_actions", "bibliographic_combination_unresolved"}
@@ -159,7 +167,8 @@ class ShadowFieldOutcome:
                 expected_category is not None
                 and self.policy_option not in OPTION_CATALOGUE[expected_category]
             )
-            or self.policy_destination not in {"ask", "automatic", "ignore", "unsupported"}
+            or self.policy_destination
+            not in {"ask", "automatic", "ignore", "unsupported"}
             or self.disposition not in _DISPOSITIONS
             or self.disposition != expected_disposition
             or re.fullmatch(r"action_[0-9a-f]{64}", self.action_id) is None
@@ -167,7 +176,8 @@ class ShadowFieldOutcome:
                 self.candidate_id is not None
                 and (
                     type(self.candidate_id) is not str
-                    or re.fullmatch(r"alternative_[0-9a-f]{64}", self.candidate_id) is None
+                    or re.fullmatch(r"alternative_[0-9a-f]{64}", self.candidate_id)
+                    is None
                 )
             )
             or re.fullmatch(r"shadow_rule_[0-9a-f]{64}", self.rule_id) is None
@@ -182,9 +192,7 @@ class ShadowFieldOutcome:
             or len(self.combination_ids) > MAX_BIBLIOGRAPHIC_COMBINATIONS
             or any(
                 type(value) is not str
-                or re.fullmatch(
-                    r"[a-z][a-z0-9_-]{0,63}_[0-9a-f]{64}", value
-                ) is None
+                or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}_[0-9a-f]{64}", value) is None
                 for value in self.citation_ids
             )
             or any(
@@ -215,44 +223,58 @@ def _rich_field_outcome(
         preview.source_candidate_id if preview.outcome == "projected" else None
     )
     disposition = (
-        "ignore" if policy_destination == "ignore"
-        else "manual" if policy_destination == "ask"
-        else "unsupported" if policy_destination == "unsupported"
-        else "candidate" if candidate_id is not None
-        else "keep_current" if preview.outcome == "no_op"
+        "ignore"
+        if policy_destination == "ignore"
+        else "manual"
+        if policy_destination == "ask"
+        else "unsupported"
+        if policy_destination == "unsupported"
+        else "candidate"
+        if candidate_id is not None
+        else "keep_current"
+        if preview.outcome == "no_op"
         else "abstention"
     )
     reason_code = (
-        "unique_supported_candidate" if disposition == "candidate"
-        else "unique_supported_preservation" if disposition == "keep_current"
-        else "unsupported_destination" if disposition == "unsupported"
+        "unique_supported_candidate"
+        if disposition == "candidate"
+        else "unique_supported_preservation"
+        if disposition == "keep_current"
+        else "unsupported_destination"
+        if disposition == "unsupported"
         else "no_eligible_action"
     )
-    action_id = "action_" + _digest({
-        "candidate_id": candidate_id,
-        "destination": destination,
-        "manifest_sha256": F20_QUALIFICATION_CANDIDATE_SHA256,
-        "option": preview.option,
-        "outcome": preview.outcome,
-        "proposal_id": proposal_id,
-    })
-    rule_id = "shadow_rule_" + _digest({
-        "category": category,
-        "decision_policy_sha256": DECISION_POLICY_SHA256,
-        "decision_policy_version": DECISION_POLICY_VERSION,
-        "destination": policy_destination,
-        "option": preview.option,
-    })
+    action_id = "action_" + _digest(
+        {
+            "candidate_id": candidate_id,
+            "destination": destination,
+            "manifest_sha256": F20_QUALIFICATION_CANDIDATE_SHA256,
+            "option": preview.option,
+            "outcome": preview.outcome,
+            "proposal_id": proposal_id,
+        }
+    )
+    rule_id = "shadow_rule_" + _digest(
+        {
+            "category": category,
+            "decision_policy_sha256": DECISION_POLICY_SHA256,
+            "decision_policy_version": DECISION_POLICY_VERSION,
+            "destination": policy_destination,
+            "option": preview.option,
+        }
+    )
     citation_ids = tuple(sorted(preview.source_evidence_references))
     combination_ids = tuple(sorted(preview.source_combination_ids))
-    qualification_candidate_id = "qualification_candidate_" + _digest({
-        "action_id": action_id,
-        "candidate_id": candidate_id,
-        "catalogue_sha256": catalogue_sha256,
-        "citation_ids": list(citation_ids),
-        "combination_ids": list(combination_ids),
-        "rule_id": rule_id,
-    })
+    qualification_candidate_id = "qualification_candidate_" + _digest(
+        {
+            "action_id": action_id,
+            "candidate_id": candidate_id,
+            "catalogue_sha256": catalogue_sha256,
+            "citation_ids": list(citation_ids),
+            "combination_ids": list(combination_ids),
+            "rule_id": rule_id,
+        }
+    )
     field_data = {
         "action_id": action_id,
         "candidate_id": candidate_id,
@@ -269,9 +291,19 @@ def _rich_field_outcome(
         "rule_id": rule_id,
     }
     return ShadowFieldOutcome(
-        "shadow_outcome_" + _digest(field_data), proposal_id, destination,
-        category, preview.option, policy_destination, disposition, action_id,
-        candidate_id, citation_ids, combination_ids, reason_code, rule_id,
+        "shadow_outcome_" + _digest(field_data),
+        proposal_id,
+        destination,
+        category,
+        preview.option,
+        policy_destination,
+        disposition,
+        action_id,
+        candidate_id,
+        citation_ids,
+        combination_ids,
+        reason_code,
+        rule_id,
         qualification_candidate_id,
     )
 
@@ -325,7 +357,13 @@ class ShadowOutcomeSet:
         options = dict(policy.options)
         fields: list[ShadowFieldOutcome] = []
         for decision in decisions.decisions:
-            if decision.destination in {"series", "genres", "tags", "description", "isbn"}:
+            if decision.destination in {
+                "series",
+                "genres",
+                "tags",
+                "description",
+                "isbn",
+            }:
                 continue
             category = _POLICY_CATEGORY_BY_DESTINATION.get(decision.destination)
             policy_destination = (
@@ -483,12 +521,14 @@ class ShadowOutcomeSet:
             self.schema_version != SHADOW_OUTCOME_SCHEMA
             or self.posture != "preview"
             or self.authority != "none"
-            or re.fullmatch(r"shadow_outcome_set_[0-9a-f]{64}", self.outcome_set_id) is None
+            or re.fullmatch(r"shadow_outcome_set_[0-9a-f]{64}", self.outcome_set_id)
+            is None
             or re.fullmatch(r"review_case_[0-9a-f]{64}", self.review_case_id) is None
             or re.fullmatch(r"report_[0-9a-f]{64}", self.report_id) is None
             or re.fullmatch(r"proposal_set_[0-9a-f]{64}", self.proposal_set_id) is None
             or re.fullmatch(r"[0-9a-f]{64}", self.target_fingerprint) is None
-            or re.fullmatch(r"resolved_policy_[0-9a-f]{64}", self.resolved_policy_id) is None
+            or re.fullmatch(r"resolved_policy_[0-9a-f]{64}", self.resolved_policy_id)
+            is None
             or re.fullmatch(r"policy_[0-9a-f]{64}", self.policy_profile_id) is None
             or type(self.policy_generation) is not int
             or self.policy_generation < 1
@@ -502,8 +542,7 @@ class ShadowOutcomeSet:
             or type(self.outcomes) is not tuple
             or not self.outcomes
             or any(type(value) is not ShadowFieldOutcome for value in self.outcomes)
-            or len({value.destination for value in self.outcomes})
-            != len(self.outcomes)
+            or len({value.destination for value in self.outcomes}) != len(self.outcomes)
             or len({value.proposal_id for value in self.outcomes}) != len(self.outcomes)
             or any(
                 value.rule_id
@@ -531,7 +570,8 @@ class ShadowOutcomeSet:
                 )
                 for value in self.outcomes
             )
-            or self.outcome_set_id != "shadow_outcome_set_" + _digest(self._identity_data())
+            or self.outcome_set_id
+            != "shadow_outcome_set_" + _digest(self._identity_data())
         ):
             raise ShadowOutcomeError("shadow outcome set is invalid")
 
@@ -543,7 +583,10 @@ class ShadowOutcomeSet:
 
     @classmethod
     def from_json(cls, serialized: str) -> "ShadowOutcomeSet":
-        if type(serialized) is not str or len(serialized.encode("utf-8")) > MAX_SHADOW_OUTCOME_BYTES:
+        if (
+            type(serialized) is not str
+            or len(serialized.encode("utf-8")) > MAX_SHADOW_OUTCOME_BYTES
+        ):
             raise ShadowOutcomeError("shadow outcome document is invalid")
         try:
             raw = json.loads(serialized)
@@ -569,13 +612,22 @@ class ShadowOutcomeSet:
                 for value in raw["outcomes"]
             )
             result = cls(
-                raw["outcome_set_id"], raw["review_case_id"], raw["report_id"],
-                raw["proposal_set_id"], raw["target_fingerprint"],
-                raw["resolved_policy_id"], raw["policy_profile_id"],
-                raw["policy_generation"], raw["source_decision_set_id"],
-                raw["decision_policy_version"], raw["decision_policy_sha256"],
-                raw["catalogue_sha256"], fields, raw["schema_version"],
-                raw["posture"], raw["authority"],
+                raw["outcome_set_id"],
+                raw["review_case_id"],
+                raw["report_id"],
+                raw["proposal_set_id"],
+                raw["target_fingerprint"],
+                raw["resolved_policy_id"],
+                raw["policy_profile_id"],
+                raw["policy_generation"],
+                raw["source_decision_set_id"],
+                raw["decision_policy_version"],
+                raw["decision_policy_sha256"],
+                raw["catalogue_sha256"],
+                fields,
+                raw["schema_version"],
+                raw["posture"],
+                raw["authority"],
             )
         except (
             KeyError,

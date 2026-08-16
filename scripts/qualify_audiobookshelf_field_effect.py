@@ -103,7 +103,8 @@ class QualificationError(RuntimeError):
 
 
 def _installed_mutation_headers(
-    origin: dict[str, str], csrf_token: str,
+    origin: dict[str, str],
+    csrf_token: str,
 ) -> dict[str, str]:
     """Bind installed-browser mutations to the loaded sealed shell."""
     assets = ReactAssetLoader().load()
@@ -117,7 +118,8 @@ def _installed_mutation_headers(
 
 
 def _installed_consent_grants(
-    activity: object, libraries: tuple[tuple[str, str, Path], ...],
+    activity: object,
+    libraries: tuple[tuple[str, str, Path], ...],
 ) -> list[dict[str, object]]:
     """Mirror the shell's capability-bound consent request exactly."""
     if type(activity) is not dict or type(activity.get("capabilities")) is not list:
@@ -133,12 +135,17 @@ def _installed_consent_grants(
         destinations = (
             capability.get("destinations") if type(capability) is dict else None
         )
-        allowed = [
-            value["destination"] for value in destinations
-            if type(value) is dict
-            and value.get("state") == "allowed"
-            and type(value.get("destination")) is str
-        ] if type(destinations) is list else []
+        allowed = (
+            [
+                value["destination"]
+                for value in destinations
+                if type(value) is dict
+                and value.get("state") == "allowed"
+                and type(value.get("destination")) is str
+            ]
+            if type(destinations) is list
+            else []
+        )
         if not allowed:
             raise QualificationError("installed_consent_capability_invalid")
         grants.append({"library": library, "destinations": allowed})
@@ -181,12 +188,16 @@ def _compose_review_client(
 
 
 def _require_installed_full_chain_coverage(
-    coverage: dict[str, str], expected: dict[str, str], *,
-    activity_present: bool, diagnostics: dict[str, object],
+    coverage: dict[str, str],
+    expected: dict[str, str],
+    *,
+    activity_present: bool,
+    diagnostics: dict[str, object],
 ) -> None:
     """Fail closed unless observed installed operations cover the exact map."""
     missing = {
-        destination: origin for destination, origin in expected.items()
+        destination: origin
+        for destination, origin in expected.items()
         if coverage.get(destination) != origin
     }
     if activity_present and not missing:
@@ -225,20 +236,33 @@ def _png(red: int, green: int, blue: int) -> bytes:
 
 
 def _run(*command: str, timeout: int = 120) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(command, check=False, capture_output=True, text=True, timeout=timeout)
+    result = subprocess.run(
+        command, check=False, capture_output=True, text=True, timeout=timeout
+    )
     if result.returncode != 0:
         raise QualificationError("qualification_command_failed")
     return result
 
 
-def _request(method: str, base: str, path: str, *, token: str | None = None, payload: object | None = None) -> object:
-    body = None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
+def _request(
+    method: str,
+    base: str,
+    path: str,
+    *,
+    token: str | None = None,
+    payload: object | None = None,
+) -> object:
+    body = (
+        None if payload is None else json.dumps(payload, separators=(",", ":")).encode()
+    )
     headers = {"Accept": "application/json"}
     if body is not None:
         headers["Content-Type"] = "application/json"
     if token is not None:
         headers["Authorization"] = "Bearer " + token
-    request = urllib.request.Request(base + path, data=body, headers=headers, method=method)
+    request = urllib.request.Request(
+        base + path, data=body, headers=headers, method=method
+    )
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             raw = response.read(1_048_577)
@@ -272,8 +296,16 @@ def _string(value: object, name: str) -> str:
 
 def _owned(name: str, owner: str) -> bool:
     completed = subprocess.run(
-        ("docker", "inspect", name, "--format", '{{ index .Config.Labels "' + OWNERSHIP_LABEL + '" }}'),
-        check=False, capture_output=True, text=True,
+        (
+            "docker",
+            "inspect",
+            name,
+            "--format",
+            '{{ index .Config.Labels "' + OWNERSHIP_LABEL + '" }}',
+        ),
+        check=False,
+        capture_output=True,
+        text=True,
     )
     return completed.returncode == 0 and completed.stdout.strip() == owner
 
@@ -285,50 +317,93 @@ def _delete_key(base: str, root_token: str, key_id: str) -> None:
         pass
 
 
-def _create_api_key(base: str, root_token: str, user_id: str, name: str) -> tuple[str, str]:
-    response = _mapping(_request("POST", base, "/api/api-keys", token=root_token, payload={
-        "name": name, "userId": user_id, "isActive": True, "expiresIn": 3600,
-    }), "api_key_response_invalid")
+def _create_api_key(
+    base: str, root_token: str, user_id: str, name: str
+) -> tuple[str, str]:
+    response = _mapping(
+        _request(
+            "POST",
+            base,
+            "/api/api-keys",
+            token=root_token,
+            payload={
+                "name": name,
+                "userId": user_id,
+                "isActive": True,
+                "expiresIn": 3600,
+            },
+        ),
+        "api_key_response_invalid",
+    )
     api_key = _mapping(response.get("apiKey"), "api_key_response_invalid")
-    return _string(api_key.get("id"), "api_key_response_invalid"), _string(api_key.get("apiKey"), "api_key_response_invalid")
+    return _string(api_key.get("id"), "api_key_response_invalid"), _string(
+        api_key.get("apiKey"), "api_key_response_invalid"
+    )
 
 
-def _create_user(base: str, root_token: str, *, username: str, password: str,
-                 library_ids: tuple[str, ...], update: bool, upload: bool) -> str:
-    response = _mapping(_request("POST", base, "/api/users", token=root_token, payload={
-        "username": username,
-        "password": password,
-        "type": "user",
-        "isActive": True,
-        "permissions": {
-            "update": update,
-            "upload": upload,
-            "delete": False,
-            "download": False,
-            "createEreader": False,
-            "accessAllLibraries": False,
-            "accessAllTags": True,
-            "accessExplicitContent": True,
-            "selectedTagsNotAccessible": False,
-        },
-        "librariesAccessible": list(library_ids),
-    }), "user_response_invalid")
-    return _string(_mapping(response.get("user"), "user_response_invalid").get("id"), "user_response_invalid")
+def _create_user(
+    base: str,
+    root_token: str,
+    *,
+    username: str,
+    password: str,
+    library_ids: tuple[str, ...],
+    update: bool,
+    upload: bool,
+) -> str:
+    response = _mapping(
+        _request(
+            "POST",
+            base,
+            "/api/users",
+            token=root_token,
+            payload={
+                "username": username,
+                "password": password,
+                "type": "user",
+                "isActive": True,
+                "permissions": {
+                    "update": update,
+                    "upload": upload,
+                    "delete": False,
+                    "download": False,
+                    "createEreader": False,
+                    "accessAllLibraries": False,
+                    "accessAllTags": True,
+                    "accessExplicitContent": True,
+                    "selectedTagsNotAccessible": False,
+                },
+                "librariesAccessible": list(library_ids),
+            },
+        ),
+        "user_response_invalid",
+    )
+    return _string(
+        _mapping(response.get("user"), "user_response_invalid").get("id"),
+        "user_response_invalid",
+    )
 
 
-def _snapshot(source_sha: str, versions: list[str] | None = None,
-              corpus: Path | None = None) -> None:
+def _snapshot(
+    source_sha: str, versions: list[str] | None = None, corpus: Path | None = None
+) -> None:
     """Run the immutable script against a wheel installed outside its snapshot."""
     archive = subprocess.run(
-        ("git", "archive", "--format=tar", source_sha), cwd=ROOT,
-        check=False, capture_output=True,
+        ("git", "archive", "--format=tar", source_sha),
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
     )
     if archive.returncode != 0:
         raise QualificationError("source_snapshot_failed")
-    with tempfile.TemporaryDirectory(prefix="mechanical-librarian-abs-source-") as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix="mechanical-librarian-abs-source-"
+    ) as temporary:
         snapshot = Path(temporary)
         try:
-            with tarfile.open(fileobj=io.BytesIO(archive.stdout), mode="r:") as contents:
+            with tarfile.open(
+                fileobj=io.BytesIO(archive.stdout), mode="r:"
+            ) as contents:
                 contents.extractall(snapshot, filter="data")
         except (tarfile.TarError, OSError) as error:
             raise QualificationError("source_snapshot_failed") from error
@@ -338,19 +413,34 @@ def _snapshot(source_sha: str, versions: list[str] | None = None,
         wheels = tuple(wheel_dir.glob("*.whl"))
         if len(wheels) != 1:
             raise QualificationError("installed_artifact_invalid")
-        _run("uv", "pip", "install", "--target", str(installed), "--no-deps", str(wheels[0]))
+        _run(
+            "uv",
+            "pip",
+            "install",
+            "--target",
+            str(installed),
+            "--no-deps",
+            str(wheels[0]),
+        )
         environment = os.environ.copy()
         environment["MECHANICAL_LIBRARIAN_QUALIFICATION_INSTALL"] = str(installed)
         environment.pop("PYTHONPATH", None)
-        command = [sys.executable, str(snapshot / "scripts/qualify_audiobookshelf_field_effect.py"),
-                   "--source-sha", source_sha, "--snapshot"]
+        command = [
+            sys.executable,
+            str(snapshot / "scripts/qualify_audiobookshelf_field_effect.py"),
+            "--source-sha",
+            source_sha,
+            "--snapshot",
+        ]
         if corpus is not None:
             command.extend(("--corpus", str(corpus.resolve())))
         for version in versions or []:
             command.extend(("--version", version))
         result = subprocess.run(
             command,
-            cwd=snapshot, check=False, env=environment,
+            cwd=snapshot,
+            check=False,
+            env=environment,
         )
     if result.returncode != 0:
         raise QualificationError("archived_qualification_failed")
@@ -361,9 +451,12 @@ def _wait(base: str) -> None:
     while time.monotonic() < deadline:
         try:
             status = _request("GET", base, "/status")
-            if (type(status) is dict and status.get("app") == "audiobookshelf"
-                    and type(status.get("serverVersion")) is str
-                    and bool(status["serverVersion"])):
+            if (
+                type(status) is dict
+                and status.get("app") == "audiobookshelf"
+                and type(status.get("serverVersion")) is str
+                and bool(status["serverVersion"])
+            ):
                 return
         except (OSError, urllib.error.URLError, urllib.error.HTTPError, TimeoutError):
             time.sleep(1)
@@ -372,29 +465,51 @@ def _wait(base: str) -> None:
 
 def _epub(path: Path) -> None:
     with zipfile.ZipFile(path, "w") as archive:
-        archive.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
-        archive.writestr("META-INF/container.xml", "<?xml version='1.0'?><container version='1.0' xmlns='urn:oasis:names:tc:opendocument:xmlns:container'><rootfiles><rootfile full-path='OEBPS/content.opf' media-type='application/oebps-package+xml'/></rootfiles></container>")
-        archive.writestr("OEBPS/content.opf", "<?xml version='1.0'?><package xmlns='http://www.idpf.org/2007/opf' xmlns:opf='http://www.idpf.org/2007/opf' version='3.0' unique-identifier='book'><metadata xmlns:dc='http://purl.org/dc/elements/1.1/'><dc:identifier id='book'>9780306406157</dc:identifier><dc:title>Before</dc:title><dc:creator opf:role='aut'>Synthetic Author</dc:creator><dc:creator opf:role='aut'>Second Qualified Author</dc:creator><dc:language>fr</dc:language><dc:publisher>Qualification Press</dc:publisher><dc:date>2025-02-03</dc:date><meta property='dcterms:modified'>2026-01-01T00:00:00Z</meta></metadata><manifest><item id='nav' href='nav.xhtml' media-type='application/xhtml+xml' properties='nav'/><item id='chapter' href='chapter.xhtml' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='chapter'/></spine></package>")
-        archive.writestr("OEBPS/nav.xhtml", "<?xml version='1.0'?><html xmlns='http://www.w3.org/1999/xhtml'><head><title>Contents</title></head><body><nav epub:type='toc' xmlns:epub='http://www.idpf.org/2007/ops'><ol><li><a href='chapter.xhtml'>Chapter</a></li></ol></nav></body></html>")
-        archive.writestr("OEBPS/chapter.xhtml", "<?xml version='1.0'?><html xmlns='http://www.w3.org/1999/xhtml'><head><title>Chapter</title></head><body><p>Synthetic qualification content.</p></body></html>")
+        archive.writestr(
+            "mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED
+        )
+        archive.writestr(
+            "META-INF/container.xml",
+            "<?xml version='1.0'?><container version='1.0' xmlns='urn:oasis:names:tc:opendocument:xmlns:container'><rootfiles><rootfile full-path='OEBPS/content.opf' media-type='application/oebps-package+xml'/></rootfiles></container>",
+        )
+        archive.writestr(
+            "OEBPS/content.opf",
+            "<?xml version='1.0'?><package xmlns='http://www.idpf.org/2007/opf' xmlns:opf='http://www.idpf.org/2007/opf' version='3.0' unique-identifier='book'><metadata xmlns:dc='http://purl.org/dc/elements/1.1/'><dc:identifier id='book'>9780306406157</dc:identifier><dc:title>Before</dc:title><dc:creator opf:role='aut'>Synthetic Author</dc:creator><dc:creator opf:role='aut'>Second Qualified Author</dc:creator><dc:language>fr</dc:language><dc:publisher>Qualification Press</dc:publisher><dc:date>2025-02-03</dc:date><meta property='dcterms:modified'>2026-01-01T00:00:00Z</meta></metadata><manifest><item id='nav' href='nav.xhtml' media-type='application/xhtml+xml' properties='nav'/><item id='chapter' href='chapter.xhtml' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='chapter'/></spine></package>",
+        )
+        archive.writestr(
+            "OEBPS/nav.xhtml",
+            "<?xml version='1.0'?><html xmlns='http://www.w3.org/1999/xhtml'><head><title>Contents</title></head><body><nav epub:type='toc' xmlns:epub='http://www.idpf.org/2007/ops'><ol><li><a href='chapter.xhtml'>Chapter</a></li></ol></nav></body></html>",
+        )
+        archive.writestr(
+            "OEBPS/chapter.xhtml",
+            "<?xml version='1.0'?><html xmlns='http://www.w3.org/1999/xhtml'><head><title>Chapter</title></head><body><p>Synthetic qualification content.</p></body></html>",
+        )
 
 
 def _operator_epub(
-    source: Path, destination: Path, index: int,
+    source: Path,
+    destination: Path,
+    index: int,
 ) -> tuple[str, str, str]:
     """Copy one real work with a private, deterministic qualification metadata overlay."""
     stem = f"9780306406{index:02d}"
-    checksum = (10 - sum(
-        int(value) * (1 if position % 2 == 0 else 3)
-        for position, value in enumerate(stem)
-    ) % 10) % 10
+    checksum = (
+        10
+        - sum(
+            int(value) * (1 if position % 2 == 0 else 3)
+            for position, value in enumerate(stem)
+        )
+        % 10
+    ) % 10
     isbn = stem + str(checksum)
     if index == 6:
         isbn = "9780306406157"
     title = (
-        "Before" if index == 6 else
-        "Before" if index == 1 else
-        f"Operator qualification {index}"
+        "Before"
+        if index == 6
+        else "Before"
+        if index == 1
+        else f"Operator qualification {index}"
     )
     with zipfile.ZipFile(source) as incoming:
         container = ET.fromstring(incoming.read("META-INF/container.xml"))
@@ -408,16 +523,21 @@ def _operator_epub(
         metadata = package.find("{http://www.idpf.org/2007/opf}metadata")
         if metadata is None:
             raise QualificationError("operator_corpus_invalid")
-        original_creator = next((
-            str(child.text).strip()
-            for child in metadata
-            if child.tag == "{http://purl.org/dc/elements/1.1/}creator"
-            and child.text and str(child.text).strip()
-        ), None)
+        original_creator = next(
+            (
+                str(child.text).strip()
+                for child in metadata
+                if child.tag == "{http://purl.org/dc/elements/1.1/}creator"
+                and child.text
+                and str(child.text).strip()
+            ),
+            None,
+        )
         if original_creator is None:
             raise QualificationError("operator_corpus_invalid")
         qualified_creator = (
-            original_creator if original_creator.endswith(".")
+            original_creator
+            if original_creator.endswith(".")
             else original_creator + "."
         )
         for child in tuple(metadata):
@@ -440,82 +560,179 @@ def _operator_epub(
         dc = "{http://purl.org/dc/elements/1.1/}"
         identifier_id = package.get("unique-identifier") or "qualification-isbn"
         package.set("unique-identifier", identifier_id)
-        ET.SubElement(metadata, dc + "identifier", {
-            "id": identifier_id,
-            "{http://www.idpf.org/2007/opf}scheme": "ISBN",
-        }).text = isbn
+        ET.SubElement(
+            metadata,
+            dc + "identifier",
+            {
+                "id": identifier_id,
+                "{http://www.idpf.org/2007/opf}scheme": "ISBN",
+            },
+        ).text = isbn
         ET.SubElement(metadata, dc + "title").text = title
-        ET.SubElement(metadata, dc + "creator", {
-            "{http://www.idpf.org/2007/opf}role": "aut",
-        }).text = qualified_creator
+        ET.SubElement(
+            metadata,
+            dc + "creator",
+            {
+                "{http://www.idpf.org/2007/opf}role": "aut",
+            },
+        ).text = qualified_creator
         ET.SubElement(metadata, dc + "language").text = "fr"
         ET.SubElement(metadata, dc + "publisher").text = "Qualification Press"
         ET.SubElement(metadata, dc + "date").text = "2025-02-03"
         package_bytes = ET.tostring(package, encoding="utf-8", xml_declaration=True)
         with zipfile.ZipFile(destination, "w") as outgoing:
             for member in incoming.infolist():
-                payload = package_bytes if member.filename == package_path else incoming.read(member)
+                payload = (
+                    package_bytes
+                    if member.filename == package_path
+                    else incoming.read(member)
+                )
                 outgoing.writestr(member, payload)
     return isbn, title, qualified_creator
 
 
-def _plan(repository, *, item: str, destination: str, value: object,
-          desired: object, observation, capabilities, clock: int,
-          origin: str = "human") -> FieldEffectPlan:
+def _plan(
+    repository,
+    *,
+    item: str,
+    destination: str,
+    value: object,
+    desired: object,
+    observation,
+    capabilities,
+    clock: int,
+    origin: str = "human",
+) -> FieldEffectPlan:
     decision = hashlib.sha256(destination.encode("ascii")).hexdigest()
     authority = EffectAuthority(
         ("human_decision_" if origin == "human" else "automatic_decision_") + decision,
-        "review_case_" + "b" * 64, "c" * 64, "fake_service", origin,
+        "review_case_" + "b" * 64,
+        "c" * 64,
+        "fake_service",
+        origin,
         "candidate",
         None if origin == "human" else "resolved_policy_" + "a" * 64,
         None if origin == "human" else "b" * 64,
     )
-    consent = EffectConsent.create(connection="canary", library="books", destination=destination,
-                                   envelope_identity=repository.field_effect_consent_envelope_identity("books"),
-                                   granted_at=clock)
+    consent = EffectConsent.create(
+        connection="canary",
+        library="books",
+        destination=destination,
+        envelope_identity=repository.field_effect_consent_envelope_identity("books"),
+        granted_at=clock,
+    )
     try:
-        provisional = FieldEffectPlan.create(connection="canary", library="books", work_id=item, destination=destination, pre_value=value, desired_value=desired, target_fingerprint="c" * 64, target_version=observation.version, dependency_digests=("d" * 64,), authority=authority, consent=consent, capability_digest="e" * 64, created_at=clock)
-        plan = FieldEffectPlan.create(connection="canary", library="books", work_id=item, destination=destination, pre_value=value, desired_value=desired, target_fingerprint="c" * 64, target_version=observation.version, dependency_digests=("d" * 64,), authority=authority, consent=consent, capability_digest=capabilities.observe(provisional).digest, created_at=clock)
+        provisional = FieldEffectPlan.create(
+            connection="canary",
+            library="books",
+            work_id=item,
+            destination=destination,
+            pre_value=value,
+            desired_value=desired,
+            target_fingerprint="c" * 64,
+            target_version=observation.version,
+            dependency_digests=("d" * 64,),
+            authority=authority,
+            consent=consent,
+            capability_digest="e" * 64,
+            created_at=clock,
+        )
+        plan = FieldEffectPlan.create(
+            connection="canary",
+            library="books",
+            work_id=item,
+            destination=destination,
+            pre_value=value,
+            desired_value=desired,
+            target_fingerprint="c" * 64,
+            target_version=observation.version,
+            dependency_digests=("d" * 64,),
+            authority=authority,
+            consent=consent,
+            capability_digest=capabilities.observe(provisional).digest,
+            created_at=clock,
+        )
     except Exception as error:
-        raise RuntimeError("synthetic field setup is invalid: " + destination) from error
+        raise RuntimeError(
+            "synthetic field setup is invalid: " + destination
+        ) from error
     repository.record_field_effect(FieldEffectOperation(plan, updated_at=clock))
     return plan
 
 
 def _value_digest(value: object) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
-def _apply(service, repository, target, capabilities, writes: list[str], recovery,
-           item: str, destination: str, desired: object, clock: int,
-           origin: str = "human") -> dict[str, object]:
+def _apply(
+    service,
+    repository,
+    target,
+    capabilities,
+    writes: list[str],
+    recovery,
+    item: str,
+    destination: str,
+    desired: object,
+    clock: int,
+    origin: str = "human",
+) -> dict[str, object]:
     placeholder = type("Plan", (), {"work_id": item, "destination": destination})()
     try:
         before = target.read(placeholder)
     except FieldEffectError as error:
         raise QualificationError("field_read_invalid_" + destination) from error
-    if destination == "tags" and (type(before.value) is not list or not before.value or any(type(value) is not str for value in before.value)):
-        raise RuntimeError("synthetic tag setup has unsupported response shape: " + type(before.value).__name__)
-    plan = _plan(repository, item=item, destination=destination, value=before.value,
-                 desired=desired, observation=before, capabilities=capabilities,
-                 clock=clock, origin=origin)
+    if destination == "tags" and (
+        type(before.value) is not list
+        or not before.value
+        or any(type(value) is not str for value in before.value)
+    ):
+        raise RuntimeError(
+            "synthetic tag setup has unsupported response shape: "
+            + type(before.value).__name__
+        )
+    plan = _plan(
+        repository,
+        item=item,
+        destination=destination,
+        value=before.value,
+        desired=desired,
+        observation=before,
+        capabilities=capabilities,
+        clock=clock,
+        origin=origin,
+    )
     write_count = len(writes)
     operation = service.apply(plan.plan_id)
     after = target.read(plan)
     persisted = repository.get_field_effect(plan.plan_id)
     request_count = len(writes) - write_count
-    if (request_count != 1 or after.value != desired or operation.state != "verified"
-            or persisted != operation):
+    if (
+        request_count != 1
+        or after.value != desired
+        or operation.state != "verified"
+        or persisted != operation
+    ):
         raise QualificationError("guarded_write_evidence_invalid")
     recovery_state = "not_applicable"
     if destination == "cover":
-        if not recovery.capture_verified or not recovery.cleanup_verified or recovery.exists(plan.plan_id):
+        if (
+            not recovery.capture_verified
+            or not recovery.cleanup_verified
+            or recovery.exists(plan.plan_id)
+        ):
             raise QualificationError("cover_recovery_evidence_invalid")
         recovery_state = "captured_and_cleaned"
     audit_documents = repository.field_effect_event_documents(plan.plan_id)
     audit = [json.loads(document) for document in audit_documents]
-    if ([event["kind"] for event in audit] != ["planned", "claimed", "applying", "verified"]
-            or audit[-1]["state"] != persisted.state):
+    if [event["kind"] for event in audit] != [
+        "planned",
+        "claimed",
+        "applying",
+        "verified",
+    ] or audit[-1]["state"] != persisted.state:
         raise QualificationError("audit_sequence_evidence_invalid")
     return {
         "destination": destination,
@@ -547,8 +764,17 @@ def _stable_cover_observation(target, item: str) -> None:
 
 
 def _raw_cover(base: str, token: str, item: str, expected: bytes) -> bytes:
-    response = httpx.get(base + "/api/items/" + item + "/cover", params={"raw": "1"}, headers={"Authorization": "Bearer " + token, "Accept-Encoding": "identity"}, timeout=20)
-    if response.status_code != 200 or hashlib.sha256(response.content).digest() != hashlib.sha256(expected).digest():
+    response = httpx.get(
+        base + "/api/items/" + item + "/cover",
+        params={"raw": "1"},
+        headers={"Authorization": "Bearer " + token, "Accept-Encoding": "identity"},
+        timeout=20,
+    )
+    if (
+        response.status_code != 200
+        or hashlib.sha256(response.content).digest()
+        != hashlib.sha256(expected).digest()
+    ):
         raise QualificationError("cover_recovery_preimage_invalid")
     return response.content
 
@@ -575,7 +801,10 @@ class _ObservedRecovery:
 def _latest_stable() -> str:
     request = urllib.request.Request(
         "https://api.github.com/repos/advplyr/audiobookshelf/releases/latest",
-        headers={"Accept": "application/vnd.github+json", "User-Agent": "mechanical-librarian-qualification"},
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "mechanical-librarian-qualification",
+        },
     )
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
@@ -588,8 +817,11 @@ def _latest_stable() -> str:
         release = json.loads(raw.decode("utf-8", "strict"))
     except (UnicodeError, json.JSONDecodeError) as error:
         raise QualificationError("latest_stable_invalid") from error
-    if (type(release) is not dict or release.get("draft") is not False
-            or release.get("prerelease") is not False):
+    if (
+        type(release) is not dict
+        or release.get("draft") is not False
+        or release.get("prerelease") is not False
+    ):
         raise QualificationError("latest_stable_invalid")
     tag = release.get("tag_name")
     if type(tag) is not str or not tag.startswith("v") or tag[1:] not in IMAGES:
@@ -608,7 +840,10 @@ def _corpus_sources(corpus: Path | None) -> tuple[Path, ...]:
     for source in sources:
         try:
             with zipfile.ZipFile(source) as archive:
-                if archive.testzip() is not None or "META-INF/container.xml" not in archive.namelist():
+                if (
+                    archive.testzip() is not None
+                    or "META-INF/container.xml" not in archive.namelist()
+                ):
                     raise QualificationError("operator_corpus_invalid")
         except (OSError, zipfile.BadZipFile):
             raise QualificationError("operator_corpus_invalid") from None
@@ -616,7 +851,10 @@ def _corpus_sources(corpus: Path | None) -> tuple[Path, ...]:
 
 
 def _wait_for_preparation(
-    client: TestClient, library_count: int, *, allow_failures: bool = False,
+    client: TestClient,
+    library_count: int,
+    *,
+    allow_failures: bool = False,
 ) -> dict[str, object]:
     deadline = time.monotonic() + 180
     while time.monotonic() < deadline:
@@ -628,11 +866,16 @@ def _wait_for_preparation(
             raise QualificationError("installed_preparation_unavailable")
         state = _mapping(response.json(), "installed_preparation_invalid")
         libraries = state.get("libraries")
-        if (type(libraries) is list and len(libraries) == library_count
-                and not state.get("active")
-                and all(type(value) is dict and value.get("state") in {
-                    "completed", "completed_with_failures"
-                } for value in libraries)):
+        if (
+            type(libraries) is list
+            and len(libraries) == library_count
+            and not state.get("active")
+            and all(
+                type(value) is dict
+                and value.get("state") in {"completed", "completed_with_failures"}
+                for value in libraries
+            )
+        ):
             if any(value.get("state") != "completed" for value in libraries):
                 if allow_failures:
                     return state
@@ -647,18 +890,23 @@ def _wait_for_preparation(
 
 
 def _qualification_hardcover_client(
-    title_corrections: dict[str, str], provider_identity: str,
-    observations: dict[str, int], isbn_titles: dict[str, str],
+    title_corrections: dict[str, str],
+    provider_identity: str,
+    observations: dict[str, int],
+    isbn_titles: dict[str, str],
     isbn_authors: dict[str, str],
-    *_: object, **__: object
+    *_: object,
+    **__: object,
 ) -> httpx.Client:
     """Return an isolated provider boundary backed by request-local evidence."""
 
     def respond(request: httpx.Request) -> httpx.Response:
         if request.method == "GET":
             return httpx.Response(
-                200, content=_png(32, 96, 160),
-                headers={"content-type": "image/png"}, request=request,
+                200,
+                content=_png(32, 96, 160),
+                headers={"content-type": "image/png"},
+                request=request,
             )
         try:
             body = json.loads(request.content.decode("utf-8", "strict"))
@@ -670,10 +918,13 @@ def _qualification_hardcover_client(
                 observations["isbn"] = observations.get("isbn", 0) + 1
                 request_local_id = 1
                 raw_isbns = values.get("isbns")
-                if (type(raw_isbns) is not list or not raw_isbns
-                        or type(raw_isbns[0]) is not str
-                        or len(raw_isbns[0]) not in {10, 13}
-                        or not raw_isbns[0].isdigit()):
+                if (
+                    type(raw_isbns) is not list
+                    or not raw_isbns
+                    or type(raw_isbns[0]) is not str
+                    or len(raw_isbns[0]) not in {10, 13}
+                    or not raw_isbns[0].isdigit()
+                ):
                     raise QualificationError("installed_provider_isbn_invalid")
                 requested_isbn = raw_isbns[0]
                 requested_title = isbn_titles.get(
@@ -697,22 +948,21 @@ def _qualification_hardcover_client(
                         for value in raw_authors
                     ]
                 )
-                contribution_authors = (
-                    "Synthetic Author", "Second Qualified Author"
-                )
+                contribution_authors = ("Synthetic Author", "Second Qualified Author")
         except (UnicodeError, json.JSONDecodeError):
             raise QualificationError("installed_provider_request_invalid") from None
         operator_title = requested_title in isbn_titles.values()
-        operator_correction = title_corrections.get(
-            requested_title, requested_title
-        )
+        operator_correction = title_corrections.get(requested_title, requested_title)
         title = (
             requested_title
-            if (operator_title and operator_correction == requested_title
-                and requested_title != "Before")
-            else
-            "After"
-            if requested_title in title_corrections and (
+            if (
+                operator_title
+                and operator_correction == requested_title
+                and requested_title != "Before"
+            )
+            else "After"
+            if requested_title in title_corrections
+            and (
                 provider_identity == "synthetic-provider-token-a"
                 or provider_identity.endswith("provider-a.secret")
             )
@@ -724,54 +974,74 @@ def _qualification_hardcover_client(
                 "contribution": "Author",
                 "author": {"id": index, "name": author},
             }
-            for index, author in enumerate(
-                contribution_authors, start=1
-            )
+            for index, author in enumerate(contribution_authors, start=1)
         ]
         cover = {"url": "https://qualification.invalid/cover.png"}
         tags = [
-            {"id": 1, "tag": "Qualification Fiction",
-             "tag_category": {"id": 1, "category": "Genre"}},
-            {"id": 2, "tag": "Guarded",
-             "tag_category": {"id": 2, "category": "Mood"}},
+            {
+                "id": 1,
+                "tag": "Qualification Fiction",
+                "tag_category": {"id": 1, "category": "Genre"},
+            },
+            {"id": 2, "tag": "Guarded", "tag_category": {"id": 2, "category": "Mood"}},
         ]
         return httpx.Response(
             200,
             json={
                 "data": {
-                    "editions": [{
-                        "id": request_local_id,
-                        "book_id": request_local_id,
-                        "isbn_10": (
-                            requested_isbn if len(requested_isbn) == 10 else None
-                        ),
-                        "isbn_13": (
-                            requested_isbn if len(requested_isbn) == 13 else None
-                        ),
-                        "asin": "B000QUAL01",
-                        "title": title,
-                        "subtitle": "Continuous qualification subtitle",
-                        "release_date": "2025-02-03",
-                        "image": cover,
-                        "publisher": {"id": 1, "name": "Qualification Press",
-                                      "parent_id": None},
-                        "language": {"id": 1, "code2": "fr", "code3": "fra",
-                                     "language": "French"},
-                        "contributions": contributions,
-                    }],
-                    "books": [{
-                        "id": request_local_id,
-                        "title": title,
-                        "description": "A bounded continuous guarded qualification value.",
-                        "release_date": "2025-02-03",
-                        "image": cover,
-                        "contributions": contributions,
-                        "book_series": [{"id": 1, "position": "2.5",
-                                         "series": {"id": 1,
-                                                    "name": "Guarded Qualification"}}],
-                        "taggings": [{"id": 1, "tag_id": 1},
-                                     {"id": 2, "tag_id": 2}],
-                    }],
+                    "editions": [
+                        {
+                            "id": request_local_id,
+                            "book_id": request_local_id,
+                            "isbn_10": (
+                                requested_isbn if len(requested_isbn) == 10 else None
+                            ),
+                            "isbn_13": (
+                                requested_isbn if len(requested_isbn) == 13 else None
+                            ),
+                            "asin": "B000QUAL01",
+                            "title": title,
+                            "subtitle": "Continuous qualification subtitle",
+                            "release_date": "2025-02-03",
+                            "image": cover,
+                            "publisher": {
+                                "id": 1,
+                                "name": "Qualification Press",
+                                "parent_id": None,
+                            },
+                            "language": {
+                                "id": 1,
+                                "code2": "fr",
+                                "code3": "fra",
+                                "language": "French",
+                            },
+                            "contributions": contributions,
+                        }
+                    ],
+                    "books": [
+                        {
+                            "id": request_local_id,
+                            "title": title,
+                            "description": "A bounded continuous guarded qualification value.",
+                            "release_date": "2025-02-03",
+                            "image": cover,
+                            "contributions": contributions,
+                            "book_series": [
+                                {
+                                    "id": 1,
+                                    "position": "2.5",
+                                    "series": {
+                                        "id": 1,
+                                        "name": "Guarded Qualification",
+                                    },
+                                }
+                            ],
+                            "taggings": [
+                                {"id": 1, "tag_id": 1},
+                                {"id": 2, "tag_id": 2},
+                            ],
+                        }
+                    ],
                     "tags": tags,
                 }
             },
@@ -782,7 +1052,9 @@ def _qualification_hardcover_client(
 
 
 def _require_installed_return_automatic_transition(
-    status_code: int, before: object, after: object,
+    status_code: int,
+    before: object,
+    after: object,
 ) -> None:
     """A return request schedules fresh lineage; it does not clear its hold."""
     before_scan_id = getattr(before, "scan_id", None)
@@ -801,7 +1073,9 @@ def _require_installed_return_automatic_transition(
 
 
 def _require_installed_return_lineage_progress(
-    progress: object, requested_scan_id: str, requested_at: int,
+    progress: object,
+    requested_scan_id: str,
+    requested_at: int,
     manual_hold_context: object | None,
 ) -> bool:
     """Require the requested scan to finish before its hold can disappear."""
@@ -817,8 +1091,12 @@ def _require_installed_return_lineage_progress(
     )
     if manual_hold_context is None and not requested_scan_completed:
         raise QualificationError("installed_return_fresh_lineage_failed")
-    if (scan_matches and state == "completed_with_failures"
-            and type(updated_at) is int and updated_at >= requested_at):
+    if (
+        scan_matches
+        and state == "completed_with_failures"
+        and type(updated_at) is int
+        and updated_at >= requested_at
+    ):
         raise QualificationError("installed_return_fresh_lineage_failed")
     if requested_scan_completed:
         return True
@@ -826,8 +1104,11 @@ def _require_installed_return_lineage_progress(
 
 
 def _read_installed_return_lineage(
-    repository: object, connection: str, library: str,
-    review_case_id: str, destination: str,
+    repository: object,
+    connection: str,
+    library: str,
+    review_case_id: str,
+    destination: str,
 ) -> tuple[object, object | None]:
     """Read the monotonic hold before progress so a clear cannot look stale."""
     hold = repository.field_effect_manual_hold_context(review_case_id, destination)
@@ -836,7 +1117,9 @@ def _read_installed_return_lineage(
 
 
 def _installed_continuous_qualification(
-    root: Path, base: str, writer_key: str,
+    root: Path,
+    base: str,
+    writer_key: str,
     libraries: tuple[tuple[str, str, Path], ...],
     drift_item: str,
     title_corrections: dict[str, str],
@@ -865,39 +1148,57 @@ def _installed_continuous_qualification(
     configuration_document = {
         "schema_version": "config-v6",
         "provider_recovery_generation": 1,
-        "connections": [{
-            "name": "canary", "adapter": "audiobookshelf",
-            "endpoint": base, "secret_file": str(secret),
-        }],
-        "libraries": [{
-            "name": name, "connection": "canary", "library_id": library_id,
-            "mount": name,
-            "provider_connections": [
-                "qualification-catalogue-a", "qualification-catalogue-b",
-            ],
-            "policy_override": {
-                "options": {"date_precision": "full_date"},
-                "destinations": {
-                    "contributor_names": "automatic",
-                    "date_precision": "automatic",
-                    "language_rendering": "automatic",
-                    "publisher_preference": "automatic",
-                    "title_layout": "automatic",
+        "connections": [
+            {
+                "name": "canary",
+                "adapter": "audiobookshelf",
+                "endpoint": base,
+                "secret_file": str(secret),
+            }
+        ],
+        "libraries": [
+            {
+                "name": name,
+                "connection": "canary",
+                "library_id": library_id,
+                "mount": name,
+                "provider_connections": [
+                    "qualification-catalogue-a",
+                    "qualification-catalogue-b",
+                ],
+                "policy_override": {
+                    "options": {"date_precision": "full_date"},
+                    "destinations": {
+                        "contributor_names": "automatic",
+                        "date_precision": "automatic",
+                        "language_rendering": "automatic",
+                        "publisher_preference": "automatic",
+                        "title_layout": "automatic",
+                    },
                 },
-            },
-        } for name, library_id, _ in libraries],
-        "mounts": [{
-            "name": name, "container_path": str(path),
-            "service_path": "/library/" + name, "read_only": True,
-        } for name, _, path in libraries],
+            }
+            for name, library_id, _ in libraries
+        ],
+        "mounts": [
+            {
+                "name": name,
+                "container_path": str(path),
+                "service_path": "/library/" + name,
+                "read_only": True,
+            }
+            for name, _, path in libraries
+        ],
         "providers": [
             {
-                "name": name, "adapter": "hardcover",
-                "enabled": True, "cover_enabled": True,
+                "name": name,
+                "adapter": "hardcover",
+                "enabled": True,
+                "cover_enabled": True,
                 "secret_file": str(provider_secrets[name.rsplit("-", 1)[1]]),
             }
             for name in (
-                "qualification-catalogue-a", "qualification-catalogue-b",
+                "qualification-catalogue-a",
+                "qualification-catalogue-b",
             )
         ],
         "review": {
@@ -924,11 +1225,19 @@ def _installed_continuous_qualification(
             composition._private_root(database) / "provider-recovery.sqlite"
         )
         preparation = create_review_pipeline(
-            configuration, database, catalogue, artifacts,
-            bound_repository.authority, provider_recovery=provider_recovery,
+            configuration,
+            database,
+            catalogue,
+            artifacts,
+            bound_repository.authority,
+            provider_recovery=provider_recovery,
         )
         continuous = compose_continuous_guarded_application(
-            configuration, bound_repository, database, artifacts, preparation,
+            configuration,
+            bound_repository,
+            database,
+            artifacts,
+            preparation,
             provider_recovery=provider_recovery,
         )
         client = _compose_review_client(
@@ -948,14 +1257,17 @@ def _installed_continuous_qualification(
 
     origin = {"Origin": "https://review.test"}
     provider_observations: dict[str, int] = {}
+
     def provider_client(*args: object, **kwargs: object) -> httpx.Client:
-        provider_identity = (
-            str(args[0]) if args else str(kwargs.get("token", ""))
-        )
+        provider_identity = str(args[0]) if args else str(kwargs.get("token", ""))
         return _qualification_hardcover_client(
-            title_corrections, provider_identity, provider_observations,
-            isbn_titles, isbn_authors,
-            *args[1:], **kwargs
+            title_corrections,
+            provider_identity,
+            provider_observations,
+            isbn_titles,
+            isbn_authors,
+            *args[1:],
+            **kwargs,
         )
 
     def provider_cover(*_: object, **__: object) -> object:
@@ -987,19 +1299,20 @@ def _installed_continuous_qualification(
                         f"/api/v1/review-preparation/canary/{name}/scan",
                         headers=mutation_headers,
                     )
-                    if (requested.status_code != 503
-                            or time.monotonic() >= request_deadline):
+                    if (
+                        requested.status_code != 503
+                        or time.monotonic() >= request_deadline
+                    ):
                         break
                     time.sleep(0.25)
                 if requested.status_code not in {202, 409}:
                     raise QualificationError(
                         f"installed_scan_request_failed:{requested.status_code}"
                     )
-            initial = _wait_for_preparation(
-                client, len(libraries), allow_failures=True
-            )
+            initial = _wait_for_preparation(client, len(libraries), allow_failures=True)
             failed_libraries = [
-                value for value in initial.get("libraries", [])
+                value
+                for value in initial.get("libraries", [])
                 if value.get("state") != "completed"
             ]
             if failed_libraries:
@@ -1013,8 +1326,10 @@ def _installed_continuous_qualification(
                             f"/api/v1/review-preparation/canary/{name}/retry",
                             headers=mutation_headers,
                         )
-                        if (retried.status_code != 503
-                                or time.monotonic() >= retry_deadline):
+                        if (
+                            retried.status_code != 503
+                            or time.monotonic() >= retry_deadline
+                        ):
                             break
                         time.sleep(0.25)
                     if retried.status_code not in {202, 409}:
@@ -1043,15 +1358,20 @@ def _installed_continuous_qualification(
                     ).fetchall():
                         failed_report = MetadataReport.from_json(report_document)
                         for provider in failed_report.providers:
-                            provider_statuses.append("provider:" + provider.status.value)
+                            provider_statuses.append(
+                                "provider:" + provider.status.value
+                            )
                             provider_statuses.extend(
                                 lane.kind.value + ":" + lane.status.value
                                 for lane in provider.lanes
                             )
                     raise QualificationError(
-                        "installed_preparation_failed:" + json.dumps(
-                            {"failures": failures,
-                             "provider_statuses": provider_statuses},
+                        "installed_preparation_failed:"
+                        + json.dumps(
+                            {
+                                "failures": failures,
+                                "provider_statuses": provider_statuses,
+                            },
                             sort_keys=True,
                         )
                     )
@@ -1062,16 +1382,27 @@ def _installed_continuous_qualification(
             if type(cases) is not list:
                 raise QualificationError("installed_library_invalid")
             original_case_ids = {
-                value.get("review_case_id") for value in cases
+                value.get("review_case_id")
+                for value in cases
                 if type(value) is dict and type(value.get("review_case_id")) is str
             }
             human_destinations = {
-                "subtitle", "series", "genres", "description",
-                "isbn", "asin", "tags", "cover",
+                "subtitle",
+                "series",
+                "genres",
+                "description",
+                "isbn",
+                "asin",
+                "tags",
+                "cover",
             }
             automatic_destinations = {
-                "title", "authors", "language", "publisher",
-                "publishedDate", "publishedYear",
+                "title",
+                "authors",
+                "language",
+                "publisher",
+                "publishedDate",
+                "publishedYear",
             }
             missing_human = set(human_destinations)
             available_human: dict[str, int] = {
@@ -1081,7 +1412,9 @@ def _installed_continuous_qualification(
             accepted = 0
 
             def accept_from_case(
-                case_summary: object, *, one: bool,
+                case_summary: object,
+                *,
+                one: bool,
                 only: str | None = None,
             ) -> int:
                 nonlocal accepted
@@ -1096,27 +1429,30 @@ def _installed_continuous_qualification(
                     return 0
                 detail_value = detail.json()
                 target = detail_value.get("target")
-                if (type(target) is not dict
-                        or (operator_item_ids
-                            and target.get("item") not in operator_item_ids)):
+                if type(target) is not dict or (
+                    operator_item_ids and target.get("item") not in operator_item_ids
+                ):
                     return 0
                 fields = detail_value.get("fields")
                 if type(fields) is not list:
                     return 0
                 recorded = 0
                 for field in fields:
-                    if (type(field) is dict
-                            and field.get("destination") in available_human
-                            and type(field.get("proposed_values")) is list):
+                    if (
+                        type(field) is dict
+                        and field.get("destination") in available_human
+                        and type(field.get("proposed_values")) is list
+                    ):
                         available_human[str(field["destination"])] += len(
                             field["proposed_values"]
                         )
-                    if (type(field) is not dict
-                            or field.get("destination") not in missing_human
-                            or (only is not None
-                                and field.get("destination") != only)
-                            or type(field.get("proposed_values")) is not list
-                            or not field["proposed_values"]):
+                    if (
+                        type(field) is not dict
+                        or field.get("destination") not in missing_human
+                        or (only is not None and field.get("destination") != only)
+                        or type(field.get("proposed_values")) is not list
+                        or not field["proposed_values"]
+                    ):
                         continue
                     selected_value = field["proposed_values"][0]
                     consideration_id = None
@@ -1173,7 +1509,8 @@ def _installed_continuous_qualification(
                                 "installed_cover_preparation_invalid"
                             )
                     payload = {
-                        "destination": field["destination"], "outcome": "accept",
+                        "destination": field["destination"],
+                        "outcome": "accept",
                         "proposal_id": field["proposal_id"],
                         "selected_value": selected_value,
                         "target_fingerprint": field["target_fingerprint"],
@@ -1182,16 +1519,16 @@ def _installed_continuous_qualification(
                         payload["consideration_id"] = consideration_id
                     decided = client.post(
                         f"/api/v1/review-cases/{case_id}/decisions",
-                        headers={**mutation_headers,
-                                 "Idempotency-Key": f"installed-{accepted:04d}-decision"},
+                        headers={
+                            **mutation_headers,
+                            "Idempotency-Key": f"installed-{accepted:04d}-decision",
+                        },
                         json=payload,
                     )
                     if decided.status_code != 200:
                         response = decided.json()
                         failure_detail = (
-                            response.get("detail")
-                            if type(response) is dict
-                            else None
+                            response.get("detail") if type(response) is dict else None
                         )
                         if failure_detail is None and type(response) is dict:
                             failure_detail = response.get("error")
@@ -1216,16 +1553,18 @@ def _installed_continuous_qualification(
             for name, _, _ in libraries:
                 only = "description" if name == "alpha" else "subtitle"
                 for case_summary in cases:
-                    if (type(case_summary) is dict
-                            and case_summary.get("library") == name
-                            and accept_from_case(
-                                case_summary, one=True, only=only
-                            )):
+                    if (
+                        type(case_summary) is dict
+                        and case_summary.get("library") == name
+                        and accept_from_case(case_summary, one=True, only=only)
+                    ):
                         break
             for name, _, _ in reversed(libraries):
                 for case_summary in cases:
-                    if (type(case_summary) is dict
-                            and case_summary.get("library") == name):
+                    if (
+                        type(case_summary) is dict
+                        and case_summary.get("library") == name
+                    ):
                         accept_from_case(case_summary, one=False)
             if missing_human or len(accepted_libraries) != len(libraries):
                 raise QualificationError(
@@ -1256,37 +1595,47 @@ def _installed_continuous_qualification(
                     continue
                 detail_value = detail.json()
                 target = detail_value.get("target")
-                if (type(target) is not dict
-                        or (operator_item_ids
-                            and target.get("item") not in operator_item_ids)):
+                if type(target) is not dict or (
+                    operator_item_ids and target.get("item") not in operator_item_ids
+                ):
                     continue
-                automatic_field = next((
-                    field for field in detail_value.get("fields", [])
-                    if type(field) is dict
-                    and field.get("destination") in automatic_destinations
-                    and type(field.get("automatic_decision")) is dict
-                    and field["automatic_decision"].get("outcome") == "candidate"
-                    and type(field.get("proposed_values")) is list
-                    and field["proposed_values"]
-                ), None)
+                automatic_field = next(
+                    (
+                        field
+                        for field in detail_value.get("fields", [])
+                        if type(field) is dict
+                        and field.get("destination") in automatic_destinations
+                        and type(field.get("automatic_decision")) is dict
+                        and field["automatic_decision"].get("outcome") == "candidate"
+                        and type(field.get("proposed_values")) is list
+                        and field["proposed_values"]
+                    ),
+                    None,
+                )
                 if automatic_field is None:
                     continue
                 automatic_destination = str(automatic_field["destination"])
                 override = client.post(
                     f"/api/v1/review-cases/{case_id}/decisions",
-                    headers={**mutation_headers,
-                             "Idempotency-Key": "installed-return-automatic-override"},
+                    headers={
+                        **mutation_headers,
+                        "Idempotency-Key": "installed-return-automatic-override",
+                    },
                     json={
-                        "destination": automatic_destination, "outcome": "accept",
+                        "destination": automatic_destination,
+                        "outcome": "accept",
                         "proposal_id": automatic_field["proposal_id"],
                         "selected_value": automatic_field["proposed_values"][0],
                         "target_fingerprint": automatic_field["target_fingerprint"],
                     },
                 )
-                if (override.status_code != 200
-                        or repository.field_effect_manual_hold_context(
-                            case_id, automatic_destination
-                        ) is None):
+                if (
+                    override.status_code != 200
+                    or repository.field_effect_manual_hold_context(
+                        case_id, automatic_destination
+                    )
+                    is None
+                ):
                     raise QualificationError("installed_manual_hold_failed")
                 return_connection = _string(
                     target.get("connection"), "installed_preparation_invalid"
@@ -1299,9 +1648,7 @@ def _installed_continuous_qualification(
                 )
                 if before_return_progress is None:
                     raise QualificationError("installed_preparation_invalid")
-                before_return_at = getattr(
-                    before_return_progress, "updated_at", None
-                )
+                before_return_at = getattr(before_return_progress, "updated_at", None)
                 if type(before_return_at) is not int:
                     raise QualificationError("installed_preparation_invalid")
                 clock_deadline = time.monotonic() + 2
@@ -1314,11 +1661,12 @@ def _installed_continuous_qualification(
                     f"{automatic_destination}/return-to-automatic",
                     headers=mutation_headers,
                 )
-                requested_return_progress, return_hold = (
-                    _read_installed_return_lineage(
-                        repository, return_connection, return_library,
-                        case_id, automatic_destination,
-                    )
+                requested_return_progress, return_hold = _read_installed_return_lineage(
+                    repository,
+                    return_connection,
+                    return_library,
+                    case_id,
+                    automatic_destination,
                 )
                 if requested_return_progress is None:
                     raise QualificationError("installed_preparation_invalid")
@@ -1333,8 +1681,10 @@ def _installed_continuous_qualification(
                 requested_return_at = getattr(
                     requested_return_progress, "updated_at", None
                 )
-                if (type(requested_return_scan_id) is not str
-                        or type(requested_return_at) is not int):
+                if (
+                    type(requested_return_scan_id) is not str
+                    or type(requested_return_at) is not int
+                ):
                     raise QualificationError("installed_preparation_invalid")
                 return_scan_completed = _require_installed_return_lineage_progress(
                     requested_return_progress,
@@ -1351,42 +1701,51 @@ def _installed_continuous_qualification(
             return_deadline = time.monotonic() + 60
             while time.monotonic() < return_deadline:
                 return_progress, return_hold = _read_installed_return_lineage(
-                    repository, return_connection, return_library,
-                    case_id, automatic_destination,
+                    repository,
+                    return_connection,
+                    return_library,
+                    case_id,
+                    automatic_destination,
                 )
                 if return_progress is None:
                     raise QualificationError("installed_preparation_invalid")
                 if not return_scan_completed:
-                    return_scan_completed = (
-                        _require_installed_return_lineage_progress(
-                            return_progress,
-                            requested_return_scan_id,
-                            requested_return_at,
-                            return_hold,
-                        )
+                    return_scan_completed = _require_installed_return_lineage_progress(
+                        return_progress,
+                        requested_return_scan_id,
+                        requested_return_at,
+                        return_hold,
                     )
                 if return_scan_completed and return_hold is None:
                     break
                 time.sleep(0.25)
             else:
                 raise QualificationError("installed_return_fresh_lineage_failed")
-            paused = client.post("/api/v1/field-effects/pause", headers=mutation_headers)
+            paused = client.post(
+                "/api/v1/field-effects/pause", headers=mutation_headers
+            )
             activity = client.get("/api/v1/activity")
-            if paused.status_code != 204 or activity.status_code != 200 or activity.json().get("paused") is not True:
+            if (
+                paused.status_code != 204
+                or activity.status_code != 200
+                or activity.json().get("paused") is not True
+            ):
                 raise QualificationError("installed_pause_failed")
             consented = client.post(
-                "/api/v1/activity/consent", headers=mutation_headers,
+                "/api/v1/activity/consent",
+                headers=mutation_headers,
                 json={"grants": _installed_consent_grants(activity.json(), libraries)},
             )
             if consented.status_code != 200:
                 consent_value = consented.json()
                 failure_detail = (
-                    consent_value.get("detail")
-                    if type(consent_value) is dict else None
+                    consent_value.get("detail") if type(consent_value) is dict else None
                 )
                 code = (
-                    failure_detail.get("code") if type(failure_detail) is dict
-                    and type(failure_detail.get("code")) is str else "unknown"
+                    failure_detail.get("code")
+                    if type(failure_detail) is dict
+                    and type(failure_detail.get("code")) is str
+                    else "unknown"
                 )
                 raise QualificationError(
                     f"installed_consent_failed:{consented.status_code}:{code}"
@@ -1400,15 +1759,20 @@ def _installed_continuous_qualification(
             }
             if not paused_states or set(paused_states) != {"planned"}:
                 raise QualificationError(
-                    "installed_pause_claimed:" + json.dumps(paused_states, sort_keys=True)
+                    "installed_pause_claimed:"
+                    + json.dumps(paused_states, sort_keys=True)
                 )
-            resumed = client.post("/api/v1/field-effects/resume", headers=mutation_headers)
+            resumed = client.post(
+                "/api/v1/field-effects/resume", headers=mutation_headers
+            )
             if resumed.status_code != 204:
                 raise QualificationError("installed_resume_failed")
             expected_origins = {
                 **{destination: "human" for destination in human_destinations},
-                **{destination: "automatic_policy"
-                   for destination in automatic_destinations},
+                **{
+                    destination: "automatic_policy"
+                    for destination in automatic_destinations
+                },
             }
             deadline = time.monotonic() + 90
             final_activity = None
@@ -1428,22 +1792,29 @@ def _installed_continuous_qualification(
                     ).fetchall():
                         operation = FieldEffectOperation.from_json(document)
                         decision_origin = operation.plan.authority.origin
-                        if (not operator_item_ids
-                                or operation.plan.work_id in operator_item_ids):
-                            if (coverage.get(operation.plan.destination)
-                                    != expected_origins.get(operation.plan.destination)):
+                        if (
+                            not operator_item_ids
+                            or operation.plan.work_id in operator_item_ids
+                        ):
+                            if coverage.get(
+                                operation.plan.destination
+                            ) != expected_origins.get(operation.plan.destination):
                                 coverage[operation.plan.destination] = decision_origin
-                        installed_outcomes.append({
-                            "decision_id": operation.plan.authority.decision_id,
-                            "destination": operation.plan.destination,
-                            "library": operation.plan.library,
-                            "origin": decision_origin,
-                            "plan_id": operation.plan.plan_id,
-                            "state": operation.state,
-                            "work_id": operation.plan.work_id,
-                        })
-                    if all(coverage.get(destination) == origin
-                           for destination, origin in expected_origins.items()):
+                        installed_outcomes.append(
+                            {
+                                "decision_id": operation.plan.authority.decision_id,
+                                "destination": operation.plan.destination,
+                                "library": operation.plan.library,
+                                "origin": decision_origin,
+                                "plan_id": operation.plan.plan_id,
+                                "state": operation.state,
+                                "work_id": operation.plan.work_id,
+                            }
+                        )
+                    if all(
+                        coverage.get(destination) == origin
+                        for destination, origin in expected_origins.items()
+                    ):
                         break
                 time.sleep(2)
             coverage = {
@@ -1455,9 +1826,10 @@ def _installed_continuous_qualification(
                     destination = str(row["destination"])
                     if coverage.get(destination) != expected_origins.get(destination):
                         coverage[destination] = str(row["origin"])
-            if (final_activity is None or any(
-                    coverage.get(destination) != origin
-                    for destination, origin in expected_origins.items())):
+            if final_activity is None or any(
+                coverage.get(destination) != origin
+                for destination, origin in expected_origins.items()
+            ):
                 binding_diagnostics = []
                 for document in repository.pending_field_effect_decision_documents(100):
                     decision = continuous._decision(document)
@@ -1467,23 +1839,32 @@ def _installed_continuous_qualification(
                     ]
                     second = application._authority.resolve(decision)
                     comparable = (
-                        "connection", "library", "work_id", "destination",
-                        "review_case_id", "target_fingerprint", "target_version",
+                        "connection",
+                        "library",
+                        "work_id",
+                        "destination",
+                        "review_case_id",
+                        "target_fingerprint",
+                        "target_version",
                         "decision_value",
                     )
-                    binding_diagnostics.append({
-                        "destination": decision.destination,
-                        "operator": first.work_id in operator_item_ids,
-                        "different": [
-                            name for name in comparable
-                            if getattr(first, name) != getattr(second, name)
-                        ],
-                        "no_op": first.pre_value == first.decision_value,
-                    })
+                    binding_diagnostics.append(
+                        {
+                            "destination": decision.destination,
+                            "operator": first.work_id in operator_item_ids,
+                            "different": [
+                                name
+                                for name in comparable
+                                if getattr(first, name) != getattr(second, name)
+                            ],
+                            "no_op": first.pre_value == first.decision_value,
+                        }
+                    )
                 thread_stack: list[str] = []
                 thread = continuous._thread
                 frame = (
-                    None if thread is None or thread.ident is None
+                    None
+                    if thread is None or thread.ident is None
                     else sys._current_frames().get(thread.ident)
                 )
                 while frame is not None:
@@ -1492,8 +1873,11 @@ def _installed_continuous_qualification(
                 activity_summary = {
                     key: final_activity.get(key) if final_activity else None
                     for key in (
-                        "counts", "enabled_libraries", "last_failure",
-                        "prepared", "suspensions",
+                        "counts",
+                        "enabled_libraries",
+                        "last_failure",
+                        "prepared",
+                        "suspensions",
                     )
                 }
                 field_diagnostics: list[dict[str, object]] = []
@@ -1508,25 +1892,32 @@ def _installed_continuous_qualification(
                         continue
                     detail_value = detail.json()
                     target = detail_value.get("target")
-                    if (type(target) is not dict
-                            or target.get("item") not in operator_item_ids):
+                    if (
+                        type(target) is not dict
+                        or target.get("item") not in operator_item_ids
+                    ):
                         continue
                     for field in detail_value.get("fields", []):
-                        if (type(field) is not dict
-                                or field.get("destination") not in automatic_destinations):
+                        if (
+                            type(field) is not dict
+                            or field.get("destination") not in automatic_destinations
+                        ):
                             continue
                         automatic = field.get("automatic_decision")
-                        field_diagnostics.append({
-                            "automatic": (
-                                automatic.get("outcome")
-                                if type(automatic) is dict else None
-                            ),
-                            "destination": field.get("destination"),
-                            "disposition": field.get("deterministic_disposition"),
-                            "current": field.get("current"),
-                            "proposed": len(field.get("proposed_values", [])),
-                            "values": field.get("proposed_values"),
-                        })
+                        field_diagnostics.append(
+                            {
+                                "automatic": (
+                                    automatic.get("outcome")
+                                    if type(automatic) is dict
+                                    else None
+                                ),
+                                "destination": field.get("destination"),
+                                "disposition": field.get("deterministic_disposition"),
+                                "current": field.get("current"),
+                                "proposed": len(field.get("proposed_values", [])),
+                                "values": field.get("proposed_values"),
+                            }
+                        )
                 _require_installed_full_chain_coverage(
                     coverage,
                     expected_origins,
@@ -1555,10 +1946,14 @@ def _installed_continuous_qualification(
             )
             revoked_activity = client.get("/api/v1/activity")
             remaining = revoked_activity.json().get("enabled_libraries", [])
-            if (revoked.status_code != 200 or revoked_activity.status_code != 200
-                    or len(remaining) != 1
-                    or remaining[0].get("library") != "alpha"):
+            if (
+                revoked.status_code != 200
+                or revoked_activity.status_code != 200
+                or len(remaining) != 1
+                or remaining[0].get("library") != "alpha"
+            ):
                 raise QualificationError("installed_library_revoke_failed")
+
             def rescan_all() -> tuple[tuple[str, int, int], ...]:
                 for name, _, _ in libraries:
                     rescan_deadline = time.monotonic() + 30
@@ -1567,8 +1962,10 @@ def _installed_continuous_qualification(
                             f"/api/v1/review-preparation/canary/{name}/scan",
                             headers=mutation_headers,
                         )
-                        if (response.status_code != 503
-                                or time.monotonic() >= rescan_deadline):
+                        if (
+                            response.status_code != 503
+                            or time.monotonic() >= rescan_deadline
+                        ):
                             break
                         time.sleep(0.25)
                     if response.status_code not in {202, 409}:
@@ -1578,26 +1975,37 @@ def _installed_continuous_qualification(
                 rescan_state = _wait_for_preparation(
                     client, len(libraries), allow_failures=True
                 )
-                return tuple(sorted(
-                    (
-                        _string(value.get("library"), "installed_preparation_invalid"),
-                        int(value.get("ready", 0)),
-                        int(value.get("blocked", 0)),
+                return tuple(
+                    sorted(
+                        (
+                            _string(
+                                value.get("library"), "installed_preparation_invalid"
+                            ),
+                            int(value.get("ready", 0)),
+                            int(value.get("blocked", 0)),
+                        )
+                        for value in rescan_state.get("libraries", [])
+                        if type(value) is dict
                     )
-                    for value in rescan_state.get("libraries", [])
-                    if type(value) is dict
-                ))
+                )
 
             first_rescan = rescan_all()
             stable_case_count = repository.count_current_review_cases(None)
-            if (rescan_all() != first_rescan
-                    or repository.count_current_review_cases(None)
-                    != stable_case_count):
+            if (
+                rescan_all() != first_rescan
+                or repository.count_current_review_cases(None) != stable_case_count
+            ):
                 raise QualificationError("installed_rescan_not_idempotent")
-            drifted = _mapping(_request(
-                "PATCH", base, "/api/items/" + drift_item + "/media",
-                token=writer_key, payload={"metadata": {"title": "External drift qualification"}},
-            ), "installed_drift_invalid")
+            drifted = _mapping(
+                _request(
+                    "PATCH",
+                    base,
+                    "/api/items/" + drift_item + "/media",
+                    token=writer_key,
+                    payload={"metadata": {"title": "External drift qualification"}},
+                ),
+                "installed_drift_invalid",
+            )
             if drifted.get("updated") is not True:
                 raise QualificationError("installed_drift_failed")
             response = client.post(
@@ -1609,21 +2017,23 @@ def _installed_continuous_qualification(
             _wait_for_preparation(client, len(libraries), allow_failures=True)
             regenerated = client.get("/api/v1/library?lens=all&limit=50")
             regenerated_ids = {
-                value.get("review_case_id") for value in regenerated.json().get("items", [])
+                value.get("review_case_id")
+                for value in regenerated.json().get("items", [])
                 if type(value) is dict and type(value.get("review_case_id")) is str
             }
             if regenerated.status_code != 200 or regenerated_ids == original_case_ids:
                 raise QualificationError("installed_drift_not_regenerated")
             repository.suspend_field_effect_capability(
-                scope="destination", connection="canary", destination="cover",
-                reason="unexpected_effect_behavior", changed_at=int(time.time()),
+                scope="destination",
+                connection="canary",
+                destination="cover",
+                reason="unexpected_effect_behavior",
+                changed_at=int(time.time()),
             )
             lifecycle_activity = client.get("/api/v1/activity")
             _require_installed_lifecycle_evidence(
                 activity_status=lifecycle_activity.status_code,
-                suspensions=tuple(
-                    lifecycle_activity.json().get("suspensions", [])
-                ),
+                suspensions=tuple(lifecycle_activity.json().get("suspensions", [])),
                 pending_cleanup_plan_ids=tuple(
                     repository.pending_field_effect_cleanups(1)
                 ),
@@ -1662,11 +2072,13 @@ def _installed_continuous_qualification(
             if login.status_code != 200:
                 raise QualificationError("installed_restart_login_failed")
             activity = restarted.get("/api/v1/activity")
-            if (activity.status_code != 200
-                    or activity.json().get("counts", {}).get("verified", 0)
-                    < len(expected_origins) - len(supplemental_automatic)
-                    or len(activity.json().get("enabled_libraries", []))
-                    != len(libraries) - 1):
+            if (
+                activity.status_code != 200
+                or activity.json().get("counts", {}).get("verified", 0)
+                < len(expected_origins) - len(supplemental_automatic)
+                or len(activity.json().get("enabled_libraries", []))
+                != len(libraries) - 1
+            ):
                 raise QualificationError("installed_restart_recovery_failed")
     finally:
         restarted.close()
@@ -1674,10 +2086,13 @@ def _installed_continuous_qualification(
         restart_provider_patch.stop()
         repository.close()
     return {
-        "activity_api": True, "continuous_scheduler": True,
+        "activity_api": True,
+        "continuous_scheduler": True,
         "external_drift_regeneration": True,
-        "human_decision_api": True, "idempotent_rescan": True,
-        "installed_composition": True, "libraries": len(libraries),
+        "human_decision_api": True,
+        "idempotent_rescan": True,
+        "installed_composition": True,
+        "libraries": len(libraries),
         "destinations": len(coverage),
         "full_chain_origins": coverage,
         "supplemental_installed_adapter_origins": {
@@ -1685,9 +2100,12 @@ def _installed_continuous_qualification(
             for destination in sorted(supplemental_automatic)
         },
         "outcomes": installed_outcomes,
-        "audit": True, "capability_suspension": True,
-        "cover_cleanup": True, "library_revocation": True,
-        "manual_hold_return": True, "pause_resume": True,
+        "audit": True,
+        "capability_suspension": True,
+        "cover_cleanup": True,
+        "library_revocation": True,
+        "manual_hold_return": True,
+        "pause_resume": True,
         "restart_resume": True,
         "rescan_local_failures": sum(value[2] for value in first_rescan),
         "supported_preparation": True,
@@ -1727,33 +2145,131 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
                 )
                 operator_metadata[isbn] = title
                 operator_authors[isbn] = author
-        _run("docker", "run", "-d", "--name", owner, "--label", OWNERSHIP_LABEL + "=" + owner, "-p", "127.0.0.1::80", "-v", str(config_dir) + ":/config", "-v", str(metadata_dir) + ":/metadata", "-v", str(library_dir) + ":/library:ro", image)
+        _run(
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            owner,
+            "--label",
+            OWNERSHIP_LABEL + "=" + owner,
+            "-p",
+            "127.0.0.1::80",
+            "-v",
+            str(config_dir) + ":/config",
+            "-v",
+            str(metadata_dir) + ":/metadata",
+            "-v",
+            str(library_dir) + ":/library:ro",
+            image,
+        )
         port = _run("docker", "port", owner, "80/tcp").stdout.strip().rsplit(":", 1)[1]
         base = "http://127.0.0.1:" + port
         _wait(base)
         username, password = "canary", secrets.token_urlsafe(24)
-        _request("POST", base, "/init", payload={"newRoot": {"username": username, "password": password}})
-        login = _request("POST", base, "/login", payload={"username": username, "password": password})
-        root_token = _string(_mapping(_mapping(login, "root_login_invalid").get("user"), "root_login_invalid").get("token"), "root_login_invalid")
-        created = _mapping(_request("POST", base, "/api/libraries", token=root_token, payload={"name": "canary-alpha", "folders": [{"fullPath": "/library/alpha"}], "mediaType": "book", "provider": "openlibrary", "settings": {"disableWatcher": True}}), "library_response_invalid")
+        _request(
+            "POST",
+            base,
+            "/init",
+            payload={"newRoot": {"username": username, "password": password}},
+        )
+        login = _request(
+            "POST", base, "/login", payload={"username": username, "password": password}
+        )
+        root_token = _string(
+            _mapping(
+                _mapping(login, "root_login_invalid").get("user"), "root_login_invalid"
+            ).get("token"),
+            "root_login_invalid",
+        )
+        created = _mapping(
+            _request(
+                "POST",
+                base,
+                "/api/libraries",
+                token=root_token,
+                payload={
+                    "name": "canary-alpha",
+                    "folders": [{"fullPath": "/library/alpha"}],
+                    "mediaType": "book",
+                    "provider": "openlibrary",
+                    "settings": {"disableWatcher": True},
+                },
+            ),
+            "library_response_invalid",
+        )
         library_id = _string(created.get("id"), "library_response_invalid")
-        second_created = _mapping(_request("POST", base, "/api/libraries", token=root_token, payload={"name": "canary-beta", "folders": [{"fullPath": "/library/beta"}], "mediaType": "book", "provider": "openlibrary", "settings": {"disableWatcher": True}}), "library_response_invalid")
-        second_library_id = _string(second_created.get("id"), "library_response_invalid")
+        second_created = _mapping(
+            _request(
+                "POST",
+                base,
+                "/api/libraries",
+                token=root_token,
+                payload={
+                    "name": "canary-beta",
+                    "folders": [{"fullPath": "/library/beta"}],
+                    "mediaType": "book",
+                    "provider": "openlibrary",
+                    "settings": {"disableWatcher": True},
+                },
+            ),
+            "library_response_invalid",
+        )
+        second_library_id = _string(
+            second_created.get("id"), "library_response_invalid"
+        )
         library_ids = (library_id, second_library_id)
-        writer_id = _create_user(base, root_token, username="writer", password=password,
-                                 library_ids=library_ids, update=True, upload=True)
-        writer_key_id, writer_key = _create_api_key(base, root_token, writer_id, "canary-writer")
+        writer_id = _create_user(
+            base,
+            root_token,
+            username="writer",
+            password=password,
+            library_ids=library_ids,
+            update=True,
+            upload=True,
+        )
+        writer_key_id, writer_key = _create_api_key(
+            base, root_token, writer_id, "canary-writer"
+        )
         key_ids.append(writer_key_id)
-        read_only_id = _create_user(base, root_token, username="read-only", password=password,
-                                    library_ids=library_ids, update=False, upload=False)
-        read_only_key_id, read_only_key = _create_api_key(base, root_token, read_only_id, "canary-read-only")
+        read_only_id = _create_user(
+            base,
+            root_token,
+            username="read-only",
+            password=password,
+            library_ids=library_ids,
+            update=False,
+            upload=False,
+        )
+        read_only_key_id, read_only_key = _create_api_key(
+            base, root_token, read_only_id, "canary-read-only"
+        )
         key_ids.append(read_only_key_id)
-        update_only_id = _create_user(base, root_token, username="update-only", password=password,
-                                      library_ids=library_ids, update=True, upload=False)
-        update_only_key_id, update_only_key = _create_api_key(base, root_token, update_only_id, "canary-update-only")
+        update_only_id = _create_user(
+            base,
+            root_token,
+            username="update-only",
+            password=password,
+            library_ids=library_ids,
+            update=True,
+            upload=False,
+        )
+        update_only_key_id, update_only_key = _create_api_key(
+            base, root_token, update_only_id, "canary-update-only"
+        )
         key_ids.append(update_only_key_id)
-        _request("POST", base, "/api/libraries/" + library_id + "/scan?force=1", token=root_token)
-        _request("POST", base, "/api/libraries/" + second_library_id + "/scan?force=1", token=root_token)
+        _request(
+            "POST",
+            base,
+            "/api/libraries/" + library_id + "/scan?force=1",
+            token=root_token,
+        )
+        _request(
+            "POST",
+            base,
+            "/api/libraries/" + second_library_id + "/scan?force=1",
+            token=root_token,
+        )
 
         def current_title(item_id: str) -> str:
             detail = _mapping(
@@ -1768,16 +2284,30 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         item = None
         items: list[object] = []
         while time.monotonic() < deadline:
-            listing = _mapping(_request("GET", base, "/api/libraries/" + library_id + "/items?limit=10&page=0", token=root_token), "listing_invalid")
+            listing = _mapping(
+                _request(
+                    "GET",
+                    base,
+                    "/api/libraries/" + library_id + "/items?limit=10&page=0",
+                    token=root_token,
+                ),
+                "listing_invalid",
+            )
             results = listing.get("results")
             expected = len(tuple(alpha_dir.glob("*.epub")))
-            if (listing.get("total") == expected and type(results) is list
-                    and len(results) == expected
-                    and all(type(value) is dict for value in results)):
+            if (
+                listing.get("total") == expected
+                and type(results) is list
+                and len(results) == expected
+                and all(type(value) is dict for value in results)
+            ):
                 items = [value.get("id") for value in results]
                 item = next(
-                    (value for value in items
-                     if type(value) is str and current_title(value) == "Before"),
+                    (
+                        value
+                        for value in items
+                        if type(value) is str and current_title(value) == "Before"
+                    ),
                     None,
                 )
                 break
@@ -1786,27 +2316,40 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             raise RuntimeError("synthetic library did not scan")
         if not isinstance(item, str):
             raise QualificationError("synthetic_library_did_not_scan")
-        if (not isinstance(items, list) or any(not isinstance(value, str) for value in items)):
+        if not isinstance(items, list) or any(
+            not isinstance(value, str) for value in items
+        ):
             raise QualificationError("synthetic_library_did_not_scan")
         deadline = time.monotonic() + 90
         second_expected = len(tuple(beta_dir.glob("*.epub")))
         second_item = None
         while time.monotonic() < deadline:
-            second_listing = _mapping(_request(
-                "GET", base,
-                "/api/libraries/" + second_library_id + "/items?limit=10&page=0",
-                token=root_token,
-            ), "listing_invalid")
+            second_listing = _mapping(
+                _request(
+                    "GET",
+                    base,
+                    "/api/libraries/" + second_library_id + "/items?limit=10&page=0",
+                    token=root_token,
+                ),
+                "listing_invalid",
+            )
             second_results = second_listing.get("results")
-            if (second_listing.get("total") == second_expected
-                    and type(second_results) is list and second_results
-                    and type(second_results[0]) is dict
-                    and type(second_results[0].get("id")) is str):
+            if (
+                second_listing.get("total") == second_expected
+                and type(second_results) is list
+                and second_results
+                and type(second_results[0]) is dict
+                and type(second_results[0].get("id")) is str
+            ):
                 candidate_ids = [value.get("id") for value in second_results]
                 second_item = next(
-                    (value for value in candidate_ids
-                     if type(value) is str and current_title(value) ==
-                     operator_metadata.get("9780306406157")),
+                    (
+                        value
+                        for value in candidate_ids
+                        if type(value) is str
+                        and current_title(value)
+                        == operator_metadata.get("9780306406157")
+                    ),
                     next(
                         (value for value in candidate_ids if type(value) is str),
                         None,
@@ -1822,7 +2365,8 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         }
         operator_titles = set(operator_metadata.values())
         operator_item_ids = {
-            value for value in scanned_item_ids
+            value
+            for value in scanned_item_ids
             if (corpus_sources or value != item)
             and current_title(value) in operator_titles
         }
@@ -1830,37 +2374,83 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             raise QualificationError("operator_corpus_identity_failed")
         original_alpha_title = current_title(item)
         original_beta_title = current_title(second_item)
-        seeded = _mapping(_request(
-            "PATCH", base, "/api/items/" + second_item + "/media",
-            token=writer_key,
-            payload={"metadata": {
-                "authors": [{"name": "Seed Author"}],
-                "language": "en",
-                "publishedDate": "2020-01-01",
-                "publishedYear": "2020",
-                "publisher": "Seed Press",
-                "title": "Beta qualification seed",
-            }},
-        ), "second_library_seed_invalid")
+        seeded = _mapping(
+            _request(
+                "PATCH",
+                base,
+                "/api/items/" + second_item + "/media",
+                token=writer_key,
+                payload={
+                    "metadata": {
+                        "authors": [{"name": "Seed Author"}],
+                        "language": "en",
+                        "publishedDate": "2020-01-01",
+                        "publishedYear": "2020",
+                        "publisher": "Seed Press",
+                        "title": "Beta qualification seed",
+                    }
+                },
+            ),
+            "second_library_seed_invalid",
+        )
         if seeded.get("updated") is not True:
             raise QualificationError("second_library_seed_failed")
         # The service must reject a key inherited from an active but read-only
         # user before the least-authority writer is allowed to mutate anything.
-        read_only_patch = _mapping(_request("PATCH", base, "/api/items/" + item + "/media", token=read_only_key, payload={"tags": ["forbidden"]}), "read_only_response_invalid")
+        read_only_patch = _mapping(
+            _request(
+                "PATCH",
+                base,
+                "/api/items/" + item + "/media",
+                token=read_only_key,
+                payload={"tags": ["forbidden"]},
+            ),
+            "read_only_response_invalid",
+        )
         if read_only_patch.get("status") not in {401, 403}:
             raise QualificationError("read_only_metadata_was_not_refused")
-        denied_cover = httpx.post(base + "/api/items/" + item + "/cover", headers={"Authorization": "Bearer " + read_only_key}, files={"cover": ("forbidden.png", _png(1, 1, 1), "image/png")}, timeout=20)
+        denied_cover = httpx.post(
+            base + "/api/items/" + item + "/cover",
+            headers={"Authorization": "Bearer " + read_only_key},
+            files={"cover": ("forbidden.png", _png(1, 1, 1), "image/png")},
+            timeout=20,
+        )
         if denied_cover.status_code not in {401, 403}:
             raise QualificationError("read_only_cover_was_not_refused")
-        update_only_patch = _mapping(_request("PATCH", base, "/api/items/" + item + "/media", token=update_only_key, payload={"tags": ["update-only"]}), "update_only_response_invalid")
+        update_only_patch = _mapping(
+            _request(
+                "PATCH",
+                base,
+                "/api/items/" + item + "/media",
+                token=update_only_key,
+                payload={"tags": ["update-only"]},
+            ),
+            "update_only_response_invalid",
+        )
         if update_only_patch.get("updated") is not True:
             raise QualificationError("update_only_metadata_was_not_allowed")
-        update_only_cover = httpx.post(base + "/api/items/" + item + "/cover", headers={"Authorization": "Bearer " + update_only_key}, files={"cover": ("forbidden.png", _png(2, 2, 2), "image/png")}, timeout=20)
+        update_only_cover = httpx.post(
+            base + "/api/items/" + item + "/cover",
+            headers={"Authorization": "Bearer " + update_only_key},
+            files={"cover": ("forbidden.png", _png(2, 2, 2), "image/png")},
+            timeout=20,
+        )
         if update_only_cover.status_code not in {401, 403}:
             raise QualificationError("update_only_cover_was_not_refused")
-        _request("PATCH", base, "/api/items/" + item + "/media", token=writer_key, payload={"tags": ["before"]})
+        _request(
+            "PATCH",
+            base,
+            "/api/items/" + item + "/media",
+            token=writer_key,
+            payload={"tags": ["before"]},
+        )
         before_cover = _png(0, 0, 255)
-        response = httpx.post(base + "/api/items/" + item + "/cover", headers={"Authorization": "Bearer " + writer_key}, files={"cover": ("before.png", before_cover, "image/png")}, timeout=20)
+        response = httpx.post(
+            base + "/api/items/" + item + "/cover",
+            headers={"Authorization": "Bearer " + writer_key},
+            files={"cover": ("before.png", before_cover, "image/png")},
+            timeout=20,
+        )
         if response.status_code not in {200, 201}:
             raise RuntimeError("synthetic initial cover was refused")
         artifacts = CoverArtifactStore(root / "artifacts")
@@ -1868,95 +2458,199 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
         artifact = CoverArtifact.create(desired_cover, b"preview", "image/png", 2, 2)
         artifacts.stage(artifact, desired_cover, b"preview")
         writes: list[str] = []
+
         def client_factory() -> httpx.Client:
             client = target_client_token(base, writer_key, 20)
+
             def observe_request(request: httpx.Request) -> None:
                 if request.method in {"PATCH", "POST"}:
                     writes.append(request.method)
+
             client.event_hooks["request"].append(observe_request)
             return client
+
         target = AudiobookshelfFieldEffectTarget(
-            client_factory=client_factory, endpoint=base, library_id=library_id,
+            client_factory=client_factory,
+            endpoint=base,
+            library_id=library_id,
             artifacts=artifacts,
         )
         capabilities = AudiobookshelfFieldEffectCapabilities(
-            client_factory=client_factory, endpoint=base, library_id=library_id,
+            client_factory=client_factory,
+            endpoint=base,
+            library_id=library_id,
         )
         repository = open_repository(root / "effects.sqlite")
         current = type("Current", (), {"current": lambda self, value: True})()
         time_value = [100]
+
         def clock() -> int:
             time_value[0] += 1
             return time_value[0]
-        if capabilities.result(type("Plan", (), {"work_id": item, "destination": "title"})()).category != "allowed":
+
+        if (
+            capabilities.result(
+                type("Plan", (), {"work_id": item, "destination": "title"})()
+            ).category
+            != "allowed"
+        ):
             raise QualificationError("writer_capability_not_allowed")
-        recovery = _ObservedRecovery(PrivateCoverRecoveryStore(root / "recovery", lambda _: _raw_cover(base, writer_key, item, before_cover)))
-        service = GuardedFieldApplication(repository, target, FakeBackupReadiness(), capabilities, current, FakeDependencyCurrentness(), current, recovery, FakeForwardReevaluation(), clock)
+        recovery = _ObservedRecovery(
+            PrivateCoverRecoveryStore(
+                root / "recovery",
+                lambda _: _raw_cover(base, writer_key, item, before_cover),
+            )
+        )
+        service = GuardedFieldApplication(
+            repository,
+            target,
+            FakeBackupReadiness(),
+            capabilities,
+            current,
+            FakeDependencyCurrentness(),
+            current,
+            recovery,
+            FakeForwardReevaluation(),
+            clock,
+        )
         adapter_outcomes = [
-            _apply(service, repository, target, capabilities, writes, recovery,
-                   item, "title", "After", clock()),
-            _apply(service, repository, target, capabilities, writes, recovery,
-                   item, "tags", ["canary"], clock()),
+            _apply(
+                service,
+                repository,
+                target,
+                capabilities,
+                writes,
+                recovery,
+                item,
+                "title",
+                "After",
+                clock(),
+            ),
+            _apply(
+                service,
+                repository,
+                target,
+                capabilities,
+                writes,
+                recovery,
+                item,
+                "tags",
+                ["canary"],
+                clock(),
+            ),
         ]
         if corpus_sources:
             authors_item = next(
-                value for value in items
-                if value in operator_item_ids and value != item
+                value for value in items if value in operator_item_ids and value != item
             )
-            adapter_outcomes.append(_apply(
-                service, repository, target, capabilities, writes, recovery,
-                authors_item, "authors", ["Seed Author"], clock(),
-            ))
+            adapter_outcomes.append(
+                _apply(
+                    service,
+                    repository,
+                    target,
+                    capabilities,
+                    writes,
+                    recovery,
+                    authors_item,
+                    "authors",
+                    ["Seed Author"],
+                    clock(),
+                )
+            )
         _stable_cover_observation(target, item)
-        adapter_outcomes.append(_apply(
-            service, repository, target, capabilities, writes, recovery,
-            item, "cover", artifact.artifact_id, clock()
-        ))
+        adapter_outcomes.append(
+            _apply(
+                service,
+                repository,
+                target,
+                capabilities,
+                writes,
+                recovery,
+                item,
+                "cover",
+                artifact.artifact_id,
+                clock(),
+            )
+        )
         beta_target = AudiobookshelfFieldEffectTarget(
-            client_factory=client_factory, endpoint=base,
-            library_id=second_library_id, artifacts=artifacts,
+            client_factory=client_factory,
+            endpoint=base,
+            library_id=second_library_id,
+            artifacts=artifacts,
         )
         beta_capabilities = AudiobookshelfFieldEffectCapabilities(
-            client_factory=client_factory, endpoint=base,
+            client_factory=client_factory,
+            endpoint=base,
             library_id=second_library_id,
         )
         beta_repository = open_repository(root / "effects-beta.sqlite")
         beta_service = GuardedFieldApplication(
-            beta_repository, beta_target, FakeBackupReadiness(),
-            beta_capabilities, current, FakeDependencyCurrentness(), current,
-            recovery, FakeForwardReevaluation(), clock,
+            beta_repository,
+            beta_target,
+            FakeBackupReadiness(),
+            beta_capabilities,
+            current,
+            FakeDependencyCurrentness(),
+            current,
+            recovery,
+            FakeForwardReevaluation(),
+            clock,
         )
         real_automatic_adapter = [
             _apply(
-                beta_service, beta_repository, beta_target, beta_capabilities,
-                writes, recovery, second_item, "title", "Before", clock(),
+                beta_service,
+                beta_repository,
+                beta_target,
+                beta_capabilities,
+                writes,
+                recovery,
+                second_item,
+                "title",
+                "Before",
+                clock(),
                 origin="automatic_policy",
             ),
             _apply(
-                beta_service, beta_repository, beta_target, beta_capabilities,
-                writes, recovery, second_item, "authors",
-                ["Synthetic Author", "Second Qualified Author"], clock(),
+                beta_service,
+                beta_repository,
+                beta_target,
+                beta_capabilities,
+                writes,
+                recovery,
+                second_item,
+                "authors",
+                ["Synthetic Author", "Second Qualified Author"],
+                clock(),
                 origin="automatic_policy",
             ),
         ]
         beta_repository.close()
-        reseeded_beta = _mapping(_request(
-            "PATCH", base, "/api/items/" + second_item + "/media",
-            token=writer_key, payload={"metadata": {
-                "authors": [{"name": "Seed Author"}],
-                "language": "en",
-                "publishedDate": "2020-01-01",
-                "publishedYear": "2020",
-                "publisher": "Seed Press",
-                "title": "Beta qualification seed",
-            }},
-        ), "second_library_reseed_invalid")
+        reseeded_beta = _mapping(
+            _request(
+                "PATCH",
+                base,
+                "/api/items/" + second_item + "/media",
+                token=writer_key,
+                payload={
+                    "metadata": {
+                        "authors": [{"name": "Seed Author"}],
+                        "language": "en",
+                        "publishedDate": "2020-01-01",
+                        "publishedYear": "2020",
+                        "publisher": "Seed Press",
+                        "title": "Beta qualification seed",
+                    }
+                },
+            ),
+            "second_library_reseed_invalid",
+        )
         if reseeded_beta.get("updated") is not True:
             raise QualificationError("second_library_reseed_failed")
         installed = _installed_continuous_qualification(
-            root, base, writer_key,
-            (("alpha", library_id, alpha_dir),
-             ("beta", second_library_id, beta_dir)),
+            root,
+            base,
+            writer_key,
+            (("alpha", library_id, alpha_dir), ("beta", second_library_id, beta_dir)),
             item,
             {
                 "After": original_alpha_title,
@@ -1966,9 +2660,7 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
                 "Guarded qualification title": original_alpha_title,
                 **{
                     title: ("Before" if index == 6 else title)
-                    for index, title in enumerate(
-                        operator_metadata.values(), start=1
-                    )
+                    for index, title in enumerate(operator_metadata.values(), start=1)
                 },
             },
             operator_item_ids,
@@ -1977,18 +2669,39 @@ def qualify(version: str, corpus: Path | None = None) -> dict[str, object]:
             set(),
         )
         repository.close()
-        digest = _run("docker", "image", "inspect", image, "--format", "{{index .RepoDigests 0}}").stdout.strip()
+        digest = _run(
+            "docker", "image", "inspect", image, "--format", "{{index .RepoDigests 0}}"
+        ).stdout.strip()
         expected_digest = image.rsplit("@", 1)[1]
-        if (not digest.endswith("@" + expected_digest)
-                or any(row["state"] != "verified" for row in adapter_outcomes)):
+        if not digest.endswith("@" + expected_digest) or any(
+            row["state"] != "verified" for row in adapter_outcomes
+        ):
             raise QualificationError("guarded_write_not_verified")
         installed_outcomes = installed["outcomes"]
-        return {"version": version, "image_digest": expected_digest, "resolved_image_digest": digest.rsplit("@", 1)[1], "authentication": "api_key_accepted", "least_authority_refusal": True, "operator_cases": len(corpus_sources), "destinations": installed["destinations"], "mixed_origins": set(installed["full_chain_origins"].values()) == {"human", "automatic_policy"}, "metadata_tags": True, "cover": installed["full_chain_origins"].get("cover") == "human", "installed_continuous": installed, "real_automatic_adapter": real_automatic_adapter, "adapter_canary": adapter_outcomes, "outcomes": installed_outcomes}
+        return {
+            "version": version,
+            "image_digest": expected_digest,
+            "resolved_image_digest": digest.rsplit("@", 1)[1],
+            "authentication": "api_key_accepted",
+            "least_authority_refusal": True,
+            "operator_cases": len(corpus_sources),
+            "destinations": installed["destinations"],
+            "mixed_origins": set(installed["full_chain_origins"].values())
+            == {"human", "automatic_policy"},
+            "metadata_tags": True,
+            "cover": installed["full_chain_origins"].get("cover") == "human",
+            "installed_continuous": installed,
+            "real_automatic_adapter": real_automatic_adapter,
+            "adapter_canary": adapter_outcomes,
+            "outcomes": installed_outcomes,
+        }
     finally:
         if base is not None and root_token is not None:
             for key_id in key_ids:
                 _delete_key(base, root_token, key_id)
-        if subprocess.run(("docker", "inspect", owner), capture_output=True, text=True).returncode == 0 and not _owned(owner, owner):
+        if subprocess.run(
+            ("docker", "inspect", owner), capture_output=True, text=True
+        ).returncode == 0 and not _owned(owner, owner):
             raise RuntimeError("refusing cleanup of unowned Docker resource")
         if _owned(owner, owner):
             _run("docker", "rm", "-f", owner)
@@ -2004,17 +2717,40 @@ def main() -> None:
     arguments = parser.parse_args()
     if not arguments.snapshot:
         source_sha = _run("git", "rev-parse", "HEAD").stdout.strip()
-        source_blob = _run("git", "show", arguments.source_sha + ":scripts/qualify_audiobookshelf_field_effect.py").stdout.encode()
-        if source_sha != arguments.source_sha or _run("git", "status", "--porcelain").stdout or hashlib.sha256(Path(__file__).read_bytes()).digest() != hashlib.sha256(source_blob).digest():
+        source_blob = _run(
+            "git",
+            "show",
+            arguments.source_sha + ":scripts/qualify_audiobookshelf_field_effect.py",
+        ).stdout.encode()
+        if (
+            source_sha != arguments.source_sha
+            or _run("git", "status", "--porcelain").stdout
+            or hashlib.sha256(Path(__file__).read_bytes()).digest()
+            != hashlib.sha256(source_blob).digest()
+        ):
             raise QualificationError("source_head_mismatch")
         _snapshot(arguments.source_sha, arguments.version, arguments.corpus)
         return
     import mechanical_librarian
-    if not INSTALLED_ROOT or not Path(mechanical_librarian.__file__).resolve().is_relative_to(IMPORT_ROOT):
+
+    if not INSTALLED_ROOT or not Path(
+        mechanical_librarian.__file__
+    ).resolve().is_relative_to(IMPORT_ROOT):
         raise QualificationError("snapshot_import_mismatch")
     latest = _latest_stable()
     values = arguments.version or list(IMAGES)
-    print(json.dumps({"schema": "audiobookshelf-field-effect-v2", "installed_artifact": True, "latest_stable_version": latest, "operator_corpus": arguments.corpus is not None, "results": [qualify(value, arguments.corpus) for value in values]}, sort_keys=True))
+    print(
+        json.dumps(
+            {
+                "schema": "audiobookshelf-field-effect-v2",
+                "installed_artifact": True,
+                "latest_stable_version": latest,
+                "operator_corpus": arguments.corpus is not None,
+                "results": [qualify(value, arguments.corpus) for value in values],
+            },
+            sort_keys=True,
+        )
+    )
 
 
 if __name__ == "__main__":

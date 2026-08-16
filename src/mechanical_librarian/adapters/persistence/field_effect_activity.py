@@ -92,15 +92,27 @@ from mechanical_librarian.domain.rich_metadata_preview import (
 )
 
 
-def _operational_signal(kind: str, cause: str, scope: str, *,
-                        connection: str | None = None,
-                        library: str | None = None,
-                        category: str | None = None,
-                        work_id: str | None = None,
-                        field: str | None = None) -> dict[str, object]:
-    return {"category": category, "cause": cause, "connection": connection,
-            "field": field, "kind": kind, "library": library,
-            "scope": scope, "work_id": work_id}
+def _operational_signal(
+    kind: str,
+    cause: str,
+    scope: str,
+    *,
+    connection: str | None = None,
+    library: str | None = None,
+    category: str | None = None,
+    work_id: str | None = None,
+    field: str | None = None,
+) -> dict[str, object]:
+    return {
+        "category": category,
+        "cause": cause,
+        "connection": connection,
+        "field": field,
+        "kind": kind,
+        "library": library,
+        "scope": scope,
+        "work_id": work_id,
+    }
 
 
 class SQLiteFieldEffectActivityRepository(ConnectionScoped):
@@ -150,15 +162,22 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         """Resolve one exact persisted decision against its current case lineage."""
         if not self._review_case_accepts_authority(decision.review_case_id):
             raise FieldEffectError("authority_binding")
-        table = "human_decisions" if type(decision) is HumanDecision else "automatic_decisions"
+        table = (
+            "human_decisions"
+            if type(decision) is HumanDecision
+            else "automatic_decisions"
+        )
         row = self._connection.execute(
             f"SELECT document FROM {table} WHERE decision_id=?", (decision.decision_id,)
         ).fetchone()
         if row is None or row[0] != decision.to_json():
             raise FieldEffectError("authority_binding")
         envelope = json.loads(self.get_review_case(decision.review_case_id))
-        if (type(envelope) is not dict or envelope.get("current") is not True
-                or type(envelope.get("case")) is not dict):
+        if (
+            type(envelope) is not dict
+            or envelope.get("current") is not True
+            or type(envelope.get("case")) is not dict
+        ):
             raise FieldEffectError("authority_binding")
         case = ReviewCase.from_json(_canonical_json(envelope["case"]))
         # ``value`` carries either a human selection envelope or the projected
@@ -183,16 +202,21 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 raise FieldEffectError("authority_binding")
             try:
                 value = _automatic_decision_value(
-                    automatic, case, MetadataReport.from_json(report_row[0]),
+                    automatic,
+                    case,
+                    MetadataReport.from_json(report_row[0]),
                     ProposalSet.from_json(proposal_row[0]),
                 )
             except (
-                ReportValueError, ProposalValueError, RichMetadataPreviewError,
+                ReportValueError,
+                ProposalValueError,
+                RichMetadataPreviewError,
             ) as error:
                 raise FieldEffectError("authority_binding") from error
         lineage = self._connection.execute(
             "SELECT connection_name,library_name,item_id FROM current_review_case_lineages "
-            "WHERE review_case_id=?", (decision.review_case_id,),
+            "WHERE review_case_id=?",
+            (decision.review_case_id,),
         ).fetchone()
         if lineage is None:
             raise FieldEffectError("authority_binding")
@@ -201,21 +225,22 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             raise FieldEffectError("authority_binding")
         target_field = next(
             (
-                item for item in target_fields
+                item
+                for item in target_fields
                 if type(item) is dict
                 and item.get("destination") == decision.destination
             ),
             None,
         )
-        if (type(target_field) is not dict
-                or target_field.get("state") not in {
-                    "value", "null", "empty", "missing",
-                }):
+        if type(target_field) is not dict or target_field.get("state") not in {
+            "value",
+            "null",
+            "empty",
+            "missing",
+        }:
             raise FieldEffectError("authority_binding")
         pre_value = (
-            target_field.get("value")
-            if target_field["state"] == "value"
-            else None
+            target_field.get("value") if target_field["state"] == "value" else None
         )
         dependency_digests: tuple[str, ...] = (decision.target_fingerprint,)
         if type(decision) is HumanDecision and decision.destination == "cover":
@@ -229,9 +254,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             if consideration_row is None:
                 raise FieldEffectError("authority_binding")
             consideration = json.loads(consideration_row[0])
-            selected_artifact = (
-                value.get("value") if type(value) is dict else None
-            )
+            selected_artifact = value.get("value") if type(value) is dict else None
             selected_candidate = next(
                 (
                     candidate
@@ -246,7 +269,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             incumbent_digest = consideration.get("incumbent_digest")
             if (
                 selected_candidate is None
-                or consideration.get("target_fingerprint") != decision.target_fingerprint
+                or consideration.get("target_fingerprint")
+                != decision.target_fingerprint
                 or consideration.get("policy_reference")
                 != self._current_cover_policy_reference
                 or consideration.get("replay_reference")
@@ -261,30 +285,40 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 decision.target_fingerprint,
                 hashlib.sha256(consideration_row[0].encode("utf-8")).hexdigest(),
             )
-        return {"connection": lineage[0], "library": lineage[1], "work_id": lineage[2],
-                "destination": decision.destination,
-                "review_case_id": decision.review_case_id,
-                "target_fingerprint": decision.target_fingerprint,
-                "target_version": field_value_version(decision.destination, pre_value),
-                "decision_value": value, "source": "persisted_review_case",
-                "pre_value": pre_value,
-                "dependency_digests": dependency_digests}
+        return {
+            "connection": lineage[0],
+            "library": lineage[1],
+            "work_id": lineage[2],
+            "destination": decision.destination,
+            "review_case_id": decision.review_case_id,
+            "target_fingerprint": decision.target_fingerprint,
+            "target_version": field_value_version(decision.destination, pre_value),
+            "decision_value": value,
+            "source": "persisted_review_case",
+            "pre_value": pre_value,
+            "dependency_digests": dependency_digests,
+        }
 
     def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool:
-        current = (self._connection.execute(
-            "SELECT current FROM field_effect_authorities WHERE decision_id=?",
-            (authority.decision_id,),
-        ).fetchone() == (1,) and self._connection.execute(
-            "SELECT 1 FROM current_review_case_lineages WHERE review_case_id=?",
-            (authority.review_case_id,),
-        ).fetchone() == (1,) and self._review_case_accepts_authority(
-            authority.review_case_id
-        ))
+        current = (
+            self._connection.execute(
+                "SELECT current FROM field_effect_authorities WHERE decision_id=?",
+                (authority.decision_id,),
+            ).fetchone()
+            == (1,)
+            and self._connection.execute(
+                "SELECT 1 FROM current_review_case_lineages WHERE review_case_id=?",
+                (authority.review_case_id,),
+            ).fetchone()
+            == (1,)
+            and self._review_case_accepts_authority(authority.review_case_id)
+        )
         if not current or authority.origin != "automatic_policy":
             return current
         lineage = self._connection.execute(
             "SELECT library_name FROM current_review_case_lineages "
-            "WHERE review_case_id=?", (authority.review_case_id,),
+            "WHERE review_case_id=?",
+            (authority.review_case_id,),
         ).fetchone()
         if lineage is None:
             return False
@@ -293,11 +327,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "JOIN field_effect_manual_holds hold "
             "ON hold.review_case_id=automatic.review_case_id "
             "AND hold.destination=automatic.destination AND hold.active=1 "
-            "WHERE automatic.decision_id=? LIMIT 1", (authority.decision_id,),
+            "WHERE automatic.decision_id=? LIMIT 1",
+            (authority.decision_id,),
         ).fetchone() == (1,):
             return False
         try:
-            return self.current_resolved_policy_id(lineage[0]) == authority.policy_identity
+            return (
+                self.current_resolved_policy_id(lineage[0]) == authority.policy_identity
+            )
         except MetadataReportError:
             return False
 
@@ -311,32 +348,44 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
 
     @staticmethod
     def _field_effect_consent_envelope_identity(
-        library: str, resolved_policy_id: str,
+        library: str,
+        resolved_policy_id: str,
     ) -> str:
-        document = canonical_effect_json({
-            "action": "apply_field",
-            "destinations": sorted(SUPPORTED_DESTINATIONS),
-            "library": library,
-            "resolved_policy_id": resolved_policy_id,
-            "schema_version": "field-effect-consent-envelope-v1",
-        })
+        document = canonical_effect_json(
+            {
+                "action": "apply_field",
+                "destinations": sorted(SUPPORTED_DESTINATIONS),
+                "library": library,
+                "resolved_policy_id": resolved_policy_id,
+                "schema_version": "field-effect-consent-envelope-v1",
+            }
+        )
         return hashlib.sha256(document.encode("utf-8")).hexdigest()
 
     def pending_field_effect_decision_documents(
-        self, limit: int, after: tuple[int, str] | None = None,
+        self,
+        limit: int,
+        after: tuple[int, str] | None = None,
     ) -> tuple[str, ...]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise FieldEffectError("invalid_limit")
-        if (after is not None and (type(after) is not tuple or len(after) != 2
-                or type(after[0]) is not int or after[0] < 0
-                or type(after[1]) is not str or not after[1])):
+        if after is not None and (
+            type(after) is not tuple
+            or len(after) != 2
+            or type(after[0]) is not int
+            or after[0] < 0
+            or type(after[1]) is not str
+            or not after[1]
+        ):
             raise FieldEffectError("invalid_limit")
         try:
             cursor = ""
             parameters: tuple[object, ...] = ()
             if after is not None:
-                cursor = ("AND (pending.occurred_at>? OR "
-                          "(pending.occurred_at=? AND pending.decision_id>?)) ")
+                cursor = (
+                    "AND (pending.occurred_at>? OR "
+                    "(pending.occurred_at=? AND pending.decision_id>?)) "
+                )
                 parameters = (after[0], after[0], after[1])
             rows = self._connection.execute(
                 "SELECT pending.document FROM ("
@@ -377,8 +426,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "hold.destination=automatic.destination AND hold.active=1)"
                 ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
                 "WHERE effect.decision_id=pending.decision_id AND "
-                "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) " + cursor +
-                "ORDER BY pending.occurred_at,pending.decision_id LIMIT ?",
+                "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
+                + cursor
+                + "ORDER BY pending.occurred_at,pending.decision_id LIMIT ?",
                 (*parameters, limit),
             ).fetchall()
             return tuple(row[0] for row in rows)
@@ -431,20 +481,26 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "GROUP BY lineage.connection_name,lineage.library_name,pending.origin "
                 "ORDER BY lineage.connection_name,lineage.library_name,pending.origin"
             ).fetchall()
-            return tuple({
-                "connection": connection,
-                "library": library,
-                "origin": origin,
-                "count": count,
-            } for connection, library, origin, count in rows)
+            return tuple(
+                {
+                    "connection": connection,
+                    "library": library,
+                    "origin": origin,
+                    "count": count,
+                }
+                for connection, library, origin, count in rows
+            )
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
     def pending_field_effect_manual_returns(
-        self, limit: int, after: tuple[int, str, str] | None = None,
+        self,
+        limit: int,
+        after: tuple[int, str, str] | None = None,
     ) -> tuple[tuple[str, str, str, str, str, str, int, int], ...]:
         if (
-            type(limit) is not int or not 1 <= limit <= 100
+            type(limit) is not int
+            or not 1 <= limit <= 100
             or (
                 after is not None
                 and (
@@ -468,8 +524,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     "AND hold.destination>?)) "
                 )
                 parameters = (
-                    after[0], after[0], after[1],
-                    after[0], after[1], after[2],
+                    after[0],
+                    after[0],
+                    after[1],
+                    after[0],
+                    after[1],
+                    after[2],
                 )
             rows = self._connection.execute(
                 "SELECT hold.review_case_id,hold.destination,lineage.connection_name,"
@@ -479,28 +539,43 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON lineage.review_case_id=hold.review_case_id "
                 "WHERE hold.active=1 AND "
                 "json_type(hold.document,'$.pending_return')='object' "
-                + cursor_clause +
-                "ORDER BY hold.updated_at,hold.review_case_id,hold.destination LIMIT ?",
+                + cursor_clause
+                + "ORDER BY hold.updated_at,hold.review_case_id,hold.destination LIMIT ?",
                 (*parameters, limit),
             ).fetchall()
             pending = []
             for (
-                review_case_id, destination, connection, library, document, updated_at
+                review_case_id,
+                destination,
+                connection,
+                library,
+                document,
+                updated_at,
             ) in rows:
                 raw = json.loads(document)
                 request = raw["pending_return"]
-                pending.append((
-                    review_case_id, destination, connection, library,
-                    raw["decision_id"], request["scan_id"], request["requested_at"],
-                    updated_at,
-                ))
+                pending.append(
+                    (
+                        review_case_id,
+                        destination,
+                        connection,
+                        library,
+                        raw["decision_id"],
+                        request["scan_id"],
+                        request["requested_at"],
+                        updated_at,
+                    )
+                )
             return tuple(pending)
         except (json.JSONDecodeError, KeyError, sqlite3.Error, TypeError) as error:
             raise FieldEffectError("persistence") from error
 
     def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool:
-        if (type(digests) is not tuple or not digests
-                or any(type(value) is not str or len(value) != 64 for value in digests)):
+        if (
+            type(digests) is not tuple
+            or not digests
+            or any(type(value) is not str or len(value) != 64 for value in digests)
+        ):
             return False
         try:
             return all(
@@ -569,11 +644,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ).fetchall()
             consented_destinations: list[tuple[str, str, str]] = []
             profile: MetadataPolicyProfile | None = None
-            for consent_id, updated_at, document, generation, resolved_id, resolved_document, draft_document in consent_rows:
+            for (
+                consent_id,
+                updated_at,
+                document,
+                generation,
+                resolved_id,
+                resolved_document,
+                draft_document,
+            ) in consent_rows:
                 raw = json.loads(document)
                 if (
                     type(raw) is not dict
-                    or set(raw) != {"consent", "current", "schema_version", "updated_at"}
+                    or set(raw)
+                    != {"consent", "current", "schema_version", "updated_at"}
                     or raw.get("current") is not True
                     or raw.get("schema_version") != "field-effect-consent-state-v1"
                     or raw.get("updated_at") != updated_at
@@ -604,14 +688,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     ).resolved_id
                 else:
                     continue
-                if consent.envelope_identity == self._field_effect_consent_envelope_identity(
-                    consent.library, current_resolved_id
+                if (
+                    consent.envelope_identity
+                    == self._field_effect_consent_envelope_identity(
+                        consent.library, current_resolved_id
+                    )
                 ):
-                    consented_destinations.append((
-                        consent.connection, consent.library, consent.destination
-                    ))
+                    consented_destinations.append(
+                        (consent.connection, consent.library, consent.destination)
+                    )
             counts = {
-                state: count for state, count in self._connection.execute(
+                state: count
+                for state, count in self._connection.execute(
                     "SELECT state,count(*) FROM field_effects GROUP BY state"
                 ).fetchall()
             }
@@ -620,58 +708,78 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "coalesce(sum(CASE WHEN attempt>=3 THEN 1 ELSE 0 END),0) "
                 "FROM field_effect_cleanups WHERE state='pending'"
             ).fetchone()
-            event_rows = [] if not include_events else self._connection.execute(
-                "SELECT effect.connection_name,effect.destination,json_extract(event.document,'$.failure'),"
-                "effect.library_name,event.occurred_at,"
-                "json_extract(event.document,'$.origin'),lineage.report_id,event.kind,effect.work_id "
-                "FROM field_effect_events event JOIN field_effects effect "
-                "ON effect.plan_id=event.plan_id LEFT JOIN current_metadata_report_lineages lineage "
-                "ON lineage.connection_name=effect.connection_name AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id "
-                "ORDER BY event.occurred_at DESC,event.event_id DESC LIMIT ?", (limit,),
-            ).fetchall()
+            event_rows = (
+                []
+                if not include_events
+                else self._connection.execute(
+                    "SELECT effect.connection_name,effect.destination,json_extract(event.document,'$.failure'),"
+                    "effect.library_name,event.occurred_at,"
+                    "json_extract(event.document,'$.origin'),lineage.report_id,event.kind,effect.work_id "
+                    "FROM field_effect_events event JOIN field_effects effect "
+                    "ON effect.plan_id=event.plan_id LEFT JOIN current_metadata_report_lineages lineage "
+                    "ON lineage.connection_name=effect.connection_name AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id "
+                    "ORDER BY event.occurred_at DESC,event.event_id DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            )
             report_ids = sorted({row[6] for row in event_rows if row[6] is not None})
-            report_documents = {} if not report_ids else dict(self._connection.execute(
-                "SELECT report_id,document FROM metadata_reports WHERE report_id IN ("
-                + ",".join("?" for _ in report_ids) + ")",
-                report_ids,
-            ).fetchall())
-            events = [{
-                "connection": connection,
-                "destination": destination,
-                "failure": failure,
-                "library": library,
-                "occurred_at": occurred_at,
-                "origin": origin,
-                "report_id": report_id,
-                "state": state,
-                "work_id": work_id,
-            } for connection, destination, failure, library, occurred_at, origin, report_id, state, work_id
-                in event_rows]
-            suspensions = [{
-                "connection": connection,
-                "destination": destination or None,
-                "reason": reason,
-                "scope": scope,
-                "updated_at": updated_at,
-            } for scope, connection, destination, reason, updated_at
-                in self._connection.execute(
+            report_documents = (
+                {}
+                if not report_ids
+                else dict(
+                    self._connection.execute(
+                        "SELECT report_id,document FROM metadata_reports WHERE report_id IN ("
+                        + ",".join("?" for _ in report_ids)
+                        + ")",
+                        report_ids,
+                    ).fetchall()
+                )
+            )
+            events = [
+                {
+                    "connection": connection,
+                    "destination": destination,
+                    "failure": failure,
+                    "library": library,
+                    "occurred_at": occurred_at,
+                    "origin": origin,
+                    "report_id": report_id,
+                    "state": state,
+                    "work_id": work_id,
+                }
+                for connection, destination, failure, library, occurred_at, origin, report_id, state, work_id in event_rows
+            ]
+            suspensions = [
+                {
+                    "connection": connection,
+                    "destination": destination or None,
+                    "reason": reason,
+                    "scope": scope,
+                    "updated_at": updated_at,
+                }
+                for scope, connection, destination, reason, updated_at in self._connection.execute(
                     "SELECT scope,connection_name,destination,reason,updated_at "
                     "FROM field_effect_suspensions ORDER BY updated_at DESC,scope,"
                     "connection_name,destination LIMIT 64"
-                ).fetchall()]
+                ).fetchall()
+            ]
             return {
                 "consented_libraries": [
                     {"connection": connection, "library": library}
-                    for connection, library in sorted({
-                        (connection, library)
-                        for connection, library, _ in consented_destinations
-                    })
+                    for connection, library in sorted(
+                        {
+                            (connection, library)
+                            for connection, library, _ in consented_destinations
+                        }
+                    )
                 ],
                 "consented_destinations": [
-                    {"connection": connection, "library": library,
-                     "destination": destination}
-                    for connection, library, destination
-                    in consented_destinations
+                    {
+                        "connection": connection,
+                        "library": library,
+                        "destination": destination,
+                    }
+                    for connection, library, destination in consented_destinations
                 ],
                 "counts": counts,
                 "cleanup": {"pending": cleanup[0], "exhausted": cleanup[1]},
@@ -680,8 +788,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "paused": self.field_effect_paused(),
                 "suspensions": suspensions,
             }
-        except (json.JSONDecodeError, MetadataPolicyError, sqlite3.Error,
-                TypeError, ValueError) as error:
+        except (
+            json.JSONDecodeError,
+            MetadataPolicyError,
+            sqlite3.Error,
+            TypeError,
+            ValueError,
+        ) as error:
             raise FieldEffectError("persistence") from error
 
     def field_effect_activity_page(
@@ -695,8 +808,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     ) -> dict[str, object]:
         """Return one exact, bounded page from the durable owner activity ledgers."""
         if (
-            (search is not None and (type(search) is not str or not search or len(search) > 128))
-            or event_type not in {"all", "review", "policy", "metadata", "safety", "unknown"}
+            (
+                search is not None
+                and (type(search) is not str or not search or len(search) > 128)
+            )
+            or event_type
+            not in {"all", "review", "policy", "metadata", "safety", "unknown"}
             or type(occurred_after) is not int
             or occurred_after < 0
             or type(page) is not int
@@ -788,7 +905,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             where.append("event_type=?")
             parameters.append(event_type)
         if search is not None:
-            escaped = search.casefold().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            escaped = (
+                search.casefold()
+                .replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
             like = f"%{escaped}%"
             where.append(
                 "(ml_casefold(work_id) LIKE ? ESCAPE '\\' OR ml_casefold(library) LIKE ? ESCAPE '\\' "
@@ -797,31 +919,47 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
             parameters.extend((like, like, like, like, like, like))
         predicate = " WHERE " + " AND ".join(where)
-        projection = "WITH activity_events(event_id,connection,destination,library,occurred_at,origin,report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,source_valid) AS (" + cast(str, events) + ") "
+        projection = (
+            "WITH activity_events(event_id,connection,destination,library,occurred_at,origin,report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,source_valid) AS ("
+            + cast(str, events)
+            + ") "
+        )
+
         def waiting_scalar(value: object, *, nullable: bool = False) -> str | None:
             if value is None and nullable:
                 return None
             if type(value) is not str or not value or len(value) > scalar_limit:
                 raise FieldEffectError("persistence")
             return value
+
         try:
-            total = int(self._connection.execute(
-                projection + "SELECT count(*) FROM activity_events" + predicate, parameters
-            ).fetchone()[0])
+            total = int(
+                self._connection.execute(
+                    projection + "SELECT count(*) FROM activity_events" + predicate,
+                    parameters,
+                ).fetchone()[0]
+            )
             page_count = max(1, (total + page_size - 1) // page_size)
             selected_page = min(page, page_count)
             rows = self._connection.execute(
-                projection + "SELECT event_id,connection,destination,library,occurred_at,origin,"
-                "report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,source_valid FROM activity_events" + predicate
+                projection
+                + "SELECT event_id,connection,destination,library,occurred_at,origin,"
+                "report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,source_valid FROM activity_events"
+                + predicate
                 + " ORDER BY occurred_at DESC,event_id DESC LIMIT ? OFFSET ?",
                 (*parameters, page_size, (selected_page - 1) * page_size),
             ).fetchall()
             report_ids = sorted({row[6] for row in rows if row[6] is not None})
-            report_rows = [] if not report_ids else self._connection.execute(
-                "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id IN ("
-                + ",".join("?" for _ in report_ids) + ")",
-                report_ids,
-            ).fetchall()
+            report_rows = (
+                []
+                if not report_ids
+                else self._connection.execute(
+                    "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id IN ("
+                    + ",".join("?" for _ in report_ids)
+                    + ")",
+                    report_ids,
+                ).fetchall()
+            )
             report_documents = {}
             try:
                 for report_row in report_rows:
@@ -842,8 +980,25 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             events = []
             decision: HumanDecision | AutomaticDecision
             for (
-                event_id, connection, destination, library, occurred_at, origin,
-                report_id, state, work_id, document, projected_type, title, detail, source_kind, source_document, source_parent_id, source_sequence, source_identity, source_valid,
+                event_id,
+                connection,
+                destination,
+                library,
+                occurred_at,
+                origin,
+                report_id,
+                state,
+                work_id,
+                document,
+                projected_type,
+                title,
+                detail,
+                source_kind,
+                source_document,
+                source_parent_id,
+                source_sequence,
+                source_identity,
+                source_valid,
             ) in rows:
                 if (
                     source_valid != 1
@@ -854,12 +1009,16 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 raw = json.loads(document)
                 if type(raw) is not dict:
                     raise FieldEffectError("persistence")
-                def scalar(value: object, maximum: int = 512, *, nullable: bool = False) -> str | None:
+
+                def scalar(
+                    value: object, maximum: int = 512, *, nullable: bool = False
+                ) -> str | None:
                     if value is None and nullable:
                         return None
                     if type(value) is not str or not value or len(value) > maximum:
                         raise FieldEffectError("persistence")
                     return value
+
                 event_id = scalar(event_id, 128)
                 scalar(connection, nullable=True)
                 destination = scalar(destination)
@@ -868,10 +1027,23 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 state = scalar(state)
                 work_id = scalar(work_id)
                 projected_type = scalar(projected_type, 32)
-                if projected_type not in {"review", "policy", "metadata", "safety", "unknown"}:
+                if projected_type not in {
+                    "review",
+                    "policy",
+                    "metadata",
+                    "safety",
+                    "unknown",
+                }:
                     raise FieldEffectError("persistence")
                 source_kind = scalar(source_kind)
-                if source_kind not in {"field_effect", "field_effect_no_change", "human_decision", "automatic_decision", "cover_safeguard", "policy_transition"}:
+                if source_kind not in {
+                    "field_effect",
+                    "field_effect_no_change",
+                    "human_decision",
+                    "automatic_decision",
+                    "cover_safeguard",
+                    "policy_transition",
+                }:
                     raise FieldEffectError("persistence")
                 if source_document is not None and (
                     type(source_document) is not str
@@ -881,9 +1053,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 try:
                     if source_kind == "field_effect":
                         event_keys = {
-                            "attempt", "decision_id", "desired_value", "destination",
-                            "event_id", "failure", "kind", "occurred_at", "origin",
-                            "plan_id", "pre_value", "schema_version", "sequence", "state",
+                            "attempt",
+                            "decision_id",
+                            "desired_value",
+                            "destination",
+                            "event_id",
+                            "failure",
+                            "kind",
+                            "occurred_at",
+                            "origin",
+                            "plan_id",
+                            "pre_value",
+                            "schema_version",
+                            "sequence",
+                            "state",
                         }
                         if (
                             set(raw) != event_keys
@@ -903,11 +1086,16 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                             or raw.get("occurred_at") != occurred_at
                             or raw.get("origin") != origin
                             or canonical_effect_json(raw) != document
-                            or event_id != "effect_event_" + hashlib.sha256(
-                                canonical_effect_json({
-                                    key: value for key, value in raw.items()
-                                    if key != "event_id"
-                                }).encode()
+                            or event_id
+                            != "effect_event_"
+                            + hashlib.sha256(
+                                canonical_effect_json(
+                                    {
+                                        key: value
+                                        for key, value in raw.items()
+                                        if key != "event_id"
+                                    }
+                                ).encode()
                             ).hexdigest()
                         ):
                             raise FieldEffectError("persistence")
@@ -915,11 +1103,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         if raw or document != "{}" or source_document is not None:
                             raise FieldEffectError("persistence")
                         record = FieldEffectNoChange.create(
-                            decision_id=source_identity, review_case_id=source_parent_id,
+                            decision_id=source_identity,
+                            review_case_id=source_parent_id,
                             # scalar() without nullable=True raises rather than
                             # returning None, so these are always str here.
-                            report_id=report_id, connection=connection, library=cast(str, library),
-                            work_id=cast(str, work_id), destination=cast(str, destination),
+                            report_id=report_id,
+                            connection=connection,
+                            library=cast(str, library),
+                            work_id=cast(str, work_id),
+                            destination=cast(str, destination),
                             target_fingerprint=self._connection.execute(
                                 "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
                                 (source_identity,),
@@ -931,7 +1123,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                             occurred_at=occurred_at,
                         )
                         if (
-                            state != "no_change_required" or origin != record.origin
+                            state != "no_change_required"
+                            or origin != record.origin
                             or event_id != record.event_id
                         ):
                             raise FieldEffectError("persistence")
@@ -940,8 +1133,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                             raise FieldEffectError("persistence")
                         decision = HumanDecision.from_json(source_document)
                         event_keys = {
-                            "actor", "decision_id", "destination", "event_id", "kind",
-                            "occurred_at", "outcome", "review_case_id", "schema_version",
+                            "actor",
+                            "decision_id",
+                            "destination",
+                            "event_id",
+                            "kind",
+                            "occurred_at",
+                            "outcome",
+                            "review_case_id",
+                            "schema_version",
                         }
                         if (
                             set(raw) != event_keys
@@ -961,8 +1161,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                             or decision.destination != destination
                             or decision.to_json() != source_document
                             or _canonical_json(raw) != document
-                            or event_id != "human_decision_event_" + hashlib.sha256(
-                                ("human-decision-event-v1:" + decision.decision_id).encode("utf-8")
+                            or event_id
+                            != "human_decision_event_"
+                            + hashlib.sha256(
+                                (
+                                    "human-decision-event-v1:" + decision.decision_id
+                                ).encode("utf-8")
                             ).hexdigest()
                         ):
                             raise FieldEffectError("persistence")
@@ -987,40 +1191,76 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                             raise FieldEffectError("persistence")
                         reviewer_status = consideration.get("reviewer_status")
                         event_keys = {
-                            "consideration_id", "decision_id", "kind", "occurred_at",
-                            "review_case_id", "schema_version",
+                            "consideration_id",
+                            "decision_id",
+                            "kind",
+                            "occurred_at",
+                            "review_case_id",
+                            "schema_version",
                         }
                         if (
                             set(raw) != event_keys
-                            or raw.get("schema_version") != "cover-consideration-event-v1"
+                            or raw.get("schema_version")
+                            != "cover-consideration-event-v1"
                             or raw.get("consideration_id") != source_identity
-                            or raw.get("kind") not in {
-                                "automatic_prepared", "owner_retry_prepared", "superseded", "selected",
-                                "kept_incumbent", "no_action", "stale",
+                            or raw.get("kind")
+                            not in {
+                                "automatic_prepared",
+                                "owner_retry_prepared",
+                                "superseded",
+                                "selected",
+                                "kept_incumbent",
+                                "no_action",
+                                "stale",
                             }
                             or (
-                                raw.get("kind") in {"automatic_prepared", "owner_retry_prepared"}
-                                and reviewer_status not in {"completed", "unavailable", "failed"}
+                                raw.get("kind")
+                                in {"automatic_prepared", "owner_retry_prepared"}
+                                and reviewer_status
+                                not in {"completed", "unavailable", "failed"}
                             )
-                            or state != (
-                                reviewer_status if raw.get("kind") in {"automatic_prepared", "owner_retry_prepared"}
+                            or state
+                            != (
+                                reviewer_status
+                                if raw.get("kind")
+                                in {"automatic_prepared", "owner_retry_prepared"}
                                 else raw.get("kind")
                             )
-                            or (raw.get("kind") == "automatic_prepared" and (origin, projected_type) != ("automatic_pipeline", "metadata"))
-                            or (raw.get("kind") == "owner_retry_prepared" and (origin, projected_type) != ("owner_retry", "review"))
-                            or (raw.get("kind") in {"selected", "kept_incumbent", "no_action"} and (origin, projected_type) != ("human", "review"))
-                            or (raw.get("kind") in {"stale", "superseded"} and (origin, projected_type) != ("unknown", "safety"))
+                            or (
+                                raw.get("kind") == "automatic_prepared"
+                                and (origin, projected_type)
+                                != ("automatic_pipeline", "metadata")
+                            )
+                            or (
+                                raw.get("kind") == "owner_retry_prepared"
+                                and (origin, projected_type)
+                                != ("owner_retry", "review")
+                            )
+                            or (
+                                raw.get("kind")
+                                in {"selected", "kept_incumbent", "no_action"}
+                                and (origin, projected_type) != ("human", "review")
+                            )
+                            or (
+                                raw.get("kind") in {"stale", "superseded"}
+                                and (origin, projected_type) != ("unknown", "safety")
+                            )
                             or raw.get("occurred_at") != occurred_at
                             or raw.get("review_case_id") != source_parent_id
                             or _canonical_json(raw) != document
-                            or event_id != "cover_consideration_event_" + hashlib.sha256(
-                                document.encode("utf-8")
-                            ).hexdigest()
+                            or event_id
+                            != "cover_consideration_event_"
+                            + hashlib.sha256(document.encode("utf-8")).hexdigest()
                         ):
                             raise FieldEffectError("persistence")
                     elif raw or document != "{}" or source_document is not None:
                         raise FieldEffectError("persistence")
-                except (AutomaticDecisionError, HumanDecisionError, TypeError, ValueError) as error:
+                except (
+                    AutomaticDecisionError,
+                    HumanDecisionError,
+                    TypeError,
+                    ValueError,
+                ) as error:
                     raise FieldEffectError("persistence") from error
                 event_title = scalar(title, nullable=True)
                 failure = scalar(raw.get("failure"), nullable=True)
@@ -1037,29 +1277,46 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 evidence = [{"label": source_label, "value": state.replace("_", " ")}]
                 lifecycle = scalar(raw.get("state"), nullable=True)
                 if source_kind == "field_effect" and lifecycle is not None:
-                    evidence.append({"label": "Recorded lifecycle", "value": lifecycle.replace("_", " ")})
+                    evidence.append(
+                        {
+                            "label": "Recorded lifecycle",
+                            "value": lifecycle.replace("_", " "),
+                        }
+                    )
                 if failure is not None:
-                    evidence.append({"label": "Recorded failure", "value": failure.replace("_", " ")})
+                    evidence.append(
+                        {
+                            "label": "Recorded failure",
+                            "value": failure.replace("_", " "),
+                        }
+                    )
                 if source_kind == "policy_transition":
                     transition = scalar(detail)
-                    evidence.append({"label": "Transition generation", "value": transition})
-                if type(occurred_at) is not int or not 0 <= occurred_at <= 253_402_300_799:
+                    evidence.append(
+                        {"label": "Transition generation", "value": transition}
+                    )
+                if (
+                    type(occurred_at) is not int
+                    or not 0 <= occurred_at <= 253_402_300_799
+                ):
                     raise FieldEffectError("persistence")
-                events.append({
-                    "connection": connection,
-                    "destination": destination,
-                    "event_id": event_id,
-                    "event_type": projected_type,
-                    "failure": failure,
-                    "library": library,
-                    "occurred_at": occurred_at,
-                    "origin": origin,
-                    "report_id": report_id,
-                    "state": state,
-                    "work_id": work_id,
-                    **({"work_label": event_title} if event_title else {}),
-                    "evidence": evidence,
-                })
+                events.append(
+                    {
+                        "connection": connection,
+                        "destination": destination,
+                        "event_id": event_id,
+                        "event_type": projected_type,
+                        "failure": failure,
+                        "library": library,
+                        "occurred_at": occurred_at,
+                        "origin": origin,
+                        "report_id": report_id,
+                        "state": state,
+                        "work_id": work_id,
+                        **({"work_label": event_title} if event_title else {}),
+                        "evidence": evidence,
+                    }
+                )
             waiting = self._connection.execute(
                 "SELECT effect.connection_name,effect.destination,effect.library_name,effect.work_id,effect.state,"
                 "lineage.report_id FROM field_effects effect "
@@ -1082,12 +1339,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     if (
                         waiting_report_row is None
                         or type(waiting_report_row[8]) is not str
-                        or not 2 <= len(waiting_report_row[8].encode("utf-8")) <= document_limit
+                        or not 2
+                        <= len(waiting_report_row[8].encode("utf-8"))
+                        <= document_limit
                     ):
                         raise FieldEffectError("persistence")
                     try:
-                        waiting_report_document = _validate_report_row(waiting_report_row)
-                        waiting_report = MetadataReport.from_json(waiting_report_document)
+                        waiting_report_document = _validate_report_row(
+                            waiting_report_row
+                        )
+                        waiting_report = MetadataReport.from_json(
+                            waiting_report_document
+                        )
                     except (MetadataReportError, ReportValueError) as error:
                         raise FieldEffectError("persistence") from error
                     if (
@@ -1103,24 +1366,35 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "page_count": page_count,
                 "page_size": page_size,
                 "report_documents": report_documents,
-                "current_waiting": None if waiting is None else {
-                    "destination": waiting[1], "library": waiting[2],
-                    "work_id": waiting[3], "state": waiting[4],
+                "current_waiting": None
+                if waiting is None
+                else {
+                    "destination": waiting[1],
+                    "library": waiting[2],
+                    "work_id": waiting[3],
+                    "state": waiting[4],
                     "work_label": waiting_title,
                 },
                 "total": total,
             }
             transaction.commit()
             return result
-        except (json.JSONDecodeError, RecursionError, sqlite3.Error, TypeError, ValueError) as error:
+        except (
+            json.JSONDecodeError,
+            RecursionError,
+            sqlite3.Error,
+            TypeError,
+            ValueError,
+        ) as error:
             transaction.rollback()
             raise FieldEffectError("persistence") from error
         except FieldEffectError:
             transaction.rollback()
             raise
 
-    def claim_field_effect(self, plan_id: str, expected_state: str,
-                           claim_token: str, claimed_at: int) -> FieldEffectOperation:
+    def claim_field_effect(
+        self, plan_id: str, expected_state: str, claim_token: str, claimed_at: int
+    ) -> FieldEffectOperation:
         transaction = self._transaction("claim_field_effect")
         try:
             transaction.begin()
@@ -1134,8 +1408,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             if row is None or row[1] != expected_state:
                 raise FieldEffectError("claim_conflict")
             persisted = FieldEffectOperation.from_json(row[0])
-            if self.field_effect_capability_suspension(
-                    persisted.plan.connection, persisted.plan.destination) is not None:
+            if (
+                self.field_effect_capability_suspension(
+                    persisted.plan.connection, persisted.plan.destination
+                )
+                is not None
+            ):
                 raise FieldEffectError("capability")
             if self._connection.execute(
                 "SELECT current FROM field_effect_authorities WHERE decision_id=?",
@@ -1149,9 +1427,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 raise FieldEffectError("consent")
             if (
                 persisted.plan.consent.envelope_identity
-                != self._consent_envelope_identity(
-                    persisted.plan.library
-                )
+                != self._consent_envelope_identity(persisted.plan.library)
             ):
                 raise FieldEffectError("consent")
             authority = persisted.plan.authority
@@ -1162,31 +1438,48 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     )
                     case = case_envelope["case"]
                     target = case["target"]
-                except (MetadataReportError, KeyError, TypeError,
-                        json.JSONDecodeError) as error:
+                except (
+                    MetadataReportError,
+                    KeyError,
+                    TypeError,
+                    json.JSONDecodeError,
+                ) as error:
                     raise FieldEffectError("authority") from error
-                if (case_envelope.get("current") is not True
-                        or not self._review_case_accepts_authority(
-                            authority.review_case_id
-                        )
-                        or case.get("target_fingerprint")
-                        != authority.target_fingerprint
-                        or (target.get("connection"), target.get("library"),
-                            target.get("item"))
-                        != (persisted.plan.connection, persisted.plan.library,
-                            persisted.plan.work_id)):
+                if (
+                    case_envelope.get("current") is not True
+                    or not self._review_case_accepts_authority(authority.review_case_id)
+                    or case.get("target_fingerprint") != authority.target_fingerprint
+                    or (
+                        target.get("connection"),
+                        target.get("library"),
+                        target.get("item"),
+                    )
+                    != (
+                        persisted.plan.connection,
+                        persisted.plan.library,
+                        persisted.plan.work_id,
+                    )
+                ):
                     raise FieldEffectError("authority")
-                table = ("human_decisions" if authority.origin == "human"
-                         else "automatic_decisions")
+                table = (
+                    "human_decisions"
+                    if authority.origin == "human"
+                    else "automatic_decisions"
+                )
                 decision = self._connection.execute(
                     f"SELECT document FROM {table} WHERE decision_id=? "
                     "AND review_case_id=? AND destination=?",
-                    (authority.decision_id, authority.review_case_id,
-                     persisted.plan.destination),
+                    (
+                        authority.decision_id,
+                        authority.review_case_id,
+                        persisted.plan.destination,
+                    ),
                 ).fetchone()
-                if (decision is None
-                        or json.loads(decision[0]).get("target_fingerprint")
-                        != authority.target_fingerprint):
+                if (
+                    decision is None
+                    or json.loads(decision[0]).get("target_fingerprint")
+                    != authority.target_fingerprint
+                ):
                     raise FieldEffectError("authority")
                 if authority.origin == "automatic_policy":
                     automatic = json.loads(decision[0])
@@ -1195,8 +1488,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         "FROM automatic_safety_state WHERE singleton=1"
                     ).fetchone()
                     suspended = {} if safety is None else dict(json.loads(safety[2]))
-                    if (safety is None or safety[0] != 0 or safety[1] is not None
-                            or automatic["policy_category"] in suspended):
+                    if (
+                        safety is None
+                        or safety[0] != 0
+                        or safety[1] is not None
+                        or automatic["policy_category"] in suspended
+                    ):
                         raise FieldEffectError("authority")
             operation = persisted.transition(
                 "claimed", at=claimed_at, claim_token=claim_token
@@ -1222,29 +1519,38 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             if safety is None:
                 raise FieldEffectError("persistence")
             if safety[0]:
-                signals.append(_operational_signal(
-                    "field_suspended", "owner_pause", "runtime"
-                ))
+                signals.append(
+                    _operational_signal("field_suspended", "owner_pause", "runtime")
+                )
             if safety[1] is not None:
-                signals.append(_operational_signal(
-                    "field_suspended", "automatic_suspension", "runtime"
-                ))
+                signals.append(
+                    _operational_signal(
+                        "field_suspended", "automatic_suspension", "runtime"
+                    )
+                )
             categories = json.loads(safety[2])
             if type(categories) is not list:
                 raise FieldEffectError("persistence")
             for entry in categories[:64]:
-                if (type(entry) is not list or len(entry) != 2
-                        or type(entry[0]) is not str):
+                if (
+                    type(entry) is not list
+                    or len(entry) != 2
+                    or type(entry[0]) is not str
+                ):
                     raise FieldEffectError("persistence")
                 category = entry[0]
-                signals.append(_operational_signal(
-                    "category_suspended", "automatic_suspension", "category",
-                    category=category,
-                ))
+                signals.append(
+                    _operational_signal(
+                        "category_suspended",
+                        "automatic_suspension",
+                        "category",
+                        category=category,
+                    )
+                )
             if self.field_effect_paused():
-                signals.append(_operational_signal(
-                    "field_suspended", "owner_pause", "runtime"
-                ))
+                signals.append(
+                    _operational_signal("field_suspended", "owner_pause", "runtime")
+                )
             authentication = self._connection.execute(
                 "SELECT work.failure_root,work.report_id,report.report_id,"
                 "report.document FROM review_preparation_work AS work "
@@ -1273,7 +1579,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     provider.provider
                     for provider in report.providers
                     if any(
-                        status in {
+                        status
+                        in {
                             ProviderStatus.AUTHENTICATION,
                             ProviderStatus.AUTHORIZATION,
                         }
@@ -1287,10 +1594,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     raise FieldEffectError("persistence")
                 authentication_roots.update(report_roots)
             for provider_root in sorted(authentication_roots)[:64]:
-                signals.append(_operational_signal(
-                    "authentication_failure", "provider_authentication",
-                    "connection", connection=provider_root,
-                ))
+                signals.append(
+                    _operational_signal(
+                        "authentication_failure",
+                        "provider_authentication",
+                        "connection",
+                        connection=provider_root,
+                    )
+                )
             rows = self._connection.execute(
                 "SELECT connection_name,library_name,work_id,destination,state,document "
                 "FROM field_effects WHERE state NOT IN ('verified','superseded','abandoned') "
@@ -1303,7 +1614,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     kind, cause = "owner_action_required", "currentness_conflict"
                     scope = "field"
                     signal_library, signal_work, signal_field = (
-                        library, work_id, destination
+                        library,
+                        work_id,
+                        destination,
                     )
                 elif failure == "backup":
                     kind, cause = "backup_failure", "backup"
@@ -1317,27 +1630,40 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     kind, cause = "field_suspended", "authority_unavailable"
                     scope = "field"
                     signal_library, signal_work, signal_field = (
-                        library, work_id, destination
+                        library,
+                        work_id,
+                        destination,
                     )
                 elif state in {"claimed", "applying", "reconciling", "retryable"}:
-                    kind, cause = "automatic_recovery", (
-                        "reconciliation" if state == "reconciling" else "in_progress"
+                    kind, cause = (
+                        "automatic_recovery",
+                        ("reconciliation" if state == "reconciling" else "in_progress"),
                     )
                     scope = "field"
                     signal_library, signal_work, signal_field = (
-                        library, work_id, destination
+                        library,
+                        work_id,
+                        destination,
                     )
                 else:
                     kind, cause = "healthy_activity", "planned"
                     scope = "field"
                     signal_library, signal_work, signal_field = (
-                        library, work_id, destination
+                        library,
+                        work_id,
+                        destination,
                     )
-                signals.append(_operational_signal(
-                    kind, cause, scope, connection=connection,
-                    library=signal_library, work_id=signal_work,
-                    field=signal_field,
-                ))
+                signals.append(
+                    _operational_signal(
+                        kind,
+                        cause,
+                        scope,
+                        connection=connection,
+                        library=signal_library,
+                        work_id=signal_work,
+                        field=signal_field,
+                    )
+                )
             return {"signals": signals}
         except (json.JSONDecodeError, sqlite3.Error, FieldEffectError) as error:
             raise FieldEffectError("persistence") from error

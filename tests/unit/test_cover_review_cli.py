@@ -109,39 +109,51 @@ def test_activity_exposes_guarded_and_recovery_states_from_shared_projection() -
     )
     output = io.StringIO()
 
-    assert main(
-        [
-            "review-activity",
-            "--config", "/config.json",
-            "--database", "/database.sqlite3",
-        ],
-        review_activity_runner=runner,
-        stdout=output,
-    ) == 0
+    assert (
+        main(
+            [
+                "review-activity",
+                "--config",
+                "/config.json",
+                "--database",
+                "/database.sqlite3",
+            ],
+            review_activity_runner=runner,
+            stdout=output,
+        )
+        == 0
+    )
 
     runner.assert_called_once_with(
         Path("/config.json"),
         Path("/database.sqlite3"),
     )
-    assert tuple(
-        item["state"] for item in json.loads(output.getvalue())["events"]
-    ) == states
+    assert (
+        tuple(item["state"] for item in json.loads(output.getvalue())["events"])
+        == states
+    )
 
 
 def test_activity_rejects_obsolete_unbound_paths() -> None:
     runner = Mock()
     errors = io.StringIO()
 
-    assert main(
-        [
-            "review-activity",
-            "--config", "/config.json",
-            "--database", "/database.sqlite3",
-            "--catalogue", "/catalogue.sqlite3",
-        ],
-        review_activity_runner=runner,
-        stderr=errors,
-    ) == 2
+    assert (
+        main(
+            [
+                "review-activity",
+                "--config",
+                "/config.json",
+                "--database",
+                "/database.sqlite3",
+                "--catalogue",
+                "/catalogue.sqlite3",
+            ],
+            review_activity_runner=runner,
+            stderr=errors,
+        )
+        == 2
+    )
 
     runner.assert_not_called()
     assert errors.getvalue() == "Review server failed: invalid invocation.\n"
@@ -161,9 +173,7 @@ def test_provider_recovery_refuses_absent_review_configuration() -> None:
             "mechanical_librarian.bootstrap.composition.create_review_pipeline",
             side_effect=AssertionError("review pipeline composed"),
         ) as pipeline,
-        pytest.raises(
-            ConfigurationError, match="review configuration is unavailable"
-        ),
+        pytest.raises(ConfigurationError, match="review configuration is unavailable"),
     ):
         run_provider_recovery_once(
             Path("/config.json"),
@@ -179,51 +189,97 @@ def test_provider_recovery_refuses_absent_review_configuration() -> None:
 def test_show_and_select_delegate_closed_values() -> None:
     runner = Mock(return_value={"schema_version": "cover-consideration-v1"})
     output = io.StringIO()
-    assert main(
-        [
-            "cover-review", "show", "--config", "/config.json",
-            "--database", "/database.sqlite3", "--artifacts", "/artifacts",
-            "--case", "review_case_" + "a" * 64,
-        ],
-        cover_review_runner=runner,
-        stdout=output,
-    ) == 0
+    assert (
+        main(
+            [
+                "cover-review",
+                "show",
+                "--config",
+                "/config.json",
+                "--database",
+                "/database.sqlite3",
+                "--artifacts",
+                "/artifacts",
+                "--case",
+                "review_case_" + "a" * 64,
+            ],
+            cover_review_runner=runner,
+            stdout=output,
+        )
+        == 0
+    )
     assert json.loads(output.getvalue())["schema_version"] == "cover-consideration-v1"
     runner.assert_called_once_with(
-        Path("/config.json"), Path("/database.sqlite3"), Path("/artifacts"),
-        "review_case_" + "a" * 64, "show", None, None,
+        Path("/config.json"),
+        Path("/database.sqlite3"),
+        Path("/artifacts"),
+        "review_case_" + "a" * 64,
+        "show",
+        None,
+        None,
     )
 
     runner.reset_mock()
-    assert main(
-        [
-            "cover-review", "history", "--config", "/config.json",
-            "--database", "/database.sqlite3", "--artifacts", "/artifacts",
-            "--case", "review_case_" + "a" * 64,
-        ],
-        cover_review_runner=runner,
-        stdout=io.StringIO(),
-    ) == 0
+    assert (
+        main(
+            [
+                "cover-review",
+                "history",
+                "--config",
+                "/config.json",
+                "--database",
+                "/database.sqlite3",
+                "--artifacts",
+                "/artifacts",
+                "--case",
+                "review_case_" + "a" * 64,
+            ],
+            cover_review_runner=runner,
+            stdout=io.StringIO(),
+        )
+        == 0
+    )
     runner.assert_called_once_with(
-        Path("/config.json"), Path("/database.sqlite3"), Path("/artifacts"),
-        "review_case_" + "a" * 64, "history", None, None,
+        Path("/config.json"),
+        Path("/database.sqlite3"),
+        Path("/artifacts"),
+        "review_case_" + "a" * 64,
+        "history",
+        None,
+        None,
     )
 
     runner.reset_mock()
-    assert main(
-        [
-            "cover-review", "select", "--config", "/config.json",
-            "--database", "/database.sqlite3", "--artifacts", "/artifacts",
-            "--case", "review_case_" + "a" * 64,
-            "--artifact", "cover_" + "b" * 64,
-            "--idempotency-key", "owner-command-0001",
-        ],
-        cover_review_runner=runner,
-        stdout=io.StringIO(),
-    ) == 0
+    assert (
+        main(
+            [
+                "cover-review",
+                "select",
+                "--config",
+                "/config.json",
+                "--database",
+                "/database.sqlite3",
+                "--artifacts",
+                "/artifacts",
+                "--case",
+                "review_case_" + "a" * 64,
+                "--artifact",
+                "cover_" + "b" * 64,
+                "--idempotency-key",
+                "owner-command-0001",
+            ],
+            cover_review_runner=runner,
+            stdout=io.StringIO(),
+        )
+        == 0
+    )
     runner.assert_called_once_with(
-        Path("/config.json"), Path("/database.sqlite3"), Path("/artifacts"),
-        "review_case_" + "a" * 64, "select", "cover_" + "b" * 64,
+        Path("/config.json"),
+        Path("/database.sqlite3"),
+        Path("/artifacts"),
+        "review_case_" + "a" * 64,
+        "select",
+        "cover_" + "b" * 64,
         "owner-command-0001",
     )
 
@@ -231,15 +287,26 @@ def test_show_and_select_delegate_closed_values() -> None:
 def test_invalid_choice_shape_fails_before_runner() -> None:
     runner = Mock()
     errors = io.StringIO()
-    assert main(
-        [
-            "cover-review", "select", "--config", "/config.json",
-            "--database", "/database.sqlite3", "--artifacts", "/artifacts",
-            "--case", "review_case_" + "a" * 64,
-            "--idempotency-key", "owner-command-0001",
-        ],
-        cover_review_runner=runner,
-        stderr=errors,
-    ) == 1
+    assert (
+        main(
+            [
+                "cover-review",
+                "select",
+                "--config",
+                "/config.json",
+                "--database",
+                "/database.sqlite3",
+                "--artifacts",
+                "/artifacts",
+                "--case",
+                "review_case_" + "a" * 64,
+                "--idempotency-key",
+                "owner-command-0001",
+            ],
+            cover_review_runner=runner,
+            stderr=errors,
+        )
+        == 1
+    )
     runner.assert_not_called()
     assert errors.getvalue() == "Review server failed safely.\n"

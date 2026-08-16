@@ -43,13 +43,29 @@ class _Store:
         review_case_id = values["review_case_id"]
         previous = self.current.get(review_case_id)
         if previous is not None:
-            self.events.append({"kind": "superseded", "occurred_at": values["occurred_at"]})
+            self.events.append(
+                {"kind": "superseded", "occurred_at": values["occurred_at"]}
+            )
         self.current[review_case_id] = document
-        self.events.append({"kind": values.get("preparation_kind", "automatic_prepared"), "occurred_at": values["occurred_at"]})
+        self.events.append(
+            {
+                "kind": values.get("preparation_kind", "automatic_prepared"),
+                "occurred_at": values["occurred_at"],
+            }
+        )
         return document
 
-    def record_cover_consideration_outcome(self, consideration_id, kind, occurred_at, decision_id=None):
-        self.events.append({"consideration_id": consideration_id, "decision_id": decision_id, "kind": kind, "occurred_at": occurred_at})
+    def record_cover_consideration_outcome(
+        self, consideration_id, kind, occurred_at, decision_id=None
+    ):
+        self.events.append(
+            {
+                "consideration_id": consideration_id,
+                "decision_id": decision_id,
+                "kind": kind,
+                "occurred_at": occurred_at,
+            }
+        )
 
     def cover_consideration_history(self, review_case_id, limit=50):
         del review_case_id
@@ -97,7 +113,9 @@ def case() -> _Case:
     return _Case()
 
 
-def test_model_free_manual_path_is_persisted_before_exact_selection(case: _Case) -> None:
+def test_model_free_manual_path_is_persisted_before_exact_selection(
+    case: _Case,
+) -> None:
     value = case.service.ensure(
         "review_case_" + "b" * 64,
         case.report.to_json(),
@@ -124,18 +142,20 @@ def test_model_free_manual_path_is_persisted_before_exact_selection(case: _Case)
 
 def test_incumbent_only_cover_remains_an_explicit_owner_choice() -> None:
     assert _needs_attention(
-            {
-                "destination": "cover",
-                "manual_required": False,
-                "result": {
-                    "outcome": "keep",
-                    "reasons": ["current_cover_verified"],
-                },
-            }
-        )
+        {
+            "destination": "cover",
+            "manual_required": False,
+            "result": {
+                "outcome": "keep",
+                "reasons": ["current_cover_verified"],
+            },
+        }
+    )
 
 
-def test_identical_replay_reopens_and_explicit_retry_creates_successor(case: _Case) -> None:
+def test_identical_replay_reopens_and_explicit_retry_creates_successor(
+    case: _Case,
+) -> None:
     case_id = "review_case_" + "c" * 64
     first = case.service.ensure(case_id, case.report.to_json(), case.proposal)
     replay = case.service.ensure(case_id, case.report.to_json(), case.proposal)
@@ -145,7 +165,11 @@ def test_identical_replay_reopens_and_explicit_retry_creates_successor(case: _Ca
         case_id, case.report.to_json(), case.proposal, retry=True
     )
     assert successor["supersedes_id"] == first["consideration_id"]
-    assert [event["kind"] for event in case.store.events] == ["automatic_prepared", "superseded", "owner_retry_prepared"]
+    assert [event["kind"] for event in case.store.events] == [
+        "automatic_prepared",
+        "superseded",
+        "owner_retry_prepared",
+    ]
 
 
 def test_incumbent_duplicate_remains_bound_to_abs_original(case: _Case) -> None:
@@ -172,9 +196,10 @@ def test_incumbent_duplicate_remains_bound_to_abs_original(case: _Case) -> None:
     assert len(value["candidates"]) == 1
     assert value["candidates"][0]["incumbent"]
     assert value["candidates"][0]["artifact_id"] == incumbent.artifact.artifact_id
-    assert json.loads(store.current["review_case_" + "d" * 64])[
-            "incumbent_digest"
-        ] == incumbent.artifact.original_digest
+    assert (
+        json.loads(store.current["review_case_" + "d" * 64])["incumbent_digest"]
+        == incumbent.artifact.original_digest
+    )
 
 
 def test_exact_policy_preferences_are_persisted_and_projected(case: _Case) -> None:
@@ -190,17 +215,19 @@ def test_exact_policy_preferences_are_persisted_and_projected(case: _Case) -> No
     value = service.ensure(case_id, case.report.to_json(), case.proposal)
 
     assert value["policy_preferences"] == {
-            "avoid_promotional_text": True,
-            "avoid_tie_in_branding": True,
-            "prefer_minimal_composition": True,
-            "schema_version": "cover-policy-v1",
-        }
+        "avoid_promotional_text": True,
+        "avoid_tie_in_branding": True,
+        "prefer_minimal_composition": True,
+        "schema_version": "cover-policy-v1",
+    }
     persisted = json.loads(case.store.current[case_id])
     assert json.loads(persisted["policy_document"]) == value["policy_preferences"]
     assert persisted["policy_reference"] == value["policy_reference"]
 
 
-def test_changed_reviewer_contract_makes_the_prior_consideration_noncurrent(case: _Case) -> None:
+def test_changed_reviewer_contract_makes_the_prior_consideration_noncurrent(
+    case: _Case,
+) -> None:
     case_id = "review_case_" + "f" * 64
     first = case.service.ensure(case_id, case.report.to_json(), case.proposal)
     changed = CoverConsiderationService(
@@ -245,7 +272,9 @@ def test_preview_store_failure_is_typed_unavailable(case: _Case) -> None:
         )
 
 
-def test_local_projection_fault_is_not_recorded_as_reviewer_failure(case: _Case) -> None:
+def test_local_projection_fault_is_not_recorded_as_reviewer_failure(
+    case: _Case,
+) -> None:
     """Only the contained process can produce reviewer failure evidence.
 
     The handler wrapped all of `observe_cover_packet` -- the packet binding,
@@ -312,7 +341,12 @@ def test_assembly_fault_after_the_reviewer_returns_is_not_reviewer_failure(
 
     def reviewer(*args: object) -> str:
         dispatches.append(args)
-        return _observer_result(*cast("tuple[bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]]", args))
+        return _observer_result(
+            *cast(
+                "tuple[bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]]",
+                args,
+            )
+        )
 
     service = CoverConsiderationService(
         case.store,
@@ -334,9 +368,7 @@ def test_assembly_fault_after_the_reviewer_returns_is_not_reviewer_failure(
     # A fault in the assembly that runs after the validated return is ours,
     # and the reviewer is not asked again to produce it.
     fault = RuntimeError("observer reference is broken")
-    with patch.object(
-        cover_observation, "_observer_reference", side_effect=fault
-    ):
+    with patch.object(cover_observation, "_observer_reference", side_effect=fault):
         with pytest.raises(RuntimeError) as surfaced:
             service.ensure(
                 "review_case_" + "5" * 64,

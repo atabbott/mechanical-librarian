@@ -166,10 +166,23 @@ class GoogleBooksMetadataProvider:
         self._called = True
         if type(plan) is MetadataLookup:
             ledger = _DiscoveryRequestLedger("google_books", "volumes-v1")
-            ledger.register(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=_FIELDS)
+            ledger.register(
+                kind=plan.kind.value,
+                matched_family=plan.matched_family,
+                title=plan.title,
+                authors=plan.authors,
+                projection=_FIELDS,
+            )
             self._ledger = ledger
             try:
-                value, _ = ledger.resolve(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=_FIELDS, execute=lambda: self._observe_lookup(plan, deadline=deadline))
+                value, _ = ledger.resolve(
+                    kind=plan.kind.value,
+                    matched_family=plan.matched_family,
+                    title=plan.title,
+                    authors=plan.authors,
+                    projection=_FIELDS,
+                    execute=lambda: self._observe_lookup(plan, deadline=deadline),
+                )
                 return replace(value, request_accounting=ledger.accounting())
             finally:
                 self._client.close()
@@ -185,7 +198,13 @@ class GoogleBooksMetadataProvider:
         results: list[ProviderLaneResult] = []
         ledger = _DiscoveryRequestLedger("google_books", "volumes-v1")
         for lane in plan.lanes:
-            ledger.register(kind=lane.kind.value, matched_family=lane.matched_family, title=lane.title, authors=lane.authors, projection=_FIELDS)
+            ledger.register(
+                kind=lane.kind.value,
+                matched_family=lane.matched_family,
+                title=lane.title,
+                authors=lane.authors,
+                projection=_FIELDS,
+            )
         self._ledger = ledger
         try:
             for lane in plan.lanes:
@@ -244,9 +263,7 @@ class GoogleBooksMetadataProvider:
                     and (value := isbn_family(claim.canonical)) is not None
                 }
                 if len(families) != 1:
-                    return self._result(
-                        lookup, ProviderStatus.INSUFFICIENT_INPUT
-                    )
+                    return self._result(lookup, ProviderStatus.INSUFFICIENT_INPUT)
                 family = next(iter(families))
             references = tuple(
                 sorted(
@@ -290,9 +307,7 @@ class GoogleBooksMetadataProvider:
             UnicodeError,
             RecursionError,
         ):
-            return self._result(
-                lookup, ProviderStatus.MALFORMED, references=references
-            )
+            return self._result(lookup, ProviderStatus.MALFORMED, references=references)
         if len(candidates) > _MAX_RESULTS:
             return self._result(
                 lookup,
@@ -300,9 +315,7 @@ class GoogleBooksMetadataProvider:
                 references=references,
             )
         if not candidates:
-            return self._result(
-                lookup, ProviderStatus.NO_MATCH, references=references
-            )
+            return self._result(lookup, ProviderStatus.NO_MATCH, references=references)
         return self._result(
             lookup,
             ProviderStatus.CANDIDATES,
@@ -349,9 +362,7 @@ class GoogleBooksMetadataProvider:
             diagnostics=self._schema_diagnostics(),
         )
 
-    def _request(
-        self, query: str, *, deadline: float | None
-    ) -> dict[str, Any]:
+    def _request(self, query: str, *, deadline: float | None) -> dict[str, Any]:
         for retry_index in range(_MAX_ATTEMPTS_PER_QUERY):
             started = self._clock()
             attempts_before_dispatch = self._attempt_count
@@ -375,15 +386,21 @@ class GoogleBooksMetadataProvider:
                     error.retryable
                     and retry_index + 1 < _MAX_ATTEMPTS_PER_QUERY
                     and self._attempt_count < _MAX_ATTEMPTS_PER_OBSERVATION
-                    and self._ledger.allows_retry(self._attempt_count, _MAX_ATTEMPTS_PER_OBSERVATION)
+                    and self._ledger.allows_retry(
+                        self._attempt_count, _MAX_ATTEMPTS_PER_OBSERVATION
+                    )
                 )
                 delay = (
                     error.retry_after
                     if error.retry_after is not None
-                    else self._retry_delay(retry_index) if can_retry else None
+                    else self._retry_delay(retry_index)
+                    if can_retry
+                    else None
                 )
-                if can_retry and delay is not None and not self._delay_fits(
-                    delay, deadline=deadline
+                if (
+                    can_retry
+                    and delay is not None
+                    and not self._delay_fits(delay, deadline=deadline)
                 ):
                     can_retry = False
                 if not can_retry or delay is None:
@@ -391,11 +408,7 @@ class GoogleBooksMetadataProvider:
                         started,
                         category=error.category,
                         delay=delay,
-                        outcome=(
-                            "exhausted"
-                            if error.retryable
-                            else "terminal"
-                        ),
+                        outcome=("exhausted" if error.retryable else "terminal"),
                     )
                     raise
                 try:
@@ -471,12 +484,9 @@ class GoogleBooksMetadataProvider:
                 },
                 timeout=remaining,
             ) as response:
-                identity_encoding = (
-                    response.headers.get("content-encoding", "identity")
-                    .strip()
-                    .lower()
-                    in {"", "identity"}
-                )
+                identity_encoding = response.headers.get(
+                    "content-encoding", "identity"
+                ).strip().lower() in {"", "identity"}
                 if response.is_stream_consumed and not identity_encoding:
                     raise ProviderFailure(ProviderStatus.MALFORMED)
                 payload = _body(
@@ -499,9 +509,7 @@ class GoogleBooksMetadataProvider:
                         ),
                     )
                 if response.status_code != 200:
-                    raise ProviderFailure(
-                        _error_status(response.status_code, payload)
-                    )
+                    raise ProviderFailure(_error_status(response.status_code, payload))
                 if (
                     response.headers.get("content-type", "")
                     .split(";", 1)[0]
@@ -539,9 +547,7 @@ class GoogleBooksMetadataProvider:
             self._remaining_response_bytes = 0
             raise ProviderFailure(ProviderStatus.OVERSIZED)
 
-    def _incomplete(
-        self, cause: ProviderIncompleteCause
-    ) -> ProviderFailure:
+    def _incomplete(self, cause: ProviderIncompleteCause) -> ProviderFailure:
         self._incomplete_causes.append(ProviderIncompleteCauseRecord(cause))
         return ProviderFailure(ProviderStatus.INCOMPLETE)
 
@@ -555,9 +561,7 @@ class GoogleBooksMetadataProvider:
             jitter = 0.0
         return min(float(2**retry_index) + float(jitter), 16.0)
 
-    def _delay_fits(
-        self, delay: float, *, deadline: float | None
-    ) -> bool:
+    def _delay_fits(self, delay: float, *, deadline: float | None) -> bool:
         if deadline is None:
             return True
         return self._clock() + delay < deadline
@@ -576,9 +580,7 @@ class GoogleBooksMetadataProvider:
                 ordinal=self._attempt_count,
                 category=category,
                 delay_seconds=delay,
-                elapsed_seconds=bounded_attempt_elapsed(
-                    started, self._clock()
-                ),
+                elapsed_seconds=bounded_attempt_elapsed(started, self._clock()),
                 outcome=outcome,
             )
         )
@@ -672,9 +674,7 @@ def _candidate(
         if identifier_type not in {"ISBN_10", "ISBN_13"}:
             continue
         compact = "".join(
-            value
-            for value in identifier_value
-            if value.isdigit() or value in "Xx"
+            value for value in identifier_value if value.isdigit() or value in "Xx"
         ).upper()
         if isbn_family(compact) is None:
             raise ValueError("provider ISBN is malformed")
@@ -754,10 +754,18 @@ def _candidate(
     if description_transformed:
         add(ClaimKind.DESCRIPTION, transformed_description, ClaimScope.WORK)
     elif transformed_description is _DESCRIPTION_OVERSIZED:
-        add(ClaimKind.DESCRIPTION, "x" * (MAX_DESCRIPTION_CHARACTERS + 1), ClaimScope.WORK)
+        add(
+            ClaimKind.DESCRIPTION,
+            "x" * (MAX_DESCRIPTION_CHARACTERS + 1),
+            ClaimScope.WORK,
+        )
     elif type(description) is str and ("<" in description or ">" in description):
         # Do not turn hostile markup into an apparent absence.
-        add(ClaimKind.DESCRIPTION, description if len(description) > MAX_DESCRIPTION_CHARACTERS else object(), ClaimScope.WORK)
+        add(
+            ClaimKind.DESCRIPTION,
+            description if len(description) > MAX_DESCRIPTION_CHARACTERS else object(),
+            ClaimScope.WORK,
+        )
     else:
         add(ClaimKind.DESCRIPTION, description, ClaimScope.WORK)
     add(ClaimKind.LANGUAGE, info.get("language"), ClaimScope.EDITION)
@@ -838,7 +846,10 @@ def _candidate(
     # attributable to this candidate.
     canonical_evidence = tuple(
         sorted(
-            (replace(value, source_ordinal=index) for index, value in enumerate(evidence)),
+            (
+                replace(value, source_ordinal=index)
+                for index, value in enumerate(evidence)
+            ),
             key=lambda value: (
                 value.scope.value,
                 value.kind.value,
@@ -897,9 +908,7 @@ def _optional_string_list(
     return tuple(values)
 
 
-def _field(
-    kind: ClaimKind, value: object
-) -> tuple[FieldState, str | None]:
+def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
     if value is None:
         return FieldState.ABSENT, None
     maximum = (
@@ -919,8 +928,12 @@ def _field(
 
 
 class _DescriptionParser(HTMLParser):
-    _BLOCKS = frozenset({"p", "div", "br", "hr", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6"})
-    _REJECT = frozenset({"script", "style", "iframe", "object", "embed", "svg", "math", "template"})
+    _BLOCKS = frozenset(
+        {"p", "div", "br", "hr", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6"}
+    )
+    _REJECT = frozenset(
+        {"script", "style", "iframe", "object", "embed", "svg", "math", "template"}
+    )
     _VOID = frozenset(
         {
             "area",
@@ -947,7 +960,9 @@ class _DescriptionParser(HTMLParser):
         self.open_tags: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in self._REJECT or any(name.casefold().startswith("on") for name, _ in attrs):
+        if tag in self._REJECT or any(
+            name.casefold().startswith("on") for name, _ in attrs
+        ):
             self.safe = False
         if tag in self._BLOCKS:
             self.parts.append("\n")
@@ -962,9 +977,7 @@ class _DescriptionParser(HTMLParser):
         if tag in self._BLOCKS:
             self.parts.append("\n")
 
-    def handle_startendtag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self.handle_starttag(tag, attrs)
         if tag not in self._VOID:
             self.handle_endtag(tag)
@@ -1005,7 +1018,11 @@ def _visible_description(value: object) -> object:
         return None
     # Claims intentionally exclude control characters.  A visible bullet is a
     # stable plain-text boundary for each source paragraph/list item.
-    rendered = " • ".join(" ".join(line.split()) for line in "".join(parser.parts).splitlines() if line.split())
+    rendered = " • ".join(
+        " ".join(line.split())
+        for line in "".join(parser.parts).splitlines()
+        if line.split()
+    )
     if len(rendered) > MAX_DESCRIPTION_CHARACTERS:
         return _DESCRIPTION_OVERSIZED
     return rendered if parser.safe and not parser.open_tags and rendered else None
@@ -1036,9 +1053,7 @@ def _body(
     chunks: list[bytes] = []
     total = 0
     raw_chunks = (
-        (response.content,)
-        if response.is_stream_consumed
-        else response.iter_raw()
+        (response.content,) if response.is_stream_consumed else response.iter_raw()
     )
     for chunk in raw_chunks:
         consume(len(chunk))

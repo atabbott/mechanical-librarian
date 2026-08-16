@@ -55,7 +55,9 @@ def _effective_policy(
     return effective
 
 
-def test_supported_managers_and_bounded_schedule_are_explicit(config: dict[str, object]) -> None:
+def test_supported_managers_and_bounded_schedule_are_explicit(
+    config: dict[str, object],
+) -> None:
     assert set(cast("list[str]", config["enabledManagers"])) == {
         "dockerfile",
         "github-actions",
@@ -74,16 +76,16 @@ def test_supported_managers_and_bounded_schedule_are_explicit(config: dict[str, 
     assert config["automergeStrategy"] == "squash"
 
 
-def test_only_named_low_risk_classes_enable_platform_automerge(config: dict[str, object]) -> None:
+def test_only_named_low_risk_classes_enable_platform_automerge(
+    config: dict[str, object],
+) -> None:
     assert not config["automerge"]
     assert config["platformAutomerge"]
     assert not config["ignoreTests"]
     assert config["lockFileMaintenance"]["enabled"]
     assert config["lockFileMaintenance"]["automerge"]
     automerge_rules = {
-        rule["description"]
-        for rule in config["packageRules"]
-        if rule.get("automerge")
+        rule["description"] for rule in config["packageRules"] if rule.get("automerge")
     }
     assert automerge_rules == {
         "Group compatible frontend updates",
@@ -92,7 +94,9 @@ def test_only_named_low_risk_classes_enable_platform_automerge(config: dict[str,
     }
 
 
-def test_project_python_compatibility_range_is_not_managed(config: dict[str, object]) -> None:
+def test_project_python_compatibility_range_is_not_managed(
+    config: dict[str, object],
+) -> None:
     ignored = [
         rule
         for rule in config["packageRules"]
@@ -103,7 +107,9 @@ def test_project_python_compatibility_range_is_not_managed(config: dict[str, obj
     assert not ignored[0]["enabled"]
 
 
-def test_only_major_and_replacement_updates_require_dashboard_approval(config: dict[str, object]) -> None:
+def test_only_major_and_replacement_updates_require_dashboard_approval(
+    config: dict[str, object],
+) -> None:
     manual = [
         rule
         for rule in config["packageRules"]
@@ -115,12 +121,11 @@ def test_only_major_and_replacement_updates_require_dashboard_approval(config: d
     }
 
 
-def test_protected_classes_override_earlier_automerge_rules(config: dict[str, object]) -> None:
+def test_protected_classes_override_earlier_automerge_rules(
+    config: dict[str, object],
+) -> None:
     rules = cast("list[dict[str, object]]", config["packageRules"])
-    positions = {
-        rule["description"]: index
-        for index, rule in enumerate(rules)
-    }
+    positions = {rule["description"]: index for index, rule in enumerate(rules)}
     protected = {
         "Prevent automatic merging of pre-1.0 minor updates",
         "Require approval for major updates",
@@ -139,8 +144,7 @@ def test_protected_classes_override_earlier_automerge_rules(config: dict[str, ob
         positions["Group stable Python minor updates"],
     ]
     assert all(
-        positions[description] > max(enabling_positions)
-        for description in protected
+        positions[description] > max(enabling_positions) for description in protected
     )
 
     runtime_packages = next(
@@ -174,44 +178,97 @@ def test_protected_classes_override_earlier_automerge_rules(config: dict[str, ob
 @pytest.mark.parametrize(
     ("manager", "package", "current", "update", "automerge", "approval"),
     (
-        pytest.param("npm", "react", "19.2.8", "minor", True, False, id="npm_react_minor"),
         pytest.param(
-            "npm", "@testing-library/react", "16.3.2", "patch", True, False,
+            "npm", "react", "19.2.8", "minor", True, False, id="npm_react_minor"
+        ),
+        pytest.param(
+            "npm",
+            "@testing-library/react",
+            "16.3.2",
+            "patch",
+            True,
+            False,
             id="npm_testing_library_react_patch",
         ),
-        pytest.param("npm", "vite", "8.2.1", "minor", False, False, id="npm_vite_minor"),
-        pytest.param("npm", "eslint", "10.8.1", "patch", False, False, id="npm_eslint_patch"),
         pytest.param(
-            "npm", "eslint-plugin-react-refresh", "0.5.3", "patch", False, False,
+            "npm", "vite", "8.2.1", "minor", False, False, id="npm_vite_minor"
+        ),
+        pytest.param(
+            "npm", "eslint", "10.8.1", "patch", False, False, id="npm_eslint_patch"
+        ),
+        pytest.param(
+            "npm",
+            "eslint-plugin-react-refresh",
+            "0.5.3",
+            "patch",
+            False,
+            False,
             id="npm_eslint_plugin_react_refresh_patch",
         ),
         pytest.param(
-            "pep621", "playwright", "1.61.0", "patch", True, False,
+            "pep621",
+            "playwright",
+            "1.61.0",
+            "patch",
+            True,
+            False,
             id="pep621_playwright_patch",
         ),
         pytest.param(
-            "pep621", "playwright", "1.61.0", "minor", False, False,
+            "pep621",
+            "playwright",
+            "1.61.0",
+            "minor",
+            False,
+            False,
             id="pep621_playwright_minor",
         ),
         pytest.param(
-            "pep621", "fastapi", "0.116.1", "minor", False, False,
+            "pep621",
+            "fastapi",
+            "0.116.1",
+            "minor",
+            False,
+            False,
             id="pep621_fastapi_minor",
         ),
         pytest.param(
-            "pep621", "pydantic", "2.13.4", "minor", True, False,
+            "pep621",
+            "pydantic",
+            "2.13.4",
+            "minor",
+            True,
+            False,
             id="pep621_pydantic_minor",
         ),
         pytest.param(
-            "dockerfile", "python", "3.13.14", "patch", False, False,
+            "dockerfile",
+            "python",
+            "3.13.14",
+            "patch",
+            False,
+            False,
             id="dockerfile_python_patch",
         ),
         pytest.param(
-            "github-actions", "actions/checkout", "6.0.2", "patch", False, False,
+            "github-actions",
+            "actions/checkout",
+            "6.0.2",
+            "patch",
+            False,
+            False,
             id="github_actions_checkout_patch",
         ),
-        pytest.param("npm", "react", "19.2.8", "major", False, True, id="npm_react_major"),
         pytest.param(
-            "npm", "react", "19.2.8", "replacement", False, True,
+            "npm", "react", "19.2.8", "major", False, True, id="npm_react_major"
+        ),
+        pytest.param(
+            "npm",
+            "react",
+            "19.2.8",
+            "replacement",
+            False,
+            True,
             id="npm_react_replacement",
         ),
     ),

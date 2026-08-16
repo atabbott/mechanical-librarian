@@ -95,20 +95,73 @@ python_files = ["test_*.py"]
 xfail_strict = true
 
 [tool.ruff]
-# The gate lints the backend source, its tests, and its scripts.
+# The gate formats, lints, and type-checks the backend source, its tests, and
+# its scripts.
 src = ["src"]
 target-version = "py313"
+# ruff's own default, stated rather than inherited: one number now governs both
+# what the formatter targets and what `E501` rejects, so the two can never
+# disagree about the width they enforce.
+line-length = 88
+# Without this, an exclusion holds only for paths ruff discovers by walking a
+# directory, and is ignored for any path named on the command line. That is the
+# difference between `ruff format src` and `ruff format <one file>`, so the
+# formatter exclusion below would protect the gate's directory invocation and
+# nothing a contributor's editor, format-on-save, or pre-commit hook does --
+# each of which formats the single file it is holding, and would rewrite a
+# byte-frozen source. This makes the exclusion hold for every invocation.
+# It is scoped to exclusions: `ruff check` still lints those four files, which
+# is what keeps their per-file ignores below meaningful rather than moot.
+force-exclude = true
+
+[tool.ruff.format]
+# The four sources named under `[tool.ruff.lint.per-file-ignores]` below are
+# byte-frozen by the F20 rich-metadata qualification manifest. The formatter
+# rewrites bytes by definition, and `# fmt: off` is itself a byte, so the only
+# way to leave their digests intact is to keep the formatter out of them. This
+# exclusion retires with the same re-qualification those lint entries do.
+exclude = [
+  "src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py",
+  "src/mechanical_librarian/domain/automatic_decision.py",
+  "src/mechanical_librarian/domain/metadata_policy.py",
+  "src/mechanical_librarian/domain/rich_metadata_preview.py",
+]
 
 [tool.ruff.lint]
 # pyflakes (F), pycodestyle (E, W), bugbear (B), and import ordering (I).
 select = ["F", "E", "W", "B", "I"]
 ignore = [
-  # E501 (line-too-long) is deliberately not enforced. 5,673 backend lines
-  # exceed the default limit, so enforcing it would require a whole-tree
-  # backend reformat -- exactly the "reformatting-only churn" this gate's
-  # ticket (#652) excludes. Backend formatting is separate future work, in the
-  # manner the frontend took under #657; the remaining pycodestyle rules are
-  # enforced normally.
+  # E501 (line-too-long) is not enforced, and no longer for #652's reason: the
+  # whole-tree reformat it deferred has happened, so `ruff format --check` now
+  # holds every construct the formatter owns to `line-length` above. That is
+  # the width gate. Measured against the formatted tree, what E501 would add on
+  # top is 1,148 findings across 76 files, and not one is a line the formatter
+  # could have made narrower:
+  #   1,011  the limit falls inside a string literal -- DDL and SQL text that
+  #          `sqlite_master` stores verbatim and `schema.py` therefore may not
+  #          reflow, EPUB and XML fixture documents, and the synthetic Python
+  #          modules `scripts/qualify_exact_artifact.py` and the tier tests
+  #          embed as source text. A formatter never rewrites string contents.
+  #      82  code in the four sources excluded from the formatter above, which
+  #          it is not permitted to reach at all.
+  #      55  code in formatted sources: dotted import paths and other single
+  #          tokens with no split point in them.
+  # The longest is 2,235 characters, so the only settings that make E501 pass
+  # are 76 per-file exemptions -- covering the largest sources in the tree --
+  # or a 2,236-character limit. Both report a pass while measuring nothing.
+  #
+  # A fourth group is named here because it is the one a reader is most likely
+  # to think could simply be shortened: 103 further lines exceed the limit only
+  # because they end in a `# type: ignore` or `# noqa` carrying the reason this
+  # project requires beside it. They are absent from the 1,148 above -- ruff
+  # exempts a line whose overrun begins inside a pragma comment, where it
+  # reports an ordinary comment of the same width -- and they cannot be
+  # shortened either, because mypy and ruff both bind a suppression to the
+  # physical line it sits on, so moving it off that line stops it suppressing.
+  # #670 had to reattach 22 of them after the reformat split their lines.
+  #
+  # Enforcing E501 for real means moving those literals out of Python source,
+  # which is separate, owned work, not a threshold.
   "E501",
 ]
 

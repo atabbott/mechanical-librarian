@@ -67,9 +67,7 @@ def test_exact_max_shape_fits_two_mebibytes_and_round_trips() -> None:
             kind=kind,
             value=value,
             state=FieldState.VALID,
-            scope=(
-                ClaimScope.EDITION if kind is ClaimKind.ISBN else ClaimScope.WORK
-            ),
+            scope=(ClaimScope.EDITION if kind is ClaimKind.ISBN else ClaimScope.WORK),
             applicability="ebook" if kind is ClaimKind.ISBN else "not_applicable",
             role=role,
             raw_order=raw_order,
@@ -113,8 +111,7 @@ def test_exact_max_shape_fits_two_mebibytes_and_round_trips() -> None:
             claim(
                 identity,
                 ClaimKind.SERIES,
-                f"s{number:03d}-{index:03d}"
-                + "x" * (MAX_SCALAR_CHARACTERS - 8),
+                f"s{number:03d}-{index:03d}" + "x" * (MAX_SCALAR_CHARACTERS - 8),
                 offset + index,
             )
             for index in range(MAX_SERIES)
@@ -124,8 +121,7 @@ def test_exact_max_shape_fits_two_mebibytes_and_round_trips() -> None:
             claim(
                 identity,
                 ClaimKind.TAG,
-                f"t{number:03d}-{index:03d}"
-                + "x" * (MAX_SCALAR_CHARACTERS - 8),
+                f"t{number:03d}-{index:03d}" + "x" * (MAX_SCALAR_CHARACTERS - 8),
                 offset + index,
             )
             for index in range(MAX_TAGS)

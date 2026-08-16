@@ -58,14 +58,10 @@ def run_contained_reviewer(
     )
     return json.dumps(
         {
-            "execution_sha256": hashlib.sha256(
-                execution_identity.encode()
-            ).hexdigest(),
+            "execution_sha256": hashlib.sha256(execution_identity.encode()).hexdigest(),
             "image_binding_sha256": hashlib.sha256(b"[]").hexdigest(),
             "image_count": 0,
-            "input_sha256": hashlib.sha256(
-                request.input_document.encode()
-            ).hexdigest(),
+            "input_sha256": hashlib.sha256(request.input_document.encode()).hexdigest(),
             "request_sha256": request.digest,
             "result": json.loads(result.document),
             "result_sha256": result.digest,

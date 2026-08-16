@@ -48,14 +48,17 @@ class CreateProposalSet:
         self,
         repository: ProposalSetRepository,
         require_current: Callable[[MetadataReport], bool],
-        resolve_policy_profile: Callable[[MetadataReport], ResolvedMetadataPolicy | str] | None = None,
+        resolve_policy_profile: Callable[[MetadataReport], ResolvedMetadataPolicy | str]
+        | None = None,
     ) -> None:
         self._repository = repository
         self._require_current = require_current
         self._resolve_policy_profile = resolve_policy_profile or (
-            lambda report: resolve_policy(
-                MetadataPolicyProfile.builtin(), report.target.library
-            ).resolved_id
+            lambda report: (
+                resolve_policy(
+                    MetadataPolicyProfile.builtin(), report.target.library
+                ).resolved_id
+            )
         )
 
     def run(self, report_id: str) -> str:
@@ -68,9 +71,7 @@ class CreateProposalSet:
             except (ProposalSetError, TargetConnectionError):
                 raise
             except Exception as error:
-                raise ProposalSetError(
-                    "proposal policy resolution failed"
-                ) from error
+                raise ProposalSetError("proposal policy resolution failed") from error
             # ``type(policy) is str`` is an exact-type test over the declared
             # ``ResolvedMetadataPolicy | str`` union, so each arm is already
             # proven; mypy simply does not narrow inside a conditional

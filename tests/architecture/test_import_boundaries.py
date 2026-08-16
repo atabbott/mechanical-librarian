@@ -7,7 +7,14 @@ PACKAGE_ROOT = Path(__file__).parents[2] / "src" / "mechanical_librarian"
 WORKBENCH_ROOT = (
     Path(__file__).parents[2] / "workbench" / "mechanical_librarian_workbench"
 )
-LAYERS = {"interfaces", "application", "domain", "adapters", "infrastructure", "bootstrap"}
+LAYERS = {
+    "interfaces",
+    "application",
+    "domain",
+    "adapters",
+    "infrastructure",
+    "bootstrap",
+}
 ALLOWED = {
     "domain": {"domain"},
     "application": {"application", "domain"},
@@ -46,7 +53,11 @@ def _imports(path: Path) -> list[str]:
 
 def _layer(module: str) -> str | None:
     parts = module.split(".")
-    return parts[1] if len(parts) > 1 and parts[0] == "mechanical_librarian" and parts[1] in LAYERS else None
+    return (
+        parts[1]
+        if len(parts) > 1 and parts[0] == "mechanical_librarian" and parts[1] in LAYERS
+        else None
+    )
 
 
 def test_production_source_obeys_dependency_direction() -> None:
@@ -56,7 +67,11 @@ def test_production_source_obeys_dependency_direction() -> None:
         origin_layer = _layer(origin)
         for target in _imports(path):
             target_layer = _layer(target)
-            if target.startswith("tests") or (origin_layer and target_layer and target_layer not in ALLOWED[origin_layer]):
+            if target.startswith("tests") or (
+                origin_layer
+                and target_layer
+                and target_layer not in ALLOWED[origin_layer]
+            ):
                 violations.append(f"{origin} imports {target}")
     assert violations == []
 
@@ -113,12 +128,12 @@ def test_http_interface_receives_only_composed_review_application() -> None:
     interface = (PACKAGE_ROOT / "interfaces" / "web" / "app.py").read_text(
         encoding="utf-8"
     )
-    application = (
-        PACKAGE_ROOT / "application" / "review_application.py"
-    ).read_text(encoding="utf-8")
-    review_services = (
-        PACKAGE_ROOT / "application" / "review_web.py"
-    ).read_text(encoding="utf-8")
+    application = (PACKAGE_ROOT / "application" / "review_application.py").read_text(
+        encoding="utf-8"
+    )
+    review_services = (PACKAGE_ROOT / "application" / "review_web.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "ReviewWebRepository" not in interface
     assert "_SerializedReviewRepository" not in interface
@@ -128,11 +143,43 @@ def test_http_interface_receives_only_composed_review_application() -> None:
     assert "class ReviewWebRepository" not in review_services
 
 
+def _registered_commands(path: Path) -> list[str]:
+    """Every command name passed to `add_parser`, read from the syntax tree.
+
+    A text search for `add_parser("name"` finds a registration only while it
+    stays on one physical line, so it silently stops finding one the moment a
+    formatter wraps the call -- which is how a command could be re-added
+    without this proof noticing. The names are read as literals instead, so the
+    proof holds whatever shape the source takes.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    return [
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_parser"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ]
+
+
 def test_runtime_has_one_cli_command_and_no_write_authority() -> None:
-    cli = (PACKAGE_ROOT / "interfaces" / "cli" / "__init__.py").read_text(encoding="utf-8")
-    assert cli.count('add_parser("review-serve"') == 1
-    for unsupported in ('add_parser("metadata-report"', 'add_parser("proposal-set', 'add_parser("review-case', 'add_parser("catalogue"', 'add_parser("batch"', 'add_parser("shadow-review', 'add_parser("reviewer-auth'):
-        assert unsupported not in cli
-    source = "\n".join(path.read_text(encoding="utf-8") for path in PACKAGE_ROOT.rglob("*.py"))
+    commands = _registered_commands(PACKAGE_ROOT / "interfaces" / "cli" / "__init__.py")
+    assert commands.count("review-serve") == 1
+    for unsupported in (
+        "metadata-report",
+        "proposal-set",
+        "review-case",
+        "catalogue",
+        "batch",
+        "shadow-review",
+        "reviewer-auth",
+    ):
+        assert not [name for name in commands if name.startswith(unsupported)]
+    source = "\n".join(
+        path.read_text(encoding="utf-8") for path in PACKAGE_ROOT.rglob("*.py")
+    )
     assert "DELETE FROM metadata_reports" not in source
     assert "UPDATE metadata_reports" not in source

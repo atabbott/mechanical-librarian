@@ -312,9 +312,7 @@ def qualify_exact_artifact(
             reason="installed_environment_invalid",
         ).strip()
         purelib = Path(purelib_text).resolve()
-        console = (
-            _environment_bin(qualified_environment) / console_script
-        ).resolve()
+        console = (_environment_bin(qualified_environment) / console_script).resolve()
         runtime_environment = _installed_runtime_environment(
             environment,
             qualified_environment,
@@ -435,7 +433,9 @@ def _qualify_runtime_console(
     python = console.parent / ("python.exe" if os.name == "nt" else "python")
     unavailable = _run(
         (
-            str(python), "-I", "-c",
+            str(python),
+            "-I",
+            "-c",
             "import importlib.util; raise SystemExit("
             "0 if importlib.util.find_spec('mechanical_librarian_workbench') is None else 1)",
         ),
@@ -474,7 +474,7 @@ def _qualify_installed_react_workspace(
     """Prove the installed wheel serves one authenticated activated shell."""
     probe = run_directory / "react-workspace-probe.py"
     probe.write_text(
-        r'''
+        r"""
 import re
 import tempfile
 from pathlib import Path
@@ -527,7 +527,7 @@ with tempfile.TemporaryDirectory() as directory:
         asset = client.get(script.group(1))
         assert asset.status_code == 200
         assert "javascript" in asset.headers["content-type"]
-''',
+""",
         encoding="utf-8",
     )
     completed = _run(
@@ -543,9 +543,15 @@ with tempfile.TemporaryDirectory() as directory:
 def _runtime_help_is_closed(value: str) -> bool:
     choices = re.findall(r"\{([^}\r\n]+)\}", value)
     commands = re.findall(r"^    ([a-z][a-z0-9-]*)  ", value, re.MULTILINE)
-    expected = "review-serve,policy-preview,cover-review,review-activity,provider-recovery"
+    expected = (
+        "review-serve,policy-preview,cover-review,review-activity,provider-recovery"
+    )
     return choices == [expected, expected] and commands == [
-        "review-serve", "policy-preview", "cover-review", "review-activity", "provider-recovery",
+        "review-serve",
+        "policy-preview",
+        "cover-review",
+        "review-activity",
+        "provider-recovery",
     ]
 
 
@@ -557,7 +563,7 @@ def _qualify_guarded_effect_lifecycle(
     """Exercise the installed injectable F13 lifecycle without product activation."""
     probe = run_directory / "guarded-effect-probe.py"
     probe.write_text(
-        '''
+        """
 from pathlib import Path
 
 from mechanical_librarian.adapters.field_effect_fakes import (
@@ -672,7 +678,7 @@ if restarted.supersede(revoked.authority.decision_id) != 1:
 if restarted.status(revoked.plan_id).state != "superseded":
     raise RuntimeError("revocation state")
 repository.close()
-'''.lstrip(),
+""".lstrip(),
         encoding="utf-8",
     )
     _run(
@@ -807,9 +813,7 @@ def _run(
         descendants_terminated = _terminate_process_tree(process)
         cleanup_deadline = time.monotonic() + 1
         for reader in readers:
-            reader.join(
-                timeout=max(0.0, cleanup_deadline - time.monotonic())
-            )
+            reader.join(timeout=max(0.0, cleanup_deadline - time.monotonic()))
     readers_stuck = any(reader.is_alive() for reader in readers)
     if not readers_stuck:
         process.stdout.close()
@@ -820,12 +824,7 @@ def _run(
             f"{reason[:-7]}_timeout" if reason.endswith("_failed") else reason
         )
         raise QualificationFailure(timeout_reason)
-    if (
-        overflow.is_set()
-        or descendants_terminated
-        or readers_stuck
-        or returncode != 0
-    ):
+    if overflow.is_set() or descendants_terminated or readers_stuck or returncode != 0:
         raise QualificationFailure(reason)
     return subprocess.CompletedProcess(
         args=command,
@@ -910,13 +909,9 @@ def _validate_wheel(wheel: Path, distribution: str) -> _WheelManifest:
                     raise QualificationFailure("wheel_invalid")
 
             files = tuple(entry for entry in entries if not entry.is_dir())
-            if (
-                sum(entry.file_size for entry in files) > _MAX_INSTALLED_BYTES
-                or any(
-                    entry.file_size < 0
-                    or entry.file_size > _MAX_WHEEL_MEMBER_BYTES
-                    for entry in files
-                )
+            if sum(entry.file_size for entry in files) > _MAX_INSTALLED_BYTES or any(
+                entry.file_size < 0 or entry.file_size > _MAX_WHEEL_MEMBER_BYTES
+                for entry in files
             ):
                 raise QualificationFailure("wheel_invalid")
             metadata_members = tuple(
@@ -982,10 +977,7 @@ def _validate_wheel(wheel: Path, distribution: str) -> _WheelManifest:
                 if observed_size != member.file_size:
                     raise QualificationFailure("wheel_invalid")
                 expected_hash = _record_hash(digest.digest())
-                if (
-                    record_hash != expected_hash
-                    or record_size != str(member.file_size)
-                ):
+                if record_hash != expected_hash or record_size != str(member.file_size):
                     raise QualificationFailure("wheel_record_invalid")
                 manifest_members.append(
                     _WheelMember(
@@ -1016,9 +1008,7 @@ def _validate_wheel(wheel: Path, distribution: str) -> _WheelManifest:
     )
 
 
-def _validate_react_wheel_surface(
-    archive: ZipFile, files: tuple[ZipInfo, ...]
-) -> None:
+def _validate_react_wheel_surface(archive: ZipFile, files: tuple[ZipInfo, ...]) -> None:
     prefix = "mechanical_librarian/interfaces/web/"
     asset_prefix = f"{prefix}react_assets/"
     names = {member.filename for member in files}
@@ -1029,9 +1019,13 @@ def _validate_react_wheel_surface(
     manifest_name = f"{asset_prefix}review-assets-v1.json"
     if identity_name not in names or manifest_name not in names:
         raise QualificationFailure("react_wheel_surface_invalid")
-    manifest_member = next(member for member in files if member.filename == manifest_name)
+    manifest_member = next(
+        member for member in files if member.filename == manifest_name
+    )
     try:
-        manifest = json.loads(_read_archive_member(archive, manifest_member).decode("utf-8"))
+        manifest = json.loads(
+            _read_archive_member(archive, manifest_member).decode("utf-8")
+        )
         relative_assets = {
             item["path"] for item in manifest["assets"] if type(item) is dict
         }
@@ -1084,9 +1078,10 @@ def _verify_installed_payload(
                     member.filename,
                     member.file_size,
                 )
-                with archive.open(member) as wheel_stream, installed.open(
-                    "rb"
-                ) as installed_stream:
+                with (
+                    archive.open(member) as wheel_stream,
+                    installed.open("rb") as installed_stream,
+                ):
                     while True:
                         wheel_chunk = wheel_stream.read(65_536)
                         installed_chunk = installed_stream.read(65_536)
@@ -1155,15 +1150,23 @@ def _verify_installed_record(
         # case-sensitive; typeshed models optionxform as a method.
         parser.optionxform = str  # type: ignore[method-assign,assignment]  # reason: configparser's documented way to keep entry-point keys case-sensitive; typeshed models optionxform as a method
         parser.read_string(
-            _read_bounded_file(entry_points, _MAX_METADATA_BYTES).decode("utf-8", "strict")
+            _read_bounded_file(entry_points, _MAX_METADATA_BYTES).decode(
+                "utf-8", "strict"
+            )
         )
         declared = (
-            () if not parser.has_section("console_scripts")
+            ()
+            if not parser.has_section("console_scripts")
             else tuple(parser["console_scripts"])
         )
-        if (not declared or console.name not in declared
-                or any(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", name) is None
-                       for name in declared)):
+        if (
+            not declared
+            or console.name not in declared
+            or any(
+                re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", name) is None
+                for name in declared
+            )
+        ):
             raise QualificationFailure("installed_record_console_invalid")
         for name in declared:
             target = console.parent / name
@@ -1180,9 +1183,7 @@ def _verify_installed_record(
         raise QualificationFailure("installed_record_generated_unexpected")
 
     for name in generated:
-        target = console_records.get(
-            name, purelib.joinpath(*PurePosixPath(name).parts)
-        )
+        target = console_records.get(name, purelib.joinpath(*PurePosixPath(name).parts))
         if target is None or not target.is_file() or target.is_symlink():
             raise QualificationFailure("installed_record_generated_invalid")
         if name not in console_records and not target.resolve().is_relative_to(purelib):
@@ -1239,7 +1240,10 @@ def _wheel_member_path(member: ZipInfo) -> PurePosixPath:
         or not path.parts
         or any(part in {"", ".", ".."} for part in path.parts)
         or "\\" in member.filename
-        or any(ord(character) < 32 or ord(character) == 127 for character in member.filename)
+        or any(
+            ord(character) < 32 or ord(character) == 127
+            for character in member.filename
+        )
         or mode == stat.S_IFLNK
     ):
         raise QualificationFailure("wheel_invalid")
@@ -1331,7 +1335,9 @@ def _environment_bin(environment: Path) -> Path:
 
 
 def _environment_python(environment: Path) -> Path:
-    return _environment_bin(environment) / ("python.exe" if os.name == "nt" else "python")
+    return _environment_bin(environment) / (
+        "python.exe" if os.name == "nt" else "python"
+    )
 
 
 def _installed_runtime_environment(

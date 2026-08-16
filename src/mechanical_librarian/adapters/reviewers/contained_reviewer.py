@@ -42,10 +42,19 @@ _LIVE_SCHEMA_REJECTION_PREFIX = (
 )
 _FAILURES = frozenset(
     {
-        "runtime", "setup", "auth", "profile", "timeout", "cancel",
-        "response_format", "malformed_output", "local_cli_abort",
+        "runtime",
+        "setup",
+        "auth",
+        "profile",
+        "timeout",
+        "cancel",
+        "response_format",
+        "malformed_output",
+        "local_cli_abort",
     }
 )
+
+
 class ContainedReviewerProcessError(ContainedReviewerError):
     """Typed, value-free failure at the reviewer trust boundary."""
 
@@ -65,7 +74,9 @@ class ContainedReviewerProcessError(ContainedReviewerError):
         if (
             type(attempts) is not tuple
             or len(attempts) > 2
-            or any(type(attempt) is not ContainedReviewerAttempt for attempt in attempts)
+            or any(
+                type(attempt) is not ContainedReviewerAttempt for attempt in attempts
+            )
         ):
             raise ValueError("invalid reviewer attempts")
         self.attempts = attempts
@@ -94,11 +105,12 @@ def read_contained_reviewer_profile(path: Path) -> bytes:
             raise ContainedReviewerProcessError("profile")
         payload = os.read(descriptor, before.st_size + 1)
         after = os.fstat(descriptor)
-        if (
-            len(payload) != before.st_size
-            or (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
-            != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns)
-        ):
+        if len(payload) != before.st_size or (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            before.st_mtime_ns,
+        ) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
             raise ContainedReviewerProcessError("profile")
         load_contained_reviewer_profile_bytes(payload)
         return payload
@@ -186,7 +198,9 @@ def _sealed_cover_images(
             os.lseek(descriptor, 0, os.SEEK_SET)
             copied = bytearray()
             while len(copied) < len(image.payload):
-                chunk = os.read(descriptor, min(65_536, len(image.payload) - len(copied)))
+                chunk = os.read(
+                    descriptor, min(65_536, len(image.payload) - len(copied))
+                )
                 if not chunk:
                     break
                 copied.extend(chunk)
@@ -197,11 +211,13 @@ def _sealed_cover_images(
             ):
                 raise OSError("sealed image identity changed")
             os.lseek(descriptor, 0, os.SEEK_SET)
-            admitted.append(_SealedImage(
-                descriptor,
-                f"/proc/self/fd/{descriptor}",
-                image.digest,
-            ))
+            admitted.append(
+                _SealedImage(
+                    descriptor,
+                    f"/proc/self/fd/{descriptor}",
+                    image.digest,
+                )
+            )
         yield tuple(admitted)
     except (OSError, ValueError) as error:
         raise ContainedReviewerProcessError("setup") from error
@@ -233,10 +249,8 @@ def _isolate_child_image_descriptors(
                 not stat.S_ISREG(isolated.st_mode)
                 or (isolated.st_dev, isolated.st_ino, isolated.st_size)
                 != (inherited.st_dev, inherited.st_ino, inherited.st_size)
-                or fcntl.fcntl(reopened, fcntl.F_GETFL) & os.O_ACCMODE
-                != os.O_RDONLY
-                or fcntl.fcntl(reopened, get_seals) & required_seals
-                != required_seals
+                or fcntl.fcntl(reopened, fcntl.F_GETFL) & os.O_ACCMODE != os.O_RDONLY
+                or fcntl.fcntl(reopened, get_seals) & required_seals != required_seals
             ):
                 raise OSError("isolated image identity changed")
             digest = hashlib.sha256()
@@ -247,11 +261,7 @@ def _isolate_child_image_descriptors(
                     break
                 digest.update(chunk)
                 remaining -= len(chunk)
-            if (
-                remaining
-                or os.read(reopened, 1)
-                or digest.hexdigest() != image.digest
-            ):
+            if remaining or os.read(reopened, 1) or digest.hexdigest() != image.digest:
                 raise OSError("isolated image bytes changed")
             os.lseek(reopened, 0, os.SEEK_SET)
             os.dup2(reopened, image.descriptor, inheritable=False)
@@ -412,13 +422,16 @@ class ContainedReviewerAdapter:
     def auth(self, action: str) -> str:
         if action not in {"start", "status", "logout"}:
             raise ContainedReviewerProcessError("profile")
-        with _bound_artifact(
-            self._profile.codex_path,
-            self._profile.identity.executable_sha256,
-        ) as codex, _bound_artifact(
-            self._profile.sandbox_path,
-            self._profile.identity.sandbox_sha256,
-        ) as sandbox:
+        with (
+            _bound_artifact(
+                self._profile.codex_path,
+                self._profile.identity.executable_sha256,
+            ) as codex,
+            _bound_artifact(
+                self._profile.sandbox_path,
+                self._profile.identity.sandbox_sha256,
+            ) as sandbox,
+        ):
             self._verify_sandbox(sandbox)
             with self._auth_lock():
                 with self._empty_auth_config() as empty_config:
@@ -457,9 +470,7 @@ class ContainedReviewerAdapter:
                                 "status": "logged_out",
                             }
                         )
-                    self._require_chatgpt_auth(
-                        command, codex, sandbox, empty_config
-                    )
+                    self._require_chatgpt_auth(command, codex, sandbox, empty_config)
                     return canonical_json(
                         {
                             "mode": "contained",
@@ -525,15 +536,12 @@ class ContainedReviewerAdapter:
         if not sys.platform.startswith("linux"):
             raise ContainedReviewerProcessError("setup")
         if any(
-            len(image.payload) > self._profile.identity.file_bytes
-            for image in images
+            len(image.payload) > self._profile.identity.file_bytes for image in images
         ):
             raise ContainedReviewerProcessError("profile")
         self._require_private_directory(self._profile.auth_store_path)
         self._require_private_directory(self._profile.job_root_path)
-        trust_failure_path = (
-            self._profile.job_root_path / ".reviewer-trust-failure"
-        )
+        trust_failure_path = self._profile.job_root_path / ".reviewer-trust-failure"
         credential_path = self._profile.auth_store_path / "auth.json"
         with (
             _bound_artifact(
@@ -561,13 +569,20 @@ class ContainedReviewerAdapter:
                         for ordinal in range(2 if retry_local_abort else 1):
                             dispatched_current = False
 
-                            def recorded_dispatch(pid: int, pgid: int, token: str) -> None:
+                            def recorded_dispatch(
+                                pid: int, pgid: int, token: str
+                            ) -> None:
                                 nonlocal dispatched_current
                                 dispatched_current = True
                                 dispatched(pid, pgid, token)
+
                             try:
                                 result = self._run_attempt(
-                                    request, recorded_dispatch, sealed_images, codex, sandbox,
+                                    request,
+                                    recorded_dispatch,
+                                    sealed_images,
+                                    codex,
+                                    sandbox,
                                     credential,
                                 )
                             except ContainedReviewerProcessError as error:
@@ -587,25 +602,32 @@ class ContainedReviewerAdapter:
                                     else:
                                         attempts.append(ContainedReviewerAttempt(True))
                                 if (
-                                    retry_local_abort and ordinal == 0
+                                    retry_local_abort
+                                    and ordinal == 0
                                     and error.code == "local_cli_abort"
                                     and dispatched_current
                                 ):
                                     time.sleep(1)
-                                    if not _credential_unchanged(credential_path, credential):
+                                    if not _credential_unchanged(
+                                        credential_path, credential
+                                    ):
                                         _record_trust_failure(trust_failure_path)
                                         raise ContainedReviewerProcessError(
                                             "auth", attempts=tuple(attempts)
                                         ) from error
                                     continue
                                 raise ContainedReviewerProcessError(
-                                    error.code, count=error.count, digest=error.digest,
+                                    error.code,
+                                    count=error.count,
+                                    digest=error.digest,
                                     attempts=tuple(attempts),
                                 ) from error
                             if dispatched_current:
                                 attempts.append(ContainedReviewerAttempt(True))
                             return replace(result, attempts=tuple(attempts))
-                        raise ContainedReviewerProcessError("runtime", attempts=tuple(attempts))
+                        raise ContainedReviewerProcessError(
+                            "runtime", attempts=tuple(attempts)
+                        )
                     finally:
                         credential_drifted = not _credential_unchanged(
                             credential_path, credential
@@ -626,87 +648,83 @@ class ContainedReviewerAdapter:
         credential: _BoundCredential,
     ) -> ContainedReviewResult:
         job_path = Path(
-                            tempfile.mkdtemp(
-                                prefix="contained-reviewer-",
-                                dir=self._profile.job_root_path,
-                            )
-                        )
+            tempfile.mkdtemp(
+                prefix="contained-reviewer-",
+                dir=self._profile.job_root_path,
+            )
+        )
         os.chmod(job_path, 0o700)
         provider_state_path = job_path / "provider-state"
         provider_state_path.mkdir(mode=0o700)
         try:
             with self._empty_auth_config() as empty_config:
-                            self._verify_codex(codex, sandbox)
-                            self._require_chatgpt_auth(
-                                self._auth_command(
-                                    codex,
-                                    sandbox,
-                                    empty_config,
-                                    provider_state_path=provider_state_path,
-                                    credential_path=credential.invocation_path,
-                                ),
-                                codex,
-                                sandbox,
-                                empty_config,
-                                credential,
-                            )
+                self._verify_codex(codex, sandbox)
+                self._require_chatgpt_auth(
+                    self._auth_command(
+                        codex,
+                        sandbox,
+                        empty_config,
+                        provider_state_path=provider_state_path,
+                        credential_path=credential.invocation_path,
+                    ),
+                    codex,
+                    sandbox,
+                    empty_config,
+                    credential,
+                )
             schema_path = job_path / "output-schema.json"
             result_path = job_path / "result.json"
             prompt_path = job_path / "prompt.bin"
             binding = _schema_binding(request)
             schema_path.write_bytes(binding.serialized)
             prompt_path.write_bytes(
-                            _prompt(
-                                request, schema_digest=binding.digest
-                            ).encode("utf-8")
+                _prompt(request, schema_digest=binding.digest).encode("utf-8")
             )
             os.chmod(schema_path, 0o600)
             os.chmod(prompt_path, 0o600)
             stdout_path = job_path / "stdout.bin"
             stderr_path = job_path / "stderr.bin"
             with (
-                            prompt_path.open("rb") as prompt_file,
-                            stdout_path.open("w+b") as stdout_file,
-                            stderr_path.open("w+b") as stderr_file,
+                prompt_path.open("rb") as prompt_file,
+                stdout_path.open("w+b") as stdout_file,
+                stderr_path.open("w+b") as stderr_file,
             ):
                 returncode = self._run_gated(
-                                self._sandbox_command(
-                                    job_path,
-                                    result_path,
-                                    tuple(value.descriptor for value in sealed_images),
-                                    provider_state_path,
-                                    codex.invocation_path,
-                                    sandbox.invocation_path,
-                                    credential.invocation_path,
-                                ),
-                                codex,
-                                sandbox,
-                                prompt_file.fileno(),
-                                stdout_file.fileno(),
-                                stderr_file.fileno(),
-                                dispatched,
-                                credential_descriptor=credential.descriptor,
-                                sealed_images=sealed_images,
+                    self._sandbox_command(
+                        job_path,
+                        result_path,
+                        tuple(value.descriptor for value in sealed_images),
+                        provider_state_path,
+                        codex.invocation_path,
+                        sandbox.invocation_path,
+                        credential.invocation_path,
+                    ),
+                    codex,
+                    sandbox,
+                    prompt_file.fileno(),
+                    stdout_file.fileno(),
+                    stderr_file.fileno(),
+                    dispatched,
+                    credential_descriptor=credential.descriptor,
+                    sealed_images=sealed_images,
                 )
                 if returncode != 0:
                     code, count, digest = _nonzero_failure(
-                                    stdout_file,
-                                    stderr_file,
-                                    returncode=returncode,
+                        stdout_file,
+                        stderr_file,
+                        returncode=returncode,
                     )
                     raise ContainedReviewerProcessError(
-                                    code, count=count, digest=digest
+                        code, count=count, digest=digest
                     )
             try:
                 result_bytes = result_path.read_bytes()
             except OSError as error:
-                raise ContainedReviewerProcessError(
-                                "malformed_output"
-                ) from error
+                raise ContainedReviewerProcessError("malformed_output") from error
             return _validated_result(
-                            result_bytes,
-                            maximum=self._profile.identity.output_bytes,
-                            schema=binding.schema,
+                result_bytes,
+                maximum=self._profile.identity.output_bytes,
+                schema=binding.schema,
             )
         finally:
             try:
@@ -717,9 +735,7 @@ class ContainedReviewerAdapter:
                 )
                 raise ContainedReviewerProcessError("runtime") from error
 
-    def _verify_codex(
-        self, codex: "_BoundArtifact", sandbox: "_BoundArtifact"
-    ) -> None:
+    def _verify_codex(self, codex: "_BoundArtifact", sandbox: "_BoundArtifact") -> None:
         command = [
             sandbox.invocation_path,
             "--die-with-parent",
@@ -827,12 +843,9 @@ class ContainedReviewerAdapter:
         )
         status = b"Logged in using ChatGPT"
         canonical = {status, status + b"\n", status + b"\r\n"}
-        if (
-            completed.returncode != 0
-            or not (
-                (completed.stdout in canonical and not completed.stderr)
-                or (completed.stderr in canonical and not completed.stdout)
-            )
+        if completed.returncode != 0 or not (
+            (completed.stdout in canonical and not completed.stderr)
+            or (completed.stderr in canonical and not completed.stdout)
         ):
             raise ContainedReviewerProcessError("auth")
 
@@ -1124,10 +1137,14 @@ class ContainedReviewerAdapter:
         if image_descriptors:
             mounts = ["--dir", "/images"]
             for index, descriptor in enumerate(image_descriptors, start=1):
-                mounts.extend((
-                    "--ro-bind-data", str(descriptor), f"/images/{index:02d}.png",
-                ))
-            command[command.index("--proc"):command.index("--proc")] = mounts
+                mounts.extend(
+                    (
+                        "--ro-bind-data",
+                        str(descriptor),
+                        f"/images/{index:02d}.png",
+                    )
+                )
+            command[command.index("--proc") : command.index("--proc")] = mounts
             for index in range(1, len(image_descriptors) + 1):
                 command.extend(("--image", f"/images/{index:02d}.png"))
         for value in _exact_config(self._profile.identity.reasoning):
@@ -1195,9 +1212,7 @@ class ContainedReviewerAdapter:
             released = True
             os.close(release_write)
             release_write = -1
-            return _wait_for_exit(
-                pid, self._profile.identity.timeout_seconds
-            )
+            return _wait_for_exit(pid, self._profile.identity.timeout_seconds)
         except TimeoutError as error:
             _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
             raise ContainedReviewerProcessError("timeout") from error
@@ -1212,9 +1227,7 @@ class ContainedReviewerAdapter:
                 try:
                     _wait_for_exit(pid, 5)
                 except TimeoutError:
-                    _kill_and_prove_dead(
-                        pid, pid, _safe_start_token(pid)
-                    )
+                    _kill_and_prove_dead(pid, pid, _safe_start_token(pid))
 
     def _limit_child(self) -> None:
         resource.setrlimit(
@@ -1227,7 +1240,10 @@ class ContainedReviewerAdapter:
         )
         resource.setrlimit(
             resource.RLIMIT_NPROC,
-            (self._profile.identity.process_limit, self._profile.identity.process_limit),
+            (
+                self._profile.identity.process_limit,
+                self._profile.identity.process_limit,
+            ),
         )
         resource.setrlimit(
             resource.RLIMIT_NOFILE,
@@ -1313,9 +1329,7 @@ def _bound_credential(path: Path) -> Iterator[_BoundCredential]:
     try:
         descriptor = os.open(
             path,
-            os.O_RDONLY
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
         )
     except OSError as error:
         raise ContainedReviewerProcessError("auth") from error
@@ -1333,9 +1347,7 @@ def _bound_credential(path: Path) -> Iterator[_BoundCredential]:
         os.close(descriptor)
 
 
-def _credential_unchanged(
-    path: Path, credential: _BoundCredential
-) -> bool:
+def _credential_unchanged(path: Path, credential: _BoundCredential) -> bool:
     try:
         path_information = os.lstat(path)
         if (
@@ -1351,10 +1363,7 @@ def _credential_unchanged(
             != credential.fingerprint[:4]
         ):
             return False
-        return (
-            _descriptor_fingerprint(credential.descriptor)
-            == credential.fingerprint
-        )
+        return _descriptor_fingerprint(credential.descriptor) == credential.fingerprint
     except (OSError, ContainedReviewerProcessError):
         return False
 
@@ -1398,9 +1407,7 @@ class _BoundArtifact:
 
 
 @contextmanager
-def _bound_artifact(
-    path: Path, expected_digest: str
-) -> Iterator[_BoundArtifact]:
+def _bound_artifact(path: Path, expected_digest: str) -> Iterator[_BoundArtifact]:
     descriptor = -1
     try:
         descriptor = os.open(
@@ -1421,10 +1428,10 @@ def _bound_artifact(
         if digest.hexdigest() != expected_digest:
             raise ContainedReviewerProcessError("setup")
         os.lseek(descriptor, 0, os.SEEK_SET)
-        invocation_root = "/proc/self/fd" if sys.platform.startswith("linux") else "/dev/fd"
-        yield _BoundArtifact(
-            descriptor, f"{invocation_root}/{descriptor}"
+        invocation_root = (
+            "/proc/self/fd" if sys.platform.startswith("linux") else "/dev/fd"
         )
+        yield _BoundArtifact(descriptor, f"{invocation_root}/{descriptor}")
     except ContainedReviewerProcessError:
         raise
     except OSError as error:
@@ -1436,9 +1443,7 @@ def _bound_artifact(
 
 def _process_start_token(pid: int) -> str:
     try:
-        token, _ = _proc_identity(
-            Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
-        )
+        token, _ = _proc_identity(Path(f"/proc/{pid}/stat").read_text(encoding="ascii"))
     except (OSError, UnicodeError, ValueError) as error:
         raise ContainedReviewerProcessError("runtime") from error
     return token
@@ -1451,11 +1456,7 @@ def _proc_identity(raw: str) -> tuple[str, int]:
         start_token = tail[19]
     except (IndexError, ValueError) as error:
         raise ValueError("invalid proc stat") from error
-    if (
-        not start_token.isascii()
-        or not start_token.isdigit()
-        or process_group < 1
-    ):
+    if not start_token.isascii() or not start_token.isdigit() or process_group < 1:
         raise ValueError("invalid proc stat")
     return start_token, process_group
 
@@ -1532,10 +1533,7 @@ def _is_live_schema_rejection(stdout_file: IO[bytes], stderr_file: IO[bytes]) ->
         stderr_file.flush()
         stdout_size = os.fstat(stdout_file.fileno()).st_size
         stderr_size = os.fstat(stderr_file.fileno()).st_size
-        if (
-            stderr_size != 0
-            or not 1 <= stdout_size <= MAX_FAILURE_SIGNAL_BYTES
-        ):
+        if stderr_size != 0 or not 1 <= stdout_size <= MAX_FAILURE_SIGNAL_BYTES:
             return False
         stdout_file.seek(0)
         payload = stdout_file.read(MAX_FAILURE_SIGNAL_BYTES + 1)
@@ -1550,14 +1548,9 @@ def _is_live_schema_rejection(stdout_file: IO[bytes], stderr_file: IO[bytes]) ->
             event = json.loads(
                 line,
                 object_pairs_hook=_unique_failure_object,
-                parse_constant=lambda value: (_ for _ in ()).throw(
-                    ValueError(value)
-                ),
+                parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
             )
-            if (
-                type(event) is not dict
-                or type(event.get("type")) is not str
-            ):
+            if type(event) is not dict or type(event.get("type")) is not str:
                 return False
             events.append(event)
         raw = events[-1]
@@ -1578,9 +1571,7 @@ def _is_live_schema_rejection(stdout_file: IO[bytes], stderr_file: IO[bytes]) ->
         service = json.loads(
             message,
             object_pairs_hook=_unique_failure_object,
-            parse_constant=lambda value: (_ for _ in ()).throw(
-                ValueError(value)
-            ),
+            parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
         )
         if (
             type(service) is not dict
@@ -1602,9 +1593,9 @@ def _is_live_schema_rejection(stdout_file: IO[bytes], stderr_file: IO[bytes]) ->
             return False
         # Narrowed to str by the type() check above; cast() was a no-op.
         service_message = service_error["message"]
-        return service_message.startswith(
-            _LIVE_SCHEMA_REJECTION_PREFIX
-        ) and len(service_message) > len(_LIVE_SCHEMA_REJECTION_PREFIX)
+        return service_message.startswith(_LIVE_SCHEMA_REJECTION_PREFIX) and len(
+            service_message
+        ) > len(_LIVE_SCHEMA_REJECTION_PREFIX)
     except (
         OSError,
         TypeError,
@@ -1641,9 +1632,7 @@ def _is_local_cli_abort(stdout_file: IO[bytes], stderr_file: IO[bytes]) -> bool:
             event = json.loads(
                 line,
                 object_pairs_hook=_unique_failure_object,
-                parse_constant=lambda value: (_ for _ in ()).throw(
-                    ValueError(value)
-                ),
+                parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
             )
             if type(event) is not dict or type(event.get("type")) is not str:
                 return False
@@ -1696,9 +1685,7 @@ def _validated_result(
         raw = json.loads(
             serialized,
             object_pairs_hook=_unique_output_object,
-            parse_constant=lambda value: (_ for _ in ()).throw(
-                ValueError(value)
-            ),
+            parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
         )
         if (
             type(raw) is not dict
@@ -1729,7 +1716,8 @@ def _prompt(
         # The union holds two unrelated dataclasses, so failing the exact-type
         # check leaves only _CoverReviewRequest, which carries `images`.
         for value in (
-            () if type(request) is ContainedReviewRequest
+            ()
+            if type(request) is ContainedReviewRequest
             else cast("_CoverReviewRequest", request).images
         )
     )
@@ -1763,9 +1751,7 @@ def _schema_binding(
     schema = _output_schema(request)
     _validate_output_schema(schema)
     serialized = request.output_schema.encode("utf-8")
-    return _SchemaBinding(
-        serialized, hashlib.sha256(serialized).hexdigest(), schema
-    )
+    return _SchemaBinding(serialized, hashlib.sha256(serialized).hexdigest(), schema)
 
 
 def _validate_output_schema(schema: object) -> None:
@@ -1800,8 +1786,7 @@ def _validate_output_schema(schema: object) -> None:
             raise ContainedReviewerProcessError("response_format")
         if root:
             if (
-                value.get("$schema")
-                != "https://json-schema.org/draft/2020-12/schema"
+                value.get("$schema") != "https://json-schema.org/draft/2020-12/schema"
                 or value.get("type") != "object"
             ):
                 raise ContainedReviewerProcessError("response_format")
@@ -1827,11 +1812,7 @@ def _validate_output_schema(schema: object) -> None:
                 )
             ):
                 raise ContainedReviewerProcessError("response_format")
-        if (
-            "const" in value
-            and "enum" in value
-            and value["const"] not in value["enum"]
-        ):
+        if "const" in value and "enum" in value and value["const"] not in value["enum"]:
             raise ContainedReviewerProcessError("response_format")
         if "items" in value:
             if primitive != "array":
@@ -1839,16 +1820,12 @@ def _validate_output_schema(schema: object) -> None:
             visit(value["items"])
         for key in ("maxItems", "minItems"):
             if key in value and (
-                primitive != "array"
-                or type(value[key]) is not int
-                or value[key] < 0
+                primitive != "array" or type(value[key]) is not int or value[key] < 0
             ):
                 raise ContainedReviewerProcessError("response_format")
         for key in ("maxLength", "minLength"):
             if key in value and (
-                primitive != "string"
-                or type(value[key]) is not int
-                or value[key] < 0
+                primitive != "string" or type(value[key]) is not int or value[key] < 0
             ):
                 raise ContainedReviewerProcessError("response_format")
         if "required" in value and (
@@ -1888,9 +1865,17 @@ def _validate_output_schema(schema: object) -> None:
             raise ContainedReviewerProcessError("response_format")
         if primitive == "object" and "properties" not in value:
             raise ContainedReviewerProcessError("response_format")
-        if "minItems" in value and "maxItems" in value and value["minItems"] > value["maxItems"]:
+        if (
+            "minItems" in value
+            and "maxItems" in value
+            and value["minItems"] > value["maxItems"]
+        ):
             raise ContainedReviewerProcessError("response_format")
-        if "minLength" in value and "maxLength" in value and value["minLength"] > value["maxLength"]:
+        if (
+            "minLength" in value
+            and "maxLength" in value
+            and value["minLength"] > value["maxLength"]
+        ):
             raise ContainedReviewerProcessError("response_format")
 
     visit(schema, root=True)
@@ -1901,8 +1886,7 @@ def _matches_output_schema(value: object, schema: dict[str, object]) -> bool:
     if "anyOf" in schema:
         alternatives = cast(list[dict[str, object]], schema["anyOf"])
         return any(
-            _matches_output_schema(value, alternative)
-            for alternative in alternatives
+            _matches_output_schema(value, alternative) for alternative in alternatives
         )
     expected = schema.get("type")
     type_matches = {
@@ -1928,15 +1912,13 @@ def _matches_output_schema(value: object, schema: dict[str, object]) -> bool:
         minimum = cast(int, schema.get("minItems", 0))
         maximum = cast(int, schema.get("maxItems", len(value)))
         item_schema = cast(dict[str, object], schema["items"])
-        return (
-            minimum <= len(value) <= maximum
-            and all(_matches_output_schema(item, item_schema) for item in value)
+        return minimum <= len(value) <= maximum and all(
+            _matches_output_schema(item, item_schema) for item in value
         )
     if type(value) is dict:
         properties = cast(dict[str, dict[str, object]], schema["properties"])
         return set(value) == set(properties) and all(
-            _matches_output_schema(item, properties[key])
-            for key, item in value.items()
+            _matches_output_schema(item, properties[key]) for key, item in value.items()
         )
     return True
 

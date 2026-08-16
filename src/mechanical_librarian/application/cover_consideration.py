@@ -83,9 +83,13 @@ class CoverConsiderationStore(Protocol):
         preparation_kind: str = "automatic_prepared",
     ) -> str: ...
 
-    def current_cover_consideration_document(self, review_case_id: str) -> str | None: ...
+    def current_cover_consideration_document(
+        self, review_case_id: str
+    ) -> str | None: ...
 
-    def latest_cover_consideration_document(self, review_case_id: str) -> str | None: ...
+    def latest_cover_consideration_document(
+        self, review_case_id: str
+    ) -> str | None: ...
 
     def cover_consideration_history(
         self, review_case_id: str, limit: int = 50
@@ -100,7 +104,9 @@ class CoverConsiderationStore(Protocol):
     ) -> None: ...
 
 
-ReviewRunner = Callable[[bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]], str]
+ReviewRunner = Callable[
+    [bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]], str
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,7 +212,9 @@ class CoverConsiderationService:
 
     def latest_id(self, review_case_id: str) -> str | None:
         document = self._store.latest_cover_consideration_document(review_case_id)
-        return None if document is None else str(json.loads(document)["consideration_id"])
+        return (
+            None if document is None else str(json.loads(document)["consideration_id"])
+        )
 
     def prepare_observation(
         self, review_case_id: str, report_document: str
@@ -234,9 +242,7 @@ class CoverConsiderationService:
     def observe(self, request: _ObservationRequest) -> _ReviewerEvidence:
         """Run optional external advice over an immutable captured request."""
         if request.packet_payload is None:
-            return _ReviewerEvidence(
-                request.replay_digest, None, "unavailable", None
-            )
+            return _ReviewerEvidence(request.replay_digest, None, "unavailable", None)
         return self._observe_payloads(
             request.replay_digest,
             request.packet_payload,
@@ -383,7 +389,9 @@ class CoverConsiderationService:
             replay_digest=replay_digest,
             supersedes_id=previous_id,
             occurred_at=self._clock(),
-            preparation_kind=("owner_retry_prepared" if retry else "automatic_prepared"),
+            preparation_kind=(
+                "owner_retry_prepared" if retry else "automatic_prepared"
+            ),
         )
         return self._project(persisted, current=True)
 
@@ -408,7 +416,8 @@ class CoverConsiderationService:
         evidence = reviewer_evidence
         if packet is not None:
             image_payloads = tuple(
-                (image.reference, image.digest, image.payload) for image in packet.images
+                (image.reference, image.digest, image.payload)
+                for image in packet.images
             )
             identity_document = classify_cover_identity(
                 report_document,
@@ -491,9 +500,10 @@ class CoverConsiderationService:
         }
         identity = dict(body)
         identity.pop("created_at")
-        consideration_id = "cover_consideration_" + hashlib.sha256(
-            canonical_packet_json(identity).encode()
-        ).hexdigest()
+        consideration_id = (
+            "cover_consideration_"
+            + hashlib.sha256(canonical_packet_json(identity).encode()).hexdigest()
+        )
         return canonical_packet_json({"consideration_id": consideration_id, **body})
 
     def _candidates(
@@ -507,21 +517,26 @@ class CoverConsiderationService:
         packet = json.loads(packet_document)
         identity = json.loads(identity_document)
         policy = json.loads(policy_document)
-        observation = None if observation_document is None else json.loads(observation_document)
+        observation = (
+            None if observation_document is None else json.loads(observation_document)
+        )
         identity_rows = {
             row["candidate_reference"]: row for row in identity["candidates"]
         }
         observation_rows = (
             {}
             if observation is None
-            else {row["candidate_reference"]: row for row in observation["observations"]}
+            else {
+                row["candidate_reference"]: row for row in observation["observations"]
+            }
         )
         acceptable = set(policy["acceptable_candidate_references"])
         recommendation = policy["recommended_candidate_reference"]
         source_by_reference = {
             cover_source_reference(report.report_id, source.source_id): source
             for source in report.cover_sources
-            if source.state is CoverSourceState.RETRIEVED and source.artifact is not None
+            if source.state is CoverSourceState.RETRIEVED
+            and source.artifact is not None
         }
         result: list[dict[str, object]] = []
         for ordinal, candidate in enumerate(packet["candidates"]):
@@ -594,7 +609,9 @@ class CoverConsiderationService:
         return result
 
     @staticmethod
-    def _omissions(report: MetadataReport, packet_document: str | None) -> list[dict[str, object]]:
+    def _omissions(
+        report: MetadataReport, packet_document: str | None
+    ) -> list[dict[str, object]]:
         if packet_document is not None:
             return list(json.loads(packet_document)["omissions"])
         return [
@@ -629,14 +646,15 @@ class CoverConsiderationService:
             "target_fingerprint": value["target_fingerprint"],
         }
 
-    def image(self, review_case_id: str, consideration_id: str, reference: str) -> bytes:
+    def image(
+        self, review_case_id: str, consideration_id: str, reference: str
+    ) -> bytes:
         document = self._store.current_cover_consideration_document(review_case_id)
         if document is None:
             raise CoverConsiderationError("not_found")
         value = json.loads(document)
-        if (
-            value["consideration_id"] != consideration_id
-            or not self._document_current(value)
+        if value["consideration_id"] != consideration_id or not self._document_current(
+            value
         ):
             raise CoverConsiderationError("stale")
         candidate = next(
@@ -666,7 +684,11 @@ class CoverConsiderationService:
         if document is None:
             return None
         value = json.loads(document)
-        return None if not self._document_current(value) else self._project(document, current=True)
+        return (
+            None
+            if not self._document_current(value)
+            else self._project(document, current=True)
+        )
 
     def _document_current(self, value: dict[str, object]) -> bool:
         review_case_id = value.get("review_case_id")
@@ -694,9 +716,8 @@ class CoverConsiderationService:
         if document is None:
             raise CoverConsiderationError("stale")
         value = json.loads(document)
-        if (
-            value["consideration_id"] != consideration_id
-            or not self._document_current(value)
+        if value["consideration_id"] != consideration_id or not self._document_current(
+            value
         ):
             raise CoverConsiderationError("stale")
         if outcome == "accept":
@@ -704,7 +725,8 @@ class CoverConsiderationService:
                 (
                     candidate
                     for candidate in value["candidates"]
-                    if selected_value == {"kind": "cover", "value": candidate["artifact_id"]}
+                    if selected_value
+                    == {"kind": "cover", "value": candidate["artifact_id"]}
                 ),
                 None,
             )
@@ -736,15 +758,40 @@ class CoverConsiderationService:
             items.append(item)
         return tuple(items)
 
-def _cover_choice_contexts(value: dict[str, object], candidates: list[dict[str, object]], policy: dict[str, object] | None) -> list[dict[str, object]]:
+
+def _cover_choice_contexts(
+    value: dict[str, object],
+    candidates: list[dict[str, object]],
+    policy: dict[str, object] | None,
+) -> list[dict[str, object]]:
     """Expose exact retained cover binding provenance without identifiers."""
     report = MetadataReport.from_json(str(value["report_document"]))
-    packet = json.loads(str(value["packet_document"])) if value["packet_document"] is not None else {"candidates": []}
-    bindings = {item["reference"]: item["source_bindings"] for item in packet["candidates"]}
-    sources = {cover_source_reference(report.report_id, source.source_id): source for source in report.cover_sources}
-    recommended = None if policy is None or policy.get("status") != "recommended" else policy.get("recommended_candidate_reference")
+    packet = (
+        json.loads(str(value["packet_document"]))
+        if value["packet_document"] is not None
+        else {"candidates": []}
+    )
+    bindings = {
+        item["reference"]: item["source_bindings"] for item in packet["candidates"]
+    }
+    sources = {
+        cover_source_reference(report.report_id, source.source_id): source
+        for source in report.cover_sources
+    }
+    recommended = (
+        None
+        if policy is None or policy.get("status") != "recommended"
+        else policy.get("recommended_candidate_reference")
+    )
     # A policy report always carries a list of acceptable candidate references.
-    acceptable = set() if policy is None else set(cast("list[object]", policy.get("acceptable_candidate_references", [])))
+    acceptable = (
+        set()
+        if policy is None
+        else set(
+            cast("list[object]", policy.get("acceptable_candidate_references", []))
+        )
+    )
+
     def evidence(reference: str, incumbent: bool) -> list[dict[str, str]]:
         rows = []
         for binding in bindings.get(reference, []):
@@ -752,23 +799,103 @@ def _cover_choice_contexts(value: dict[str, object], candidates: list[dict[str, 
             if source is None:
                 continue
             label, role, observation = {
-                CoverSourceKind.ABS: ("Local library record", "local_presence", "Local library cover retained."),
-                CoverSourceKind.EPUB: ("Local EPUB package", "local_presence", "Local EPUB cover retained."),
-                CoverSourceKind.HARDCOVER: ("Hardcover", "external_corroboration", "Retained catalogue cover supports this choice."),
-                CoverSourceKind.OPEN_LIBRARY: ("Open Library", "external_corroboration", "Retained catalogue cover supports this choice."),
-            }.get(source.kind, ("Provider evidence", "external_corroboration", "Retained cover evidence supports this choice."))
+                CoverSourceKind.ABS: (
+                    "Local library record",
+                    "local_presence",
+                    "Local library cover retained.",
+                ),
+                CoverSourceKind.EPUB: (
+                    "Local EPUB package",
+                    "local_presence",
+                    "Local EPUB cover retained.",
+                ),
+                CoverSourceKind.HARDCOVER: (
+                    "Hardcover",
+                    "external_corroboration",
+                    "Retained catalogue cover supports this choice.",
+                ),
+                CoverSourceKind.OPEN_LIBRARY: (
+                    "Open Library",
+                    "external_corroboration",
+                    "Retained catalogue cover supports this choice.",
+                ),
+            }.get(
+                source.kind,
+                (
+                    "Provider evidence",
+                    "external_corroboration",
+                    "Retained cover evidence supports this choice.",
+                ),
+            )
             rows.append({"source": label, "role": role, "observation": observation})
-        return rows or ([{"source": "Local library record", "role": "local_presence", "observation": "Current cover preview is unavailable; local presence is retained."}] if incumbent else [])
-    incumbent = next((item for item in candidates if item.get("incumbent") is True), None)
+        return rows or (
+            [
+                {
+                    "source": "Local library record",
+                    "role": "local_presence",
+                    "observation": "Current cover preview is unavailable; local presence is retained.",
+                }
+            ]
+            if incumbent
+            else []
+        )
+
+    incumbent = next(
+        (item for item in candidates if item.get("incumbent") is True), None
+    )
     current_reference = None if incumbent is None else incumbent.get("reference")
-    current_recommended = current_reference == recommended and current_reference in acceptable and incumbent is not None and incumbent.get("selectable") is True
-    contexts: list[dict[str, object]] = [{"alternative_id": None, "selection": "current", "evidence": evidence(str(current_reference), True) if type(current_reference) is str else evidence("", True), "limitations": (["Preview unavailable for this retained cover."] if cast("dict[str, object]", value["incumbent"]).get("state") == "unavailable" else []), "rationale": "Keep the cover currently held by the local library.", "recommendation": "recommended" if current_recommended else "no_recommendation", "recommendation_reason": "Authoritative cover policy recommends this retained cover." if current_recommended else "No recommendation retained."}]
+    current_recommended = (
+        current_reference == recommended
+        and current_reference in acceptable
+        and incumbent is not None
+        and incumbent.get("selectable") is True
+    )
+    contexts: list[dict[str, object]] = [
+        {
+            "alternative_id": None,
+            "selection": "current",
+            "evidence": evidence(str(current_reference), True)
+            if type(current_reference) is str
+            else evidence("", True),
+            "limitations": (
+                ["Preview unavailable for this retained cover."]
+                if cast("dict[str, object]", value["incumbent"]).get("state")
+                == "unavailable"
+                else []
+            ),
+            "rationale": "Keep the cover currently held by the local library.",
+            "recommendation": "recommended"
+            if current_recommended
+            else "no_recommendation",
+            "recommendation_reason": "Authoritative cover policy recommends this retained cover."
+            if current_recommended
+            else "No recommendation retained.",
+        }
+    ]
     for candidate in candidates:
         reference = candidate.get("reference")
-        if candidate.get("incumbent") is True or candidate.get("selectable") is not True or type(reference) is not str:
+        if (
+            candidate.get("incumbent") is True
+            or candidate.get("selectable") is not True
+            or type(reference) is not str
+        ):
             continue
         is_recommended = reference == recommended and reference in acceptable
-        contexts.append({"alternative_id": reference, "selection": "proposed", "evidence": evidence(reference, False), "limitations": [], "rationale": "This retained cover candidate is selectable for owner review.", "recommendation": "recommended" if is_recommended else "no_recommendation", "recommendation_reason": "Authoritative cover policy recommends this retained cover." if is_recommended else "No recommendation retained."})
+        contexts.append(
+            {
+                "alternative_id": reference,
+                "selection": "proposed",
+                "evidence": evidence(reference, False),
+                "limitations": [],
+                "rationale": "This retained cover candidate is selectable for owner review.",
+                "recommendation": "recommended"
+                if is_recommended
+                else "no_recommendation",
+                "recommendation_reason": "Authoritative cover policy recommends this retained cover."
+                if is_recommended
+                else "No recommendation retained.",
+            }
+        )
     return contexts
 
 

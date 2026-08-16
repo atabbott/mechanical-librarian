@@ -20,7 +20,12 @@ class OpenedLocalMedia:
 
 
 def validate_relative_reference(reference: str) -> tuple[str, ...]:
-    if type(reference) is not str or not reference or "\x00" in reference or "\\" in reference:
+    if (
+        type(reference) is not str
+        or not reference
+        or "\x00" in reference
+        or "\\" in reference
+    ):
         raise LocalMediaError("invalid local media reference")
     try:
         encoded = reference.encode("utf-8")
@@ -41,30 +46,32 @@ def _identity(descriptor: int) -> tuple[int, int, int, int, int]:
     value = os.fstat(descriptor)
     if not stat.S_ISREG(value.st_mode) or value.st_size < 0:
         raise LocalMediaError("local media source is unavailable")
-    return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
 
 
 def open_local_media(container_path: str, reference: str) -> OpenedLocalMedia:
     """Open one regular file by walking every component without following links."""
 
     parts = validate_relative_reference(reference)
-    if type(container_path) is not str or not container_path.startswith("/") or "\x00" in container_path:
+    if (
+        type(container_path) is not str
+        or not container_path.startswith("/")
+        or "\x00" in container_path
+    ):
         raise LocalMediaError("local media mount is unavailable")
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     if not nofollow or os.open not in os.supports_dir_fd:
         raise LocalMediaError("no-follow local media access is unavailable")
     directory_flags = (
-        os.O_RDONLY
-        | os.O_DIRECTORY
-        | getattr(os, "O_CLOEXEC", 0)
-        | nofollow
+        os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_CLOEXEC", 0) | nofollow
     )
-    file_flags = (
-        os.O_RDONLY
-        | os.O_NONBLOCK
-        | getattr(os, "O_CLOEXEC", 0)
-        | nofollow
-    )
+    file_flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | nofollow
     current = -1
     descriptor = -1
     try:

@@ -19,19 +19,77 @@ from mechanical_librarian.domain.review_field_classification import (
 @pytest.mark.parametrize(
     ("inputs", "state", "attention", "editable"),
     (
-        ({"attention_candidate": True, "automatic_outcome": None, "has_human_decision": False, "suspended": False}, "needs_attention", True, True),
-        ({"attention_candidate": False, "automatic_outcome": "abstention", "has_human_decision": False, "suspended": False}, "manual_fallback", True, True),
-        ({"attention_candidate": True, "automatic_outcome": "candidate", "has_human_decision": False, "suspended": False}, "automatic_recorded", False, True),
-        ({"attention_candidate": True, "automatic_outcome": None, "has_human_decision": True, "suspended": False}, "human_recorded", False, False),
-        ({"attention_candidate": True, "automatic_outcome": None, "has_human_decision": False, "suspended": True}, "unsupported", False, False),
+        (
+            {
+                "attention_candidate": True,
+                "automatic_outcome": None,
+                "has_human_decision": False,
+                "suspended": False,
+            },
+            "needs_attention",
+            True,
+            True,
+        ),
+        (
+            {
+                "attention_candidate": False,
+                "automatic_outcome": "abstention",
+                "has_human_decision": False,
+                "suspended": False,
+            },
+            "manual_fallback",
+            True,
+            True,
+        ),
+        (
+            {
+                "attention_candidate": True,
+                "automatic_outcome": "candidate",
+                "has_human_decision": False,
+                "suspended": False,
+            },
+            "automatic_recorded",
+            False,
+            True,
+        ),
+        (
+            {
+                "attention_candidate": True,
+                "automatic_outcome": None,
+                "has_human_decision": True,
+                "suspended": False,
+            },
+            "human_recorded",
+            False,
+            False,
+        ),
+        (
+            {
+                "attention_candidate": True,
+                "automatic_outcome": None,
+                "has_human_decision": False,
+                "suspended": True,
+            },
+            "unsupported",
+            False,
+            False,
+        ),
     ),
-    ids=("needs_attention", "manual_fallback", "automatic_recorded", "human_recorded", "unsupported"),
+    ids=(
+        "needs_attention",
+        "manual_fallback",
+        "automatic_recorded",
+        "human_recorded",
+        "unsupported",
+    ),
 )
 def test_closed_matrix_keeps_attention_and_recorded_states_distinct(
     inputs: dict[str, object], state: str, attention: bool, editable: bool
 ) -> None:
     value = classify_review_field(
-        **inputs, current_value="Title", proposed_values=("Title",),
+        **inputs,
+        current_value="Title",
+        proposed_values=("Title",),
     )
     assert value.state == state
     assert value.needs_attention == attention
@@ -42,17 +100,40 @@ def test_closed_matrix_keeps_attention_and_recorded_states_distinct(
 @pytest.mark.parametrize(
     ("cause", "guidance"),
     (
-        ("unsupported", "This field is unavailable for the current service capability."),
-        ("automatic_safety_suspended", "Automatic handling is suspended pending a safety recovery."),
-        ("external_field_failure", "This field is waiting for an external service recovery."),
-        ("external_connection_failure", "This connection is waiting for an external service recovery."),
-        ("external_recovered", "External recovery completed; this field can be reviewed again."),
+        (
+            "unsupported",
+            "This field is unavailable for the current service capability.",
+        ),
+        (
+            "automatic_safety_suspended",
+            "Automatic handling is suspended pending a safety recovery.",
+        ),
+        (
+            "external_field_failure",
+            "This field is waiting for an external service recovery.",
+        ),
+        (
+            "external_connection_failure",
+            "This connection is waiting for an external service recovery.",
+        ),
+        (
+            "external_recovered",
+            "External recovery completed; this field can be reviewed again.",
+        ),
     ),
 )
 def test_owner_guidance_is_distinct_for_each_typed_unavailable_cause(
     cause: str, guidance: str
 ) -> None:
-    value = classify_review_field(attention_candidate=False, automatic_outcome=None, has_human_decision=False, suspended=cause != "unsupported", cause=cause, current_value=None, proposed_values=())
+    value = classify_review_field(
+        attention_candidate=False,
+        automatic_outcome=None,
+        has_human_decision=False,
+        suspended=cause != "unsupported",
+        cause=cause,
+        current_value=None,
+        proposed_values=(),
+    )
     assert value.reason == guidance
 
 
@@ -60,7 +141,10 @@ def test_owner_guidance_is_distinct_for_each_typed_unavailable_cause(
     ("current", "proposed"),
     (
         ("Title", ({"kind": "text", "value": "Title"},)),
-        ({"name": "Atlas", "sequence": "2"}, ({"kind": "series", "value": {"name": "Atlas", "sequence": "2"}},)),
+        (
+            {"name": "Atlas", "sequence": "2"},
+            ({"kind": "series", "value": {"name": "Atlas", "sequence": "2"}},),
+        ),
     ),
     ids=("text", "series"),
 )
@@ -68,9 +152,12 @@ def test_canonical_proposal_values_compare_the_underlying_scalar_and_structure(
     current: object, proposed: tuple[dict[str, object], ...]
 ) -> None:
     value = classify_review_field(
-        attention_candidate=True, automatic_outcome=None,
-        has_human_decision=False, suspended=False,
-        current_value=current, proposed_values=proposed,
+        attention_candidate=True,
+        automatic_outcome=None,
+        has_human_decision=False,
+        suspended=False,
+        current_value=current,
+        proposed_values=proposed,
     )
     assert value.preservation_only
 
@@ -121,8 +208,10 @@ def test_attention_continues_after_two_contradictory_batches() -> None:
 
         def read_review_attention(self, search, limit, offset):
             self.offsets.append(offset)
-            rows = tuple(("case", "report", f"invalid-{index}", 1, None, None)
-                         for index in range(offset, offset + limit))
+            rows = tuple(
+                ("case", "report", f"invalid-{index}", 1, None, None)
+                for index in range(offset, offset + limit)
+            )
             return ReviewAttentionSnapshot(rows, 99)
 
     repository = Repository()
@@ -144,7 +233,9 @@ def test_attention_fetch_failure_remains_unavailable() -> None:
 
     with pytest.raises(ReviewWebError, match="unavailable"):
         BrowseReviewLibrary(Repository()).attention(
-            search=None, limit=1, cursor=None,
+            search=None,
+            limit=1,
+            cursor=None,
         )
 
 
@@ -157,7 +248,7 @@ def test_attention_backfills_a_valid_successor_and_ends_honestly() -> None:
 
     class Repository:
         def read_review_attention(self, search, limit, offset):
-            return ReviewAttentionSnapshot(rows[offset:offset + limit], len(rows))
+            return ReviewAttentionSnapshot(rows[offset : offset + limit], len(rows))
 
     browse = BrowseReviewLibrary(Repository())
     with patch(
@@ -172,17 +263,24 @@ def test_attention_backfills_a_valid_successor_and_ends_honestly() -> None:
 
 
 def test_attention_last_valid_raw_row_has_no_cursor_and_stable_raw_total() -> None:
-    rows = (("case", "report", "stale", 1, None, None), ("case", "report", "valid", 1, None, None))
+    rows = (
+        ("case", "report", "stale", 1, None, None),
+        ("case", "report", "valid", 1, None, None),
+    )
 
     class Repository:
         def read_review_attention(self, search, limit, offset):
-            return ReviewAttentionSnapshot(rows[offset:offset + limit], len(rows))
+            return ReviewAttentionSnapshot(rows[offset : offset + limit], len(rows))
 
     with patch(
         "mechanical_librarian.application.review_web._attention_item",
-        side_effect=lambda case, report, destination, count, **_kwargs: None if destination == "stale" else {"destination": destination},
+        side_effect=lambda case, report, destination, count, **_kwargs: (
+            None if destination == "stale" else {"destination": destination}
+        ),
     ):
-        page = BrowseReviewLibrary(Repository()).attention(search=None, limit=1, cursor=None)
+        page = BrowseReviewLibrary(Repository()).attention(
+            search=None, limit=1, cursor=None
+        )
     assert page["items"] == [{"destination": "valid"}]
     assert page["next_cursor"] is None
     assert page["total"] == 2
@@ -202,11 +300,15 @@ def test_attention_exact_boundary_all_contradictory_rows_proves_exhaustion() -> 
 
         def read_review_attention(self, search, limit, offset):
             self.offsets.append(offset)
-            return ReviewAttentionSnapshot(rows[offset:offset + limit], len(rows))
+            return ReviewAttentionSnapshot(rows[offset : offset + limit], len(rows))
 
     repository = Repository()
-    with patch("mechanical_librarian.application.review_web._attention_item", return_value=None):
-        page = BrowseReviewLibrary(repository).attention(search=None, limit=1, cursor=None)
+    with patch(
+        "mechanical_librarian.application.review_web._attention_item", return_value=None
+    ):
+        page = BrowseReviewLibrary(repository).attention(
+            search=None, limit=1, cursor=None
+        )
     assert [] == page["items"]
     assert page["next_cursor"] is None
     assert 4 == page["total"]
@@ -214,11 +316,14 @@ def test_attention_exact_boundary_all_contradictory_rows_proves_exhaustion() -> 
 
 
 def test_attention_terminal_contradictory_lookahead_has_no_empty_successor() -> None:
-    rows = (("case", "report", "valid", 1, None, None), ("case", "report", "invalid", 1, None, None))
+    rows = (
+        ("case", "report", "valid", 1, None, None),
+        ("case", "report", "invalid", 1, None, None),
+    )
 
     class Repository:
         def read_review_attention(self, search, limit, offset):
-            return ReviewAttentionSnapshot(rows[offset:offset + limit], len(rows))
+            return ReviewAttentionSnapshot(rows[offset : offset + limit], len(rows))
 
     with patch(
         "mechanical_librarian.application.review_web._attention_item",
@@ -226,14 +331,20 @@ def test_attention_terminal_contradictory_lookahead_has_no_empty_successor() -> 
             None if destination == "invalid" else {"destination": destination}
         ),
     ):
-        page = BrowseReviewLibrary(Repository()).attention(search=None, limit=1, cursor=None)
+        page = BrowseReviewLibrary(Repository()).attention(
+            search=None, limit=1, cursor=None
+        )
     assert [{"destination": "valid"}] == page["items"]
     assert page["next_cursor"] is None
     assert 2 == page["total"]
 
 
 def test_attention_visible_successor_remains_at_next_cursor() -> None:
-    rows = (("case", "report", "valid-1", 1, None, None), ("case", "report", "invalid", 1, None, None), ("case", "report", "valid-2", 1, None, None))
+    rows = (
+        ("case", "report", "valid-1", 1, None, None),
+        ("case", "report", "invalid", 1, None, None),
+        ("case", "report", "valid-2", 1, None, None),
+    )
 
     class Repository:
         def __init__(self) -> None:
@@ -241,14 +352,16 @@ def test_attention_visible_successor_remains_at_next_cursor() -> None:
 
         def read_review_attention(self, search, limit, offset):
             self.offsets.append(offset)
-            return ReviewAttentionSnapshot(rows[offset:offset + limit], len(rows))
+            return ReviewAttentionSnapshot(rows[offset : offset + limit], len(rows))
 
     def item(case, report, destination, count, **_kwargs):
         return None if destination == "invalid" else {"destination": destination}
 
     repository = Repository()
     browse = BrowseReviewLibrary(repository)
-    with patch("mechanical_librarian.application.review_web._attention_item", side_effect=item):
+    with patch(
+        "mechanical_librarian.application.review_web._attention_item", side_effect=item
+    ):
         first = browse.attention(search=None, limit=1, cursor=None)
         second = browse.attention(search=None, limit=1, cursor=first["next_cursor"])
     assert [{"destination": "valid-1"}] == first["items"]

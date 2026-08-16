@@ -62,15 +62,11 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         connection: sqlite3.Connection,
         binding: _LinuxDatabaseBinding | None = None,
         *,
-        require_staged_shadow_projection_current: Callable[
-            [str, PipelineAction], None
-        ],
+        require_staged_shadow_projection_current: Callable[[str, PipelineAction], None],
         get_review_case: Callable[[str], str],
         get_review_case_report: Callable[[str], str],
         get_review_case_decisions: Callable[[str], tuple[str, ...]],
-        get_review_case_history: Callable[
-            [str, int], tuple[dict[str, object], ...]
-        ],
+        get_review_case_history: Callable[[str, int], tuple[dict[str, object], ...]],
         current_cover_consideration_document: Callable[[str], str | None],
         cover_consideration_history: Callable[
             [str, int], tuple[dict[str, object], ...]
@@ -96,9 +92,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         self.get_review_case_report = get_review_case_report
         self.get_review_case_decisions = get_review_case_decisions
         self.get_review_case_history = get_review_case_history
-        self.current_cover_consideration_document = (
-            current_cover_consideration_document
-        )
+        self.current_cover_consideration_document = current_cover_consideration_document
         self.cover_consideration_history = cover_consideration_history
         self.list_current_review_case_documents = list_current_review_case_documents
         self.count_current_review_cases = count_current_review_cases
@@ -134,7 +128,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         if action.review_case_id is None:
             raise MetadataReportError("review case is unavailable")
         try:
-            self._require_staged_shadow_projection_current(action.review_case_id, action)
+            self._require_staged_shadow_projection_current(
+                action.review_case_id, action
+            )
             row = self._connection.execute(
                 "SELECT review.document,report.document FROM review_cases review "
                 "JOIN metadata_reports report ON report.report_id=review.report_id "
@@ -145,19 +141,34 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 raise MetadataReportError("review case is unavailable")
             case = ReviewCase.from_json(row[0])
             report = MetadataReport.from_json(row[1])
-            if case.review_case_id != action.review_case_id or case.report_id != report.report_id:
+            if (
+                case.review_case_id != action.review_case_id
+                or case.report_id != report.report_id
+            ):
                 raise MetadataReportError("review case is unavailable")
             cover = next(
-                (proposal for proposal in case.proposals
-                 if proposal["destination"] == "cover"),
+                (
+                    proposal
+                    for proposal in case.proposals
+                    if proposal["destination"] == "cover"
+                ),
                 None,
             )
             # Every ReviewCase proposal carries a "result" object; the
             # surrounding except clause turns any drift into MetadataReportError.
-            if cover is None or cast("dict[str, object]", cover["result"])["outcome"] == "ineligible":
+            if (
+                cover is None
+                or cast("dict[str, object]", cover["result"])["outcome"] == "ineligible"
+            ):
                 return None
             return report.to_json(), str(cover["proposal_id"]), False
-        except (sqlite3.Error, ReviewCaseValueError, ReportValueError, KeyError, TypeError) as error:
+        except (
+            sqlite3.Error,
+            ReviewCaseValueError,
+            ReportValueError,
+            KeyError,
+            TypeError,
+        ) as error:
             raise MetadataReportError("review case is unavailable") from error
 
     def read_current_review_case(
@@ -177,10 +188,18 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     if history_limit is None
                     else self.get_review_case_history(review_case_id, history_limit)
                 ),
-                automatic_attention_destinations=self._automatic_attention_destinations(review_case_id),
-                automatic_safety_suspended_destinations=self._automatic_attention_destinations(review_case_id),
-                shadow_abstention_destinations=self._shadow_abstention_destinations(review_case_id),
-                automatic_override_blocked_destinations=self._automatic_override_blocked_destinations(review_case_id),
+                automatic_attention_destinations=self._automatic_attention_destinations(
+                    review_case_id
+                ),
+                automatic_safety_suspended_destinations=self._automatic_attention_destinations(
+                    review_case_id
+                ),
+                shadow_abstention_destinations=self._shadow_abstention_destinations(
+                    review_case_id
+                ),
+                automatic_override_blocked_destinations=self._automatic_override_blocked_destinations(
+                    review_case_id
+                ),
                 suspended_destinations=self._field_effect_capability_suspended_destinations(
                     review_case_id
                 ),
@@ -193,9 +212,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 cover_history=(
                     ()
                     if history_limit is None
-                    else self.cover_consideration_history(
-                        review_case_id, history_limit
-                    )
+                    else self.cover_consideration_history(review_case_id, history_limit)
                 ),
             )
         return snapshot
@@ -223,36 +240,73 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 ]
             ] = []
             for case_document, report_document in rows:
-                if case_document is None and '"schema_version":"review-terminal-work-v1"' in report_document:
-                    projected_rows.append((case_document, report_document, (), (), (), (), None))
+                if (
+                    case_document is None
+                    and '"schema_version":"review-terminal-work-v1"' in report_document
+                ):
+                    projected_rows.append(
+                        (case_document, report_document, (), (), (), (), None)
+                    )
                     continue
                 report = MetadataReport.from_json(report_document)
                 terminal = self._connection.execute(
                     "SELECT work_id,stage,attempt,recovery_attempt,state,failure_code,failure_root "
                     "FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=? "
                     "ORDER BY updated_at DESC,work_id DESC LIMIT 1",
-                    (report.target.connection, report.target.library, report.target.item),
+                    (
+                        report.target.connection,
+                        report.target.library,
+                        report.target.item,
+                    ),
                 ).fetchone()
-                terminal_document = None if (
-                    terminal is None
-                    or terminal[4] != "failed"
-                    or terminal[5] is None
-                ) else _canonical_json({
-                    "attempt": terminal[2], "connection": report.target.connection,
-                    "failure_root": terminal[6], "item": report.target.item,
-                    "lane": terminal[1], "library": report.target.library,
-                    "recovery_attempt": terminal[3], "schema_version": "review-terminal-work-v1",
-                    "status": terminal[5], "work_id": terminal[0],
-                })
-                case_id = None if case_document is None else ReviewCase.from_json(case_document).review_case_id
-                projected_rows.append((
-                    case_document, report_document,
-                    () if case_id is None else self.get_review_case_decisions(case_id),
-                    () if case_id is None else self._automatic_attention_destinations(case_id),
-                    () if case_id is None else self._field_effect_capability_suspended_destinations(case_id),
-                    () if case_id is None else self._shadow_abstention_destinations(case_id),
-                    terminal_document,
-                ))
+                terminal_document = (
+                    None
+                    if (
+                        terminal is None
+                        or terminal[4] != "failed"
+                        or terminal[5] is None
+                    )
+                    else _canonical_json(
+                        {
+                            "attempt": terminal[2],
+                            "connection": report.target.connection,
+                            "failure_root": terminal[6],
+                            "item": report.target.item,
+                            "lane": terminal[1],
+                            "library": report.target.library,
+                            "recovery_attempt": terminal[3],
+                            "schema_version": "review-terminal-work-v1",
+                            "status": terminal[5],
+                            "work_id": terminal[0],
+                        }
+                    )
+                )
+                case_id = (
+                    None
+                    if case_document is None
+                    else ReviewCase.from_json(case_document).review_case_id
+                )
+                projected_rows.append(
+                    (
+                        case_document,
+                        report_document,
+                        ()
+                        if case_id is None
+                        else self.get_review_case_decisions(case_id),
+                        ()
+                        if case_id is None
+                        else self._automatic_attention_destinations(case_id),
+                        ()
+                        if case_id is None
+                        else self._field_effect_capability_suspended_destinations(
+                            case_id
+                        ),
+                        ()
+                        if case_id is None
+                        else self._shadow_abstention_destinations(case_id),
+                        terminal_document,
+                    )
+                )
             projected = tuple(projected_rows)
             total, attention_total = self.count_current_review_cases(search)
             snapshot = ReviewLibrarySnapshot(
@@ -286,7 +340,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         return tuple(row[0] for row in rows)
 
     def _automatic_override_blocked_destinations(
-        self, review_case_id: str,
+        self,
+        review_case_id: str,
     ) -> tuple[str, ...]:
         rows = self._connection.execute(
             "SELECT DISTINCT automatic.destination FROM automatic_decisions automatic "
@@ -300,7 +355,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         return tuple(row[0] for row in rows)
 
     def _field_effect_capability_suspended_destinations(
-        self, review_case_id: str,
+        self,
+        review_case_id: str,
     ) -> tuple[str, ...]:
         rows = self._connection.execute(
             "SELECT json_extract(result.value,'$.destination') "
@@ -320,7 +376,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         return tuple(row[0] for row in rows)
 
     def _field_effect_capability_suspension_causes(
-        self, review_case_id: str,
+        self,
+        review_case_id: str,
     ) -> tuple[tuple[str, ReviewFieldCause], ...]:
         rows = self._connection.execute(
             "SELECT json_extract(result.value,'$.destination'),(SELECT "

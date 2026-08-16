@@ -22,7 +22,9 @@ from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_r
 
 def _report() -> MetadataReport:
     return MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Title")),
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Title")
+        ),
         file=FileFacts(0, "a" * 64, "b" * 64),
         local_claims=(),
         local_reasons=("no_opening_claims",),
@@ -32,6 +34,7 @@ def _report() -> MetadataReport:
 
 def _raise(error: BaseException):
     """A seam that fails, so a phase can be made to fail one at a time."""
+
     def seam(*_arguments: object, **_keywords: object):
         raise error
 
@@ -73,9 +76,7 @@ def test_currentness_precedes_publication_and_readback_is_exact() -> None:
         repository.events.append("current")
         return True
 
-    serialized = CreateProposalSet(repository, current).run(
-        report.report_id
-    )
+    serialized = CreateProposalSet(repository, current).run(report.report_id)
     proposal_set = evaluate_report(report)
     assert proposal_set.to_json() == serialized
     assert ["get_report", "current", "publish", "get_proposal"] == repository.events

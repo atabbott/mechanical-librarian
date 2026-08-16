@@ -3,7 +3,6 @@ non-author credits, identity-bound aliases, and the controlled
 package-creator placeholder.
 """
 
-
 import pytest
 
 from mechanical_librarian.domain.metadata_report import (
@@ -131,17 +130,19 @@ def test_identity_bound_aliases_do_not_grant_three_author_authority() -> None:
         if claim.kind is ClaimKind.CREATOR
     )
     assert all(
-            any(link.outcome is Comparison.AGREEMENT for link in claim.links)
-            for claim in creator_claims
-        )
+        any(link.outcome is Comparison.AGREEMENT for link in claim.links)
+        for claim in creator_claims
+    )
     result = _result(evaluate_report(report), TargetDestination.AUTHORS)
     assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
-    assert (("Ada Example", "Bob Example"),) == tuple(alternative.value.value for alternative in result.alternatives)
+    assert (("Ada Example", "Bob Example"),) == tuple(
+        alternative.value.value for alternative in result.alternatives
+    )
     assert all(
-            reference.startswith("local_")
-            for alternative in result.alternatives
-            for reference in alternative.evidence_references
-        )
+        reference.startswith("local_")
+        for alternative in result.alternatives
+        for reference in alternative.evidence_references
+    )
 
 
 def test_incomplete_identity_bindings_preserve_direct_author_evidence() -> None:
@@ -153,14 +154,16 @@ def test_incomplete_identity_bindings_preserve_direct_author_evidence() -> None:
     }
     result = _result(evaluate_report(report), TargetDestination.AUTHORS)
     assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
-    assert (("Ada Example", "Bob Example"),) == tuple(alternative.value.value for alternative in result.alternatives)
+    assert (("Ada Example", "Bob Example"),) == tuple(
+        alternative.value.value for alternative in result.alternatives
+    )
     assert provider_references.issubset(
-            {
-                reference
-                for alternative in result.alternatives
-                for reference in alternative.evidence_references
-            }
-        )
+        {
+            reference
+            for alternative in result.alternatives
+            for reference in alternative.evidence_references
+        }
+    )
 
 
 def test_provider_typed_non_author_credits_preserve_complete_authors() -> None:
@@ -259,9 +262,7 @@ def test_ambiguous_provider_author_credits_do_not_become_partial_authors(
                         TargetFieldState.MISSING,
                     ),
                 ),
-                providers=(
-                    _provider("catalogue", "edition-1", claims),
-                ),
+                providers=(_provider("catalogue", "edition-1", claims),),
             )
         ),
         TargetDestination.AUTHORS,
@@ -308,9 +309,7 @@ def test_incomplete_provider_author_list_is_withheld(state: FieldState) -> None:
                         TargetFieldState.MISSING,
                     ),
                 ),
-                providers=(
-                    _provider("catalogue", "edition-1", claims),
-                ),
+                providers=(_provider("catalogue", "edition-1", claims),),
             )
         ),
         TargetDestination.AUTHORS,
@@ -406,9 +405,7 @@ def test_unrepresentable_author_like_or_unknown_contributor_withholds_authors(
                         TargetFieldState.MISSING,
                     ),
                 ),
-                providers=(
-                    _provider("catalogue", "edition-1", claims),
-                ),
+                providers=(_provider("catalogue", "edition-1", claims),),
             )
         )
     result = _result(proposal_set, TargetDestination.AUTHORS)
@@ -632,13 +629,16 @@ def test_mixed_package_creators_keep_real_author_order(
     )
     assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
     assert expected == result.alternatives[0].value.value
-    assert tuple(
-        sorted(
-            claim.reference
-            for claim in claims
-            if claim.observed.strip().casefold() != "unknown"
+    assert (
+        tuple(
+            sorted(
+                claim.reference
+                for claim in claims
+                if claim.observed.strip().casefold() != "unknown"
+            )
         )
-    ) == result.alternatives[0].evidence_references
+        == result.alternatives[0].evidence_references
+    )
     assert claims == report.local_claims
 
 
@@ -668,9 +668,7 @@ def test_placeholder_rule_is_exact_and_creator_context_specific(value: str) -> N
         evaluate_report(
             _report(
                 fields=_fields(None, authors=authors),
-                local_claims=(
-                    _local_creator("Unknown", basis="opening_matter"),
-                ),
+                local_claims=(_local_creator("Unknown", basis="opening_matter"),),
             )
         ),
         TargetDestination.AUTHORS,
@@ -749,8 +747,14 @@ def test_placeholder_rule_is_exact_and_creator_context_specific(value: str) -> N
         ),
     )
     unrelated = evaluate_report(unrelated_report)
-    assert ProposalOutcome.PROPOSE_CHANGE == _result(unrelated, TargetDestination.TITLE).outcome
-    assert ProposalOutcome.INELIGIBLE == _result(unrelated, TargetDestination.AUTHORS).outcome
+    assert (
+        ProposalOutcome.PROPOSE_CHANGE
+        == _result(unrelated, TargetDestination.TITLE).outcome
+    )
+    assert (
+        ProposalOutcome.INELIGIBLE
+        == _result(unrelated, TargetDestination.AUTHORS).outcome
+    )
 
 
 def test_placeholder_changes_only_the_authors_policy_result() -> None:
@@ -758,9 +762,7 @@ def test_placeholder_changes_only_the_authors_policy_result() -> None:
         TargetDestination.AUTHORS,
         TargetFieldState.MISSING,
     )
-    baseline = evaluate_report(
-        _report(fields=_fields(None, authors=authors))
-    )
+    baseline = evaluate_report(_report(fields=_fields(None, authors=authors)))
     with_placeholder = evaluate_report(
         _report(
             fields=_fields(None, authors=authors),
@@ -768,14 +770,14 @@ def test_placeholder_changes_only_the_authors_policy_result() -> None:
         )
     )
     assert {
-            result.destination: result
-            for result in baseline.results
-            if result.destination is not TargetDestination.AUTHORS
-        } == {
-            result.destination: result
-            for result in with_placeholder.results
-            if result.destination is not TargetDestination.AUTHORS
-        }
+        result.destination: result
+        for result in baseline.results
+        if result.destination is not TargetDestination.AUTHORS
+    } == {
+        result.destination: result
+        for result in with_placeholder.results
+        if result.destination is not TargetDestination.AUTHORS
+    }
 
 
 def test_ambiguous_local_contributor_does_not_become_partial_narrators() -> None:

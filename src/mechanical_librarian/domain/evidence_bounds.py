@@ -43,9 +43,7 @@ _CREDENTIAL_PATTERN = re.compile(
     r"|\b[a-z][a-z0-9+.-]*://[^/\s:@]+:[^/\s@]+@"
     r")"
 )
-_BARE_BEARER_PATTERN = re.compile(
-    r"(?i)\bbearer\s+([a-z0-9._~+/=-]{8,})(?=\s|$)"
-)
+_BARE_BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+([a-z0-9._~+/=-]{8,})(?=\s|$)")
 _CREDENTIAL_ASSIGNMENT_PATTERN = re.compile(
     r"[\"']?([A-Za-z][A-Za-z0-9_.:-]{1,80})[\"']?\s*([:=])"
 )
@@ -61,15 +59,9 @@ _HOME_PATH_PATTERN = re.compile(r"(?<!\w)~[/\\]")
 _LABELLED_PATH_PATTERN = re.compile(
     r"(?i)\b(?:path|file|location|source)\s*[:=]\s*(?:~[/\\]|[/\\]|[a-z]:[/\\])"
 )
-_ABSOLUTE_PATH_PATTERN = re.compile(
-    r"(?<![\w/~])/(?!/)[^\s/:]+(?:/[^\s/:]+)*"
-)
-_WINDOWS_DRIVE_ROOT_PATTERN = re.compile(
-    r"(?i)(?<![a-z0-9_])[a-z]:[/\\]"
-)
-_UNC_PATH_PATTERN = re.compile(
-    r"(?<![\w\\])\\\\[^\\\s]+\\[^\\\s]+"
-)
+_ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![\w/~])/(?!/)[^\s/:]+(?:/[^\s/:]+)*")
+_WINDOWS_DRIVE_ROOT_PATTERN = re.compile(r"(?i)(?<![a-z0-9_])[a-z]:[/\\]")
+_UNC_PATH_PATTERN = re.compile(r"(?<![\w\\])\\\\[^\\\s]+\\[^\\\s]+")
 _COOKIE_HEADER_PATTERN = re.compile(r"(?i)\b(?:cookie|set-cookie)\s*:")
 _SENSITIVE_DIAGNOSTIC_PATTERN = re.compile(
     r"(?i)\b(?:api[ _-]?key|client[ _-]?secret|access[ _-]?token|"
@@ -78,9 +70,7 @@ _SENSITIVE_DIAGNOSTIC_PATTERN = re.compile(
 _SOURCE_TEXT_SENTINEL = re.compile(
     r"(?:unsafe|oversized)-source-text-sha256:[0-9a-f]{64}"
 )
-_SOURCE_TEXT_SENTINEL_PREFIX = re.compile(
-    r"(?:unsafe|oversized)-source-text-sha256:"
-)
+_SOURCE_TEXT_SENTINEL_PREFIX = re.compile(r"(?:unsafe|oversized)-source-text-sha256:")
 
 T = TypeVar("T")
 
@@ -92,7 +82,10 @@ class EvidenceValueError(ValueError):
 def validate_text(value: object, label: str, maximum: int) -> str:
     if type(value) is not str or not value or value.strip() != value:
         raise EvidenceValueError(f"{label} must be non-empty trimmed text")
-    if len(value) > maximum or len(value.encode("utf-8", errors="surrogatepass")) > maximum * 4:
+    if (
+        len(value) > maximum
+        or len(value.encode("utf-8", errors="surrogatepass")) > maximum * 4
+    ):
         raise EvidenceValueError(f"{label} exceeds its size limit")
     if any(_forbidden_codepoint(ord(character)) for character in value):
         raise EvidenceValueError(f"{label} contains forbidden control or Unicode text")
@@ -163,8 +156,12 @@ def validate_safe_diagnostic_text(value: object, label: str, maximum: int) -> st
     """
 
     text = validate_projection_text(value, label, maximum)
-    if _COOKIE_HEADER_PATTERN.search(text) or _SENSITIVE_DIAGNOSTIC_PATTERN.search(text):
-        raise EvidenceValueError(f"{label} must not contain credential or cookie material")
+    if _COOKIE_HEADER_PATTERN.search(text) or _SENSITIVE_DIAGNOSTIC_PATTERN.search(
+        text
+    ):
+        raise EvidenceValueError(
+            f"{label} must not contain credential or cookie material"
+        )
     return text
 
 
@@ -222,7 +219,9 @@ def validate_string_tuple(
     if len(values) > maximum:
         raise EvidenceValueError(f"{label} exceeds its count limit")
     validated = tuple(
-        validate_code(value, label) if codes else validate_text(value, label, item_maximum)
+        validate_code(value, label)
+        if codes
+        else validate_text(value, label, item_maximum)
         for value in values
     )
     if len(validated) != len(set(validated)):
@@ -255,7 +254,9 @@ def _credential_shaped(value: str) -> bool:
     if bare_bearer is not None:
         credential = bare_bearer.group(1)
         if (
-            any(character.isdigit() or character in "_~+/=-" for character in credential)
+            any(
+                character.isdigit() or character in "_~+/=-" for character in credential
+            )
             or credential.count(".") >= 2
         ):
             return True
@@ -273,9 +274,7 @@ def _credential_shaped(value: str) -> bool:
     return False
 
 
-def _credential_label_shaped(
-    raw_label: str, *, reject_exact_secret: bool
-) -> bool:
+def _credential_label_shaped(raw_label: str, *, reject_exact_secret: bool) -> bool:
     label = _CREDENTIAL_LABEL_SEPARATOR.sub(
         "_", _CAMEL_BOUNDARY.sub("_", raw_label)
     ).casefold()

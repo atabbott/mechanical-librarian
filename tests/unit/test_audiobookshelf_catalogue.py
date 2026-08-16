@@ -24,26 +24,48 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.domain.metadata_report import canonical_json
 
 
-def _library(name: str = "books", identifier: str = "library-1") -> LibraryConfiguration:
+def _library(
+    name: str = "books", identifier: str = "library-1"
+) -> LibraryConfiguration:
     return LibraryConfiguration(name, "primary", identifier, "book", None, ())
 
 
 def _item(identifier: str = "item-1") -> dict[str, object]:
-    return {"id": identifier, "libraryId": "library-1", "updatedAt": 1, "media": {"metadata": {"title": "Title", "authors": [{"name": "Ada"}]}, "ebookFile": {"ebookFormat": "epub", "ino": "inode", "metadata": {"relPath": "books/title.epub", "size": 7}}}}
+    return {
+        "id": identifier,
+        "libraryId": "library-1",
+        "updatedAt": 1,
+        "media": {
+            "metadata": {"title": "Title", "authors": [{"name": "Ada"}]},
+            "ebookFile": {
+                "ebookFormat": "epub",
+                "ino": "inode",
+                "metadata": {"relPath": "books/title.epub", "size": 7},
+            },
+        },
+    }
 
 
 def test_probe_requires_every_configured_book_library() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/libraries"
-        return httpx.Response(200, json={"libraries": [
-            {"id": "library-1", "mediaType": "book"},
-            {"id": "audio", "mediaType": "podcast"},
-        ]})
+        return httpx.Response(
+            200,
+            json={
+                "libraries": [
+                    {"id": "library-1", "mediaType": "book"},
+                    {"id": "audio", "mediaType": "podcast"},
+                ]
+            },
+        )
 
     reader = AudiobookshelfCatalogueReader(
         client_factory=lambda _: httpx.Client(
             transport=httpx.MockTransport(handler), base_url="https://abs.invalid"
-        ), mounts={}, maximum_bytes=65_536, timeout_seconds=1,
+        ),
+        mounts={},
+        maximum_bytes=65_536,
+        timeout_seconds=1,
     )
     with pytest.raises(TargetConnectionError) as raised:
         reader.probe_connection("primary", (_library(), _library("history", "missing")))
@@ -52,31 +74,76 @@ def test_probe_requires_every_configured_book_library() -> None:
 
 def test_aggregate_capacity_is_checked_before_any_detail_request() -> None:
     requests: list[str] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request.url.path)
         if request.url.path == "/api/libraries":
-            return httpx.Response(200, json={"libraries": [{"id": "library-1", "mediaType": "book"}]})
+            return httpx.Response(
+                200, json={"libraries": [{"id": "library-1", "mediaType": "book"}]}
+            )
         if request.url.path.endswith("/items"):
             return httpx.Response(200, json={"total": 2, "results": [{"id": "item-1"}]})
         raise AssertionError("details must not be fetched")
-    reader = AudiobookshelfCatalogueReader(client_factory=lambda _: httpx.Client(transport=httpx.MockTransport(handler), base_url="https://abs.invalid"), mounts={}, maximum_bytes=65_536, timeout_seconds=1)
+
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda _: httpx.Client(
+            transport=httpx.MockTransport(handler), base_url="https://abs.invalid"
+        ),
+        mounts={},
+        maximum_bytes=65_536,
+        timeout_seconds=1,
+    )
     with pytest.raises(CatalogueError):
         reader.read_library("primary", _library(), 1)
     assert requests == ["/api/libraries", "/api/libraries/library-1/items"]
 
 
-def test_singular_unmounted_book_is_catalogued_but_not_eligible_and_matches_item_identity() -> None:
+def test_singular_unmounted_book_is_catalogued_but_not_eligible_and_matches_item_identity() -> (
+    None
+):
     detail = _item()
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/libraries":
-            return httpx.Response(200, json={"libraries": [{"id": "library-1", "mediaType": "book"}]})
+            return httpx.Response(
+                200, json={"libraries": [{"id": "library-1", "mediaType": "book"}]}
+            )
         if request.url.path.endswith("/items"):
-            return httpx.Response(200, json={"total": 1, "results": [{"id": "item-1", "libraryId": "library-1", "updatedAt": 1}]})
+            return httpx.Response(
+                200,
+                json={
+                    "total": 1,
+                    "results": [
+                        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+                    ],
+                },
+            )
         return httpx.Response(200, json=detail)
-    reader = AudiobookshelfCatalogueReader(client_factory=lambda _: httpx.Client(transport=httpx.MockTransport(handler), base_url="https://abs.invalid"), mounts={}, maximum_bytes=65_536, timeout_seconds=1)
+
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda _: httpx.Client(
+            transport=httpx.MockTransport(handler), base_url="https://abs.invalid"
+        ),
+        mounts={},
+        maximum_bytes=65_536,
+        timeout_seconds=1,
+    )
     entry = reader.read_library("primary", _library(), 10)[0]
-    expected = hashlib.sha256(canonical_json({"format": "epub", "inode": "inode", "relative": "books/title.epub", "size": 7}).encode("utf-8")).hexdigest()
-    assert (entry.classification, entry.eligible, entry.file_identity) == ("singular-supported", False, expected)
+    expected = hashlib.sha256(
+        canonical_json(
+            {
+                "format": "epub",
+                "inode": "inode",
+                "relative": "books/title.epub",
+                "size": 7,
+            }
+        ).encode("utf-8")
+    ).hexdigest()
+    assert (entry.classification, entry.eligible, entry.file_identity) == (
+        "singular-supported",
+        False,
+        expected,
+    )
 
 
 @pytest.mark.parametrize(
@@ -88,7 +155,14 @@ def test_singular_unmounted_book_is_catalogued_but_not_eligible_and_matches_item
     ),
 )
 def test_strict_stream_json_rejects_duplicates_nonfinite_and_depth(body: bytes) -> None:
-    client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, headers={"content-type": "application/json"}, content=body)), base_url="https://abs.invalid")
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200, headers={"content-type": "application/json"}, content=body
+            )
+        ),
+        base_url="https://abs.invalid",
+    )
     with client, pytest.raises(CatalogueError):
         _get(client, "/api/libraries", 65_536, 1)
 
@@ -96,14 +170,36 @@ def test_strict_stream_json_rejects_duplicates_nonfinite_and_depth(body: bytes) 
 def test_missing_items_and_one_element_plural_remain_unusable() -> None:
     detail = _item()
     detail["isMissing"] = True
-    detail["media"] = {"metadata": {"title": "Title", "authors": []}, "ebookFiles": [{"ebookFormat": "epub"}]}
+    detail["media"] = {
+        "metadata": {"title": "Title", "authors": []},
+        "ebookFiles": [{"ebookFormat": "epub"}],
+    }
+
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/libraries":
-            return httpx.Response(200, json={"libraries": [{"id": "library-1", "mediaType": "book"}]})
+            return httpx.Response(
+                200, json={"libraries": [{"id": "library-1", "mediaType": "book"}]}
+            )
         if request.url.path.endswith("/items"):
-            return httpx.Response(200, json={"total": 1, "results": [{"id": "item-1", "libraryId": "library-1", "updatedAt": 1}]})
+            return httpx.Response(
+                200,
+                json={
+                    "total": 1,
+                    "results": [
+                        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+                    ],
+                },
+            )
         return httpx.Response(200, json=detail)
-    reader = AudiobookshelfCatalogueReader(client_factory=lambda _: httpx.Client(transport=httpx.MockTransport(handler), base_url="https://abs.invalid"), mounts={}, maximum_bytes=65_536, timeout_seconds=1)
+
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda _: httpx.Client(
+            transport=httpx.MockTransport(handler), base_url="https://abs.invalid"
+        ),
+        mounts={},
+        maximum_bytes=65_536,
+        timeout_seconds=1,
+    )
     with pytest.raises(CatalogueError):
         reader.read_library("primary", _library(), 10)
 
@@ -111,15 +207,52 @@ def test_missing_items_and_one_element_plural_remain_unusable() -> None:
 def test_path_only_mapping_matches_item_identity_and_enforces_relative_bounds() -> None:
     mount = MediaMountConfiguration("books", "/library", "/media", True)
     summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
+
     def detail(path: str) -> dict[str, object]:
-        return {**_item(), "media": {"metadata": {"title": "Title", "authors": [{"name": "Ada"}]}, "ebookFile": {"ebookFormat": "epub", "ino": "inode", "metadata": {"path": path, "size": 7}}}}
-    entry = catalogue_entry("primary", _library(), mount, summary, detail("/media/books/title.epub"))
-    expected = hashlib.sha256(canonical_json({"format": "epub", "inode": "inode", "relative": "books/title.epub", "size": 7}).encode("utf-8")).hexdigest()
-    assert (entry.eligible, entry.file_identity, entry.service_path) == (True, expected, "books/title.epub")
-    for relative, classification in (("a" * 1024, "singular-supported"), ("a" * 1025, "needs-attention")):
-        value = catalogue_entry("primary", _library(), mount, summary, detail("/media/" + relative))
-        assert (value.classification, value.eligible) == (classification, classification == "singular-supported")
-    assert not catalogue_entry("primary", _library(), mount, summary, detail("/outside/book.epub")).eligible
+        return {
+            **_item(),
+            "media": {
+                "metadata": {"title": "Title", "authors": [{"name": "Ada"}]},
+                "ebookFile": {
+                    "ebookFormat": "epub",
+                    "ino": "inode",
+                    "metadata": {"path": path, "size": 7},
+                },
+            },
+        }
+
+    entry = catalogue_entry(
+        "primary", _library(), mount, summary, detail("/media/books/title.epub")
+    )
+    expected = hashlib.sha256(
+        canonical_json(
+            {
+                "format": "epub",
+                "inode": "inode",
+                "relative": "books/title.epub",
+                "size": 7,
+            }
+        ).encode("utf-8")
+    ).hexdigest()
+    assert (entry.eligible, entry.file_identity, entry.service_path) == (
+        True,
+        expected,
+        "books/title.epub",
+    )
+    for relative, classification in (
+        ("a" * 1024, "singular-supported"),
+        ("a" * 1025, "needs-attention"),
+    ):
+        value = catalogue_entry(
+            "primary", _library(), mount, summary, detail("/media/" + relative)
+        )
+        assert (value.classification, value.eligible) == (
+            classification,
+            classification == "singular-supported",
+        )
+    assert not catalogue_entry(
+        "primary", _library(), mount, summary, detail("/outside/book.epub")
+    ).eligible
 
 
 @pytest.mark.parametrize(
@@ -134,7 +267,10 @@ def test_empty_plural_is_none_and_plural_values_need_attention(
     plural: object, expected: tuple[bool, str]
 ) -> None:
     summary = {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}
-    detail = {**_item(), "media": {"metadata": {"title": "Title", "authors": []}, "ebookFiles": plural}}
+    detail = {
+        **_item(),
+        "media": {"metadata": {"title": "Title", "authors": []}, "ebookFiles": plural},
+    }
     entry = catalogue_entry("primary", _library(), None, summary, detail)
     assert (entry.has_ebook, entry.classification) == expected
 
@@ -151,12 +287,18 @@ def test_volatile_activity_fields_do_not_change_catalogue_identity() -> None:
         "mediaProgress": {"isFinished": False, "progress": 0.75},
     }
     first = catalogue_entry(
-        "primary", _library(), None,
-        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}, baseline,
+        "primary",
+        _library(),
+        None,
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+        baseline,
     )
     second = catalogue_entry(
-        "primary", _library(), None,
-        {"id": "item-1", "libraryId": "library-1", "updatedAt": 2}, active,
+        "primary",
+        _library(),
+        None,
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 2},
+        active,
     )
     assert first.source_fingerprint == second.source_fingerprint
 
@@ -166,12 +308,18 @@ def test_item_revision_is_fallback_when_material_revision_is_unavailable() -> No
     changed = _item()
     changed["updatedAt"] = 2
     first = catalogue_entry(
-        "primary", _library(), None,
-        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}, baseline,
+        "primary",
+        _library(),
+        None,
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+        baseline,
     )
     second = catalogue_entry(
-        "primary", _library(), None,
-        {"id": "item-1", "libraryId": "library-1", "updatedAt": 2}, changed,
+        "primary",
+        _library(),
+        None,
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 2},
+        changed,
     )
     assert first.source_fingerprint != second.source_fingerprint
 
@@ -195,9 +343,7 @@ def test_invalid_material_revision_retains_item_revision_fallback(
     changed = _item()
     changed["updatedAt"] = 2
     changed["media"]["ebookFile"]["metadata"]["mtimeMs"] = invalid_revision
-    first = catalogue_entry(
-        "primary", _library(), None, summary, baseline
-    )
+    first = catalogue_entry("primary", _library(), None, summary, baseline)
     second = catalogue_entry(
         "primary",
         _library(),
@@ -246,12 +392,18 @@ def test_item_revision_protects_cover_bytes_without_a_cover_revision() -> None:
     changed["updatedAt"] = 2
     changed["media"]["ebookFile"]["metadata"]["mtimeMs"] = 1
     first = catalogue_entry(
-        "primary", _library(), None,
-        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1}, baseline,
+        "primary",
+        _library(),
+        None,
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+        baseline,
     )
     second = catalogue_entry(
-        "primary", _library(), None,
-        {"id": "item-1", "libraryId": "library-1", "updatedAt": 2}, changed,
+        "primary",
+        _library(),
+        None,
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 2},
+        changed,
     )
     assert first.source_fingerprint != second.source_fingerprint
 
@@ -291,5 +443,7 @@ def test_each_material_review_source_dimension_changes_fingerprint(
     mutate(detail)
     assert (
         original.source_fingerprint
-        != catalogue_entry("primary", _library(), None, summary, detail).source_fingerprint
+        != catalogue_entry(
+            "primary", _library(), None, summary, detail
+        ).source_fingerprint
     )

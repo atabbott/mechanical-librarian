@@ -178,10 +178,14 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
             activate_metadata_policy=(
-                lambda policy_id, expected, resolutions, activated_at, *,
-                reconcile_current=False: self.activate_metadata_policy(
-                    policy_id, expected, resolutions, activated_at,
-                    reconcile_current=reconcile_current,
+                lambda policy_id, expected, resolutions, activated_at, *, reconcile_current=False: (
+                    self.activate_metadata_policy(
+                        policy_id,
+                        expected,
+                        resolutions,
+                        activated_at,
+                        reconcile_current=reconcile_current,
+                    )
                 )
             ),
         )
@@ -191,8 +195,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             connection,
             binding,
             record_field_effect_event=(
-                lambda operation, kind, occurred_at: (
-                    self._record_field_effect_event(operation, kind, occurred_at)
+                lambda operation, kind, occurred_at: self._record_field_effect_event(
+                    operation, kind, occurred_at
                 )
             ),
             field_effect_consent_envelope_identity=(
@@ -249,8 +253,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 lambda library: self.current_resolved_metadata_policy(library)
             ),
             policy_destinations_for=(
-                lambda report, proposal: (
-                    self._metadata_policy._policy_destinations_for(report, proposal)
+                lambda report, proposal: self._metadata_policy._policy_destinations_for(
+                    report, proposal
                 )
             ),
         )
@@ -291,8 +295,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
             record_field_effect_event=(
-                lambda operation, kind, occurred_at: (
-                    self._record_field_effect_event(operation, kind, occurred_at)
+                lambda operation, kind, occurred_at: self._record_field_effect_event(
+                    operation, kind, occurred_at
                 )
             ),
             current_cover_policy_reference=(
@@ -358,9 +362,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 lambda review_case_id: self.get_review_case_report(review_case_id)
             ),
             get_review_case_decisions=(
-                lambda review_case_id: self.get_review_case_decisions(
-                    review_case_id
-                )
+                lambda review_case_id: self.get_review_case_decisions(review_case_id)
             ),
             get_review_case_history=(
                 lambda review_case_id, limit: self.get_review_case_history(
@@ -368,8 +370,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
             current_cover_consideration_document=(
-                lambda review_case_id: (
-                    self.current_cover_consideration_document(review_case_id)
+                lambda review_case_id: self.current_cover_consideration_document(
+                    review_case_id
                 )
             ),
             cover_consideration_history=(
@@ -388,8 +390,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 lambda search: self.count_current_review_cases(search)
             ),
             list_current_attention_documents=(
-                lambda search, limit, offset: (
-                    self.list_current_attention_documents(search, limit, offset)
+                lambda search, limit, offset: self.list_current_attention_documents(
+                    search, limit, offset
                 )
             ),
             count_current_attention_fields=(
@@ -415,7 +417,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._field_effect_activity.field_effect_authority_source(decision)
 
     def record_current_field_effect_no_change(
-        self, decision: AutomaticDecision, occurred_at: int,
+        self,
+        decision: AutomaticDecision,
+        occurred_at: int,
     ) -> bool:
         return self._field_effects.record_current_field_effect_no_change(
             decision,
@@ -423,13 +427,14 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
 
     def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool:
-        return self._field_effect_activity.field_effect_authority_is_current(
-            authority
-        )
+        return self._field_effect_activity.field_effect_authority_is_current(authority)
 
     def grant_field_effect_consents(
-        self, connection: str, libraries: tuple[str, ...],
-        destinations: tuple[str, ...], granted_at: int,
+        self,
+        connection: str,
+        libraries: tuple[str, ...],
+        destinations: tuple[str, ...],
+        granted_at: int,
     ) -> tuple[EffectConsent, ...]:
         return self._field_effects.grant_field_effect_consents(
             connection,
@@ -439,8 +444,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
 
     def grant_field_effect_consent_matrix(
-        self, connection: str,
-        grants: tuple[tuple[str, tuple[str, ...]], ...], granted_at: int,
+        self,
+        connection: str,
+        grants: tuple[tuple[str, tuple[str, ...]], ...],
+        granted_at: int,
     ) -> tuple[EffectConsent, ...]:
         return self._field_effects.grant_field_effect_consent_matrix(
             connection,
@@ -449,7 +456,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
 
     def current_field_effect_consent(
-        self, connection: str, library: str, destination: str,
+        self,
+        connection: str,
+        library: str,
+        destination: str,
     ) -> EffectConsent:
         return self._field_effects.current_field_effect_consent(
             connection,
@@ -466,7 +476,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
 
     def revoke_library_field_effect_consents(
-        self, connection: str, library: str, changed_at: int,
+        self,
+        connection: str,
+        library: str,
+        changed_at: int,
     ) -> int:
         return self._field_effects.revoke_library_field_effect_consents(
             connection,
@@ -475,7 +488,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
 
     def pending_field_effect_decision_documents(
-        self, limit: int, after: tuple[int, str] | None = None,
+        self,
+        limit: int,
+        after: tuple[int, str] | None = None,
     ) -> tuple[str, ...]:
         return self._field_effect_activity.pending_field_effect_decision_documents(
             limit, after
@@ -485,11 +500,18 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._field_effect_activity.pending_field_effect_decision_counts()
 
     def field_effect_manual_override(
-        self, review_case_id: str, destination: str, changed_at: int,
+        self,
+        review_case_id: str,
+        destination: str,
+        changed_at: int,
     ) -> int:
         """Supersede only unclaimed automatic authority for a human override."""
-        if (type(review_case_id) is not str or type(destination) is not str
-                or type(changed_at) is not int or changed_at < 0):
+        if (
+            type(review_case_id) is not str
+            or type(destination) is not str
+            or type(changed_at) is not int
+            or changed_at < 0
+        ):
             raise FieldEffectError("authority_binding")
         transaction = self._transaction("field_effect_manual_override")
         try:
@@ -523,7 +545,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             raise FieldEffectError("persistence") from error
 
     def _set_field_effect_manual_hold(
-        self, review_case_id: str, destination: str, changed_at: int,
+        self,
+        review_case_id: str,
+        destination: str,
+        changed_at: int,
         decision_id: str,
     ) -> None:
         self._field_effects._set_field_effect_manual_hold(
@@ -534,7 +559,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
 
     def field_effect_manual_hold_context(
-        self, review_case_id: str, destination: str,
+        self,
+        review_case_id: str,
+        destination: str,
     ) -> tuple[str, str] | None:
         return self._field_effects.field_effect_manual_hold_context(
             review_case_id,
@@ -542,7 +569,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
 
     def field_effect_manual_hold_token(
-        self, review_case_id: str, destination: str,
+        self,
+        review_case_id: str,
+        destination: str,
     ) -> str | None:
         return self._field_effects.field_effect_manual_hold_token(
             review_case_id,
@@ -550,8 +579,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
 
     def request_field_effect_manual_return(
-        self, review_case_id: str, destination: str, hold_token: str,
-        scan_id: str, requested_at: int, changed_at: int,
+        self,
+        review_case_id: str,
+        destination: str,
+        hold_token: str,
+        scan_id: str,
+        requested_at: int,
+        changed_at: int,
     ) -> bool:
         return self._field_effects.request_field_effect_manual_return(
             review_case_id,
@@ -563,7 +597,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
 
     def pending_field_effect_manual_returns(
-        self, limit: int, after: tuple[int, str, str] | None = None,
+        self,
+        limit: int,
+        after: tuple[int, str, str] | None = None,
     ) -> tuple[tuple[str, str, str, str, str, str, int, int], ...]:
         return self._field_effect_activity.pending_field_effect_manual_returns(
             limit, after
@@ -573,7 +609,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._field_effects._has_pending_field_effect_manual_return(scan_id)
 
     def clear_field_effect_manual_hold(
-        self, review_case_id: str, destination: str, changed_at: int,
+        self,
+        review_case_id: str,
+        destination: str,
+        changed_at: int,
         expected_hold_token: str | None = None,
     ) -> tuple[str, str] | None:
         return self._field_effects.clear_field_effect_manual_hold(
@@ -590,7 +629,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._field_effect_activity.field_effect_backup_ready()
 
     def next_field_effect_plan_id(
-        self, last_library: str | None,
+        self,
+        last_library: str | None,
     ) -> tuple[str, str] | None:
         return self._field_effects.next_field_effect_plan_id(last_library)
 
@@ -624,7 +664,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             page_size=page_size,
         )
 
-    def record_field_effect(self, operation: FieldEffectOperation) -> FieldEffectOperation:
+    def record_field_effect(
+        self, operation: FieldEffectOperation
+    ) -> FieldEffectOperation:
         return self._field_effects.record_field_effect(operation)
 
     def get_field_effect(self, plan_id: str) -> FieldEffectOperation:
@@ -633,9 +675,15 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def field_effect_event_documents(self, plan_id: str) -> tuple[str, ...]:
         return self._field_effects.field_effect_event_documents(plan_id)
 
-    def suspend_field_effect_capability(self, *, scope: str, connection: str,
-                                        destination: str, reason: str,
-                                        changed_at: int) -> None:
+    def suspend_field_effect_capability(
+        self,
+        *,
+        scope: str,
+        connection: str,
+        destination: str,
+        reason: str,
+        changed_at: int,
+    ) -> None:
         self._field_effects.suspend_field_effect_capability(
             scope=scope,
             connection=connection,
@@ -644,15 +692,21 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             changed_at=changed_at,
         )
 
-    def field_effect_capability_suspension(self, connection: str,
-                                           destination: str) -> str | None:
+    def field_effect_capability_suspension(
+        self, connection: str, destination: str
+    ) -> str | None:
         return self._field_effects.field_effect_capability_suspension(
             connection,
             destination,
         )
 
     def clear_field_effect_capability_suspension(
-        self, *, scope: str, connection: str, destination: str, reason: str,
+        self,
+        *,
+        scope: str,
+        connection: str,
+        destination: str,
+        reason: str,
         observed_at: int,
     ) -> None:
         self._field_effects.clear_field_effect_capability_suspension(
@@ -663,15 +717,21 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             observed_at=observed_at,
         )
 
-    def claim_field_effect(self, plan_id: str, expected_state: str,
-                           claim_token: str, claimed_at: int) -> FieldEffectOperation:
+    def claim_field_effect(
+        self, plan_id: str, expected_state: str, claim_token: str, claimed_at: int
+    ) -> FieldEffectOperation:
         return self._field_effect_activity.claim_field_effect(
             plan_id, expected_state, claim_token, claimed_at
         )
 
-    def transition_field_effect(self, plan_id: str, expected_state: str,
-                                state: str, changed_at: int,
-                                failure: str | None = None) -> FieldEffectOperation:
+    def transition_field_effect(
+        self,
+        plan_id: str,
+        expected_state: str,
+        state: str,
+        changed_at: int,
+        failure: str | None = None,
+    ) -> FieldEffectOperation:
         return self._field_effects.transition_field_effect(
             plan_id,
             expected_state,
@@ -699,7 +759,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             raise FieldEffectError("persistence") from error
 
     def _revoke_field_effect_authority_in_transaction(
-        self, decision_id: str, changed_at: int, *, required: bool,
+        self,
+        decision_id: str,
+        changed_at: int,
+        *,
+        required: bool,
     ) -> int:
         return self._field_effects._revoke_field_effect_authority_in_transaction(
             decision_id,
@@ -710,10 +774,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def revoke_field_effect_consent(self, consent_id: str, changed_at: int) -> int:
         return self._field_effects.revoke_field_effect_consent(consent_id, changed_at)
 
-    def schedule_field_effect_reconciliation(self, plan_id: str,
-                                             expected_state: str,
-                                             changed_at: int,
-                                             failure: str = "ambiguous") -> FieldEffectOperation:
+    def schedule_field_effect_reconciliation(
+        self,
+        plan_id: str,
+        expected_state: str,
+        changed_at: int,
+        failure: str = "ambiguous",
+    ) -> FieldEffectOperation:
         return self._field_effects.schedule_field_effect_reconciliation(
             plan_id,
             expected_state,
@@ -721,9 +788,14 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             failure,
         )
 
-    def complete_field_effect_reconciliation(self, plan_id: str, state: str,
-                                             failure: str | None, changed_at: int,
-                                             reevaluate: bool = False) -> FieldEffectOperation:
+    def complete_field_effect_reconciliation(
+        self,
+        plan_id: str,
+        state: str,
+        failure: str | None,
+        changed_at: int,
+        reevaluate: bool = False,
+    ) -> FieldEffectOperation:
         return self._field_effects.complete_field_effect_reconciliation(
             plan_id,
             state,
@@ -732,15 +804,14 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             reevaluate,
         )
 
-    def retire_stale_cover_decision(
-        self, decision_id: str, changed_at: int
-    ) -> bool:
+    def retire_stale_cover_decision(self, decision_id: str, changed_at: int) -> bool:
         return self._cover_considerations.retire_stale_cover_decision(
             decision_id, changed_at
         )
 
-    def claim_next_field_effect_action(self, changed_at: int,
-                                       plan_id: str | None = None) -> dict[str, object] | None:
+    def claim_next_field_effect_action(
+        self, changed_at: int, plan_id: str | None = None
+    ) -> dict[str, object] | None:
         return self._field_effects.claim_next_field_effect_action(changed_at, plan_id)
 
     def complete_forward_reevaluation(self, action_id: str, changed_at: int) -> None:
@@ -770,15 +841,15 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def operational_snapshot(self) -> dict[str, object]:
         return self._field_effect_activity.operational_snapshot()
 
-    def _update_field_effect(self, operation: FieldEffectOperation,
-                             expected_state: str) -> None:
+    def _update_field_effect(
+        self, operation: FieldEffectOperation, expected_state: str
+    ) -> None:
         self._field_effects._update_field_effect(operation, expected_state)
 
-    def _record_field_effect_event(self, operation: FieldEffectOperation,
-                                   kind: str, occurred_at: int) -> None:
-        self._field_effects._append_field_effect_event(
-            operation, kind, occurred_at
-        )
+    def _record_field_effect_event(
+        self, operation: FieldEffectOperation, kind: str, occurred_at: int
+    ) -> None:
+        self._field_effects._append_field_effect_event(operation, kind, occurred_at)
 
     @property
     def authority(self) -> object | None:
@@ -826,7 +897,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def discovery_requires_qualification(self, action: PipelineAction) -> bool:
         return self._review_scans.discovery_requires_qualification(action)
 
-    def qualify_review_discovery(self, action: PipelineAction, qualified_at: int) -> bool:
+    def qualify_review_discovery(
+        self, action: PipelineAction, qualified_at: int
+    ) -> bool:
         return self._review_scans.qualify_review_discovery(action, qualified_at)
 
     def defer_for_target_connection(
@@ -834,7 +907,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     ) -> None:
         self._review_scans.defer_for_target_connection(action, code, updated_at)
 
-    def hold_target_connection(self, connection: str, code: str, updated_at: int) -> None:
+    def hold_target_connection(
+        self, connection: str, code: str, updated_at: int
+    ) -> None:
         self._review_scans.hold_target_connection(connection, code, updated_at)
 
     def begin_target_connection_check(
@@ -855,9 +930,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def claim_review_pipeline_work(
         self, work_id: str, claimed_at: int
     ) -> PipelineAction | None:
-        return self._review_preparation.claim_review_pipeline_work(
-            work_id, claimed_at
-        )
+        return self._review_preparation.claim_review_pipeline_work(work_id, claimed_at)
 
     def stage_provider_retry_successor(
         self, source_report_id: str, report: MetadataReport, staged_at: int
@@ -872,9 +945,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def provider_retry_complete(self, report_id: str) -> bool:
         return self._review_preparation.provider_retry_complete(report_id)
 
-    def completed_provider_retry_successor(
-        self, source_report_id: str
-    ) -> str | None:
+    def completed_provider_retry_successor(self, source_report_id: str) -> str | None:
         return self._review_preparation.completed_provider_retry_successor(
             source_report_id
         )
@@ -949,9 +1020,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         report: MetadataReport,
         currentness: Callable[[], bool],
         expected_current: str | None = None,
-        after_publication: Callable[[ReportRepository, MetadataReport], None] | None = None,
+        after_publication: Callable[[ReportRepository, MetadataReport], None]
+        | None = None,
         *,
-        expected_package: tuple[str | None, str, str | None, int | None, str] | None = None,
+        expected_package: tuple[str | None, str, str | None, int | None, str]
+        | None = None,
     ) -> str:
         return self._reports.publish(
             report,
@@ -1012,9 +1085,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def read_review_attention(
         self, search: str | None, limit: int, offset: int
     ) -> ReviewAttentionSnapshot:
-        return self._review_projections.read_review_attention(
-            search, limit, offset
-        )
+        return self._review_projections.read_review_attention(search, limit, offset)
 
     def list_current_review_case_documents(
         self,
@@ -1027,16 +1098,12 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             search, limit, offset, attention
         )
 
-    def count_current_review_cases(
-        self, search: str | None
-    ) -> tuple[int, int]:
+    def count_current_review_cases(self, search: str | None) -> tuple[int, int]:
         return self._review_cases.count_current_review_cases(search)
 
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[
-        tuple[str, str, str, int, str | None, ReviewFieldCause | None], ...
-    ]:
+    ) -> tuple[tuple[str, str, str, int, str | None, ReviewFieldCause | None], ...]:
         return self._review_cases.list_current_attention_documents(
             search, limit, offset
         )
@@ -1044,12 +1111,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def count_current_attention_fields(self, search: str | None) -> int:
         return self._review_cases.count_current_attention_fields(search)
 
-    def begin_login(
-        self, now: int, window_seconds: int, maximum_failures: int
-    ) -> bool:
-        return self._review_sessions.begin_login(
-            now, window_seconds, maximum_failures
-        )
+    def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
+        return self._review_sessions.begin_login(now, window_seconds, maximum_failures)
 
     def shadow_posture(self) -> str:
         return self._metadata_policy.shadow_posture()
@@ -1060,9 +1123,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def activate_qualified_automatic(self, updated_at: int) -> str:
         return self._metadata_policy.activate_qualified_automatic(updated_at)
 
-    def _schedule_current_shadow_work(
-        self, case: ReviewCase, updated_at: int
-    ) -> None:
+    def _schedule_current_shadow_work(self, case: ReviewCase, updated_at: int) -> None:
         self._review_preparation._schedule_current_shadow_work(case, updated_at)
 
     def _persisted_shadow_sources(
@@ -1294,13 +1355,15 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                         message = str(error)
                         category = (
                             message.removeprefix("category:")
-                            if message.startswith("category:") else None
+                            if message.startswith("category:")
+                            else None
                         )
                         if category:
                             categories = dict(current.category_suspensions)
                             categories[category] = "automatic_admission_failed"
                             safety = AutomaticSafetyState(
-                                current.paused, current.global_suspension,
+                                current.paused,
+                                current.global_suspension,
                                 tuple(sorted(categories.items())),
                             )
                             self._set_automatic_safety_state(safety, evaluated_at)
@@ -1309,7 +1372,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                                 continue
                         else:
                             safety = AutomaticSafetyState(
-                                current.paused, "automatic_authority_failed",
+                                current.paused,
+                                "automatic_authority_failed",
                                 current.category_suspensions,
                             )
                             self._set_automatic_safety_state(safety, evaluated_at)
@@ -1324,9 +1388,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         except ReviewAdmissionStaleError:
             try:
                 if staged_action is None and case_for_recovery is not None:
-                    self._schedule_current_shadow_work(
-                        case_for_recovery, evaluated_at
-                    )
+                    self._schedule_current_shadow_work(case_for_recovery, evaluated_at)
                 transaction.commit()
                 return "stale"
             except (sqlite3.Error, MetadataReportError) as error:
@@ -1353,9 +1415,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     ) -> None:
         self._decisions._record_automatic_outcomes(outcome, occurred_at)
 
-    def list_shadow_outcomes(
-        self, limit: int
-    ) -> tuple[tuple[str, int], ...]:
+    def list_shadow_outcomes(self, limit: int) -> tuple[tuple[str, int], ...]:
         if type(limit) is not int or not 1 <= limit <= 50:
             raise MetadataReportError("shadow outcome sample is unavailable")
         try:
@@ -1438,12 +1498,16 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def metadata_policy_transition(self) -> PolicyTransition | None:
         return self._metadata_policy.metadata_policy_transition()
 
-    def retry_metadata_policy_transition(self, transition_id: str, retried_at: int) -> PolicyTransition:
+    def retry_metadata_policy_transition(
+        self, transition_id: str, retried_at: int
+    ) -> PolicyTransition:
         return self._metadata_policy.retry_metadata_policy_transition(
             transition_id, retried_at
         )
 
-    def acknowledge_metadata_policy_transition(self, transition_id: str, acknowledged_at: int) -> PolicyTransition:
+    def acknowledge_metadata_policy_transition(
+        self, transition_id: str, acknowledged_at: int
+    ) -> PolicyTransition:
         return self._metadata_policy.acknowledge_metadata_policy_transition(
             transition_id, acknowledged_at
         )
@@ -1508,9 +1572,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             transaction.rollback()
             raise MetadataReportError("review session is unavailable") from error
 
-    def get_review_case_decisions(
-        self, review_case_id: str
-    ) -> tuple[str, ...]:
+    def get_review_case_decisions(self, review_case_id: str) -> tuple[str, ...]:
         return self._decisions.get_review_case_decisions(review_case_id)
 
     def current_cover_consideration(
@@ -1520,16 +1582,12 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             review_case_id, replay_digest
         )
 
-    def current_cover_consideration_document(
-        self, review_case_id: str
-    ) -> str | None:
+    def current_cover_consideration_document(self, review_case_id: str) -> str | None:
         return self._cover_considerations.current_cover_consideration_document(
             review_case_id
         )
 
-    def latest_cover_consideration_document(
-        self, review_case_id: str
-    ) -> str | None:
+    def latest_cover_consideration_document(self, review_case_id: str) -> str | None:
         return self._cover_considerations.latest_cover_consideration_document(
             review_case_id
         )
@@ -1652,40 +1710,53 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self, review_case_id: str, action: PipelineAction
     ) -> None:
         """Admit only the exact claimed staged case to package-internal projection."""
-        if action.lineage_checkpoint is None or action.policy_generation is None or self._connection.execute(
-            "SELECT 1 FROM review_preparation_work work "
-            "JOIN current_review_case_lineages staged ON "
-            "staged.connection_name=work.connection_name AND "
-            "staged.library_name=work.library_name AND "
-            "staged.item_id=work.item_id AND "
-            "staged.proposal_set_id=work.proposal_set_id AND "
-            "staged.report_id=work.report_id AND "
-            "staged.review_case_id=work.review_case_id "
-            "JOIN current_metadata_reports report ON "
-            "report.connection_name=staged.connection_name AND "
-            "report.library_name=staged.library_name AND "
-            "report.item_id=staged.item_id AND "
-            "report.report_id=staged.report_id "
-            "JOIN metadata_policy_state policy ON policy.singleton=1 "
-            "WHERE work.work_id=? AND work.stage='projection' "
-            "AND work.state='running' AND work.attempt=? "
-            "AND work.connection_name=? AND work.library_name=? "
-            "AND work.item_id=? AND work.report_id=? "
-            "AND work.proposal_set_id=? AND work.review_case_id=? "
-            "AND staged.checkpoint=? AND policy.generation=?",
-            (
-                action.action_id, action.attempt, action.connection,
-                action.library, action.item_id, action.report_id,
-                action.proposal_set_id, review_case_id, action.lineage_checkpoint,
-                action.policy_generation,
-            ),
-        ).fetchone() != (1,):
+        if (
+            action.lineage_checkpoint is None
+            or action.policy_generation is None
+            or self._connection.execute(
+                "SELECT 1 FROM review_preparation_work work "
+                "JOIN current_review_case_lineages staged ON "
+                "staged.connection_name=work.connection_name AND "
+                "staged.library_name=work.library_name AND "
+                "staged.item_id=work.item_id AND "
+                "staged.proposal_set_id=work.proposal_set_id AND "
+                "staged.report_id=work.report_id AND "
+                "staged.review_case_id=work.review_case_id "
+                "JOIN current_metadata_reports report ON "
+                "report.connection_name=staged.connection_name AND "
+                "report.library_name=staged.library_name AND "
+                "report.item_id=staged.item_id AND "
+                "report.report_id=staged.report_id "
+                "JOIN metadata_policy_state policy ON policy.singleton=1 "
+                "WHERE work.work_id=? AND work.stage='projection' "
+                "AND work.state='running' AND work.attempt=? "
+                "AND work.connection_name=? AND work.library_name=? "
+                "AND work.item_id=? AND work.report_id=? "
+                "AND work.proposal_set_id=? AND work.review_case_id=? "
+                "AND staged.checkpoint=? AND policy.generation=?",
+                (
+                    action.action_id,
+                    action.attempt,
+                    action.connection,
+                    action.library,
+                    action.item_id,
+                    action.report_id,
+                    action.proposal_set_id,
+                    review_case_id,
+                    action.lineage_checkpoint,
+                    action.policy_generation,
+                ),
+            ).fetchone()
+            != (1,)
+        ):
             raise ReviewAdmissionStaleError
 
     def _review_case_accepts_authority(self, review_case_id: str) -> bool:
         return self._review_cases._review_case_accepts_authority(review_case_id)
 
-    def current(self, connection: str, library: str, item: str, file_identity: str) -> str:
+    def current(
+        self, connection: str, library: str, item: str, file_identity: str
+    ) -> str:
         document = self.current_optional(connection, library, item, file_identity)
         if document is None:
             raise MetadataReportError("persisted current report is unavailable")
@@ -1704,26 +1775,37 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
 
     def pending_provider_recovery_outbox(
-        self, *, limit: int = 100,
+        self,
+        *,
+        limit: int = 100,
     ) -> tuple[tuple[object, ...], ...]:
         """Return bounded exact package cutovers awaiting recovery enqueue."""
         return self._recovery_outbox.pending_provider_recovery_outbox(limit=limit)
 
     def complete_provider_recovery_outbox(
-        self, outbox_id: str, *, delivered_at: int,
+        self,
+        outbox_id: str,
+        *,
+        delivered_at: int,
     ) -> None:
         """Mark one exact cutover delivered only after idempotent enqueue."""
         self._recovery_outbox.complete_provider_recovery_outbox(
             outbox_id, delivered_at=delivered_at
         )
 
-    def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None:
+    def current_optional(
+        self, connection: str, library: str, item: str, file_identity: str
+    ) -> str | None:
         return self._reports.current_optional(connection, library, item, file_identity)
 
-    def preview_digest(self, report_id: str, artifact_id: str, preview_variant: str) -> str:
+    def preview_digest(
+        self, report_id: str, artifact_id: str, preview_variant: str
+    ) -> str:
         return self._reports.preview_digest(report_id, artifact_id, preview_variant)
 
-    def preview_digest_for_artifact(self, artifact_id: str, preview_variant: str) -> str:
+    def preview_digest_for_artifact(
+        self, artifact_id: str, preview_variant: str
+    ) -> str:
         return self._reports.preview_digest_for_artifact(artifact_id, preview_variant)
 
     def artifact_is_referenced(self, digest: str) -> bool:
@@ -1919,7 +2001,14 @@ def open_shadow_preview_repository(path: Path) -> SQLiteShadowPreviewRepository:
             os.close(descriptor)
 
 
-def open_repository(path: Path, *, create: bool = True, expected_identity: tuple[int, int] | None = None, cross_thread: bool = False, authority: object | None = None) -> SQLiteMetadataReportRepository:
+def open_repository(
+    path: Path,
+    *,
+    create: bool = True,
+    expected_identity: tuple[int, int] | None = None,
+    cross_thread: bool = False,
+    authority: object | None = None,
+) -> SQLiteMetadataReportRepository:
     created = False
     descriptor = -1
     created_identity: tuple[int, int] | None = None
@@ -1933,7 +2022,10 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
         if os.path.lexists(path):
             descriptor = os.open(path, flags)
             information = os.fstat(descriptor)
-            if expected_identity is not None and (information.st_dev, information.st_ino) != expected_identity:
+            if (
+                expected_identity is not None
+                and (information.st_dev, information.st_ino) != expected_identity
+            ):
                 raise MetadataReportError("database authority changed")
             if not stat.S_ISREG(information.st_mode):
                 raise MetadataReportError("database path is invalid")
@@ -1941,9 +2033,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
             if sys.platform.startswith("linux"):
                 binding = _LinuxDatabaseBinding.create(path, descriptor, authority)
                 descriptor = -1
-                _validate_existing_read_only(
-                    binding.alias_path, binding.descriptor
-                )
+                _validate_existing_read_only(binding.alias_path, binding.descriptor)
                 binding.require_current()
             else:
                 _reject_database_sidecars(path)
@@ -1964,9 +2054,7 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
         else:
             raise MetadataReportError("database is unavailable")
         database_path = binding.alias_path if binding is not None else path
-        database_descriptor = (
-            binding.descriptor if binding is not None else descriptor
-        )
+        database_descriptor = binding.descriptor if binding is not None else descriptor
         connection = _connect_bound(
             database_path,
             database_descriptor,
@@ -1991,7 +2079,9 @@ def open_repository(path: Path, *, create: bool = True, expected_identity: tuple
         if binding is None:
             os.close(descriptor)
             descriptor = -1
-        repository = SQLiteMetadataReportRepository(connection, binding, (information.st_dev, information.st_ino))
+        repository = SQLiteMetadataReportRepository(
+            connection, binding, (information.st_dev, information.st_ino)
+        )
         connection = None
         binding = None
         return repository

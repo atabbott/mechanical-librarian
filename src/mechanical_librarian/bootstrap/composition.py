@@ -329,9 +329,12 @@ class _RearProvenanceFields(TypedDict):
 
 
 def compose_audiobookshelf_field_effect_target(
-    configuration: ApplicationConfiguration, artifact_store_path: Path,
-    connection_name: str, library_name: str,
-    *, credentials: dict[str, str] | None = None,
+    configuration: ApplicationConfiguration,
+    artifact_store_path: Path,
+    connection_name: str,
+    library_name: str,
+    *,
+    credentials: dict[str, str] | None = None,
     artifact_identity: tuple[int, int] | None = None,
 ) -> AudiobookshelfFieldEffectTarget:
     """Compose one field-local ABS target from an already validated snapshot.
@@ -349,12 +352,14 @@ def compose_audiobookshelf_field_effect_target(
     return AudiobookshelfFieldEffectTarget(
         client_factory=lambda: (
             target_client(
-                connection.endpoint, connection.secret_file,
+                connection.endpoint,
+                connection.secret_file,
                 configuration.limits.timeout_seconds,
             )
             if credentials is None
             else target_client_token(
-                connection.endpoint, credentials["target:" + connection.name],
+                connection.endpoint,
+                credentials["target:" + connection.name],
                 configuration.limits.timeout_seconds,
             )
         ),
@@ -366,13 +371,31 @@ def compose_audiobookshelf_field_effect_target(
 
 
 def compose_audiobookshelf_field_effect_capabilities(
-    configuration: ApplicationConfiguration, connection_name: str, library_name: str,
-    *, credentials: dict[str, str] | None = None,
+    configuration: ApplicationConfiguration,
+    connection_name: str,
+    library_name: str,
+    *,
+    credentials: dict[str, str] | None = None,
 ) -> AudiobookshelfFieldEffectCapabilities:
-    connection, library, _mount, _providers = configuration.select(connection_name, library_name)
+    connection, library, _mount, _providers = configuration.select(
+        connection_name, library_name
+    )
     return AudiobookshelfFieldEffectCapabilities(
-        client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds) if credentials is None else target_client_token(connection.endpoint, credentials["target:" + connection.name], configuration.limits.timeout_seconds),
-        endpoint=connection.endpoint, library_id=library.library_id,
+        client_factory=lambda: (
+            target_client(
+                connection.endpoint,
+                connection.secret_file,
+                configuration.limits.timeout_seconds,
+            )
+            if credentials is None
+            else target_client_token(
+                connection.endpoint,
+                credentials["target:" + connection.name],
+                configuration.limits.timeout_seconds,
+            )
+        ),
+        endpoint=connection.endpoint,
+        library_id=library.library_id,
         maximum_response_bytes=configuration.limits.target_response_bytes,
     )
 
@@ -380,34 +403,35 @@ def compose_audiobookshelf_field_effect_capabilities(
 def compose_continuous_guarded_application(
     configuration: ApplicationConfiguration,
     repository: SQLiteMetadataReportRepository,
-    database_path: Path, artifact_store_path: Path,
-    preparation: ReviewPreparationSupervisor, private_root: Path | None = None,
+    database_path: Path,
+    artifact_store_path: Path,
+    preparation: ReviewPreparationSupervisor,
+    private_root: Path | None = None,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
 ) -> ContinuousGuardedApplication:
     """Activate one configured Audiobookshelf instance across its libraries."""
     configured = tuple(
-        (library.connection, library.name)
-        for library in configuration.libraries
+        (library.connection, library.name) for library in configuration.libraries
     )
     if not configured:
         raise ConfigurationError("guarded application has no configured library")
-    artifact_identity = CoverArtifactStore(
-        artifact_store_path, create=True
-    ).identity
+    artifact_identity = CoverArtifactStore(artifact_store_path, create=True).identity
     targets = {
         key: compose_audiobookshelf_field_effect_target(
-            configuration, artifact_store_path, *key,
+            configuration,
+            artifact_store_path,
+            *key,
             artifact_identity=artifact_identity,
         )
         for key in configured
     }
     capabilities: dict[tuple[str, str], CapabilityObserver] = {
-        key: compose_audiobookshelf_field_effect_capabilities(
-            configuration, *key
-        )
+        key: compose_audiobookshelf_field_effect_capabilities(configuration, *key)
         for key in configured
     }
-    private_root = _private_root(database_path) if private_root is None else private_root
+    private_root = (
+        _private_root(database_path) if private_root is None else private_root
+    )
     recovery_root = private_root / "cover-recovery"
     recovery_root.mkdir(mode=0o700, exist_ok=True)
     recovery = PrivateCoverRecoveryStore(
@@ -462,8 +486,7 @@ def compose_field_effect_activity_projection(
 ) -> ContinuousGuardedApplication:
     """Compose the shared Activity projection without write-capable adapters."""
     configured = tuple(
-        (library.connection, library.name)
-        for library in configuration.libraries
+        (library.connection, library.name) for library in configuration.libraries
     )
     if not configured:
         raise ConfigurationError("guarded application has no configured library")
@@ -492,11 +515,15 @@ class _IsolatedEpubInspector:
     def __init__(self, artifacts: CoverArtifactStore) -> None:
         self._artifacts = artifacts
 
-    def inspect(self, mount: MediaMountConfiguration, relative_path: str, maximum_bytes: int) -> InspectionResult:
+    def inspect(
+        self, mount: MediaMountConfiguration, relative_path: str, maximum_bytes: int
+    ) -> InspectionResult:
         opened = None
         try:
             opened = open_local_media(mount.container_path, relative_path)
-            digest = sha256_descriptor(opened.descriptor, opened.length, maximum=maximum_bytes)
+            digest = sha256_descriptor(
+                opened.descriptor, opened.length, maximum=maximum_bytes
+            )
             source = Fingerprint("sha256", SchemaVersion("local-file-v1"), digest)
             report = run_epub_inspector_child(
                 opened.descriptor,
@@ -505,7 +532,10 @@ class _IsolatedEpubInspector:
                 logical_identity=digest,
             )
             inspection = report
-            if inspection.outcome not in {EpubInspectionOutcome.SUCCESS, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE}:
+            if inspection.outcome not in {
+                EpubInspectionOutcome.SUCCESS,
+                EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
+            }:
                 raise ItemInspectionError("EPUB inspection failed")
             claims: list[LocalClaim] = []
             for occurrence, fact in enumerate(inspection.facts, 1):
@@ -531,7 +561,11 @@ class _IsolatedEpubInspector:
                     role=fact.role,
                     # ``EpubRearProvenance.to_data`` emits exactly this dataclass'
                     # keyword shape, and ``__post_init__`` revalidates every value.
-                    rear_provenance=None if fact.rear_provenance is None else RearClaimProvenance(**cast("_RearProvenanceFields", fact.rear_provenance.to_data())),
+                    rear_provenance=None
+                    if fact.rear_provenance is None
+                    else RearClaimProvenance(
+                        **cast("_RearProvenanceFields", fact.rear_provenance.to_data())
+                    ),
                     occurrence=occurrence,
                     date_event=fact.date_event,
                     date_precision=fact.date_precision,
@@ -542,14 +576,33 @@ class _IsolatedEpubInspector:
                 try:
                     decoded = decode_cover(declared.data or b"")
                     try:
-                        self._artifacts.stage(decoded.artifact, declared.data or b"", decoded.preview)
-                        covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, CoverSourceState.RETRIEVED, decoded.artifact),)
+                        self._artifacts.stage(
+                            decoded.artifact, declared.data or b"", decoded.preview
+                        )
+                        covers = (
+                            CoverSource(
+                                declared.source_id,
+                                CoverSourceKind.EPUB,
+                                CoverSourceState.RETRIEVED,
+                                decoded.artifact,
+                            ),
+                        )
                     except ArtifactAuthorityError:
                         raise
                     except MetadataReportError:
-                        covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, CoverSourceState.UNAVAILABLE),)
+                        covers = (
+                            CoverSource(
+                                declared.source_id,
+                                CoverSourceKind.EPUB,
+                                CoverSourceState.UNAVAILABLE,
+                            ),
+                        )
                 except CoverDecodeRejected as error:
-                    covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, error.state),)
+                    covers = (
+                        CoverSource(
+                            declared.source_id, CoverSourceKind.EPUB, error.state
+                        ),
+                    )
                 except CoverDecodeTimeout:
                     covers = (
                         CoverSource(
@@ -561,7 +614,11 @@ class _IsolatedEpubInspector:
                     )
             else:
                 assert declared.state is not None
-                covers = (CoverSource(declared.source_id, CoverSourceKind.EPUB, declared.state),)
+                covers = (
+                    CoverSource(
+                        declared.source_id, CoverSourceKind.EPUB, declared.state
+                    ),
+                )
             return InspectionResult(
                 digest,
                 tuple(claims),
@@ -578,11 +635,22 @@ class _IsolatedEpubInspector:
             if opened is not None:
                 os.close(opened.descriptor)
 
-    def unchanged(self, mount: MediaMountConfiguration, relative_path: str, expected_digest: str, maximum_bytes: int) -> bool:
+    def unchanged(
+        self,
+        mount: MediaMountConfiguration,
+        relative_path: str,
+        expected_digest: str,
+        maximum_bytes: int,
+    ) -> bool:
         opened = None
         try:
             opened = open_local_media(mount.container_path, relative_path)
-            return sha256_descriptor(opened.descriptor, opened.length, maximum=maximum_bytes) == expected_digest
+            return (
+                sha256_descriptor(
+                    opened.descriptor, opened.length, maximum=maximum_bytes
+                )
+                == expected_digest
+            )
         except (LocalMediaError, OSError, ValueError):
             return False
         finally:
@@ -598,47 +666,102 @@ class _CoverEvidenceObserver:
     acquisition or validation outcome.
     """
 
-    def __init__(self, target: TargetCoverReader, artifacts: CoverArtifactStore, providers: tuple[ProviderConnectionConfiguration, ...] = ()) -> None:
+    def __init__(
+        self,
+        target: TargetCoverReader,
+        artifacts: CoverArtifactStore,
+        providers: tuple[ProviderConnectionConfiguration, ...] = (),
+    ) -> None:
         self._target = target
         self._artifacts = artifacts
         self._providers = {value.name: value for value in providers}
 
-    def observe(self, target: TargetSnapshot, providers: tuple[ProviderObservation, ...], local_sources: tuple[CoverSource, ...], descriptors: tuple[ProviderCoverDescriptor, ...] = (), aggregate_deadline: float | None = None) -> tuple[CoverSource, ...]:
+    def observe(
+        self,
+        target: TargetSnapshot,
+        providers: tuple[ProviderObservation, ...],
+        local_sources: tuple[CoverSource, ...],
+        descriptors: tuple[ProviderCoverDescriptor, ...] = (),
+        aggregate_deadline: float | None = None,
+    ) -> tuple[CoverSource, ...]:
         now = time.monotonic()
         aggregate = now + 60.0 if aggregate_deadline is None else aggregate_deadline
         deadline = CoverDeadline(aggregate, min(now + 20.0, aggregate))
         if target.cover is None:
-            source = CoverSource(cover_source_id(CoverSourceKind.ABS, "absent"), CoverSourceKind.ABS, CoverSourceState.ABSENT)
-            return (source, *local_sources, *self._provider_covers(providers, descriptors, deadline=deadline))
+            source = CoverSource(
+                cover_source_id(CoverSourceKind.ABS, "absent"),
+                CoverSourceKind.ABS,
+                CoverSourceState.ABSENT,
+            )
+            return (
+                source,
+                *local_sources,
+                *self._provider_covers(providers, descriptors, deadline=deadline),
+            )
         source_id = cover_source_id(CoverSourceKind.ABS, target.cover.identity)
         try:
-            original = self._target.read_cover(target.cover, deadline=deadline.aggregate_deadline)
+            original = self._target.read_cover(
+                target.cover, deadline=deadline.aggregate_deadline
+            )
             if original is None:
-                source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.ABSENT)
+                source = CoverSource(
+                    source_id, CoverSourceKind.ABS, CoverSourceState.ABSENT
+                )
             else:
                 decoded = decode_cover(
                     original,
                     deadline=deadline.aggregate_deadline,
                 )
                 self._artifacts.stage(decoded.artifact, original, decoded.preview)
-                source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.RETRIEVED, decoded.artifact)
+                source = CoverSource(
+                    source_id,
+                    CoverSourceKind.ABS,
+                    CoverSourceState.RETRIEVED,
+                    decoded.artifact,
+                )
         except CoverTimeoutError:
-            source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.TIMEOUT, timeout_scope="attempted")
+            source = CoverSource(
+                source_id,
+                CoverSourceKind.ABS,
+                CoverSourceState.TIMEOUT,
+                timeout_scope="attempted",
+            )
         except CoverDecodeTimeout:
-            source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.TIMEOUT, timeout_scope="attempted")
+            source = CoverSource(
+                source_id,
+                CoverSourceKind.ABS,
+                CoverSourceState.TIMEOUT,
+                timeout_scope="attempted",
+            )
         except CoverSourceChangedError:
-            source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.SOURCE_CHANGED)
+            source = CoverSource(
+                source_id, CoverSourceKind.ABS, CoverSourceState.SOURCE_CHANGED
+            )
         except CoverDecodeRejected as error:
             source = CoverSource(source_id, CoverSourceKind.ABS, error.state)
         except CoverReadError as error:
-            source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState(error.state))
+            source = CoverSource(
+                source_id, CoverSourceKind.ABS, CoverSourceState(error.state)
+            )
         except ArtifactAuthorityError:
             raise
         except MetadataReportError:
-            source = CoverSource(source_id, CoverSourceKind.ABS, CoverSourceState.UNAVAILABLE)
-        return (source, *local_sources, *self._provider_covers(providers, descriptors, deadline=deadline))
+            source = CoverSource(
+                source_id, CoverSourceKind.ABS, CoverSourceState.UNAVAILABLE
+            )
+        return (
+            source,
+            *local_sources,
+            *self._provider_covers(providers, descriptors, deadline=deadline),
+        )
 
-    def _provider_covers(self, observations: tuple[ProviderObservation, ...], descriptors: tuple[ProviderCoverDescriptor, ...], *, deadline: CoverDeadline) -> tuple[CoverSource, ...]:
+    def _provider_covers(
+        self,
+        observations: tuple[ProviderObservation, ...],
+        descriptors: tuple[ProviderCoverDescriptor, ...],
+        *,
+        deadline: CoverDeadline,
+    ) -> tuple[CoverSource, ...]:
         admitted, truncations = self._admit_provider_descriptors(
             observations, descriptors
         )
@@ -658,9 +781,7 @@ class _CoverEvidenceObserver:
                 )
                 continue
             for value in values:
-                results.append(
-                    self._remote(value, deadline)
-                )
+                results.append(self._remote(value, deadline))
         return (*results, *truncations)
 
     def _admit_provider_descriptors(
@@ -757,7 +878,9 @@ class _CoverEvidenceObserver:
             ),
         )
 
-    def _remote(self, descriptor: ProviderCoverDescriptor, deadline: CoverDeadline) -> CoverSource:
+    def _remote(
+        self, descriptor: ProviderCoverDescriptor, deadline: CoverDeadline
+    ) -> CoverSource:
         source_id = descriptor.source_id
         kind = descriptor.kind
         if descriptor.terminal_state is not None:
@@ -775,7 +898,9 @@ class _CoverEvidenceObserver:
                 provenance=descriptor.provenance,
             )
         try:
-            if descriptor.wait is not None and not descriptor.wait(deadline.aggregate_deadline):
+            if descriptor.wait is not None and not descriptor.wait(
+                deadline.aggregate_deadline
+            ):
                 return CoverSource(
                     source_id,
                     kind,
@@ -820,10 +945,16 @@ class _CoverEvidenceObserver:
             )
         except RemoteCoverError as error:
             message = str(error)
-            state = CoverSourceState.UNSAFE_REMOTE if "unsafe" in message else CoverSourceState.UNSUPPORTED_FORMAT if "format" in message else CoverSourceState.OVERSIZED if "oversized" in message else CoverSourceState.UNAVAILABLE
-            return CoverSource(
-                source_id, kind, state, provenance=descriptor.provenance
+            state = (
+                CoverSourceState.UNSAFE_REMOTE
+                if "unsafe" in message
+                else CoverSourceState.UNSUPPORTED_FORMAT
+                if "format" in message
+                else CoverSourceState.OVERSIZED
+                if "oversized" in message
+                else CoverSourceState.UNAVAILABLE
             )
+            return CoverSource(source_id, kind, state, provenance=descriptor.provenance)
         except CoverDecodeRejected as error:
             return CoverSource(
                 source_id,
@@ -841,11 +972,30 @@ class _CoverEvidenceObserver:
                 provenance=descriptor.provenance,
             )
 
-def run_metadata_report(config_path: Path, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None) -> str:
+
+def run_metadata_report(
+    config_path: Path,
+    database_path: Path,
+    artifact_store_path: Path,
+    connection_name: str,
+    library_name: str,
+    item: str,
+    file_index: int,
+    expected_file_identity: str | None = None,
+) -> str:
     # Validate the separately authorized private store before credentials or
     # network clients are constructed.  It must already be operator-created.
     configuration = load_configuration_file(config_path)
-    return run_metadata_report_loaded(configuration, database_path, artifact_store_path, connection_name, library_name, item, file_index, expected_file_identity)
+    return run_metadata_report_loaded(
+        configuration,
+        database_path,
+        artifact_store_path,
+        connection_name,
+        library_name,
+        item,
+        file_index,
+        expected_file_identity,
+    )
 
 
 class _NonClosingRepository:
@@ -863,14 +1013,50 @@ class _NonClosingRepository:
         return None
 
 
-def run_metadata_report_loaded(configuration: ApplicationConfiguration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity: tuple[int, int] | None = None, artifact_identity: tuple[int, int] | None = None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True, repository_authority: object | None = None, pipeline_repository: SQLiteMetadataReportRepository | None = None, review_claim_next: bool = False, timing: StageTimer | None = None) -> str:
+def run_metadata_report_loaded(
+    configuration: ApplicationConfiguration,
+    database_path: Path,
+    artifact_store_path: Path,
+    connection_name: str,
+    library_name: str,
+    item: str,
+    file_index: int,
+    expected_file_identity: str | None = None,
+    credentials: dict[str, str] | None = None,
+    repository_identity: tuple[int, int] | None = None,
+    artifact_identity: tuple[int, int] | None = None,
+    open_library_pacer: OpenLibraryPacer | None = None,
+    hardcover_pacer: HardcoverPacer | None = None,
+    review_action: PipelineAction | None = None,
+    recover_artifacts: bool = True,
+    repository_authority: object | None = None,
+    pipeline_repository: SQLiteMetadataReportRepository | None = None,
+    review_claim_next: bool = False,
+    timing: StageTimer | None = None,
+) -> str:
     """Compose one report solely from an already validated configuration snapshot."""
-    connection, library, mount, provider_configs = configuration.select(connection_name, library_name)
+    connection, library, mount, provider_configs = configuration.select(
+        connection_name, library_name
+    )
     if mount is None:
         raise UnsupportedMediaError("unsupported media")
-    artifacts = CoverArtifactStore(artifact_store_path, create=False, expected_identity=artifact_identity)
+    artifacts = CoverArtifactStore(
+        artifact_store_path, create=False, expected_identity=artifact_identity
+    )
     target = AudiobookshelfItemReader(
-        client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds) if credentials is None else target_client_token(connection.endpoint, credentials["target:" + connection.name], configuration.limits.timeout_seconds),
+        client_factory=lambda: (
+            target_client(
+                connection.endpoint,
+                connection.secret_file,
+                configuration.limits.timeout_seconds,
+            )
+            if credentials is None
+            else target_client_token(
+                connection.endpoint,
+                credentials["target:" + connection.name],
+                configuration.limits.timeout_seconds,
+            )
+        ),
         endpoint=connection.endpoint,
         library_id=library.library_id,
         service_path=mount.service_path,
@@ -889,6 +1075,7 @@ def run_metadata_report_loaded(configuration: ApplicationConfiguration, database
         hardcover_pacer = HardcoverPacer()
     bindings: list[ProviderBinding] = []
     for provider in provider_configs:
+
         def factory(
             value: ProviderConnectionConfiguration = provider,
         ) -> MetadataProvider:
@@ -915,7 +1102,14 @@ def run_metadata_report_loaded(configuration: ApplicationConfiguration, database
                     raise MetadataReportError("provider credential unavailable")
                 instance = HardcoverMetadataProvider(
                     value.name,
-                    hardcover_client(value.secret_file, configuration.limits.timeout_seconds) if credentials is None else hardcover_client_token(credentials["provider:" + value.name], configuration.limits.timeout_seconds),
+                    hardcover_client(
+                        value.secret_file, configuration.limits.timeout_seconds
+                    )
+                    if credentials is None
+                    else hardcover_client_token(
+                        credentials["provider:" + value.name],
+                        configuration.limits.timeout_seconds,
+                    ),
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     pacer=hardcover_pacer,
@@ -923,7 +1117,9 @@ def run_metadata_report_loaded(configuration: ApplicationConfiguration, database
             elif value.adapter == "open_library" and value.contact_email is not None:
                 instance = OpenLibraryMetadataProvider(
                     value.name,
-                    open_library_client(value.contact_email, configuration.limits.timeout_seconds),
+                    open_library_client(
+                        value.contact_email, configuration.limits.timeout_seconds
+                    ),
                     configuration.limits.provider_response_bytes,
                     configuration.limits.timeout_seconds,
                     pacer=open_library_pacer,
@@ -931,11 +1127,11 @@ def run_metadata_report_loaded(configuration: ApplicationConfiguration, database
             else:
                 raise MetadataReportError("provider configuration is invalid")
             return instance
+
         bindings.append(
-            ProviderBinding(
-                provider.name, provider.enabled, factory, provider.adapter
-            )
+            ProviderBinding(provider.name, provider.enabled, factory, provider.adapter)
         )
+
     def repository_factory() -> ReportRepository:
         repository: _NonClosingRepository | SQLiteMetadataReportRepository = (
             _NonClosingRepository(pipeline_repository)
@@ -963,7 +1159,9 @@ def run_metadata_report_loaded(configuration: ApplicationConfiguration, database
         library=library,
         mount=mount,
         limits=configuration.limits,
-        cover_observer=_CoverEvidenceObserver(target, artifacts, tuple(provider_configs)),
+        cover_observer=_CoverEvidenceObserver(
+            target, artifacts, tuple(provider_configs)
+        ),
         publication_authority_guard=artifacts.require_current,
         publication_receipt=(
             None
@@ -984,6 +1182,7 @@ def run_metadata_report_loaded(configuration: ApplicationConfiguration, database
         timing=timing,
     )
     return service.run(item, file_index, expected_file_identity)
+
 
 def _require_report_current_loaded(
     configuration: ApplicationConfiguration,
@@ -1040,9 +1239,7 @@ def create_proposal_set_loaded(
 
     def current(report: MetadataReport) -> bool:
         try:
-            return _require_report_current_loaded(
-                configuration, artifacts, report
-            )
+            return _require_report_current_loaded(configuration, artifacts, report)
         except (CurrentnessError, TargetNotFoundError) as error:
             raise ProposalCurrentnessError("proposal report is stale") from error
 
@@ -1083,9 +1280,12 @@ def admit_review_case_loaded(
         try:
             if not _require_report_current_loaded(configuration, artifacts, report):
                 return False
-            return proposal.resolved_policy_id == _current_resolved_policy(
-                configuration, repository, report.target.library
-            ).resolved_id
+            return (
+                proposal.resolved_policy_id
+                == _current_resolved_policy(
+                    configuration, repository, report.target.library
+                ).resolved_id
+            )
         except (CurrentnessError, TargetNotFoundError):
             return False
 
@@ -1126,6 +1326,7 @@ def create_review_pipeline(
             finally:
                 recovery_repository.close()
             artifacts_recovered = True
+
     mounts = {item.name: item for item in configuration.mounts}
     clients = {item.name: item for item in configuration.connections}
     reader = AudiobookshelfCatalogueReader(
@@ -1157,13 +1358,17 @@ def create_review_pipeline(
     discovery_lock = threading.Lock()
     if provider_recovery is None:
         raise ConfigurationError("provider recovery store is unavailable")
+
     def repository_factory() -> SQLiteMetadataReportRepository:
         return open_repository(
             database_path, create=False, authority=database_authority
         )
 
     def retry_resolver(
-        connection_name: str, library_name: str, name: str, adapter: str,
+        connection_name: str,
+        library_name: str,
+        name: str,
+        adapter: str,
         generation: int,
     ) -> ConfiguredProviderRetry | None:
         if generation != configuration.provider_recovery_generation:
@@ -1172,7 +1377,14 @@ def create_review_pipeline(
             _, _, _, configured = configuration.select(connection_name, library_name)
         except ConfigurationError:
             return None
-        provider = next((value for value in configured if value.name == name and value.adapter == adapter), None)
+        provider = next(
+            (
+                value
+                for value in configured
+                if value.name == name and value.adapter == adapter
+            ),
+            None,
+        )
         if provider is None:
             return None
         if not provider.enabled:
@@ -1182,15 +1394,43 @@ def create_review_pipeline(
             value: ProviderConnectionConfiguration = provider,
         ) -> MetadataProvider:
             if value.adapter == "google_books":
-                api_key = None if value.secret_file is None else read_secret(value.secret_file)
-                return GoogleBooksMetadataProvider(value.name, google_books_client(configuration.limits.timeout_seconds), configuration.limits.provider_response_bytes, configuration.limits.timeout_seconds, api_key=api_key)
+                api_key = (
+                    None
+                    if value.secret_file is None
+                    else read_secret(value.secret_file)
+                )
+                return GoogleBooksMetadataProvider(
+                    value.name,
+                    google_books_client(configuration.limits.timeout_seconds),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    api_key=api_key,
+                )
             if value.adapter == "hardcover" and value.secret_file is not None:
-                return HardcoverMetadataProvider(value.name, hardcover_client(value.secret_file, configuration.limits.timeout_seconds), configuration.limits.provider_response_bytes, configuration.limits.timeout_seconds, pacer=hardcover_pacer)
+                return HardcoverMetadataProvider(
+                    value.name,
+                    hardcover_client(
+                        value.secret_file, configuration.limits.timeout_seconds
+                    ),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    pacer=hardcover_pacer,
+                )
             if value.adapter == "open_library" and value.contact_email is not None:
-                return OpenLibraryMetadataProvider(value.name, open_library_client(value.contact_email, configuration.limits.timeout_seconds), configuration.limits.provider_response_bytes, configuration.limits.timeout_seconds, pacer=open_library_pacer)
+                return OpenLibraryMetadataProvider(
+                    value.name,
+                    open_library_client(
+                        value.contact_email, configuration.limits.timeout_seconds
+                    ),
+                    configuration.limits.provider_response_bytes,
+                    configuration.limits.timeout_seconds,
+                    pacer=open_library_pacer,
+                )
             raise ProviderRetrySuccessorError("provider retry configuration changed")
 
-        return ConfiguredProviderRetry(ProviderBinding(name, True, factory, adapter), adapter, generation)
+        return ConfiguredProviderRetry(
+            ProviderBinding(name, True, factory, adapter), adapter, generation
+        )
 
     pipeline_holder: dict[str, ReviewPreparationPipeline] = {}
 
@@ -1202,8 +1442,13 @@ def create_review_pipeline(
         """Build one successor observation's adapters from validated selections."""
         artifacts = CoverArtifactStore(artifact_store_path, create=False)
         target = AudiobookshelfItemReader(
-            client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds),
-            endpoint=connection.endpoint, library_id=library.library_id,
+            client_factory=lambda: target_client(
+                connection.endpoint,
+                connection.secret_file,
+                configuration.limits.timeout_seconds,
+            ),
+            endpoint=connection.endpoint,
+            library_id=library.library_id,
             service_path=mount.service_path,
             maximum_bytes=configuration.limits.target_response_bytes,
             timeout_seconds=configuration.limits.timeout_seconds,
@@ -1228,12 +1473,15 @@ def create_review_pipeline(
 
     recovery_cancel = threading.Event()
     recovery_runner = ScopedProviderRecoveryRunner(
-        store=provider_recovery, generation=configuration.provider_recovery_generation,
+        store=provider_recovery,
+        generation=configuration.provider_recovery_generation,
         retry=activation.retry_member,
         classify_failure=_classify_provider_recovery_failure,
-        clock=lambda: int(time.time()), cancelled=recovery_cancel.is_set,
+        clock=lambda: int(time.time()),
+        cancelled=recovery_cancel.is_set,
         blocked_targets=lambda: frozenset(
-            condition.connection for condition in pipeline_holder["pipeline"].connection_conditions()
+            condition.connection
+            for condition in pipeline_holder["pipeline"].connection_conditions()
             if condition.state in {"paused", "checking"}
         ),
     )
@@ -1255,7 +1503,8 @@ def create_review_pipeline(
         return open_catalogue(catalogue_path, create=create)
 
     def generate_report(
-        action: PipelineAction, claim_next: bool,
+        action: PipelineAction,
+        claim_next: bool,
         pipeline_repository: ReviewPipelineRepository,
     ) -> str:
         return run_metadata_report_loaded(
@@ -1272,7 +1521,9 @@ def create_review_pipeline(
             review_action=action,
             recover_artifacts=False,
             repository_authority=database_authority,
-            pipeline_repository=cast("SQLiteMetadataReportRepository", pipeline_repository),
+            pipeline_repository=cast(
+                "SQLiteMetadataReportRepository", pipeline_repository
+            ),
             review_claim_next=claim_next,
             timing=timing,
         )
@@ -1369,7 +1620,9 @@ def reopen_metadata_report(database_path: Path, report_id: str) -> str:
         repository.close()
 
 
-def reopen_current_metadata_report(database_path: Path, connection: str, library: str, item: str, file_identity: str) -> str:
+def reopen_current_metadata_report(
+    database_path: Path, connection: str, library: str, item: str, file_identity: str
+) -> str:
     repository = open_repository(database_path, create=False)
     try:
         return repository.current(connection, library, item, file_identity)
@@ -1377,12 +1630,20 @@ def reopen_current_metadata_report(database_path: Path, connection: str, library
         repository.close()
 
 
-def reopen_cover_preview(database_path: Path, artifact_store_path: Path, report_id: str, artifact_id: str, preview_variant: str) -> bytes:
+def reopen_cover_preview(
+    database_path: Path,
+    artifact_store_path: Path,
+    report_id: str,
+    artifact_id: str,
+    preview_variant: str,
+) -> bytes:
     """Read the one report-bound preview; originals and discovery stay unavailable."""
     repository = open_repository(database_path, create=False)
     try:
         digest = repository.preview_digest(report_id, artifact_id, preview_variant)
-        return CoverArtifactStore(artifact_store_path, create=False).read_preview_digest(digest)
+        return CoverArtifactStore(
+            artifact_store_path, create=False
+        ).read_preview_digest(digest)
     finally:
         repository.close()
 
@@ -1402,9 +1663,7 @@ def create_proposal_set(
     )
 
 
-def reopen_proposal_set(
-    database_path: Path, proposal_set_id: str
-) -> str:
+def reopen_proposal_set(database_path: Path, proposal_set_id: str) -> str:
     repository = open_repository(database_path, create=False)
     try:
         return GetProposalSet(repository).run(proposal_set_id)
@@ -1435,9 +1694,7 @@ def reopen_review_case(database_path: Path, review_case_id: str) -> str:
         repository.close()
 
 
-def preview_shadow_decision_case(
-    database_path: Path, review_case_id: str
-) -> str:
+def preview_shadow_decision_case(database_path: Path, review_case_id: str) -> str:
     repository = open_shadow_preview_repository(database_path)
     try:
         return preview_shadow_decision(repository, review_case_id).to_json()
@@ -1445,13 +1702,26 @@ def preview_shadow_decision_case(
         repository.close()
 
 
-def run_catalogue(config_path: Path, database_path: Path, action: str, connection: str | None, library: str | None, library_id: str | None, selector: str | None, limit: int = 100) -> str:
+def run_catalogue(
+    config_path: Path,
+    database_path: Path,
+    action: str,
+    connection: str | None,
+    library: str | None,
+    library_id: str | None,
+    selector: str | None,
+    limit: int = 100,
+) -> str:
     """Refresh or inspect the one current catalogue through explicit composition."""
     configuration = load_configuration_file(config_path)
     mounts = {item.name: item for item in configuration.mounts}
     clients = {item.name: item for item in configuration.connections}
     reader = AudiobookshelfCatalogueReader(
-        client_factory=lambda name: target_client(clients[name].endpoint, clients[name].secret_file, configuration.limits.timeout_seconds),
+        client_factory=lambda name: target_client(
+            clients[name].endpoint,
+            clients[name].secret_file,
+            configuration.limits.timeout_seconds,
+        ),
         mounts=mounts,
         maximum_bytes=configuration.limits.target_response_bytes,
         timeout_seconds=configuration.limits.timeout_seconds,
@@ -1460,18 +1730,57 @@ def run_catalogue(config_path: Path, database_path: Path, action: str, connectio
     try:
         service = RefreshCurrentCatalogue(reader, repository)
         if action == "refresh":
-            return json.dumps({"generation": service.refresh(configuration)}, separators=(",", ":"))
-        exact = None if action == "list" else (connection or "", library or "", library_id or "", selector or "")
-        entries = service.inspect(configuration, exact=exact, facet=selector if action == "list" else None, limit=limit)
-        values = [{"connection": item.connection, "library": item.library, "library_id": item.library_id, "item": item.item_id, "title": item.title, "authors": list(item.authors), "ebook": item.has_ebook, "audio": item.has_audio, "classification": item.classification, "eligible": item.eligible} for item in entries]
+            return json.dumps(
+                {"generation": service.refresh(configuration)}, separators=(",", ":")
+            )
+        exact = (
+            None
+            if action == "list"
+            else (connection or "", library or "", library_id or "", selector or "")
+        )
+        entries = service.inspect(
+            configuration,
+            exact=exact,
+            facet=selector if action == "list" else None,
+            limit=limit,
+        )
+        values = [
+            {
+                "connection": item.connection,
+                "library": item.library,
+                "library_id": item.library_id,
+                "item": item.item_id,
+                "title": item.title,
+                "authors": list(item.authors),
+                "ebook": item.has_ebook,
+                "audio": item.has_audio,
+                "classification": item.classification,
+                "eligible": item.eligible,
+            }
+            for item in entries
+        ]
         if action == "get" and values:
-            values[0].update({"updated_at": entries[0].updated_at, "file_identity": entries[0].file_identity, "format": entries[0].format, "service_path": entries[0].service_path, "mount": entries[0].mount})
+            values[0].update(
+                {
+                    "updated_at": entries[0].updated_at,
+                    "file_identity": entries[0].file_identity,
+                    "format": entries[0].format,
+                    "service_path": entries[0].service_path,
+                    "mount": entries[0].mount,
+                }
+            )
         return json.dumps(values, ensure_ascii=False, separators=(",", ":"))
     finally:
         repository.close()
 
 
-def preview_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, requested: tuple[tuple[str, str, str, str], ...], all_eligible: bool) -> str:
+def preview_batch(
+    config_path: Path,
+    catalogue_path: Path,
+    manifest_path: Path,
+    requested: tuple[tuple[str, str, str, str], ...],
+    all_eligible: bool,
+) -> str:
     """Freeze one selected current-catalogue view before any report authority."""
     configuration = load_configuration_file(config_path)
     fingerprint = batch_catalogue_fingerprint(configuration)
@@ -1485,9 +1794,7 @@ def preview_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, 
         configuration, selections, all_eligible=all_eligible
     )
     providers = _batch_provider_names(configuration, selections)
-    provider_adapters = _batch_provider_adapters(
-        configuration, selections, providers
-    )
+    provider_adapters = _batch_provider_adapters(configuration, selections, providers)
     raw = batch_manifest(
         snapshot,
         batch_fingerprint(configuration, selections),
@@ -1497,22 +1804,50 @@ def preview_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, 
     )
     create_batch_manifest(manifest_path, raw)
     value = cast("_Manifest", parse_manifest(raw))
-    return json.dumps({"id": value["id"], "entries": len(selections), **value["call_maxima"]}, separators=(",", ":"))
+    return json.dumps(
+        {"id": value["id"], "entries": len(selections), **value["call_maxima"]},
+        separators=(",", ":"),
+    )
 
 
 def inspect_batch(manifest_path: Path) -> str:
     value = cast("_Manifest", parse_manifest(read_batch_manifest(manifest_path)))
-    return json.dumps({"id": value["id"], "entries": len(value["entries"]), **value["call_maxima"]}, separators=(",", ":"))
+    return json.dumps(
+        {"id": value["id"], "entries": len(value["entries"]), **value["call_maxima"]},
+        separators=(",", ":"),
+    )
 
 
-def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, manifest_id: str, database_path: Path, artifact_store_path: Path, emit: Callable[[dict[str, object]], None]) -> bool:
+def run_batch(
+    config_path: Path,
+    catalogue_path: Path,
+    manifest_path: Path,
+    manifest_id: str,
+    database_path: Path,
+    artifact_store_path: Path,
+    emit: Callable[[dict[str, object]], None],
+) -> bool:
     """Run the immutable foreground list serially; no resume or hidden state."""
     value = cast("_Manifest", parse_manifest(read_batch_manifest(manifest_path)))
     if value["id"] != manifest_id:
         raise BatchError("batch manifest is unavailable")
     configuration = load_configuration_file(config_path)
-    selections = tuple(BatchSelection(raw["connection"], raw["library"], raw["library_id"], raw["item"], raw["file_identity"], raw["classification"], raw["eligible"]) for raw in value["entries"])
-    if batch_fingerprint(configuration, selections) != value["batch_config_fingerprint"]:
+    selections = tuple(
+        BatchSelection(
+            raw["connection"],
+            raw["library"],
+            raw["library_id"],
+            raw["item"],
+            raw["file_identity"],
+            raw["classification"],
+            raw["eligible"],
+        )
+        for raw in value["entries"]
+    )
+    if (
+        batch_fingerprint(configuration, selections)
+        != value["batch_config_fingerprint"]
+    ):
         raise BatchError("batch configuration changed")
     actual_providers = _batch_provider_names(configuration, selections)
     if actual_providers != tuple(value["providers"]):
@@ -1529,7 +1864,10 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
         snapshot = repository.snapshot(batch_catalogue_fingerprint(configuration))
     finally:
         repository.close()
-    if snapshot.generation != value["catalogue_generation"] or snapshot.fingerprint != value["catalogue_fingerprint"]:
+    if (
+        snapshot.generation != value["catalogue_generation"]
+        or snapshot.fingerprint != value["catalogue_fingerprint"]
+    ):
         raise BatchError("catalogue requires refresh")
     artifacts = CoverArtifactStore(artifact_store_path, create=False)
     artifact_identity = artifacts.identity
@@ -1540,13 +1878,14 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
         repository.close()
     selected_connections = {selection.connection for selection in selections}
     selected_provider_names = set(value["providers"])
-    credentials = _load_batch_credentials(configuration, selected_connections, selected_provider_names)
+    credentials = _load_batch_credentials(
+        configuration, selected_connections, selected_provider_names
+    )
     open_library_pacer = (
         OpenLibraryPacer() if "open_library" in actual_adapters else None
     )
-    hardcover_pacer = (
-        HardcoverPacer() if "hardcover" in actual_adapters else None
-    )
+    hardcover_pacer = HardcoverPacer() if "hardcover" in actual_adapters else None
+
     def current_entry(
         generation: int, fingerprint: str, key: tuple[str, str, str, str]
     ) -> CatalogueEntry | None:
@@ -1555,6 +1894,7 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
             return repository.current_entry(generation, fingerprint, key)
         finally:
             repository.close()
+
     def report(entry: CatalogueEntry) -> tuple[str, tuple[ProviderStatus, ...]]:
         serialized = run_metadata_report_loaded(
             configuration,
@@ -1572,13 +1912,41 @@ def run_batch(config_path: Path, catalogue_path: Path, manifest_path: Path, mani
             hardcover_pacer=hardcover_pacer,
         )
         from mechanical_librarian.domain.metadata_report import MetadataReport
+
         report = MetadataReport.from_json(serialized)
         return report.report_id, tuple(item.status for item in report.providers)
-    return ForegroundBatchRun(snapshot=snapshot, selections=selections, projection=lambda: batch_fingerprint(configuration, selections), expected_projection=value["batch_config_fingerprint"], current_entry=current_entry, report=report, emit=emit).run()
+
+    return ForegroundBatchRun(
+        snapshot=snapshot,
+        selections=selections,
+        projection=lambda: batch_fingerprint(configuration, selections),
+        expected_projection=value["batch_config_fingerprint"],
+        current_entry=current_entry,
+        report=report,
+        emit=emit,
+    ).run()
 
 
-def _batch_provider_names(configuration: ApplicationConfiguration, selections: tuple[BatchSelection, ...]) -> tuple[str, ...]:
-    return tuple(sorted({name for selection in selections for library in configuration.libraries if library.name == selection.library and library.connection == selection.connection for name in library.provider_connections if next(provider for provider in configuration.providers if provider.name == name).enabled}))
+def _batch_provider_names(
+    configuration: ApplicationConfiguration, selections: tuple[BatchSelection, ...]
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                name
+                for selection in selections
+                for library in configuration.libraries
+                if library.name == selection.library
+                and library.connection == selection.connection
+                for name in library.provider_connections
+                if next(
+                    provider
+                    for provider in configuration.providers
+                    if provider.name == name
+                ).enabled
+            }
+        )
+    )
 
 
 def _batch_provider_adapters(
@@ -1609,16 +1977,28 @@ def _require_open_library_batch_envelope(
             for name in library.provider_connections
         )
     else:
-        enabled = "open_library" in _batch_provider_adapters(
-            configuration, selections
-        )
+        enabled = "open_library" in _batch_provider_adapters(configuration, selections)
     if enabled and (all_eligible or len(selections) > 5):
         raise BatchError("Open Library batch selection is invalid")
 
 
-def _load_batch_credentials(configuration: ApplicationConfiguration, selected_connections: set[str], selected_provider_names: set[str]) -> dict[str, str]:
-    values = {"target:" + item.name: read_secret(item.secret_file) for item in configuration.connections if item.name in selected_connections}
-    values.update({"provider:" + item.name: read_secret(item.secret_file) for item in configuration.providers if item.name in selected_provider_names and item.secret_file is not None})
+def _load_batch_credentials(
+    configuration: ApplicationConfiguration,
+    selected_connections: set[str],
+    selected_provider_names: set[str],
+) -> dict[str, str]:
+    values = {
+        "target:" + item.name: read_secret(item.secret_file)
+        for item in configuration.connections
+        if item.name in selected_connections
+    }
+    values.update(
+        {
+            "provider:" + item.name: read_secret(item.secret_file)
+            for item in configuration.providers
+            if item.name in selected_provider_names and item.secret_file is not None
+        }
+    )
     return values
 
 
@@ -1654,14 +2034,18 @@ def run_review_server(
             from mechanical_librarian.application.operations import StageTimer
 
             timing = StageTimer(timing_store)
-            provider_recovery = SQLiteProviderRecoveryStore.open(private_root / "provider-recovery.sqlite")
+            provider_recovery = SQLiteProviderRecoveryStore.open(
+                private_root / "provider-recovery.sqlite"
+            )
             preparation = create_review_pipeline(
                 configuration,
                 database_path,
                 catalogue_path,
                 artifact_store_path,
                 repository.authority,
-                timing, private_root, provider_recovery,
+                timing,
+                private_root,
+                provider_recovery,
             )
             field_application = (
                 compose_continuous_guarded_application(
@@ -1669,19 +2053,25 @@ def run_review_server(
                     repository,
                     database_path,
                     artifact_store_path,
-                    preparation, private_root, provider_recovery,
+                    preparation,
+                    private_root,
+                    provider_recovery,
                 )
                 if getattr(configuration, "libraries", ())
                 else None
             )
-            support_bundle = SupportBundle(((
-                "runtime",
-                lambda: {
-                    "deployment": "single_container",
-                    "schema_state": "exact_current",
-                    "timing_records": len(timing_store.list()),
-                },
-            ),))
+            support_bundle = SupportBundle(
+                (
+                    (
+                        "runtime",
+                        lambda: {
+                            "deployment": "single_container",
+                            "schema_state": "exact_current",
+                            "timing_records": len(timing_store.list()),
+                        },
+                    ),
+                )
+            )
             cover_considerations = _compose_cover_considerations(
                 repository, artifact_store_path, review
             )
@@ -1734,7 +2124,8 @@ def run_review_server(
 
 
 def _compose_cover_considerations(
-    repository: SQLiteMetadataReportRepository, artifact_store_path: Path,
+    repository: SQLiteMetadataReportRepository,
+    artifact_store_path: Path,
     review: ReviewWebConfiguration,
 ) -> CoverConsiderationService:
     artifacts: CoverArtifactStore | None = None
@@ -1749,7 +2140,9 @@ def _compose_cover_considerations(
         reviewer_profile = (
             None
             if review.cover_reviewer_profile_file is None
-            else read_contained_reviewer_profile(Path(review.cover_reviewer_profile_file))
+            else read_contained_reviewer_profile(
+                Path(review.cover_reviewer_profile_file)
+            )
         )
     except ContainedReviewerProcessError:
         # Never dispatch an unqualified profile. The shared consideration
@@ -1816,7 +2209,8 @@ def run_cover_review(
         field = next(
             # ``CaseDetailView.to_data`` always projects "fields" from its own
             # ``tuple[dict[str, object], ...]`` attribute.
-            value for value in cast("list[dict[str, object]]", detail["fields"])
+            value
+            for value in cast("list[dict[str, object]]", detail["fields"])
             if value["destination"] == "cover"
         )
         consideration = field["cover_consideration"]
@@ -1827,9 +2221,7 @@ def run_cover_review(
             "no-action": "reject",
         }[action]
         selected_value: dict[str, object] | None = (
-            None
-            if action != "select"
-            else {"kind": "cover", "value": artifact_id}
+            None if action != "select" else {"kind": "cover", "value": artifact_id}
         )
         if idempotency_key is None:
             raise ValueError("idempotency key is required")
@@ -1882,7 +2274,10 @@ def run_review_activity(
 
 
 def run_provider_recovery_once(
-    config_path: Path, database_path: Path, catalogue_path: Path, artifact_store_path: Path
+    config_path: Path,
+    database_path: Path,
+    catalogue_path: Path,
+    artifact_store_path: Path,
 ) -> None:
     """Run the same one-claim recovery path used by the preparation supervisor."""
     configuration = load_configuration_file(config_path)
@@ -1892,7 +2287,10 @@ def run_provider_recovery_once(
         _private_root(database_path) / "provider-recovery.sqlite"
     )
     supervisor = create_review_pipeline(
-        configuration, database_path, catalogue_path, artifact_store_path,
+        configuration,
+        database_path,
+        catalogue_path,
+        artifact_store_path,
         provider_recovery=store,
     )
     try:
@@ -1950,8 +2348,10 @@ def run_policy_preview(
 
 def main(argv: Sequence[str] | None = None) -> int:
     from mechanical_librarian.interfaces.cli import main as runtime_main
+
     return runtime_main(
-        argv, review_serve_runner=run_review_server,
+        argv,
+        review_serve_runner=run_review_server,
         policy_preview_runner=run_policy_preview,
         cover_review_runner=run_cover_review,
         review_activity_runner=run_review_activity,
@@ -1960,10 +2360,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 __all__ = [
-    "create_proposal_set", "inspect_batch", "main", "preview_batch",
-    "reopen_cover_preview", "reopen_current_metadata_report",
-    "reopen_metadata_report", "reopen_proposal_set", "admit_review_case", "reopen_review_case",
-    "preview_shadow_decision_case", "run_batch",
-    "run_catalogue", "run_cover_packet_reviewer",
+    "create_proposal_set",
+    "inspect_batch",
+    "main",
+    "preview_batch",
+    "reopen_cover_preview",
+    "reopen_current_metadata_report",
+    "reopen_metadata_report",
+    "reopen_proposal_set",
+    "admit_review_case",
+    "reopen_review_case",
+    "preview_shadow_decision_case",
+    "run_batch",
+    "run_catalogue",
+    "run_cover_packet_reviewer",
     "run_metadata_report",
 ]

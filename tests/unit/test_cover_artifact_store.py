@@ -24,9 +24,7 @@ def test_require_artifact_needs_the_original_and_preview() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         store = CoverArtifactStore(root)
-        artifact = CoverArtifact.create(
-            b"source", b"preview", "image/png", 1, 1
-        )
+        artifact = CoverArtifact.create(b"source", b"preview", "image/png", 1, 1)
         store.stage(artifact, b"source", b"preview")
         (root / artifact.original_digest).unlink()
         with pytest.raises(MetadataReportError):
@@ -37,9 +35,7 @@ def test_require_artifact_uses_the_cover_pipeline_bound() -> None:
     with tempfile.TemporaryDirectory() as directory:
         original = b"x" * (1_048_576 + 1)
         store = CoverArtifactStore(Path(directory))
-        artifact = CoverArtifact.create(
-            original, b"preview", "image/png", 1, 1
-        )
+        artifact = CoverArtifact.create(original, b"preview", "image/png", 1, 1)
         store.stage(artifact, original, b"preview")
         store.require_artifact(artifact)
 
@@ -57,15 +53,22 @@ def test_recovery_preserves_referenced_history_and_removes_staged_orphans() -> N
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         store = CoverArtifactStore(root)
-        retained = CoverArtifact.create(b"retained source", b"retained preview", "image/png", 1, 1)
-        orphan = CoverArtifact.create(b"orphan source", b"orphan preview", "image/png", 1, 1)
+        retained = CoverArtifact.create(
+            b"retained source", b"retained preview", "image/png", 1, 1
+        )
+        orphan = CoverArtifact.create(
+            b"orphan source", b"orphan preview", "image/png", 1, 1
+        )
         store.stage(retained, b"retained source", b"retained preview")
         store.stage(orphan, b"orphan source", b"orphan preview")
         store.recover_unreferenced(
-            lambda digest: digest in {
-                retained.original_digest,
-                retained.preview_digest,
-            }
+            lambda digest: (
+                digest
+                in {
+                    retained.original_digest,
+                    retained.preview_digest,
+                }
+            )
         )
         assert store.preview(retained) == b"retained preview"
         assert not (root / orphan.original_digest).exists()
@@ -76,7 +79,9 @@ def test_recovery_keeps_references_without_reading_or_hashing_them() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         store = CoverArtifactStore(root)
-        orphan = CoverArtifact.create(b"orphan source", b"orphan preview", "image/png", 1, 1)
+        orphan = CoverArtifact.create(
+            b"orphan source", b"orphan preview", "image/png", 1, 1
+        )
         store.stage(orphan, b"orphan source", b"orphan preview")
         # The recovery sweep must decide from directory entries alone. Forcing
         # the failure through the module's own read and hash primitives, rather
@@ -86,7 +91,9 @@ def test_recovery_keeps_references_without_reading_or_hashing_them() -> None:
         # collaborator.
         with (
             patch.object(
-                cover_artifacts.os, "read", side_effect=AssertionError("retained blob read")
+                cover_artifacts.os,
+                "read",
+                side_effect=AssertionError("retained blob read"),
             ),
             patch.object(
                 cover_artifacts.hashlib,

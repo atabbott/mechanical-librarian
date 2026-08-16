@@ -30,7 +30,9 @@ def run_cover_packet_reviewer(
         schema_payload.decode("utf-8", errors="strict"),
         image_payloads,
     )
-    reviewer = ContainedReviewerAdapter(load_contained_reviewer_profile_bytes(profile_payload))
+    reviewer = ContainedReviewerAdapter(
+        load_contained_reviewer_profile_bytes(profile_payload)
+    )
     return _invoke_cover(reviewer, profile_payload, request)
 
 
@@ -47,34 +49,40 @@ def _invoke_cover(
     result = reviewer.run_cover(request, record_dispatch)
     if set(dispatch) != {"pgid", "pid", "start_token"}:
         raise RuntimeError("contained reviewer did not record dispatch")
-    image_binding = canonical_json([
-        {"reference": value.reference, "sha256": value.digest}
-        for value in request.images
-    ])
-    execution_identity = canonical_json({
-        "profile_sha256": hashlib.sha256(profile_payload).hexdigest(),
-        "request_sha256": request.digest,
-    })
-    envelope = {
-            "execution_sha256": hashlib.sha256(execution_identity.encode()).hexdigest(),
-            "image_binding_sha256": hashlib.sha256(image_binding.encode()).hexdigest(),
-            "image_count": len(request.images),
-            "input_sha256": hashlib.sha256(request.input_document.encode()).hexdigest(),
+    image_binding = canonical_json(
+        [
+            {"reference": value.reference, "sha256": value.digest}
+            for value in request.images
+        ]
+    )
+    execution_identity = canonical_json(
+        {
+            "profile_sha256": hashlib.sha256(profile_payload).hexdigest(),
             "request_sha256": request.digest,
-            "result": json.loads(result.document),
-            "result_sha256": result.digest,
-            "schema_version": "cover-contained-reviewer-result-v1",
-            "status": "completed",
-            "attempt_evidence": [
-                {
-                    "diagnostic_bytes": attempt.diagnostic_bytes,
-                    "diagnostic_sha256": attempt.diagnostic_sha256,
-                    "dispatched": True,
-                    "failure_code": attempt.failure_code,
-                } if attempt.failure_code is not None else {"dispatched": True}
-                for attempt in result.attempts
-            ],
         }
+    )
+    envelope = {
+        "execution_sha256": hashlib.sha256(execution_identity.encode()).hexdigest(),
+        "image_binding_sha256": hashlib.sha256(image_binding.encode()).hexdigest(),
+        "image_count": len(request.images),
+        "input_sha256": hashlib.sha256(request.input_document.encode()).hexdigest(),
+        "request_sha256": request.digest,
+        "result": json.loads(result.document),
+        "result_sha256": result.digest,
+        "schema_version": "cover-contained-reviewer-result-v1",
+        "status": "completed",
+        "attempt_evidence": [
+            {
+                "diagnostic_bytes": attempt.diagnostic_bytes,
+                "diagnostic_sha256": attempt.diagnostic_sha256,
+                "dispatched": True,
+                "failure_code": attempt.failure_code,
+            }
+            if attempt.failure_code is not None
+            else {"dispatched": True}
+            for attempt in result.attempts
+        ],
+    }
     return json.dumps(
         envelope,
         ensure_ascii=False,

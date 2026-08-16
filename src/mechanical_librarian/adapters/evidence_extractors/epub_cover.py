@@ -152,11 +152,7 @@ def read_declared_cover(descriptor: int, expected_digest: str) -> DeclaredEpubCo
         ):
             raise ValueError
         data = bytes(cover)
-        if (
-            not data
-            or value["length"] != len(data)
-            or len(data) > _MAX_COVER_BYTES
-        ):
+        if not data or value["length"] != len(data) or len(data) > _MAX_COVER_BYTES:
             raise ValueError
         return DeclaredEpubCover(
             cover_source_id(CoverSourceKind.EPUB, value["identity"]),

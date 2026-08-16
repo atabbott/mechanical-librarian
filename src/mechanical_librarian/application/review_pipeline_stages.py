@@ -193,7 +193,9 @@ class ReviewPipelineStages:
                 repository.close()
 
     def extract(
-        self, pipeline_repository: ReviewPipelineRepository, action: PipelineAction,
+        self,
+        pipeline_repository: ReviewPipelineRepository,
+        action: PipelineAction,
         claim_next: bool,
     ) -> tuple[str, bool]:
         self._require_eligible_entry(action)
@@ -238,7 +240,8 @@ class ReviewPipelineStages:
             return ReviewPipelineError("authentication")
         provider = next(
             (
-                value for value in self._configuration.providers
+                value
+                for value in self._configuration.providers
                 if value.name == error.provider
             ),
             None,
@@ -246,10 +249,12 @@ class ReviewPipelineStages:
         if provider is None:
             return ReviewPipelineError("configuration")
         self._recovery_observer.observe_failure(
-            connection=provider.name, adapter=provider.adapter,
+            connection=provider.name,
+            adapter=provider.adapter,
             scope=action.library,
             generation=self._configuration.provider_recovery_generation,
-            failure="authentication", now=self._clock(),
+            failure="authentication",
+            now=self._clock(),
         )
         return ReviewPipelineError("authentication", root=error.provider)
 
@@ -260,7 +265,8 @@ class ReviewPipelineStages:
             cast("ReviewStageRepository", pipeline_repository).get(report_id)
         )
         record_provider_recovery_observations(
-            self._recovery_observer, value,
+            self._recovery_observer,
+            value,
             adapters={
                 provider.name: provider.adapter
                 for provider in self._configuration.providers
@@ -291,7 +297,8 @@ class ReviewPipelineStages:
         return result.status, result.review_case_id
 
     def project(
-        self, pipeline_repository: ReviewPipelineRepository,
+        self,
+        pipeline_repository: ReviewPipelineRepository,
         action: PipelineAction | str,
     ) -> str:
         try:
@@ -327,6 +334,7 @@ class ReviewPipelineStages:
         if action.review_case_id is None:
             return
         try:
+
             def snapshot() -> tuple[str, str, bool] | None:
                 return cast(
                     "ReviewStageRepository", pipeline_repository
@@ -372,14 +380,19 @@ class ReviewPipelineStages:
             raise ReviewPipelineError("persistence") from error
 
     def after_advance(
-        self, pipeline_repository: ReviewPipelineRepository, action: PipelineAction,
+        self,
+        pipeline_repository: ReviewPipelineRepository,
+        action: PipelineAction,
         output_id: str | None,
     ) -> None:
         """Drain the durable cutover outbox after every final advancement."""
-        if not (
-            action.stage == "projection"
-            or (action.stage == "admission" and output_id is None)
-        ) or action.report_id is None:
+        if (
+            not (
+                action.stage == "projection"
+                or (action.stage == "admission" and output_id is None)
+            )
+            or action.report_id is None
+        ):
             return
         self._drain_outbox(pipeline_repository)
 
@@ -389,7 +402,8 @@ class ReviewPipelineStages:
         self._probe_connection(
             connection,
             tuple(
-                value for value in self._configuration.libraries
+                value
+                for value in self._configuration.libraries
                 if value.connection == connection
             ),
         )

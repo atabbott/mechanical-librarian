@@ -69,7 +69,10 @@ def test_populated_subjective_fields_do_not_get_replaced() -> None:
             providers=(_provider("catalogue", "edition-1", (claim,)),),
         )
     )
-    assert ProposalOutcome.UNRESOLVED_CHOICE == _result(proposal_set, TargetDestination.GENRES).outcome
+    assert (
+        ProposalOutcome.UNRESOLVED_CHOICE
+        == _result(proposal_set, TargetDestination.GENRES).outcome
+    )
 
 
 @pytest.mark.parametrize(
@@ -93,7 +96,9 @@ def test_local_work_subtitle_and_provider_edition_subtitle_are_admitted(
         ),
         TargetDestination.SUBTITLE,
     )
-    assert {"Local work subtitle"} == {str(value.value.value) for value in local_result.alternatives}
+    assert {"Local work subtitle"} == {
+        str(value.value.value) for value in local_result.alternatives
+    }
     assert {ProposalScope.WORK} == {value.scope for value in local_result.alternatives}
     provider = _provider(
         name,
@@ -123,14 +128,16 @@ def test_local_work_subtitle_and_provider_edition_subtitle_are_admitted(
         ),
         TargetDestination.SUBTITLE,
     )
-    assert {"Edition subtitle"} == {str(value.value.value) for value in provider_result.alternatives}
-    assert {ProposalScope.EDITION} == {value.scope for value in provider_result.alternatives}
+    assert {"Edition subtitle"} == {
+        str(value.value.value) for value in provider_result.alternatives
+    }
+    assert {ProposalScope.EDITION} == {
+        value.scope for value in provider_result.alternatives
+    }
 
 
 def test_subtitle_scope_admission_is_source_sensitive() -> None:
-    local_edition = _local_subtitle(
-        "Wrong local edition subtitle", ClaimScope.EDITION
-    )
+    local_edition = _local_subtitle("Wrong local edition subtitle", ClaimScope.EDITION)
     provider_work = _provider(
         "open_library",
         "edition-1",
@@ -215,8 +222,12 @@ def test_equal_subtitles_keep_local_and_provider_scopes_separate() -> None:
         TargetDestination.SUBTITLE,
     )
     assert 2 == len(result.alternatives)
-    assert {ProposalScope.WORK, ProposalScope.EDITION} == {alternative.scope for alternative in result.alternatives}
-    assert all(len(alternative.correlations) == 1 for alternative in result.alternatives)
+    assert {ProposalScope.WORK, ProposalScope.EDITION} == {
+        alternative.scope for alternative in result.alternatives
+    }
+    assert all(
+        len(alternative.correlations) == 1 for alternative in result.alternatives
+    )
 
 
 def test_candidates_from_one_provider_are_one_correlation_group() -> None:
@@ -280,9 +291,7 @@ def test_partial_multiple_series_never_invents_pairing() -> None:
     )
     result = _result(
         evaluate_report(
-            _report(
-                providers=(_provider("catalogue", "edition-1", claims),)
-            )
+            _report(providers=(_provider("catalogue", "edition-1", claims),))
         ),
         TargetDestination.SERIES,
     )
@@ -352,9 +361,9 @@ def test_complete_multiple_series_preserves_exact_names_and_sequences() -> None:
     )
     assert ProposalOutcome.PROPOSE_CHANGE == result.outcome, result.to_data()
     assert (
-            TargetSeries("Reading Order", "2"),
-            TargetSeries("Publication Order", None),
-        ) == result.alternatives[0].value.value
+        TargetSeries("Reading Order", "2"),
+        TargetSeries("Publication Order", None),
+    ) == result.alternatives[0].value.value
 
 
 @pytest.mark.parametrize(
@@ -395,9 +404,7 @@ def test_unusable_series_sequence_withholds_the_source_aggregate(
                         TargetFieldState.MISSING,
                     ),
                 ),
-                providers=(
-                    _provider("catalogue", "edition-1", claims),
-                ),
+                providers=(_provider("catalogue", "edition-1", claims),),
             )
         ),
         TargetDestination.SERIES,
@@ -500,9 +507,7 @@ def test_series_without_sequence_remains_eligible() -> None:
                         (TargetSeries("reading order", None),),
                     ),
                 ),
-                providers=(
-                    _provider("open_library", "edition-1", claims),
-                ),
+                providers=(_provider("open_library", "edition-1", claims),),
             )
         ),
         TargetDestination.SERIES,
@@ -511,9 +516,7 @@ def test_series_without_sequence_remains_eligible() -> None:
 
 
 def test_cover_requires_one_complete_safe_artifact() -> None:
-    artifact = CoverArtifact.create(
-        b"cover", b"preview", "image/png", 10, 20
-    )
+    artifact = CoverArtifact.create(b"cover", b"preview", "image/png", 10, 20)
     source = CoverSource(
         cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:cover"),
         CoverSourceKind.HARDCOVER,
@@ -589,9 +592,7 @@ def test_verified_incumbent_and_alternative_require_owner_cover_choice() -> None
 
 
 def test_populated_unverified_cover_is_manual_only_with_typed_incumbent_gap() -> None:
-    artifact = CoverArtifact.create(
-        b"cover", b"preview", "image/png", 10, 20
-    )
+    artifact = CoverArtifact.create(b"cover", b"preview", "image/png", 10, 20)
     source = CoverSource(
         cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:cover"),
         CoverSourceKind.HARDCOVER,
@@ -616,21 +617,25 @@ def test_populated_unverified_cover_is_manual_only_with_typed_incumbent_gap() ->
     )
     assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
     assert (
-            "current_cover_unavailable",
-            "current_cover_unverified",
-            "owner_cover_choice_required",
-        ) == result.reasons
+        "current_cover_unavailable",
+        "current_cover_unverified",
+        "owner_cover_choice_required",
+    ) == result.reasons
     assert 1 == len(result.alternatives)
     assert result.selected_alternative_id is None
 
 
 def test_non_google_markup_description_is_ineligible() -> None:
-    claim = _claim("catalogue", "edition-1", ClaimKind.DESCRIPTION, "Summary <em>", scope=ClaimScope.WORK)
+    claim = _claim(
+        "catalogue",
+        "edition-1",
+        ClaimKind.DESCRIPTION,
+        "Summary <em>",
+        scope=ClaimScope.WORK,
+    )
     result = _result(
         evaluate_report(
-            _report(
-                providers=(_provider("catalogue", "edition-1", (claim,)),)
-            )
+            _report(providers=(_provider("catalogue", "edition-1", (claim,)),))
         ),
         TargetDestination.DESCRIPTION,
     )
@@ -708,9 +713,11 @@ def test_provider_subtitle_and_asin_require_exact_ebook_applicability(
         ),
         destination,
     )
-    assert (ProposalOutcome.PROPOSE_CHANGE
-            if applicability == "ebook"
-            else ProposalOutcome.INELIGIBLE) == result.outcome
+    assert (
+        ProposalOutcome.PROPOSE_CHANGE
+        if applicability == "ebook"
+        else ProposalOutcome.INELIGIBLE
+    ) == result.outcome
 
 
 _MATCHING_DESCRIPTION = "A complete description " + "x" * 700
@@ -777,9 +784,7 @@ def test_malformed_target_is_ineligible_even_with_evidence() -> None:
         evaluate_report(
             _report(
                 fields=fields,
-                providers=(
-                    _provider("catalogue", "edition-1", (claim,)),
-                ),
+                providers=(_provider("catalogue", "edition-1", (claim,)),),
             )
         ),
         TargetDestination.LANGUAGE,
@@ -797,9 +802,7 @@ def test_identifier_and_explicit_rules_do_not_manufacture_evidence() -> None:
         applicability="ebook",
     )
     fields = _fields(
-        isbn=TargetField(
-            TargetDestination.ISBN, TargetFieldState.MISSING
-        ),
+        isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING),
         explicit=TargetField(
             TargetDestination.EXPLICIT,
             TargetFieldState.VALUE,
@@ -816,7 +819,10 @@ def test_identifier_and_explicit_rules_do_not_manufacture_evidence() -> None:
     assert ProposalOutcome.DEFER == isbn_result.outcome
     assert () == isbn_result.alternatives
     assert "identifier_applicability_unresolved" in isbn_result.reasons
-    assert ProposalOutcome.DEFER == _result(proposal_set, TargetDestination.EXPLICIT).outcome
+    assert (
+        ProposalOutcome.DEFER
+        == _result(proposal_set, TargetDestination.EXPLICIT).outcome
+    )
 
 
 def test_explicit_local_ebook_isbn_remains_eligible() -> None:

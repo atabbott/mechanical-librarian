@@ -99,8 +99,12 @@ def _request(limits: EpubPackageLimits | None = None) -> EpubPackageRequest:
             ExternalItemId("book"),
         ),
         FileReference("books", "generated/book.epub"),
-        EpubPackageSource(len(value), lambda offset, size: value[offset : offset + size]),
-        Fingerprint("sha256", SchemaVersion("source-v1"), hashlib.sha256(value).hexdigest()),
+        EpubPackageSource(
+            len(value), lambda offset, size: value[offset : offset + size]
+        ),
+        Fingerprint(
+            "sha256", SchemaVersion("source-v1"), hashlib.sha256(value).hexdigest()
+        ),
         EpubPackageCapability.PACKAGE,
         EpubPackageLimits() if limits is None else limits,
         datetime.now(timezone.utc) + timedelta(seconds=30),
@@ -117,7 +121,9 @@ def _parse(xml: bytes, request: EpubPackageRequest | None = None) -> _Node:
 
 def _entries(*names: str) -> dict[str, _Entry]:
     return {
-        name: _Entry(name, name.encode(), 0x0808, zipfile.ZIP_DEFLATED, 0, 1, 1, 0, 0, 0, 0)
+        name: _Entry(
+            name, name.encode(), 0x0808, zipfile.ZIP_DEFLATED, 0, 1, 1, 0, 0, 0, 0
+        )
         for name in names
     }
 
@@ -164,7 +170,13 @@ def test_unsupported_root_element_is_rejected() -> None:
 
 
 def test_version_family_is_resolved_or_rejected() -> None:
-    for declared, expected in (("1.0", "2.0"), ("2.0", "2.0"), ("2.0.1", "2.0"), ("3.0", "3.0"), ("3.3", "3.0")):
+    for declared, expected in (
+        ("1.0", "2.0"),
+        ("2.0", "2.0"),
+        ("2.0.1", "2.0"),
+        ("3.0", "3.0"),
+        ("3.3", "3.0"),
+    ):
         frame = _package_frame(_request(), _parse(_package(version=declared)))
         assert (frame.version, frame.declared_version) == (expected, declared)
     for declared in ("", "4.0", "2", "3", "3.x", " 3.0", "03.0"):
@@ -211,7 +223,9 @@ def test_section_sequence_rejects_unsupported_top_level_shapes() -> None:
     epub2 = _parse(_package(version="2.0", trailing="<bindings/>"))
     with pytest.raises(_Rejected):
         _check_section_sequence(epub2, "2.0")
-    _check_section_sequence(_parse(_package(trailing="<guide/><bindings/><collection/>")), "3.0")
+    _check_section_sequence(
+        _parse(_package(trailing="<guide/><bindings/><collection/>")), "3.0"
+    )
 
 
 def test_repeated_section_group_is_rejected() -> None:
@@ -225,7 +239,10 @@ def test_repeated_section_group_is_rejected() -> None:
 
 
 def test_empty_manifest_or_spine_is_rejected() -> None:
-    for manifest, spine in ((" ", '<itemref idref="nav"/>'), ('<item id="a" href="a" media-type="x/y"/>', " ")):
+    for manifest, spine in (
+        (" ", '<itemref idref="nav"/>'),
+        ('<item id="a" href="a" media-type="x/y"/>', " "),
+    ):
         with pytest.raises(_Rejected) as raised:
             _package_frame(_request(), _parse(_package(manifest=manifest, spine=spine)))
         assert raised.value.outcome is EpubInspectionOutcome.MALFORMED
@@ -277,10 +294,19 @@ def test_malformed_xml_never_reaches_the_frame_stage() -> None:
 
 # Stage: archive-level warnings that never change acceptance.
 def test_noncanonical_inputs_are_reported_not_rejected() -> None:
-    frame = _package_frame(_request(), _parse(_package(version="3.3", trailing="<tours/>")))
+    frame = _package_frame(
+        _request(), _parse(_package(version="3.3", trailing="<tours/>"))
+    )
     entries = _entries("mimetype")
-    entries["mimetype"] = _Entry("mimetype", b"mimetype", 0x0001, zipfile.ZIP_STORED, 0, 1, 1, 0, 0, 0, 0)
-    assert sorted(_codes(_archive_shape_warnings(entries, frame, True))) == ["deprecated_tours", "noncanonical_mimetype", "noncanonical_package_version", "noncanonical_zip_flags"]
+    entries["mimetype"] = _Entry(
+        "mimetype", b"mimetype", 0x0001, zipfile.ZIP_STORED, 0, 1, 1, 0, 0, 0, 0
+    )
+    assert sorted(_codes(_archive_shape_warnings(entries, frame, True))) == [
+        "deprecated_tours",
+        "noncanonical_mimetype",
+        "noncanonical_package_version",
+        "noncanonical_zip_flags",
+    ]
 
 
 def test_canonical_archive_reports_nothing() -> None:
@@ -297,10 +323,10 @@ def test_every_opened_control_document_is_declared() -> None:
         _request(), _PACKAGE, root, rootfile, [("OEBPS/secret.xhtml", cipher)]
     )
     assert [declaration.kind for declaration in declarations] == [
-            EpubPackageDeclarationKind.ROOTFILE,
-            EpubPackageDeclarationKind.PACKAGE,
-            EpubPackageDeclarationKind.ENCRYPTION,
-        ]
+        EpubPackageDeclarationKind.ROOTFILE,
+        EpubPackageDeclarationKind.PACKAGE,
+        EpubPackageDeclarationKind.ENCRYPTION,
+    ]
 
 
 # Stage: the package's unambiguous id map.
@@ -337,9 +363,7 @@ def test_third_claim_on_a_withdrawn_id_stays_withdrawn() -> None:
 
 
 # Stage: metadata refinement resolution.
-def _frame_and_registry(
-    metadata: str
-) -> tuple[_PackageFrame, dict[str, _Node]]:
+def _frame_and_registry(metadata: str) -> tuple[_PackageFrame, dict[str, _Node]]:
     root = _parse(_package(metadata=metadata))
     registry, _warnings = _identifier_registry(_request(), _PACKAGE, root)
     return _package_frame(_request(), root), registry
@@ -351,7 +375,10 @@ def test_unusable_refinement_edges_are_reported() -> None:
         '<meta id="b" refines="#absent" property="role">aut</meta>'
     )
     codes = _codes(_refinement_cycle_warnings(frame.metadata_nodes, registry))
-    assert sorted(codes) == ["invalid_metadata_refinement", "unresolved_metadata_refinement"]
+    assert sorted(codes) == [
+        "invalid_metadata_refinement",
+        "unresolved_metadata_refinement",
+    ]
 
 
 def test_refinement_cycle_terminates_and_is_reported() -> None:
@@ -359,7 +386,9 @@ def test_refinement_cycle_terminates_and_is_reported() -> None:
         '<meta id="a" refines="#b" property="role">aut</meta>'
         '<meta id="b" refines="#a" property="role">aut</meta>'
     )
-    assert "cyclic_metadata_refinement" in _codes(_refinement_cycle_warnings(frame.metadata_nodes, registry))
+    assert "cyclic_metadata_refinement" in _codes(
+        _refinement_cycle_warnings(frame.metadata_nodes, registry)
+    )
 
 
 def test_title_refinement_to_a_non_title_is_reported_and_dropped() -> None:
@@ -389,7 +418,9 @@ def test_display_sequence_outside_its_range_is_reported_and_dropped() -> None:
             '<dc:title id="t">Book</dc:title>'
             f'<meta refines="#t" property="display-seq">{value}</meta>'
         )
-        _types, sequences, warnings = _title_refinements(frame.metadata_nodes, {}, registry)
+        _types, sequences, warnings = _title_refinements(
+            frame.metadata_nodes, {}, registry
+        )
         assert sequences == {}
         assert _codes(warnings) == ["invalid_metadata_refinement"]
 
@@ -416,7 +447,7 @@ def test_calibre_pairs_are_collected_without_projection() -> None:
 
 # Stage: Dublin Core and ``<meta>`` field projection.
 def _project(
-    metadata: str
+    metadata: str,
 ) -> tuple[list[EpubPackageObservation], list[EpubPackageWarning]]:
     root = _parse(_package(metadata=metadata))
     registry, _warnings = _identifier_registry(_request(), _PACKAGE, root)
@@ -446,7 +477,9 @@ def test_invalid_identifier_is_reported_without_an_inferred_scheme() -> None:
         "<dc:identifier>ISBN 978-0-000-00000-1</dc:identifier>"
     )
     assert "invalid_identifier" in _codes(warnings)
-    assert EpubPackageField.IDENTIFIER_SCHEME not in {observation.field for observation in observations}
+    assert EpubPackageField.IDENTIFIER_SCHEME not in {
+        observation.field for observation in observations
+    }
 
 
 def test_empty_dublin_core_element_contributes_nothing() -> None:
@@ -484,7 +517,14 @@ def test_oversize_value_is_replaced_by_a_digest_marker_not_truncated() -> None:
     registry, _warnings = _identifier_registry(_request(), _PACKAGE, root)
     refinements, _refinement_warnings = _metadata_refinements(frame, registry)
     observations, _observation_warnings = _dublin_core_observations(
-        _request(), _PACKAGE, frame, frame.metadata_nodes[0], "title", registry, {}, refinements
+        _request(),
+        _PACKAGE,
+        frame,
+        frame.metadata_nodes[0],
+        "title",
+        registry,
+        {},
+        refinements,
     )
     assert observations[0].raw_value.startswith("oversized-source-text-sha256:")
     assert "A" * 64 not in observations[0].raw_value
@@ -492,27 +532,39 @@ def test_oversize_value_is_replaced_by_a_digest_marker_not_truncated() -> None:
 
 def test_required_fields_are_measured_only_over_metadata_observations() -> None:
     observations, _warnings = _project("<dc:title>Book</dc:title>")
-    assert _codes(_required_field_warnings(observations, "3.0")) == ["incomplete_required_metadata", "missing_modification_date"]
+    assert _codes(_required_field_warnings(observations, "3.0")) == [
+        "incomplete_required_metadata",
+        "missing_modification_date",
+    ]
 
 
 def test_package_identity_infers_a_lone_identifier_and_reports_it() -> None:
-    root = _parse(_package(metadata='<dc:identifier id="pub">urn:uuid:not-a-uuid</dc:identifier>'))
+    root = _parse(
+        _package(metadata='<dc:identifier id="pub">urn:uuid:not-a-uuid</dc:identifier>')
+    )
     frame = _package_frame(_request(), root)
     registry, _warnings = _identifier_registry(_request(), _PACKAGE, root)
     refinements, _refinement_warnings = _metadata_refinements(frame, registry)
     identifiers: dict[str, _Node] = {}
-    _metadata_field_observations(_request(), _PACKAGE, frame, registry, identifiers, refinements)
+    _metadata_field_observations(
+        _request(), _PACKAGE, frame, registry, identifiers, refinements
+    )
     observations, warnings = _package_identity_observations(
         _request(), _PACKAGE, frame, root, identifiers
     )
     assert _codes(warnings) == ["inferred_package_identifier"]
-    assert [item.field for item in observations] == [EpubPackageField.PACKAGE_IDENTIFIER, EpubPackageField.PACKAGE_VERSION]
+    assert [item.field for item in observations] == [
+        EpubPackageField.PACKAGE_IDENTIFIER,
+        EpubPackageField.PACKAGE_VERSION,
+    ]
 
 
 def test_two_candidate_identifiers_are_never_guessed() -> None:
     root = _parse(_package())
     frame = _package_frame(_request(), root)
-    node = _parse(b"<dc:identifier xmlns:dc='http://purl.org/dc/elements/1.1/'>a</dc:identifier>")
+    node = _parse(
+        b"<dc:identifier xmlns:dc='http://purl.org/dc/elements/1.1/'>a</dc:identifier>"
+    )
     observations, warnings = _package_identity_observations(
         _request(), _PACKAGE, frame, root, {"a": node, "b": node}
     )
@@ -642,17 +694,19 @@ def test_media_overlay_must_be_a_local_smil_document() -> None:
 
 def test_epub3_requires_exactly_one_navigation_document() -> None:
     state = _Manifest()
-    assert _codes(_manifest_integrity(state, "3.0")) == ["invalid_navigation_declaration"]
+    assert _codes(_manifest_integrity(state, "3.0")) == [
+        "invalid_navigation_declaration"
+    ]
     state.nav_count = 1
     assert _manifest_integrity(state, "3.0") == []
     assert _manifest_integrity(_Manifest(), "2.0") == []
 
 
 def test_contradictory_cover_properties_are_reported() -> None:
-    state = _Manifest(
-        ids={"a": "d" * 64, "b": "e" * 64}, cover_ids=["a", "b"]
+    state = _Manifest(ids={"a": "d" * 64, "b": "e" * 64}, cover_ids=["a", "b"])
+    assert "contradictory_cover_declaration" in _codes(
+        _manifest_integrity(state, "2.0")
     )
-    assert "contradictory_cover_declaration" in _codes(_manifest_integrity(state, "2.0"))
 
 
 # Stage: spine slot and reading-order projection.
@@ -670,7 +724,8 @@ def _spine(
 
 def test_foreign_spine_element_is_dropped_not_rejected() -> None:
     declarations, warnings = _spine(
-        "<foreign/>", '<item id="a" href="a.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
+        "<foreign/>",
+        '<item id="a" href="a.xhtml" media-type="application/xhtml+xml" properties="nav"/>',
     )
     assert declarations == []
     assert _codes(warnings) == ["invalid_spine_item"]
@@ -702,7 +757,9 @@ def test_incompatible_media_type_occupies_a_slot_only() -> None:
         '<item id="a" href="a.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
         '<item id="b" href="b.png" media-type="image/png"/>',
     )
-    assert [declaration.kind for declaration in declarations] == [EpubPackageDeclarationKind.SPINE_SLOT]
+    assert [declaration.kind for declaration in declarations] == [
+        EpubPackageDeclarationKind.SPINE_SLOT
+    ]
     assert "invalid_spine_item" in _codes(warnings)
 
 
@@ -732,7 +789,9 @@ def test_toc_pointing_at_a_non_ncx_is_reported() -> None:
 
 
 def test_tours_in_epub3_are_reported_as_invalid() -> None:
-    frame = _frame(trailing="<tours><tour title='t'><site title='s' href='a.xhtml'/></tour></tours>")
+    frame = _frame(
+        trailing="<tours><tour title='t'><site title='s' href='a.xhtml'/></tour></tours>"
+    )
     warnings = _tours_warnings(_PACKAGE, frame, _entries("OEBPS/a.xhtml"), _Manifest())
     assert _codes(warnings) == ["invalid_deprecated_tours"]
 
@@ -749,9 +808,7 @@ def test_tour_site_escaping_the_container_rejects_the_package() -> None:
 
 
 def test_guide_bound_rejects_rather_than_truncating() -> None:
-    references = "".join(
-        '<reference type="text" href="a.xhtml" />' for _ in range(3)
-    )
+    references = "".join('<reference type="text" href="a.xhtml" />' for _ in range(3))
     root = _parse(_package(trailing=f"<guide>{references}</guide>"))
     with pytest.raises(_Rejected) as raised:
         _guide_declarations(
@@ -765,7 +822,9 @@ def test_guide_bound_rejects_rather_than_truncating() -> None:
 
 def test_guide_reference_escaping_the_container_rejects_the_package() -> None:
     root = _parse(
-        _package(trailing='<guide><reference type="text" href="../../etc/passwd"/></guide>')
+        _package(
+            trailing='<guide><reference type="text" href="../../etc/passwd"/></guide>'
+        )
     )
     with pytest.raises(_Rejected) as raised:
         _guide_declarations(_request(), _PACKAGE, root, _entries("OEBPS/a.xhtml"))
@@ -777,7 +836,7 @@ def test_unusable_guide_references_are_dropped_individually() -> None:
         _package(
             trailing=(
                 "<guide>"
-                '<foreign/>'
+                "<foreign/>"
                 '<reference href="a.xhtml"/>'
                 '<reference type="1bad" href="a.xhtml"/>'
                 '<reference type="text" href="absent.xhtml"/>'
@@ -795,14 +854,22 @@ def test_unusable_guide_references_are_dropped_individually() -> None:
 
 # Stage: encryption accounting.
 def test_encrypted_control_document_rejects_the_package() -> None:
-    for name in ("mimetype", "META-INF/container.xml", "META-INF/encryption.xml", _PACKAGE):
+    for name in (
+        "mimetype",
+        "META-INF/container.xml",
+        "META-INF/encryption.xml",
+        _PACKAGE,
+    ):
         with pytest.raises(_Rejected) as raised:
             _encryption_warnings(_PACKAGE, {name}, True)
         assert raised.value.outcome is EpubInspectionOutcome.ENCRYPTED
 
 
 def test_encrypted_content_is_only_reported() -> None:
-    assert _codes(_encryption_warnings(_PACKAGE, {"OEBPS/secret.xhtml"}, True)) == ["opaque_resource_encrypted", "encryption_declarations_present"]
+    assert _codes(_encryption_warnings(_PACKAGE, {"OEBPS/secret.xhtml"}, True)) == [
+        "opaque_resource_encrypted",
+        "encryption_declarations_present",
+    ]
     assert _encryption_warnings(_PACKAGE, set(), False) == []
 
 
@@ -828,7 +895,9 @@ def test_legacy_cover_is_only_consulted_without_a_current_one() -> None:
         _request(), _PACKAGE, frame, manifest
     )
     assert [item.field for item in observations] == [EpubPackageField.COVER]
-    assert [declaration.kind for declaration in declarations] == [EpubPackageDeclarationKind.COVER]
+    assert [declaration.kind for declaration in declarations] == [
+        EpubPackageDeclarationKind.COVER
+    ]
     assert warnings == []
 
 
@@ -851,9 +920,7 @@ def test_legacy_cover_naming_a_non_image_is_reported_and_dropped() -> None:
 # Stage: consistency warnings and final bounds accounting.
 def _observations(values: list[str]) -> list[EpubPackageObservation]:
     root = _parse(
-        _package(
-            metadata="".join(f"<dc:title>{value}</dc:title>" for value in values)
-        )
+        _package(metadata="".join(f"<dc:title>{value}</dc:title>" for value in values))
     )
     frame = _package_frame(_request(), root)
     registry, _warnings = _identifier_registry(_request(), _PACKAGE, root)
@@ -900,7 +967,10 @@ def test_repeated_warnings_collapse_and_a_flood_is_announced() -> None:
         for observation in _observations([f"T{index}" for index in range(40)])
     ]
     report = _bounded_report(request, [], [], flood, EpubPackageUsage())
-    assert [warning.code for warning in report.warnings] == ["ambiguous_title", "warning_occurrences_aggregated"]
+    assert [warning.code for warning in report.warnings] == [
+        "ambiguous_title",
+        "warning_occurrences_aggregated",
+    ]
 
 
 # Stages driven directly, with no parent stage between test and contract.
@@ -945,14 +1015,28 @@ def test_dublin_core_value_registers_only_a_resolvable_identifier() -> None:
     )
     registered: dict[str, _Node] = {}
     value, warnings = _dublin_core_value(
-        _request(), _PACKAGE, node, "identifier", "pub", {"pub": node}, registered, _no_refinements()
+        _request(),
+        _PACKAGE,
+        node,
+        "identifier",
+        "pub",
+        {"pub": node},
+        registered,
+        _no_refinements(),
     )
     assert registered == {"pub": node}
     assert value.inferred_scheme == "UUID"
     assert warnings == []
     withdrawn: dict[str, _Node] = {}
     _dublin_core_value(
-        _request(), _PACKAGE, node, "identifier", "pub", {}, withdrawn, _no_refinements()
+        _request(),
+        _PACKAGE,
+        node,
+        "identifier",
+        "pub",
+        {},
+        withdrawn,
+        _no_refinements(),
     )
     assert withdrawn == {}
 
@@ -975,7 +1059,10 @@ def test_calibre_series_projects_only_paired_values() -> None:
     observations, warnings = _calibre_series_observations(
         _request(), _PACKAGE, frame, refinements
     )
-    assert [item.field for item in observations] == [EpubPackageField.COLLECTION, EpubPackageField.COLLECTION_POSITION]
+    assert [item.field for item in observations] == [
+        EpubPackageField.COLLECTION,
+        EpubPackageField.COLLECTION_POSITION,
+    ]
     assert observations[1].citation.source_ordinal == 4
     assert _codes(warnings) == ["incomplete_calibre_series"]
 
@@ -1006,7 +1093,12 @@ def test_manifest_item_rejects_a_traversal_at_its_own_boundary() -> None:
         item = _item(f'id="a" href="{href}" media-type="application/xhtml+xml"')
         with pytest.raises(_Rejected) as raised:
             _manifest_item(
-                _request(), _PACKAGE, _entries("OEBPS/a.xhtml"), item, {"a": item}, _Manifest()
+                _request(),
+                _PACKAGE,
+                _entries("OEBPS/a.xhtml"),
+                item,
+                {"a": item},
+                _Manifest(),
             )
         assert raised.value.outcome is EpubInspectionOutcome.MALFORMED
 
@@ -1015,7 +1107,12 @@ def test_manifest_item_rejects_a_foreign_element_at_its_own_boundary() -> None:
     node = _parse(f'<foreign xmlns="{_OPF}" id="a"/>'.encode())
     with pytest.raises(_Rejected) as raised:
         _manifest_item(
-            _request(), _PACKAGE, _entries("OEBPS/a.xhtml"), node, {"a": node}, _Manifest()
+            _request(),
+            _PACKAGE,
+            _entries("OEBPS/a.xhtml"),
+            node,
+            {"a": node},
+            _Manifest(),
         )
     assert raised.value.outcome is EpubInspectionOutcome.MALFORMED
 
@@ -1026,13 +1123,18 @@ def test_manifest_item_accumulates_only_accepted_state() -> None:
         'id="a" href="a.xhtml" media-type="application/xhtml+xml" properties="nav"'
     )
     declarations, warnings = _manifest_item(
-        _request(), _PACKAGE, _entries("OEBPS/a.xhtml"), accepted, {"a": accepted}, state
+        _request(),
+        _PACKAGE,
+        _entries("OEBPS/a.xhtml"),
+        accepted,
+        {"a": accepted},
+        state,
     )
     assert warnings == []
     assert [declaration.kind for declaration in declarations] == [
-            EpubPackageDeclarationKind.MANIFEST_ITEM,
-            EpubPackageDeclarationKind.NAVIGATION,
-        ]
+        EpubPackageDeclarationKind.MANIFEST_ITEM,
+        EpubPackageDeclarationKind.NAVIGATION,
+    ]
     assert (set(state.ids), state.nav_count) == ({"a"}, 1)
     withdrawn = _item('id="b" href="a.xhtml" media-type="application/xhtml+xml"')
     declarations, warnings = _manifest_item(
@@ -1060,7 +1162,20 @@ def test_manifest_item_reports_a_repeated_resource_without_dropping_it() -> None
 # Free text almost never produces a traversal or a well-formed prefix mapping, so
 # both strategies below are built from the tokens an attacker would actually use.
 _SEGMENTS = st.sampled_from(
-    ["..", ".", "%2e%2e", "%2E%2e", "a", "OEBPS", "", "%2f", "%5c", "~", "a b", "\u202e"]
+    [
+        "..",
+        ".",
+        "%2e%2e",
+        "%2E%2e",
+        "a",
+        "OEBPS",
+        "",
+        "%2f",
+        "%5c",
+        "~",
+        "a b",
+        "\u202e",
+    ]
 )
 _REFERENCES = st.one_of(
     st.lists(_SEGMENTS, max_size=6).map("/".join),
@@ -1068,7 +1183,17 @@ _REFERENCES = st.one_of(
     st.text(max_size=80),
 )
 _PREFIX_TOKENS = st.sampled_from(
-    ["a:", "dcterms:", "1bad:", "a", ":", "", "https://example.invalid/v", "not-an-iri", "a b"]
+    [
+        "a:",
+        "dcterms:",
+        "1bad:",
+        "a",
+        ":",
+        "",
+        "https://example.invalid/v",
+        "not-an-iri",
+        "a b",
+    ]
 )
 _PREFIX_DECLARATIONS = st.one_of(
     st.lists(_PREFIX_TOKENS, max_size=6).map(" ".join),
@@ -1140,7 +1265,10 @@ def test_declared_reference_is_rejected_or_stays_inside_the_container() -> None:
             assert not resolved.startswith("../")
             assert "\\" not in resolved
             assert "/../" not in resolved
-            assert len(resolved.encode("utf-8")) <= EpubPackageLimits.MEMBER_NAME_UTF8_BYTES_HARD_CAP
+            assert (
+                len(resolved.encode("utf-8"))
+                <= EpubPackageLimits.MEMBER_NAME_UTF8_BYTES_HARD_CAP
+            )
 
     check()
     assert _TRAVERSAL_REFERENCE in rejected
@@ -1167,7 +1295,9 @@ def test_prefix_vocabulary_is_rejected_or_fully_validated() -> None:
         accepted.append(prefixes)
         assert len(prefixes) <= request.limits.prefix_mappings
         for name, iri in prefixes.items():
-            assert re.search(r"^[A-Za-z_][A-Za-z0-9_.-]{0,127}$", name), r"^[A-Za-z_][A-Za-z0-9_.-]{0,127}$"
+            assert re.search(r"^[A-Za-z_][A-Za-z0-9_.-]{0,127}$", name), (
+                r"^[A-Za-z_][A-Za-z0-9_.-]{0,127}$"
+            )
             assert " " not in iri
 
     check()

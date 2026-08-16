@@ -54,9 +54,7 @@ def _plan(repository, clock, destination, suffix, pre="old", desired="new"):
         None,
         None,
     )
-    consent = repository.current_field_effect_consent(
-        "primary", "books", destination
-    )
+    consent = repository.current_field_effect_consent("primary", "books", destination)
     value = FieldEffectPlan.create(
         connection="primary",
         library="books",
@@ -91,7 +89,9 @@ def _expect_rejected(service, plan_id, code):
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("phase", choices=("prepare", "recover"))
-    parser.add_argument("--root", type=Path, default=Path("/data/guarded-qualification"))
+    parser.add_argument(
+        "--root", type=Path, default=Path("/data/guarded-qualification")
+    )
     arguments = parser.parse_args()
     root = arguments.root
     database = root / "application.sqlite3"
@@ -117,45 +117,42 @@ def main() -> None:
             "primary",
             ("books",),
             (
-                "authors", "cover", "description", "genres", "isbn",
-                "language", "publisher", "subtitle", "title",
+                "authors",
+                "cover",
+                "description",
+                "genres",
+                "isbn",
+                "language",
+                "publisher",
+                "subtitle",
+                "title",
             ),
             1,
         )
 
         ready = _plan(repository, clock, "title", "0")
         claimed = _plan(repository, clock, "subtitle", "1")
-        repository.claim_field_effect(
-            claimed.plan_id, "planned", "1" * 64, clock()
-        )
+        repository.claim_field_effect(claimed.plan_id, "planned", "1" * 64, clock())
         verification = _plan(repository, clock, "authors", "9", ["old"], ["new"])
         repository.claim_field_effect(
             verification.plan_id, "planned", "9" * 64, clock()
         )
         applying = _plan(repository, clock, "publisher", "2")
-        repository.claim_field_effect(
-            applying.plan_id, "planned", "2" * 64, clock()
-        )
+        repository.claim_field_effect(applying.plan_id, "planned", "2" * 64, clock())
         repository.transition_field_effect(
             applying.plan_id, "claimed", "applying", clock()
         )
         reconciling = _plan(repository, clock, "description", "3")
-        repository.claim_field_effect(
-            reconciling.plan_id, "planned", "3" * 64, clock()
-        )
+        repository.claim_field_effect(reconciling.plan_id, "planned", "3" * 64, clock())
         repository.transition_field_effect(
             reconciling.plan_id, "claimed", "applying", clock()
         )
         repository.schedule_field_effect_reconciliation(
             reconciling.plan_id, "applying", clock()
         )
-        cover = _plan(
-            repository, clock, "cover", "4", None, "cover_" + "4" * 64
-        )
+        cover = _plan(repository, clock, "cover", "4", None, "cover_" + "4" * 64)
         store.capture(cover)
-        repository.claim_field_effect(
-            cover.plan_id, "planned", "4" * 64, clock()
-        )
+        repository.claim_field_effect(cover.plan_id, "planned", "4" * 64, clock())
         repository.transition_field_effect(
             cover.plan_id, "claimed", "applying", clock()
         )
@@ -169,9 +166,12 @@ def main() -> None:
         _expect_rejected(service, paused.plan_id, "paused")
         repository.set_field_effect_paused(False, clock())
         revoked = _plan(repository, clock, "genres", "6", ["old"], ["fiction"])
-        if repository.revoke_field_effect_authority(
-            revoked.authority.decision_id, clock()
-        ) != 1:
+        if (
+            repository.revoke_field_effect_authority(
+                revoked.authority.decision_id, clock()
+            )
+            != 1
+        ):
             raise RuntimeError("revocation failed")
         drained = _plan(repository, clock, "isbn", "7")
         target.seed(drained)
@@ -224,20 +224,27 @@ def main() -> None:
         "drained": "planned",
     }
     actual = {
-        name: service.status(plan_id).state
-        for name, plan_id in identifiers.items()
+        name: service.status(plan_id).state for name, plan_id in identifiers.items()
     }
     verification = service.status(identifiers["verification"])
-    if (actual != expected
-            or verification.failure != "target_failure"
-            or store.exists(identifiers["cover"])):
+    if (
+        actual != expected
+        or verification.failure != "target_failure"
+        or store.exists(identifiers["cover"])
+    ):
         raise RuntimeError("checkpoint recovery disagrees")
     repository.close()
-    print(json.dumps({
-        "checkpoints": actual,
-        "schema": "guarded-checkpoint-restart-v1",
-        "status": "passed",
-    }, sort_keys=True, separators=(",", ":")))
+    print(
+        json.dumps(
+            {
+                "checkpoints": actual,
+                "schema": "guarded-checkpoint-restart-v1",
+                "status": "passed",
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
 
 
 if __name__ == "__main__":

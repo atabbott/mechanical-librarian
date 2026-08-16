@@ -285,7 +285,10 @@ def test_closed_and_foreign_native_references_fail_safely(
 )
 def test_exact_label_is_the_exemption_authorization(label: str) -> None:
     result = evaluate_snapshot(
-        snapshot(body="## Tracking exemption\nVisible human rationale.", labels=["tracking-exempt"]),
+        snapshot(
+            body="## Tracking exemption\nVisible human rationale.",
+            labels=["tracking-exempt"],
+        ),
         REPOSITORY,
     )
     assert result.allowed
@@ -334,14 +337,18 @@ def _unsupported_metadata_cases() -> dict[str, tuple[dict, str]]:
     oversized_body = snapshot()
     oversized_body["data"]["repository"]["pullRequest"]["body"] = "x" * 262_145
     too_many = snapshot([issue(135)])
-    too_many["data"]["repository"]["pullRequest"]["allClosingIssues"]["totalCount"] = 101
-    too_many["data"]["repository"]["pullRequest"]["allClosingIssues"]["pageInfo"]["hasNextPage"] = True
+    too_many["data"]["repository"]["pullRequest"]["allClosingIssues"]["totalCount"] = (
+        101
+    )
+    too_many["data"]["repository"]["pullRequest"]["allClosingIssues"]["pageInfo"][
+        "hasNextPage"
+    ] = True
     truncated = snapshot([issue(135)])
     truncated["data"]["repository"]["pullRequest"]["allClosingIssues"]["totalCount"] = 2
     malformed = snapshot([issue(135)])
-    malformed["data"]["repository"]["pullRequest"]["allClosingIssues"]["nodes"] = [{
-        "number": "135", "state": "OPEN", "repository": {"nameWithOwner": REPOSITORY}
-    }]
+    malformed["data"]["repository"]["pullRequest"]["allClosingIssues"]["nodes"] = [
+        {"number": "135", "state": "OPEN", "repository": {"nameWithOwner": REPOSITORY}}
+    ]
     mismatch = snapshot([issue(135)])
     mismatch["data"]["repository"]["nameWithOwner"] = "another/repository"
     duplicate = snapshot([issue(135), issue(135)])
@@ -378,7 +385,9 @@ def _label_metadata_cases() -> dict[str, tuple[dict, str]]:
     malformed["data"]["repository"]["pullRequest"]["labels"]["nodes"] = [{"name": 12}]
     duplicate = snapshot(labels=["tracking-exempt", "tracking-exempt"])
     paginated = snapshot(labels=["tracking-exempt"])
-    paginated["data"]["repository"]["pullRequest"]["labels"]["pageInfo"]["hasNextPage"] = True
+    paginated["data"]["repository"]["pullRequest"]["labels"]["pageInfo"][
+        "hasNextPage"
+    ] = True
     truncated = snapshot(labels=["tracking-exempt"])
     truncated["data"]["repository"]["pullRequest"]["labels"]["totalCount"] = 2
     too_many = snapshot(labels=[f"label-{number}" for number in range(100)])

@@ -60,6 +60,7 @@ __all__ = [
     "RetrySuccessorObservers",
 ]
 
+
 class ProviderRecoveryRepository(ReportRepository, Protocol):
     """``ReportRepository`` plus the two retry-staging reads recovery performs."""
 
@@ -118,7 +119,9 @@ class ProviderRecoveryActivation:
         self._clock = clock
 
     def retry_member(
-        self, recovery_state: ProviderRecovery, job: ProviderRecoveryJob,
+        self,
+        recovery_state: ProviderRecovery,
+        job: ProviderRecoveryJob,
         heartbeat: Callable[[], None],
     ) -> None:
         owed, staged_report_id = self._admit(job)
@@ -146,11 +149,22 @@ class ProviderRecoveryActivation:
             )
             if completed_report_id is not None:
                 return False, None
-            package = repository.current_review_package(job.target_connection, job.library, job.item)
-            if package != (job.package_proposal_id, job.package_report_id, job.package_case_id, job.package_checkpoint, job.package_outcome):
+            package = repository.current_review_package(
+                job.target_connection, job.library, job.item
+            )
+            if package != (
+                job.package_proposal_id,
+                job.package_report_id,
+                job.package_case_id,
+                job.package_checkpoint,
+                job.package_outcome,
+            ):
                 raise CurrentnessError("target or media changed")
             current_document = repository.current_optional(
-                job.target_connection, job.library, job.item, job.file_identity,
+                job.target_connection,
+                job.library,
+                job.item,
+                job.file_identity,
             )
             if current_document is None:
                 return True, None
@@ -166,8 +180,10 @@ class ProviderRecoveryActivation:
             repository.close()
 
     def _generate_successor(
-        self, pipeline: ReviewPreparationPipeline | None,
-        recovery_state: ProviderRecovery, job: ProviderRecoveryJob,
+        self,
+        pipeline: ReviewPreparationPipeline | None,
+        recovery_state: ProviderRecovery,
+        job: ProviderRecoveryJob,
         heartbeat: Callable[[], None],
     ) -> str:
         connection, library, mount, _ = self._configuration.select(
@@ -178,12 +194,14 @@ class ProviderRecoveryActivation:
         target, inspector = self._observers(connection, library, mount)
         try:
             serialized = GenerateProviderRetrySuccessor(
-                target=target, inspector=inspector,
+                target=target,
+                inspector=inspector,
                 repository_factory=cast(
                     "Callable[[], ReportRepository]", self._repository_factory
                 ),
                 provider_resolver=self._provider_resolver,
-                mount=mount, limits=self._configuration.limits,
+                mount=mount,
+                limits=self._configuration.limits,
                 # The staged work id is deliberately discarded here; the seam
                 # types the hook as returning nothing.
                 after_publication=cast(
@@ -196,8 +214,10 @@ class ProviderRecoveryActivation:
                 ),
                 heartbeat=heartbeat,
             ).run(
-                job.source_report_id, tuple(json.loads(job.lane_ids)),
-                provider_name=job.connection, adapter=job.adapter,
+                job.source_report_id,
+                tuple(json.loads(job.lane_ids)),
+                provider_name=job.connection,
+                adapter=job.adapter,
                 generation=job.generation,
                 generation_woken=recovery_state.attempt == 0,
             )
@@ -223,8 +243,11 @@ class ProviderRecoveryActivation:
         return MetadataReport.from_json(serialized).report_id
 
     def _complete_successor(
-        self, pipeline: ReviewPreparationPipeline | None, job: ProviderRecoveryJob,
-        report_id: str, heartbeat: Callable[[], None],
+        self,
+        pipeline: ReviewPreparationPipeline | None,
+        job: ProviderRecoveryJob,
+        report_id: str,
+        heartbeat: Callable[[], None],
     ) -> None:
         if pipeline is None or not pipeline.run_recovery_successor(
             report_id, heartbeat
@@ -266,15 +289,27 @@ class ProviderRecoveryActivation:
         repository: ProviderRecoveryRepository,
         # The outbox query projects exactly this column order and nullability;
         # see ``pending_provider_recovery_outbox``.
-        row: tuple[str, str, str, str, str | None, str, str | None, int | None, str, int],
+        row: tuple[
+            str, str, str, str, str | None, str, str | None, int | None, str, int
+        ],
     ) -> None:
         (
-            outbox_id, target_connection, library_name, item_id,
-            proposal_id, report_id, case_id, checkpoint, outcome, created_at,
+            outbox_id,
+            target_connection,
+            library_name,
+            item_id,
+            proposal_id,
+            report_id,
+            case_id,
+            checkpoint,
+            outcome,
+            created_at,
         ) = row
         package = (proposal_id, report_id, case_id, checkpoint, outcome)
         current = repository.current_review_package(
-            target_connection, library_name, item_id,
+            target_connection,
+            library_name,
+            item_id,
         )
         if current == package:
             report = MetadataReport.from_json(repository.get(report_id))
@@ -285,11 +320,14 @@ class ProviderRecoveryActivation:
             ):
                 raise ReviewPipelineError("projection")
             jobs = provider_recovery_jobs(
-                report, package=package, configuration=self._configuration,
+                report,
+                package=package,
+                configuration=self._configuration,
                 scope=report.target.library,
             )
             if jobs:
                 self._enqueue(jobs)
         repository.complete_provider_recovery_outbox(
-            outbox_id, delivered_at=max(self._clock(), created_at),
+            outbox_id,
+            delivered_at=max(self._clock(), created_at),
         )

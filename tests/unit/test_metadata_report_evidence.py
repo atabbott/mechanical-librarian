@@ -96,18 +96,30 @@ from tests.support.metadata_report_doubles import (
 )
 
 
-def test_real_audiobookshelf_currentness_accepts_asymmetric_equivalent_locations() -> None:
+def test_real_audiobookshelf_currentness_accepts_asymmetric_equivalent_locations() -> (
+    None
+):
     def payload(*, file_path: str | None, size: int = 1) -> dict[str, object]:
         file_metadata: dict[str, object] = {"relPath": "book.epub", "size": size}
         if file_path is not None:
             file_metadata["path"] = file_path
         return {
-            "id": "item-1", "libraryId": "library-id", "isInvalid": False,
-            "isMissing": False, "mediaType": "book", "relPath": "Author/Book",
-            "path": "/media/Author/Book", "isFile": False,
-            "media": {"metadata": {"title": "Current title"}, "ebookFile": {
-                "ebookFormat": "epub", "ino": "inode-1", "metadata": file_metadata,
-            }},
+            "id": "item-1",
+            "libraryId": "library-id",
+            "isInvalid": False,
+            "isMissing": False,
+            "mediaType": "book",
+            "relPath": "Author/Book",
+            "path": "/media/Author/Book",
+            "isFile": False,
+            "media": {
+                "metadata": {"title": "Current title"},
+                "ebookFile": {
+                    "ebookFormat": "epub",
+                    "ino": "inode-1",
+                    "metadata": file_metadata,
+                },
+            },
         }
 
     def service_for(responses: list[dict[str, object]]):
@@ -120,25 +132,39 @@ def test_real_audiobookshelf_currentness_accepts_asymmetric_equivalent_locations
                 nonlocal position
                 response = responses[position]
                 position += 1
-                return httpx.Response(200, headers={"content-type": "application/json"}, json=response)
+                return httpx.Response(
+                    200, headers={"content-type": "application/json"}, json=response
+                )
 
             return httpx.Client(transport=httpx.MockTransport(handler))
 
         target = AudiobookshelfItemReader(
-            client_factory=factory, endpoint="https://example.invalid", library_id="library-id",
-            service_path="/media", maximum_bytes=65_536,
+            client_factory=factory,
+            endpoint="https://example.invalid",
+            library_id="library-id",
+            service_path="/media",
+            maximum_bytes=65_536,
         )
         repository = FakeReportRepository()
         return GenerateMetadataReport(
-            target=target, inspector=FakeInspector(InspectionResult("c" * 64, ())),
-            repository_factory=lambda: cast(ReportRepository, repository), providers=(),
-            connection=TargetConnectionConfiguration("primary", "https://example.invalid", "/private/target"),
-            library=LibraryConfiguration("ebooks", "primary", "library-id", "ebook", "books", ()),
-            mount=MediaMountConfiguration("books", "/container", "/media", True), limits=ReportLimits(),
+            target=target,
+            inspector=FakeInspector(InspectionResult("c" * 64, ())),
+            repository_factory=lambda: cast(ReportRepository, repository),
+            providers=(),
+            connection=TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/target"
+            ),
+            library=LibraryConfiguration(
+                "ebooks", "primary", "library-id", "ebook", "books", ()
+            ),
+            mount=MediaMountConfiguration("books", "/container", "/media", True),
+            limits=ReportLimits(),
         ), repository
 
     initial = payload(file_path=None)
-    service, repository = service_for([initial, payload(file_path="/media/Author/Book/book.epub")])
+    service, repository = service_for(
+        [initial, payload(file_path="/media/Author/Book/book.epub")]
+    )
     assert service.run("item-1", 0)
     assert 1 == len(repository.values)
 
@@ -147,7 +173,9 @@ def test_real_audiobookshelf_currentness_accepts_asymmetric_equivalent_locations
         changed.run("item-1", 0)
     assert {} == repository.values
 
-    contradictory, repository = service_for([initial, payload(file_path="/media/Other/book.epub")])
+    contradictory, repository = service_for(
+        [initial, payload(file_path="/media/Other/book.epub")]
+    )
     with pytest.raises(MetadataReportError):
         contradictory.run("item-1", 0)
     assert {} == repository.values
@@ -294,9 +322,12 @@ def test_provider_access_time_is_canonical_bounded_and_replay_stable(
     missing["providers"][0].pop("accessed_at")
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(canonical_json(missing))
-    assert ProviderObservation(
-            "catalogue", ProviderStatus.INSUFFICIENT_INPUT
-        ).to_data()["accessed_at"] is None
+    assert (
+        ProviderObservation("catalogue", ProviderStatus.INSUFFICIENT_INPUT).to_data()[
+            "accessed_at"
+        ]
+        is None
+    )
 
     with pytest.raises(ReportValueError):
         provider_access_time(clock)
@@ -407,9 +438,7 @@ def test_provider_dates_preserve_lexical_normalized_precision_and_linkage() -> N
         ),
     )
     replay_data = report.to_data()
-    replay_data["providers"][0]["candidates"][0]["claims"][1][
-        "date_precision"
-    ] = "day"
+    replay_data["providers"][0]["candidates"][0]["claims"][1]["date_precision"] = "day"
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(canonical_json(replay_data))
 
@@ -507,7 +536,11 @@ def test_local_date_event_scope_is_event_aware_and_replay_rejects_mismatch() -> 
             DateEvent.COPYRIGHT,
         )
     )
-    assert [claim.scope for claim in claims] == [ClaimScope.WORK, ClaimScope.WORK, ClaimScope.EDITION]
+    assert [claim.scope for claim in claims] == [
+        ClaimScope.WORK,
+        ClaimScope.WORK,
+        ClaimScope.EDITION,
+    ]
     with pytest.raises(ReportValueError):
         replace(claims[0], scope=ClaimScope.EDITION)
 
@@ -532,8 +565,16 @@ def test_local_date_event_scope_is_event_aware_and_replay_rejects_mismatch() -> 
 @pytest.mark.parametrize(
     ("kind", "event", "observed"),
     (
-        (ClaimKind.PUBLICATION_DATE, DateEvent.MANIFESTATION_PUBLICATION, "2001-02-03T04:05:06Z"),
-        (ClaimKind.DATE_EVENT, DateEvent.WORK_FIRST_PUBLICATION, "2001-02-03T04:05:06+01:00:00"),
+        (
+            ClaimKind.PUBLICATION_DATE,
+            DateEvent.MANIFESTATION_PUBLICATION,
+            "2001-02-03T04:05:06Z",
+        ),
+        (
+            ClaimKind.DATE_EVENT,
+            DateEvent.WORK_FIRST_PUBLICATION,
+            "2001-02-03T04:05:06+01:00:00",
+        ),
         (ClaimKind.DATE_EVENT, DateEvent.COPYRIGHT, "2001-02-03"),
     ),
 )
@@ -574,7 +615,6 @@ def test_valid_local_dates_bind_observed_canonical_and_precision(
         MetadataReport.from_json(canonical_json(document))
 
 
-
 @pytest.mark.parametrize(
     ("kind", "event", "observed", "canonical", "precision"),
     (
@@ -604,7 +644,7 @@ def test_valid_local_dates_bind_observed_canonical_and_precision(
 def test_inconsistent_local_date_precision_is_refused_at_construction(
     kind, event, observed, canonical, precision
 ) -> None:
-    with pytest.raises(ReportValueError, match='local date precision is inconsistent'):
+    with pytest.raises(ReportValueError, match="local date precision is inconsistent"):
         LocalClaim.create(
             kind=kind,
             observed=observed,
@@ -677,12 +717,12 @@ def test_nonvalid_local_dates_cannot_retain_canonical_values_or_precision(
     document = report.to_data()
     document["local"]["claims"][0][field_name] = document_forged
     with pytest.raises(ReportValueError, match="local date precision is inconsistent"):
-        MetadataReport.from_json(
-            canonical_json(document)
-        )
+        MetadataReport.from_json(canonical_json(document))
 
 
-def test_local_dates_and_contextual_credits_replay_without_candidate_conflation() -> None:
+def test_local_dates_and_contextual_credits_replay_without_candidate_conflation() -> (
+    None
+):
     publication = LocalClaim.create(
         kind=ClaimKind.PUBLICATION_DATE,
         observed="2024-03",
@@ -728,9 +768,7 @@ def test_local_dates_and_contextual_credits_replay_without_candidate_conflation(
 
 def test_exhausted_provider_reopens_as_typed_terminal_without_attempts() -> None:
     selected = TargetFile("a" * 64, "book.epub", "epub")
-    snapshot = TargetSnapshot(
-        "ebook", "Current title", (selected,)
-    )
+    snapshot = TargetSnapshot("ebook", "Current title", (selected,))
     target = FakeTarget([snapshot, snapshot])
     claim = LocalClaim.create(
         kind=ClaimKind.ISBN,
@@ -760,16 +798,16 @@ def test_exhausted_provider_reopens_as_typed_terminal_without_attempts() -> None
         service = GenerateMetadataReport(
             target=target,
             inspector=inspector,
-            repository_factory=lambda: cast(ReportRepository, open_repository(database)),
+            repository_factory=lambda: cast(
+                ReportRepository, open_repository(database)
+            ),
             providers=(
                 ProviderBinding(
                     "google_books",
                     True,
                     lambda: GoogleBooksMetadataProvider(
                         "google_books",
-                        httpx.Client(
-                            transport=httpx.MockTransport(unavailable)
-                        ),
+                        httpx.Client(transport=httpx.MockTransport(unavailable)),
                         65_536,
                         sleep=lambda _: None,
                         jitter=lambda: 0.0,
@@ -790,9 +828,7 @@ def test_exhausted_provider_reopens_as_typed_terminal_without_attempts() -> None
                 "books",
                 ("google_books",),
             ),
-            mount=MediaMountConfiguration(
-                "books", "/media", "/library", True
-            ),
+            mount=MediaMountConfiguration("books", "/media", "/library", True),
             limits=ReportLimits(),
         )
         report = MetadataReport.from_json(service.run("item-1", 0))
@@ -807,9 +843,8 @@ def test_exhausted_provider_reopens_as_typed_terminal_without_attempts() -> None
     assert ProviderStatus.UNAVAILABLE == reopened.providers[0].status
     assert () == reopened.providers[0].candidates
     assert ("http_non_success",) == tuple(
-            value.category.value
-            for value in reopened.providers[0].diagnostics
-        )
+        value.category.value for value in reopened.providers[0].diagnostics
+    )
     assert (6,) == tuple(value.count for value in reopened.providers[0].diagnostics)
     assert '"attempt' not in persisted
     for forbidden in (
@@ -834,7 +869,9 @@ def test_rejected_cover_state_round_trips_in_serialized_report() -> None:
         ),
     )
     report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
         file=FileFacts(0, "a" * 64, "b" * 64),
         local_claims=(),
         local_reasons=("no_opening_claims",),
@@ -874,31 +911,33 @@ def test_variant_marker_fails_closed_for_abridgement_nouns_and_preserves_token_b
 
 def test_closed_claim_vocabulary_is_exact() -> None:
     assert {kind.value for kind in ClaimKind} == {
-            "title",
-            "subtitle",
-            "creator",
-            "contributor",
-            "series",
-            "series_sequence",
-            "isbn",
-            "asin",
+        "title",
+        "subtitle",
+        "creator",
+        "contributor",
+        "series",
+        "series_sequence",
+        "isbn",
+        "asin",
         "publication_date",
         "date_event",
         "contextual_credit",
-            "publisher",
-            "description",
-            "language",
-            "subject",
-            "imprint",
-            "genre",
-            "tag",
-        }
+        "publisher",
+        "description",
+        "language",
+        "subject",
+        "imprint",
+        "genre",
+        "tag",
+    }
 
 
 def test_field_results_are_complete_canonical_and_separate_from_claims() -> None:
     results = derive_field_results(())
     report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
         file=FileFacts(0, "a" * 64, "b" * 64),
         local_claims=(),
         local_reasons=("no_opening_claims",),
@@ -909,19 +948,26 @@ def test_field_results_are_complete_canonical_and_separate_from_claims() -> None
     assert MetadataReport.from_json(report.to_json()) == report
     with pytest.raises(ReportValueError):
         MetadataReport.create(
-            target=report.target, file=report.file, local_claims=(),
-            local_reasons=("no_opening_claims",), providers=(),
+            target=report.target,
+            file=report.file,
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(),
             field_results=results[:-1],
         )
     contradictory = tuple(
         FieldResult(value.kind, FieldState.VALID, value.sources)
-        if value.kind is ClaimKind.TITLE else value
+        if value.kind is ClaimKind.TITLE
+        else value
         for value in results
     )
     with pytest.raises(ReportValueError):
         MetadataReport.create(
-            target=report.target, file=report.file, local_claims=(),
-            local_reasons=("no_opening_claims",), providers=(),
+            target=report.target,
+            file=report.file,
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(),
             field_results=contradictory,
         )
     source_contradiction = tuple(
@@ -932,13 +978,18 @@ def test_field_results_are_complete_canonical_and_separate_from_claims() -> None
                 FieldSourceResult(FieldSource.EPUB, FieldState.ABSENT),
                 FieldSourceResult(FieldSource.TARGET_METADATA, FieldState.VALID),
             ),
-        ) if value.kind is ClaimKind.TITLE else value
+        )
+        if value.kind is ClaimKind.TITLE
+        else value
         for value in results
     )
     with pytest.raises(ReportValueError):
         MetadataReport.create(
-            target=report.target, file=report.file, local_claims=(),
-            local_reasons=("no_opening_claims",), providers=(),
+            target=report.target,
+            file=report.file,
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(),
             field_results=source_contradiction,
         )
 
@@ -956,26 +1007,53 @@ def test_non_valid_observation_state_is_projected_to_its_field_result() -> None:
         state=FieldState.OVERSIZED,
     )
     report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
         file=FileFacts(0, "a" * 64, "b" * 64),
-        local_claims=(claim,), local_reasons=("package_metadata_description",), providers=(),
+        local_claims=(claim,),
+        local_reasons=("package_metadata_description",),
+        providers=(),
     )
-    assert dict((value.kind, value.state) for value in report.field_results)[ClaimKind.DESCRIPTION] == FieldState.OVERSIZED
+    assert (
+        dict((value.kind, value.state) for value in report.field_results)[
+            ClaimKind.DESCRIPTION
+        ]
+        == FieldState.OVERSIZED
+    )
 
 
 def test_malformed_and_inapplicable_claims_derive_independent_field_results() -> None:
     claims = (
-        LocalClaim.create(kind=ClaimKind.ISBN, observed="not-an-isbn", canonical=None,
-                          excerpt="not-an-isbn", applicability="unknown", checksum="invalid",
-                          applicability_basis="unlabelled", state=FieldState.MALFORMED),
-        LocalClaim.create(kind=ClaimKind.PUBLISHER, observed="not supplied", canonical="not supplied",
-                          excerpt="not supplied", applicability="not_applicable", checksum="not_applicable",
-                          applicability_basis="not_applicable", state=FieldState.INAPPLICABLE),
+        LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="not-an-isbn",
+            canonical=None,
+            excerpt="not-an-isbn",
+            applicability="unknown",
+            checksum="invalid",
+            applicability_basis="unlabelled",
+            state=FieldState.MALFORMED,
+        ),
+        LocalClaim.create(
+            kind=ClaimKind.PUBLISHER,
+            observed="not supplied",
+            canonical="not supplied",
+            excerpt="not supplied",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            state=FieldState.INAPPLICABLE,
+        ),
     )
     report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
-        file=FileFacts(0, "a" * 64, "b" * 64), local_claims=claims,
-        local_reasons=("no_opening_claims",), providers=(),
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=claims,
+        local_reasons=("no_opening_claims",),
+        providers=(),
     )
     states = {value.kind: value.state for value in report.field_results}
     assert states[ClaimKind.ISBN] == FieldState.MALFORMED
@@ -984,30 +1062,66 @@ def test_malformed_and_inapplicable_claims_derive_independent_field_results() ->
 
 def test_source_capabilities_keep_target_title_only_and_epub_exact() -> None:
     title = LocalClaim.create(
-        kind=ClaimKind.TITLE, observed="Current title", canonical="Current title",
-        excerpt="Current title", applicability="not_applicable", basis="target_metadata",
-        checksum="not_applicable", applicability_basis="not_applicable",
+        kind=ClaimKind.TITLE,
+        observed="Current title",
+        canonical="Current title",
+        excerpt="Current title",
+        applicability="not_applicable",
+        basis="target_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
     )
     report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
-        file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(title,),
-        local_reasons=("no_opening_claims",), providers=(),
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(title,),
+        local_reasons=("no_opening_claims",),
+        providers=(),
     )
-    fields = {value.kind: {source.source: source.state for source in value.sources} for value in report.field_results}
+    fields = {
+        value.kind: {source.source: source.state for source in value.sources}
+        for value in report.field_results
+    }
     assert fields[ClaimKind.TITLE][FieldSource.TARGET_METADATA] == FieldState.VALID
     assert fields[ClaimKind.TITLE][FieldSource.EPUB] == FieldState.ABSENT
-    assert all(fields[kind][FieldSource.TARGET_METADATA] is FieldState.UNSUPPORTED for kind in ClaimKind if kind is not ClaimKind.TITLE)
+    assert all(
+        fields[kind][FieldSource.TARGET_METADATA] is FieldState.UNSUPPORTED
+        for kind in ClaimKind
+        if kind is not ClaimKind.TITLE
+    )
 
 
 @pytest.mark.parametrize(
     ("prefix", "state", "forged_state", "canonical"),
     (
         ("unsafe-source-text-sha256:", FieldState.UNSUPPORTED, FieldState.VALID, None),
-        ("unsafe-source-text-sha256:", FieldState.UNSUPPORTED, FieldState.OVERSIZED, None),
-        ("unsafe-source-text-sha256:", FieldState.UNSUPPORTED, FieldState.UNSUPPORTED, "Forged"),
+        (
+            "unsafe-source-text-sha256:",
+            FieldState.UNSUPPORTED,
+            FieldState.OVERSIZED,
+            None,
+        ),
+        (
+            "unsafe-source-text-sha256:",
+            FieldState.UNSUPPORTED,
+            FieldState.UNSUPPORTED,
+            "Forged",
+        ),
         ("oversized-source-text-sha256:", FieldState.OVERSIZED, FieldState.VALID, None),
-        ("oversized-source-text-sha256:", FieldState.OVERSIZED, FieldState.UNSUPPORTED, None),
-        ("oversized-source-text-sha256:", FieldState.OVERSIZED, FieldState.OVERSIZED, "Forged"),
+        (
+            "oversized-source-text-sha256:",
+            FieldState.OVERSIZED,
+            FieldState.UNSUPPORTED,
+            None,
+        ),
+        (
+            "oversized-source-text-sha256:",
+            FieldState.OVERSIZED,
+            FieldState.OVERSIZED,
+            "Forged",
+        ),
     ),
 )
 def test_source_text_sentinels_refuse_a_forged_state_or_canonical(
@@ -1015,16 +1129,28 @@ def test_source_text_sentinels_refuse_a_forged_state_or_canonical(
 ) -> None:
     sentinel = prefix + "a" * 64
     claim = LocalClaim.create(
-        kind=ClaimKind.TITLE, observed=sentinel, canonical=None, excerpt=sentinel,
-        applicability="not_applicable", basis="package_metadata",
-        checksum="not_applicable", applicability_basis="not_applicable", state=state,
+        kind=ClaimKind.TITLE,
+        observed=sentinel,
+        canonical=None,
+        excerpt=sentinel,
+        applicability="not_applicable",
+        basis="package_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        state=state,
     )
     assert claim.state == state
     with pytest.raises(ReportValueError):
         LocalClaim.create(
-            kind=ClaimKind.TITLE, observed=sentinel, canonical=canonical, excerpt=sentinel,
-            applicability="not_applicable", basis="package_metadata",
-            checksum="not_applicable", applicability_basis="not_applicable", state=forged_state,
+            kind=ClaimKind.TITLE,
+            observed=sentinel,
+            canonical=canonical,
+            excerpt=sentinel,
+            applicability="not_applicable",
+            basis="package_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            state=forged_state,
         )
 
 
@@ -1038,13 +1164,24 @@ def test_source_text_sentinels_refuse_a_forged_state_or_canonical(
     ),
 )
 def test_unsafe_text_is_refused_in_every_public_local_claim_field(field, value) -> None:
-    values = {"observed": "Ada Example", "canonical": "Ada Example", "excerpt": "Ada Example", "role": None}
+    values = {
+        "observed": "Ada Example",
+        "canonical": "Ada Example",
+        "excerpt": "Ada Example",
+        "role": None,
+    }
     values[field] = value
     with pytest.raises(ReportValueError):
         LocalClaim.create(
-            kind=ClaimKind.CREATOR, observed=values["observed"], canonical=values["canonical"],
-            excerpt=values["excerpt"], applicability="not_applicable", basis="package_metadata",
-            checksum="not_applicable", applicability_basis="not_applicable", role=values["role"],
+            kind=ClaimKind.CREATOR,
+            observed=values["observed"],
+            canonical=values["canonical"],
+            excerpt=values["excerpt"],
+            applicability="not_applicable",
+            basis="package_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            role=values["role"],
         )
 
 
@@ -1066,43 +1203,73 @@ def test_unsafe_text_is_refused_in_every_rear_provenance_field(field) -> None:
 )
 def test_creator_roles_accept_a_canonical_source_text_sentinel(role) -> None:
     claim = LocalClaim.create(
-        kind=ClaimKind.CREATOR, observed="Ada Example", canonical="Ada Example",
-        excerpt="Ada Example", applicability="not_applicable", basis="package_metadata",
-        checksum="not_applicable", applicability_basis="not_applicable", role=role,
+        kind=ClaimKind.CREATOR,
+        observed="Ada Example",
+        canonical="Ada Example",
+        excerpt="Ada Example",
+        applicability="not_applicable",
+        basis="package_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        role=role,
     )
     assert claim.role == role
 
 
 @pytest.mark.parametrize(
     "role",
-    ("unsafe-source-text-sha256:" + "A" * 64, "oversized-source-text-sha256:short", "x" * 65),
+    (
+        "unsafe-source-text-sha256:" + "A" * 64,
+        "oversized-source-text-sha256:short",
+        "x" * 65,
+    ),
     ids=("uppercase_digest", "short_digest", "oversized_role"),
 )
 def test_creator_roles_refuse_a_noncanonical_source_text_sentinel(role) -> None:
     with pytest.raises(ReportValueError):
         LocalClaim.create(
-            kind=ClaimKind.CREATOR, observed="Ada Example", canonical="Ada Example",
-            excerpt="Ada Example", applicability="not_applicable", basis="package_metadata",
-            checksum="not_applicable", applicability_basis="not_applicable", role=role,
+            kind=ClaimKind.CREATOR,
+            observed="Ada Example",
+            canonical="Ada Example",
+            excerpt="Ada Example",
+            applicability="not_applicable",
+            basis="package_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            role=role,
         )
 
 
 def test_local_claim_source_sentinels_and_public_evidence_are_closed() -> None:
     valid = LocalClaim.create(
-        kind=ClaimKind.TITLE, observed="Current title", canonical="Current title",
-        excerpt="Current title", applicability="not_applicable", basis="target_metadata",
-        checksum="not_applicable", applicability_basis="not_applicable",
+        kind=ClaimKind.TITLE,
+        observed="Current title",
+        canonical="Current title",
+        excerpt="Current title",
+        applicability="not_applicable",
+        basis="target_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
     )
     with pytest.raises(ReportValueError):
         LocalClaim.create(
-            kind=ClaimKind.PUBLISHER, observed="Example Press", canonical="Example Press",
-            excerpt="Example Press", applicability="not_applicable", basis="target_metadata",
-            checksum="not_applicable", applicability_basis="not_applicable",
+            kind=ClaimKind.PUBLISHER,
+            observed="Example Press",
+            canonical="Example Press",
+            excerpt="Example Press",
+            applicability="not_applicable",
+            basis="target_metadata",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
         )
     report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
-        file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(valid,),
-        local_reasons=("no_opening_claims",), providers=(),
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(valid,),
+        local_reasons=("no_opening_claims",),
+        providers=(),
     )
     data = report.to_data()
     data["local"]["claims"][0]["canonical"] = "/Users/private/title"
@@ -1110,14 +1277,25 @@ def test_local_claim_source_sentinels_and_public_evidence_are_closed() -> None:
         MetadataReport.from_json(canonical_json(data))
 
     replay = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
-        file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(
             LocalClaim.create(
-                kind=ClaimKind.CREATOR, observed="Ada Example", canonical="Ada Example",
-                excerpt="Ada Example", applicability="not_applicable", basis="package_metadata",
-                checksum="not_applicable", applicability_basis="not_applicable", role="author",
+                kind=ClaimKind.CREATOR,
+                observed="Ada Example",
+                canonical="Ada Example",
+                excerpt="Ada Example",
+                applicability="not_applicable",
+                basis="package_metadata",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                role="author",
             ),
-        ), local_reasons=("package_metadata_creator",), providers=(),
+        ),
+        local_reasons=("package_metadata_creator",),
+        providers=(),
     )
     replay_data = replay.to_data()
     replay_data["local"]["claims"][0]["role"] = "unsafe-source-text-sha256:" + "A" * 64
@@ -1129,7 +1307,15 @@ _REAR_PROVENANCE = RearClaimProvenance("a" * 64, 1, 1, "copyright", "Copyright 2
 
 
 def _provider_claim(kind: ClaimKind, value: str) -> ProviderClaim:
-    return ProviderClaim.create(provider="catalogue", candidate="candidate", kind=kind, value=value, state=FieldState.VALID, scope=ClaimScope.EDITION if kind is ClaimKind.ISBN else ClaimScope.WORK, applicability="ebook" if kind is ClaimKind.ISBN else "not_applicable")
+    return ProviderClaim.create(
+        provider="catalogue",
+        candidate="candidate",
+        kind=kind,
+        value=value,
+        state=FieldState.VALID,
+        scope=ClaimScope.EDITION if kind is ClaimKind.ISBN else ClaimScope.WORK,
+        applicability="ebook" if kind is ClaimKind.ISBN else "not_applicable",
+    )
 
 
 @pytest.mark.parametrize(
@@ -1155,9 +1341,13 @@ def test_provider_claim_values_refuse_unsafe_text(kind, value) -> None:
 )
 def test_rear_provenance_is_carried_by_every_bounded_opening_matter_kind(kind) -> None:
     claim = LocalClaim.create(
-        kind=kind, observed="Bounded value", canonical="Bounded value",
-        excerpt="Bounded value", applicability="not_applicable",
-        basis="opening_matter", checksum="not_applicable",
+        kind=kind,
+        observed="Bounded value",
+        canonical="Bounded value",
+        excerpt="Bounded value",
+        applicability="not_applicable",
+        basis="opening_matter",
+        checksum="not_applicable",
         applicability_basis="not_applicable",
         rear_provenance=_REAR_PROVENANCE,
     )
@@ -1179,69 +1369,166 @@ def test_local_role_and_rear_provenance_refuse_foreign_kinds_and_bases(
 ) -> None:
     with pytest.raises(ReportValueError):
         LocalClaim.create(
-            kind=kind, observed="A title", canonical="A title", excerpt="A title",
-            applicability="not_applicable", basis=basis, checksum="not_applicable",
-            applicability_basis="not_applicable", role=role, rear_provenance=rear,
+            kind=kind,
+            observed="A title",
+            canonical="A title",
+            excerpt="A title",
+            applicability="not_applicable",
+            basis=basis,
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            role=role,
+            rear_provenance=rear,
         )
 
 
 def test_provider_claim_and_local_role_rear_provenance_are_closed() -> None:
     assert _provider_claim(ClaimKind.TITLE, "A title").kind == ClaimKind.TITLE
     assert _provider_claim(ClaimKind.ISBN, "9780306406157").kind == ClaimKind.ISBN
-    assert _provider_claim(ClaimKind.PUBLISHER, "Example Press").kind == ClaimKind.PUBLISHER
+    assert (
+        _provider_claim(ClaimKind.PUBLISHER, "Example Press").kind
+        == ClaimKind.PUBLISHER
+    )
     valid_rear = LocalClaim.create(
-        kind=ClaimKind.CREATOR, observed="Ada Example", canonical="Ada Example", excerpt="Ada Example",
-        applicability="not_applicable", basis="opening_matter", checksum="not_applicable",
-        applicability_basis="not_applicable", role="author", rear_provenance=_REAR_PROVENANCE,
+        kind=ClaimKind.CREATOR,
+        observed="Ada Example",
+        canonical="Ada Example",
+        excerpt="Ada Example",
+        applicability="not_applicable",
+        basis="opening_matter",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        role="author",
+        rear_provenance=_REAR_PROVENANCE,
     )
     assert valid_rear.rear_provenance == _REAR_PROVENANCE
 
 
 def test_edition_field_scope_agrees_with_same_scope_provider_evidence() -> None:
-    for kind in (ClaimKind.PUBLICATION_DATE, ClaimKind.PUBLISHER, ClaimKind.IMPRINT, ClaimKind.LANGUAGE):
+    for kind in (
+        ClaimKind.PUBLICATION_DATE,
+        ClaimKind.PUBLISHER,
+        ClaimKind.IMPRINT,
+        ClaimKind.LANGUAGE,
+    ):
         assert claim_scope(kind) == ClaimScope.EDITION
-    local = LocalClaim.create(kind=ClaimKind.PUBLISHER, observed="Press", canonical="Press", excerpt="Press", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=claim_scope(ClaimKind.PUBLISHER))
-    imprint = LocalClaim.create(kind=ClaimKind.IMPRINT, observed="Press", canonical="Press", excerpt="Press", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=claim_scope(ClaimKind.IMPRINT))
-    provider = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.PUBLISHER, value="Press", state=FieldState.VALID, scope=ClaimScope.EDITION, applicability="not_applicable")
-    provider_imprint = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.IMPRINT, value="Press", state=FieldState.VALID, scope=ClaimScope.EDITION, applicability="not_applicable")
-    assert comparison_links(provider, (local, imprint)) == (ComparisonLink(local.reference, Comparison.AGREEMENT, ComparisonMethod.EXACT),)
-    assert comparison_links(provider_imprint, (local, imprint)) == (ComparisonLink(imprint.reference, Comparison.AGREEMENT, ComparisonMethod.EXACT),)
-    normalized_provider = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.PUBLISHER, value="PRESS", state=FieldState.VALID, scope=ClaimScope.EDITION, applicability="not_applicable")
+    local = LocalClaim.create(
+        kind=ClaimKind.PUBLISHER,
+        observed="Press",
+        canonical="Press",
+        excerpt="Press",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=claim_scope(ClaimKind.PUBLISHER),
+    )
+    imprint = LocalClaim.create(
+        kind=ClaimKind.IMPRINT,
+        observed="Press",
+        canonical="Press",
+        excerpt="Press",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=claim_scope(ClaimKind.IMPRINT),
+    )
+    provider = ProviderClaim.create(
+        provider="catalogue",
+        candidate="candidate",
+        kind=ClaimKind.PUBLISHER,
+        value="Press",
+        state=FieldState.VALID,
+        scope=ClaimScope.EDITION,
+        applicability="not_applicable",
+    )
+    provider_imprint = ProviderClaim.create(
+        provider="catalogue",
+        candidate="candidate",
+        kind=ClaimKind.IMPRINT,
+        value="Press",
+        state=FieldState.VALID,
+        scope=ClaimScope.EDITION,
+        applicability="not_applicable",
+    )
+    assert comparison_links(provider, (local, imprint)) == (
+        ComparisonLink(local.reference, Comparison.AGREEMENT, ComparisonMethod.EXACT),
+    )
+    assert comparison_links(provider_imprint, (local, imprint)) == (
+        ComparisonLink(imprint.reference, Comparison.AGREEMENT, ComparisonMethod.EXACT),
+    )
+    normalized_provider = ProviderClaim.create(
+        provider="catalogue",
+        candidate="candidate",
+        kind=ClaimKind.PUBLISHER,
+        value="PRESS",
+        state=FieldState.VALID,
+        scope=ClaimScope.EDITION,
+        applicability="not_applicable",
+    )
     assert comparison_links(normalized_provider, (local,)) == (
-            ComparisonLink(
-                local.reference,
-                Comparison.AGREEMENT,
-                ComparisonMethod.CLOSED_FIELD_NORMALIZATION,
-            ),
-        )
-    normalized_local = LocalClaim.create(kind=ClaimKind.PUBLISHER, observed="Press  House", canonical="Press House", excerpt="Press  House", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.EDITION)
-    canonical_provider = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.PUBLISHER, value="Press House", state=FieldState.VALID, scope=ClaimScope.EDITION, applicability="not_applicable")
+        ComparisonLink(
+            local.reference,
+            Comparison.AGREEMENT,
+            ComparisonMethod.CLOSED_FIELD_NORMALIZATION,
+        ),
+    )
+    normalized_local = LocalClaim.create(
+        kind=ClaimKind.PUBLISHER,
+        observed="Press  House",
+        canonical="Press House",
+        excerpt="Press  House",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.EDITION,
+    )
+    canonical_provider = ProviderClaim.create(
+        provider="catalogue",
+        candidate="candidate",
+        kind=ClaimKind.PUBLISHER,
+        value="Press House",
+        state=FieldState.VALID,
+        scope=ClaimScope.EDITION,
+        applicability="not_applicable",
+    )
     assert comparison_links(canonical_provider, (normalized_local,)) == (
-            ComparisonLink(
-                normalized_local.reference,
-                Comparison.AGREEMENT,
-                ComparisonMethod.CLOSED_FIELD_NORMALIZATION,
-            ),
-        )
+        ComparisonLink(
+            normalized_local.reference,
+            Comparison.AGREEMENT,
+            ComparisonMethod.CLOSED_FIELD_NORMALIZATION,
+        ),
+    )
 
 
 def test_non_valid_title_sentinel_cannot_become_canonical() -> None:
     sentinel = "unsafe-source-text-sha256:" + "a" * 64
     claim = LocalClaim.create(
-        kind=ClaimKind.TITLE, observed=sentinel, canonical=None, excerpt=sentinel,
-        applicability="not_applicable", basis="package_metadata", checksum="not_applicable",
-        applicability_basis="not_applicable", state=FieldState.UNSUPPORTED,
+        kind=ClaimKind.TITLE,
+        observed=sentinel,
+        canonical=None,
+        excerpt=sentinel,
+        applicability="not_applicable",
+        basis="package_metadata",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        state=FieldState.UNSUPPORTED,
     )
     report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
-        file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(claim,),
-        local_reasons=("package_metadata_title",), providers=(),
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(claim,),
+        local_reasons=("package_metadata_title",),
+        providers=(),
     )
     assert report.local_claims[0].canonical is None
     assert report.field_results[0].state == FieldState.UNSUPPORTED
 
 
-def test_closed_local_field_vocabulary_accepts_package_and_contextual_evidence() -> None:
+def test_closed_local_field_vocabulary_accepts_package_and_contextual_evidence() -> (
+    None
+):
     publisher = LocalClaim.create(
         kind=ClaimKind.PUBLISHER,
         observed="Example Press",
@@ -1277,7 +1564,9 @@ def test_report_is_closed_canonical_and_content_addressed() -> None:
         applicability_basis="not_applicable",
     )
     report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
         file=FileFacts(0, "a" * 64, "b" * 64),
         local_claims=(claim,),
         local_reasons=("opening_title",),
@@ -1288,7 +1577,9 @@ def test_report_is_closed_canonical_and_content_addressed() -> None:
     assert report.local_status == "candidate"
 
 
-def test_title_claims_retain_exact_512_characters_but_isbn_evidence_stays_bounded() -> None:
+def test_title_claims_retain_exact_512_characters_but_isbn_evidence_stays_bounded() -> (
+    None
+):
     title = "T" * 512
     claim = LocalClaim.create(
         kind=ClaimKind.TITLE,
@@ -1301,7 +1592,12 @@ def test_title_claims_retain_exact_512_characters_but_isbn_evidence_stays_bounde
         applicability_basis="not_applicable",
     )
     assert claim.observed == title
-    assert TargetFacts("primary", "ebooks", "item-1", default_target_fields(title)).current_title == title
+    assert (
+        TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields(title)
+        ).current_title
+        == title
+    )
     with pytest.raises(ReportValueError):
         LocalClaim.create(
             kind=ClaimKind.ISBN,
@@ -1321,7 +1617,9 @@ def test_title_claims_retain_exact_512_characters_but_isbn_evidence_stays_bounde
         ("An  intentional  title", "An intentional title"),
     ),
 )
-def test_safe_observed_titles_preserve_exact_text_and_canonicalize_claims(title, canonical) -> None:
+def test_safe_observed_titles_preserve_exact_text_and_canonicalize_claims(
+    title, canonical
+) -> None:
     claim = LocalClaim.create(
         kind=ClaimKind.TITLE,
         observed=title,

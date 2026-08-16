@@ -54,12 +54,13 @@ class _Target:
     def read(self, item: str) -> TargetSnapshot:
         raise AssertionError("not used")
 
-    def read_cover(self, cover: TargetCover, *, deadline: float | None = None) -> bytes | None:
+    def read_cover(
+        self, cover: TargetCover, *, deadline: float | None = None
+    ) -> bytes | None:
         self.calls += 1
         if isinstance(self.result, Exception):
             raise self.result
         return self.result  # type: ignore[return-value]
-
 
 
 def test_gallery_admission_caps_provider_and_total_with_visible_truncation() -> None:
@@ -118,9 +119,7 @@ def test_gallery_admission_caps_provider_and_total_with_visible_truncation() -> 
             descriptors,
         )
     provider_values = [
-        value
-        for value in values
-        if value.kind is CoverSourceKind.HARDCOVER
+        value for value in values if value.kind is CoverSourceKind.HARDCOVER
     ]
     admitted = [
         value
@@ -130,8 +129,7 @@ def test_gallery_admission_caps_provider_and_total_with_visible_truncation() -> 
     assert 8 == len(admitted)
     assert all(
         sum(
-            value.provenance is not None
-            and value.provenance.provider == provider
+            value.provenance is not None and value.provenance.provider == provider
             for value in admitted
         )
         <= 4
@@ -140,8 +138,7 @@ def test_gallery_admission_caps_provider_and_total_with_visible_truncation() -> 
     reasons = {
         value.provenance.truncation_reason
         for value in provider_values
-        if value.state is CoverSourceState.TRUNCATED
-        and value.provenance is not None
+        if value.state is CoverSourceState.TRUNCATED and value.provenance is not None
     }
     assert {
         CoverTruncationReason.PROVIDER_LIMIT,
@@ -201,11 +198,7 @@ def test_digest_deduplication_retains_every_provider_provenance() -> None:
             (),
             descriptors,
         )
-    retrieved = [
-        value
-        for value in values
-        if value.state is CoverSourceState.RETRIEVED
-    ]
+    retrieved = [value for value in values if value.state is CoverSourceState.RETRIEVED]
     assert 2 == len(retrieved)
     assert 1 == len(
         {
@@ -249,9 +242,7 @@ def test_terminal_descriptor_state_is_published_without_remote_fetch() -> None:
     )
     with (
         tempfile.TemporaryDirectory() as directory,
-        patch(
-            "mechanical_librarian.bootstrap.composition.fetch_remote_cover"
-        ) as fetch,
+        patch("mechanical_librarian.bootstrap.composition.fetch_remote_cover") as fetch,
     ):
         values = _CoverEvidenceObserver(
             _Target(None),
@@ -264,9 +255,7 @@ def test_terminal_descriptor_state_is_published_without_remote_fetch() -> None:
             (descriptor,),
         )
     provider_value = next(
-        value
-        for value in values
-        if value.kind is CoverSourceKind.HARDCOVER
+        value for value in values if value.kind is CoverSourceKind.HARDCOVER
     )
     assert CoverSourceState.REJECTED == provider_value.state
     fetch.assert_not_called()
@@ -275,10 +264,13 @@ def test_terminal_descriptor_state_is_published_without_remote_fetch() -> None:
 def test_abs_result_is_recorded_without_a_request() -> None:
     with tempfile.TemporaryDirectory() as directory:
         target = _Target(b"unexpected")
-        value = _CoverEvidenceObserver(target, CoverArtifactStore(Path(directory))).observe(
-            TargetSnapshot("ebook", "Title", (), None), (), ()
-        )
-    assert (CoverSourceKind.ABS, CoverSourceState.ABSENT) == (value[0].kind, value[0].state)
+        value = _CoverEvidenceObserver(
+            target, CoverArtifactStore(Path(directory))
+        ).observe(TargetSnapshot("ebook", "Title", (), None), (), ())
+    assert (CoverSourceKind.ABS, CoverSourceState.ABSENT) == (
+        value[0].kind,
+        value[0].state,
+    )
     assert 0 == target.calls
 
 
@@ -287,7 +279,11 @@ def test_retrieves_and_stages_one_declared_abs_cover() -> None:
         store = CoverArtifactStore(Path(directory))
         target = _Target(_jpeg())
         value = _CoverEvidenceObserver(target, store).observe(
-            TargetSnapshot("ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")), (), ()
+            TargetSnapshot(
+                "ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")
+            ),
+            (),
+            (),
         )
         assert CoverSourceState.RETRIEVED == value[0].state
         assert 1 == target.calls
@@ -296,16 +292,32 @@ def test_retrieves_and_stages_one_declared_abs_cover() -> None:
 
 def test_timeout_is_an_explicit_attempted_outcome() -> None:
     with tempfile.TemporaryDirectory() as directory:
-        value = _CoverEvidenceObserver(_Target(CoverTimeoutError("elapsed")), CoverArtifactStore(Path(directory))).observe(
-            TargetSnapshot("ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")), (), ()
+        value = _CoverEvidenceObserver(
+            _Target(CoverTimeoutError("elapsed")), CoverArtifactStore(Path(directory))
+        ).observe(
+            TargetSnapshot(
+                "ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")
+            ),
+            (),
+            (),
         )
-    assert (CoverSourceState.TIMEOUT, "attempted") == (value[0].state, value[0].timeout_scope)
+    assert (CoverSourceState.TIMEOUT, "attempted") == (
+        value[0].state,
+        value[0].timeout_scope,
+    )
 
 
 def test_changed_abs_source_is_recorded_without_publication() -> None:
     with tempfile.TemporaryDirectory() as directory:
-        value = _CoverEvidenceObserver(_Target(CoverSourceChangedError("changed")), CoverArtifactStore(Path(directory))).observe(
-            TargetSnapshot("ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")), (), ()
+        value = _CoverEvidenceObserver(
+            _Target(CoverSourceChangedError("changed")),
+            CoverArtifactStore(Path(directory)),
+        ).observe(
+            TargetSnapshot(
+                "ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")
+            ),
+            (),
+            (),
         )
     assert CoverSourceState.SOURCE_CHANGED == value[0].state
 
@@ -318,13 +330,17 @@ def test_changed_abs_source_is_recorded_without_publication() -> None:
     ),
     ids=("oversized", "unsupported_format"),
 )
-def test_abs_terminal_read_classifications_are_preserved(state: str, expected: CoverSourceState) -> None:
+def test_abs_terminal_read_classifications_are_preserved(
+    state: str, expected: CoverSourceState
+) -> None:
     with tempfile.TemporaryDirectory() as directory:
         value = _CoverEvidenceObserver(
             _Target(CoverReadError(state)),
             CoverArtifactStore(Path(directory)),
         ).observe(
-            TargetSnapshot("ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")),
+            TargetSnapshot(
+                "ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")
+            ),
             (),
             (),
         )

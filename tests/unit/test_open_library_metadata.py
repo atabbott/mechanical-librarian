@@ -275,12 +275,11 @@ def test_detail_schema_diagnostics_are_context_local_and_replay_exact() -> None:
     assert "wrong edition subject" not in retained
     assert "wrong work publisher" not in retained
     assert all(
-            context.value
-            not in {"wrong edition subject", "wrong work publisher"}
-            for descriptor in provider.cover_descriptors
-            if descriptor.provenance is not None
-            for context in descriptor.provenance.context
-        )
+        context.value not in {"wrong edition subject", "wrong work publisher"}
+        for descriptor in provider.cover_descriptors
+        if descriptor.provenance is not None
+        for context in descriptor.provenance.context
+    )
     report = MetadataReport.create(
         target=TargetFacts(
             "primary",
@@ -296,13 +295,13 @@ def test_detail_schema_diagnostics_are_context_local_and_replay_exact() -> None:
     replay = MetadataReport.from_json(report.to_json())
     assert observation.diagnostics == replay.providers[0].diagnostics
     assert 0 == open_library_metadata._unknown_projection_rejections(
-            _edition("/books/OL1M"),
-            schema="edition_detail",
-        )
+        _edition("/books/OL1M"),
+        schema="edition_detail",
+    )
     assert 0 == open_library_metadata._unknown_projection_rejections(
-            _work(),
-            schema="work_detail",
-        )
+        _work(),
+        schema="work_detail",
+    )
 
 
 _SERIES_AGGREGATE_CASES: tuple[
@@ -411,8 +410,7 @@ def test_series_aggregate_states_do_not_mix_valid_and_unsupported(
         (claim.kind, claim.state, claim.value)
         for claim in candidate.claims
         if claim.scope is ClaimScope.WORK
-        and claim.kind
-        in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
+        and claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
     )
     assert expected == actual
 
@@ -457,14 +455,13 @@ def test_by_statement_scalar_or_list_is_retained_and_diagnosed_once(
     retained = tuple(
         evidence.value
         for evidence in candidate.evidence
-        if evidence.kind
-        is ProviderEvidenceKind.RESPONSIBILITY_STATEMENT
+        if evidence.kind is ProviderEvidenceKind.RESPONSIBILITY_STATEMENT
     )
     assert expected == retained
     assert diagnostics == open_library_metadata._optional_projection_rejections(
-            edition,
-            schema="edition_detail",
-        )
+        edition,
+        schema="edition_detail",
+    )
 
 
 def test_candidate_semantics_exclude_only_evidence_source_ordinals() -> None:
@@ -485,8 +482,12 @@ def test_candidate_semantics_exclude_only_evidence_source_ordinals() -> None:
         ),
     )
     assert candidate != reordered
-    assert open_library_metadata._candidate_semantic_key(candidate) == open_library_metadata._candidate_semantic_key(reordered)
-    assert tuple(range(len(candidate.evidence))) == tuple(sorted(value.source_ordinal for value in candidate.evidence))
+    assert open_library_metadata._candidate_semantic_key(
+        candidate
+    ) == open_library_metadata._candidate_semantic_key(reordered)
+    assert tuple(range(len(candidate.evidence))) == tuple(
+        sorted(value.source_ordinal for value in candidate.evidence)
+    )
 
 
 def test_candidate_semantics_keep_required_work_join_strict() -> None:
@@ -509,21 +510,23 @@ def test_candidate_semantics_keep_required_work_join_strict() -> None:
             for value in candidate.evidence
         ),
     )
-    assert open_library_metadata._candidate_semantic_key(candidate) != open_library_metadata._candidate_semantic_key(conflicting)
+    assert open_library_metadata._candidate_semantic_key(
+        candidate
+    ) != open_library_metadata._candidate_semantic_key(conflicting)
 
 
 def test_search_author_pairs_keep_safe_names_without_misbinding_keys() -> None:
     assert (
-            ("Ada Example", "/authors/OL7A"),
-            ("Zed Example", None),
-        ) == open_library_metadata._search_authors(
-            ["Ada Example", "Zed Example"],
-            ["OL7A", "not-an-author-key"],
-        )
+        ("Ada Example", "/authors/OL7A"),
+        ("Zed Example", None),
+    ) == open_library_metadata._search_authors(
+        ["Ada Example", "Zed Example"],
+        ["OL7A", "not-an-author-key"],
+    )
     assert () == open_library_metadata._search_authors(
-            [f"Author {index}" for index in range(9)],
-            [f"OL{index + 1}A" for index in range(9)],
-        )
+        [f"Author {index}" for index in range(9)],
+        [f"OL{index + 1}A" for index in range(9)],
+    )
 
 
 @pytest.mark.parametrize(
@@ -548,7 +551,9 @@ def test_search_author_pairs_keep_safe_names_without_misbinding_keys() -> None:
         ),
     ),
 )
-def test_publication_date_presence_emits_one_typed_claim_and_safe_context(label, present, value, expected_state, expected_context) -> None:
+def test_publication_date_presence_emits_one_typed_claim_and_safe_context(
+    label, present, value, expected_state, expected_context
+) -> None:
     edition = _edition("/books/OL1M")
     if present:
         edition["publish_date"] = value
@@ -572,15 +577,16 @@ def test_publication_date_presence_emits_one_typed_claim_and_safe_context(label,
     context = tuple(
         evidence.value
         for evidence in candidate.evidence
-        if evidence.kind
-        is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
     )
     assert 1 == len(claims)
     assert (5, expected_state) == (claims[0].raw_order, claims[0].state)
     assert expected_context == context
 
 
-def test_work_detail_author_identity_survives_unusable_search_and_edition_links() -> None:
+def test_work_detail_author_identity_survives_unusable_search_and_edition_links() -> (
+    None
+):
     work = _work()
     work["authors"] = [
         {
@@ -700,16 +706,14 @@ def test_optional_detail_failures_are_local_and_diagnosed_once(
         assert description.value is None
     if field == "by_statement":
         assert ProviderEvidenceKind.RESPONSIBILITY_STATEMENT not in {
-                value.kind
-                for value in observation.candidates[0].evidence
-            }
+            value.kind for value in observation.candidates[0].evidence
+        }
     if field == "authors":
         assert "open-library-author-OL7A" not in {
-                value.value
-                for value in observation.candidates[0].evidence
-                if value.kind
-                is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY
-            }
+            value.value
+            for value in observation.candidates[0].evidence
+            if value.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY
+        }
 
 
 _OPTIONAL_PROVENANCE_CASES: tuple[
@@ -801,12 +805,15 @@ def test_optional_provenance_failures_are_local_diagnosed_and_replayable(
     assert (1,) == tuple(value.count for value in observation.diagnostics)
     candidate = observation.candidates[0]
     assert any(
-            claim.kind is ClaimKind.TITLE
-            and claim.state is FieldState.VALID
-            for claim in candidate.claims
-        )
-    assert (omitted_kind, scope) not in {(value.kind, value.scope) for value in candidate.evidence}
-    assert (sibling_kind, scope) in {(value.kind, value.scope) for value in candidate.evidence}
+        claim.kind is ClaimKind.TITLE and claim.state is FieldState.VALID
+        for claim in candidate.claims
+    )
+    assert (omitted_kind, scope) not in {
+        (value.kind, value.scope) for value in candidate.evidence
+    }
+    assert (sibling_kind, scope) in {
+        (value.kind, value.scope) for value in candidate.evidence
+    }
     report = MetadataReport.create(
         target=TargetFacts(
             "primary",
@@ -831,9 +838,7 @@ def test_optional_provenance_failures_are_local_diagnosed_and_replayable(
                 repository.close()
             reopened = open_repository(path, create=False)
             try:
-                persisted = MetadataReport.from_json(
-                    reopened.get(report.report_id)
-                )
+                persisted = MetadataReport.from_json(reopened.get(report.report_id))
             finally:
                 reopened.close()
         assert report == persisted
@@ -912,13 +917,23 @@ _REVISION_ALIAS_CASES: tuple[
 
 @pytest.mark.parametrize(
     (
-        "name", "document", "revision", "latest_revision", "expected",
-        "diagnostic_count", "persist",
+        "name",
+        "document",
+        "revision",
+        "latest_revision",
+        "expected",
+        "diagnostic_count",
+        "persist",
     ),
     _REVISION_ALIAS_CASES,
 )
 def test_revision_aliases_are_independent_and_replay_one_preferred_value(
-    name, document, revision, latest_revision, expected, diagnostic_count,
+    name,
+    document,
+    revision,
+    latest_revision,
+    expected,
+    diagnostic_count,
     persist,
 ) -> None:
     edition = _edition("/books/OL1M")
@@ -953,19 +968,18 @@ def test_revision_aliases_are_independent_and_replay_one_preferred_value(
     ).observe(_isbn_lookup((_isbn(),)))
 
     assert ProviderStatus.CANDIDATES == observation.status
-    assert (() if diagnostic_count == 0 else (diagnostic_count,)) == tuple(value.count for value in observation.diagnostics)
-    scope = (
-        ClaimScope.EDITION
-        if document == "edition"
-        else ClaimScope.WORK
+    assert (() if diagnostic_count == 0 else (diagnostic_count,)) == tuple(
+        value.count for value in observation.diagnostics
     )
+    scope = ClaimScope.EDITION if document == "edition" else ClaimScope.WORK
     revisions = [
         value
         for value in observation.candidates[0].evidence
-        if value.kind is ProviderEvidenceKind.REVISION
-        and value.scope is scope
+        if value.kind is ProviderEvidenceKind.REVISION and value.scope is scope
     ]
-    assert ([] if expected is None else [expected]) == [value.value for value in revisions]
+    assert ([] if expected is None else [expected]) == [
+        value.value for value in revisions
+    ]
     if revisions:
         assert (1 if scope is ClaimScope.EDITION else 3) == revisions[0].source_ordinal
     report = MetadataReport.create(
@@ -993,9 +1007,7 @@ def test_revision_aliases_are_independent_and_replay_one_preferred_value(
                 repository.close()
             reopened = open_repository(path, create=False)
             try:
-                persisted = MetadataReport.from_json(
-                    reopened.get(report.report_id)
-                )
+                persisted = MetadataReport.from_json(reopened.get(report.report_id))
             finally:
                 reopened.close()
         assert report == persisted
@@ -1092,94 +1104,306 @@ def test_nested_work_author_evidence_persists_with_exact_source_semantics() -> N
     edition_subtitle = next(
         value
         for value in candidate.claims
-        if value.kind is ClaimKind.SUBTITLE
-        and value.scope is ClaimScope.EDITION
+        if value.kind is ClaimKind.SUBTITLE and value.scope is ClaimScope.EDITION
     )
     assert "ebook" == edition_subtitle.applicability
     expected_claims = (
         (0, ClaimKind.ISBN, ClaimScope.EDITION, None, FieldState.VALID, "0306406152"),
-        (1, ClaimKind.ISBN, ClaimScope.EDITION, None, FieldState.VALID, "9780306406157"),
+        (
+            1,
+            ClaimKind.ISBN,
+            ClaimScope.EDITION,
+            None,
+            FieldState.VALID,
+            "9780306406157",
+        ),
         (2, ClaimKind.ASIN, ClaimScope.EDITION, None, FieldState.UNSUPPORTED, None),
-        (3, ClaimKind.TITLE, ClaimScope.EDITION, None, FieldState.VALID, "Edition title"),
-        (4, ClaimKind.SUBTITLE, ClaimScope.EDITION, None, FieldState.VALID, "Edition subtitle"),
-        (5, ClaimKind.PUBLICATION_DATE, ClaimScope.EDITION, None, FieldState.VALID, "2026-01-02"),
-        (6, ClaimKind.TITLE, ClaimScope.EDITION, None, FieldState.VALID, "Alternate edition"),
-        (7, ClaimKind.TITLE, ClaimScope.EDITION, None, FieldState.VALID, "Other edition"),
-        (8, ClaimKind.PUBLISHER, ClaimScope.EDITION, None, FieldState.VALID, "Example Press"),
-        (9, ClaimKind.IMPRINT, ClaimScope.EDITION, None, FieldState.VALID, "Example Imprint"),
-        (10, ClaimKind.IMPRINT, ClaimScope.EDITION, None, FieldState.VALID, "Scalar Imprint"),
+        (
+            3,
+            ClaimKind.TITLE,
+            ClaimScope.EDITION,
+            None,
+            FieldState.VALID,
+            "Edition title",
+        ),
+        (
+            4,
+            ClaimKind.SUBTITLE,
+            ClaimScope.EDITION,
+            None,
+            FieldState.VALID,
+            "Edition subtitle",
+        ),
+        (
+            5,
+            ClaimKind.PUBLICATION_DATE,
+            ClaimScope.EDITION,
+            None,
+            FieldState.VALID,
+            "2026-01-02",
+        ),
+        (
+            6,
+            ClaimKind.TITLE,
+            ClaimScope.EDITION,
+            None,
+            FieldState.VALID,
+            "Alternate edition",
+        ),
+        (
+            7,
+            ClaimKind.TITLE,
+            ClaimScope.EDITION,
+            None,
+            FieldState.VALID,
+            "Other edition",
+        ),
+        (
+            8,
+            ClaimKind.PUBLISHER,
+            ClaimScope.EDITION,
+            None,
+            FieldState.VALID,
+            "Example Press",
+        ),
+        (
+            9,
+            ClaimKind.IMPRINT,
+            ClaimScope.EDITION,
+            None,
+            FieldState.VALID,
+            "Example Imprint",
+        ),
+        (
+            10,
+            ClaimKind.IMPRINT,
+            ClaimScope.EDITION,
+            None,
+            FieldState.VALID,
+            "Scalar Imprint",
+        ),
         (11, ClaimKind.LANGUAGE, ClaimScope.EDITION, None, FieldState.VALID, "eng"),
         (12, ClaimKind.CREATOR, ClaimScope.EDITION, None, FieldState.UNSUPPORTED, None),
-        (13, ClaimKind.CONTRIBUTOR, ClaimScope.EDITION, None, FieldState.UNSUPPORTED, None),
-        (14, ClaimKind.TITLE, ClaimScope.WORK, None, FieldState.VALID, "Local work title"),
-        (15, ClaimKind.SUBTITLE, ClaimScope.WORK, None, FieldState.VALID, "Work subtitle"),
-        (16, ClaimKind.TITLE, ClaimScope.WORK, None, FieldState.VALID, "Alternate work"),
-        (17, ClaimKind.DESCRIPTION, ClaimScope.WORK, None, FieldState.VALID, "Description"),
+        (
+            13,
+            ClaimKind.CONTRIBUTOR,
+            ClaimScope.EDITION,
+            None,
+            FieldState.UNSUPPORTED,
+            None,
+        ),
+        (
+            14,
+            ClaimKind.TITLE,
+            ClaimScope.WORK,
+            None,
+            FieldState.VALID,
+            "Local work title",
+        ),
+        (
+            15,
+            ClaimKind.SUBTITLE,
+            ClaimScope.WORK,
+            None,
+            FieldState.VALID,
+            "Work subtitle",
+        ),
+        (
+            16,
+            ClaimKind.TITLE,
+            ClaimScope.WORK,
+            None,
+            FieldState.VALID,
+            "Alternate work",
+        ),
+        (
+            17,
+            ClaimKind.DESCRIPTION,
+            ClaimScope.WORK,
+            None,
+            FieldState.VALID,
+            "Description",
+        ),
         (18, ClaimKind.CREATOR, ClaimScope.WORK, None, FieldState.UNSUPPORTED, None),
-        (19, ClaimKind.CONTRIBUTOR, ClaimScope.WORK, None, FieldState.UNSUPPORTED, None),
+        (
+            19,
+            ClaimKind.CONTRIBUTOR,
+            ClaimScope.WORK,
+            None,
+            FieldState.UNSUPPORTED,
+            None,
+        ),
         (20, ClaimKind.TAG, ClaimScope.WORK, None, FieldState.UNSUPPORTED, None),
         (21, ClaimKind.GENRE, ClaimScope.WORK, None, FieldState.UNSUPPORTED, None),
         (22, ClaimKind.SERIES, ClaimScope.WORK, None, FieldState.VALID, "Cycle"),
         (23, ClaimKind.SERIES_SEQUENCE, ClaimScope.WORK, None, FieldState.VALID, "2"),
     )
     assert expected_claims == tuple(
-            (
-                value.raw_order,
-                value.kind,
-                value.scope,
-                value.role,
-                value.state,
-                value.value,
-            )
-            for value in candidate.claims
+        (
+            value.raw_order,
+            value.kind,
+            value.scope,
+            value.role,
+            value.state,
+            value.value,
         )
+        for value in candidate.claims
+    )
     expected_matrix = (
         (30, ProviderEvidenceKind.COPYRIGHT_DATE, ClaimScope.EDITION, None, "2026"),
-        (18, ProviderEvidenceKind.DEWEY_CLASSIFICATION, ClaimScope.EDITION, None, "813.6"),
-        (6, ProviderEvidenceKind.DISTRIBUTOR, ClaimScope.EDITION, None, "Example Distributor"),
+        (
+            18,
+            ProviderEvidenceKind.DEWEY_CLASSIFICATION,
+            ClaimScope.EDITION,
+            None,
+            "813.6",
+        ),
+        (
+            6,
+            ProviderEvidenceKind.DISTRIBUTOR,
+            ClaimScope.EDITION,
+            None,
+            "Example Distributor",
+        ),
         (33, ProviderEvidenceKind.EDITION_COVER_ID, ClaimScope.EDITION, None, "101"),
-        (27, ProviderEvidenceKind.EDITION_DESCRIPTION, ClaimScope.EDITION, None, "Edition description"),
-        (7, ProviderEvidenceKind.EDITION_STATEMENT, ClaimScope.EDITION, None, "First edition"),
-        (8, ProviderEvidenceKind.EDITION_STATEMENT, ClaimScope.EDITION, None, "First edition statement"),
-        (0, ProviderEvidenceKind.EDITION_WORK_RELATION, ClaimScope.EDITION, None, "open-library-work-OL5W"),
-        (2, ProviderEvidenceKind.LAST_MODIFIED, ClaimScope.EDITION, None, "2026-01-02T03:04:05.000000"),
-        (19, ProviderEvidenceKind.LC_CLASSIFICATION, ClaimScope.EDITION, None, "PS3605.X36"),
+        (
+            27,
+            ProviderEvidenceKind.EDITION_DESCRIPTION,
+            ClaimScope.EDITION,
+            None,
+            "Edition description",
+        ),
+        (
+            7,
+            ProviderEvidenceKind.EDITION_STATEMENT,
+            ClaimScope.EDITION,
+            None,
+            "First edition",
+        ),
+        (
+            8,
+            ProviderEvidenceKind.EDITION_STATEMENT,
+            ClaimScope.EDITION,
+            None,
+            "First edition statement",
+        ),
+        (
+            0,
+            ProviderEvidenceKind.EDITION_WORK_RELATION,
+            ClaimScope.EDITION,
+            None,
+            "open-library-work-OL5W",
+        ),
+        (
+            2,
+            ProviderEvidenceKind.LAST_MODIFIED,
+            ClaimScope.EDITION,
+            None,
+            "2026-01-02T03:04:05.000000",
+        ),
+        (
+            19,
+            ProviderEvidenceKind.LC_CLASSIFICATION,
+            ClaimScope.EDITION,
+            None,
+            "PS3605.X36",
+        ),
         (17, ProviderEvidenceKind.LCCN, ClaimScope.EDITION, None, "2026123456"),
         (16, ProviderEvidenceKind.OCLC, ClaimScope.EDITION, None, "12345"),
         (31, ProviderEvidenceKind.PAGE_COUNT, ClaimScope.EDITION, None, "321"),
         (29, ProviderEvidenceKind.PAGINATION, ClaimScope.EDITION, None, "321 pages"),
         (28, ProviderEvidenceKind.PHYSICAL_FORMAT, ClaimScope.EDITION, None, "eBook"),
-        (20, ProviderEvidenceKind.PUBLICATION_PLACE, ClaimScope.EDITION, None, "London"),
-        (5, ProviderEvidenceKind.RESPONSIBILITY_STATEMENT, ClaimScope.EDITION, None, "By Ada Author"),
+        (
+            20,
+            ProviderEvidenceKind.PUBLICATION_PLACE,
+            ClaimScope.EDITION,
+            None,
+            "London",
+        ),
+        (
+            5,
+            ProviderEvidenceKind.RESPONSIBILITY_STATEMENT,
+            ClaimScope.EDITION,
+            None,
+            "By Ada Author",
+        ),
         (1, ProviderEvidenceKind.REVISION, ClaimScope.EDITION, None, "3"),
-        (9, ProviderEvidenceKind.TRANSLATION_STATEMENT, ClaimScope.EDITION, None, "Original title"),
+        (
+            9,
+            ProviderEvidenceKind.TRANSLATION_STATEMENT,
+            ClaimScope.EDITION,
+            None,
+            "Original title",
+        ),
         (25, ProviderEvidenceKind.WIKIDATA, ClaimScope.EDITION, None, "Q123"),
-        (14, ProviderEvidenceKind.AUTHOR_IDENTITY, ClaimScope.WORK, None, "open-library-author-OL7A"),
-        (15, ProviderEvidenceKind.CONTRIBUTOR_IDENTITY, ClaimScope.WORK, "author", "open-library-author-OL7A"),
-        (32, ProviderEvidenceKind.FIRST_PUBLICATION_DATE, ClaimScope.WORK, None, "2025-12-31"),
-        (4, ProviderEvidenceKind.LAST_MODIFIED, ClaimScope.WORK, None, "2026-01-03T03:04:05.000000"),
+        (
+            14,
+            ProviderEvidenceKind.AUTHOR_IDENTITY,
+            ClaimScope.WORK,
+            None,
+            "open-library-author-OL7A",
+        ),
+        (
+            15,
+            ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+            ClaimScope.WORK,
+            "author",
+            "open-library-author-OL7A",
+        ),
+        (
+            32,
+            ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+            ClaimScope.WORK,
+            None,
+            "2025-12-31",
+        ),
+        (
+            4,
+            ProviderEvidenceKind.LAST_MODIFIED,
+            ClaimScope.WORK,
+            None,
+            "2026-01-03T03:04:05.000000",
+        ),
         (22, ProviderEvidenceKind.PERSON, ClaimScope.WORK, None, "Example Person"),
         (23, ProviderEvidenceKind.PLACE, ClaimScope.WORK, None, "Example Place"),
         (3, ProviderEvidenceKind.REVISION, ClaimScope.WORK, None, "4"),
         (13, ProviderEvidenceKind.SEARCH_EDITION, ClaimScope.WORK, None, "OL1M"),
         (12, ProviderEvidenceKind.SEARCH_LANGUAGE, ClaimScope.WORK, None, "eng"),
-        (11, ProviderEvidenceKind.SEARCH_PUBLICATION_DATE, ClaimScope.WORK, None, "2026"),
-        (10, ProviderEvidenceKind.SEARCH_PUBLISHER, ClaimScope.WORK, None, "Search Press"),
-        (21, ProviderEvidenceKind.SUBJECT, ClaimScope.WORK, None, "Speculative fiction"),
+        (
+            11,
+            ProviderEvidenceKind.SEARCH_PUBLICATION_DATE,
+            ClaimScope.WORK,
+            None,
+            "2026",
+        ),
+        (
+            10,
+            ProviderEvidenceKind.SEARCH_PUBLISHER,
+            ClaimScope.WORK,
+            None,
+            "Search Press",
+        ),
+        (
+            21,
+            ProviderEvidenceKind.SUBJECT,
+            ClaimScope.WORK,
+            None,
+            "Speculative fiction",
+        ),
         (24, ProviderEvidenceKind.TIME, ClaimScope.WORK, None, "Near future"),
         (26, ProviderEvidenceKind.WIKIDATA, ClaimScope.WORK, None, "Q456"),
         (34, ProviderEvidenceKind.WORK_COVER_ID, ClaimScope.WORK, None, "202"),
     )
     assert expected_matrix == tuple(
-            (
-                value.source_ordinal,
-                value.kind,
-                value.scope,
-                value.role,
-                value.value,
-            )
-            for value in candidate.evidence
+        (
+            value.source_ordinal,
+            value.kind,
+            value.scope,
+            value.role,
+            value.value,
         )
+        for value in candidate.evidence
+    )
     identity = next(
         value
         for value in candidate.evidence
@@ -1190,16 +1414,17 @@ def test_nested_work_author_evidence_persists_with_exact_source_semantics() -> N
     assert "author" == identity.role
     assert identity.source_ordinal >= 0
     assert [
-            value.source_ordinal
-            for value in report.providers[0].candidates[0].evidence
-        ] == [
-            value.source_ordinal
-            for value in candidate.evidence
-        ]
+        value.source_ordinal for value in report.providers[0].candidates[0].evidence
+    ] == [value.source_ordinal for value in candidate.evidence]
 
 
 def test_detail_freeze_replay_preserves_empty_containers_and_decimal() -> None:
-    value = {"empty_mapping": {}, "empty_sequence": [], "nested": [{}, []], "decimal": Decimal("1.25")}
+    value = {
+        "empty_mapping": {},
+        "empty_sequence": [],
+        "nested": [{}, []],
+        "decimal": Decimal("1.25"),
+    }
     frozen = open_library_metadata._freeze_detail(value)
     assert value == open_library_metadata._thaw_detail(frozen)
 
@@ -1240,9 +1465,9 @@ def test_first_dispatch_captures_injected_access_time() -> None:
 )
 def test_publication_field_accepts_year_month_day_and_signed_offset(lexical) -> None:
     assert (FieldState.VALID, lexical) == open_library_metadata._field(
-            ClaimKind.PUBLICATION_DATE,
-            lexical,
-        )
+        ClaimKind.PUBLICATION_DATE,
+        lexical,
+    )
 
 
 def test_work_plan_persists_ordered_qualified_creators_through_replay() -> None:
@@ -1271,9 +1496,7 @@ def test_work_plan_persists_ordered_qualified_creators_through_replay() -> None:
                 }
             ]
         },
-        "/books/OL1M.json": _edition(
-            "/books/OL1M", work="/works/OL5W"
-        ),
+        "/books/OL1M.json": _edition("/books/OL1M", work="/works/OL5W"),
         "/works/OL5W.json": _work("/works/OL5W"),
     }
 
@@ -1296,12 +1519,12 @@ def test_work_plan_persists_ordered_qualified_creators_through_replay() -> None:
     assert ProviderQueryKind.WORK == observation.query_kind
     assert (title.reference,) == observation.input_references
     assert ("Zed Author", "Ada Author") == tuple(
-            claim.value
-            for claim in observation.candidates[0].claims
-            if claim.kind is ClaimKind.CREATOR
-            and claim.state.value == "valid"
-            and claim.role == "author"
-        )
+        claim.value
+        for claim in observation.candidates[0].claims
+        if claim.kind is ClaimKind.CREATOR
+        and claim.state.value == "valid"
+        and claim.role == "author"
+    )
 
     report = MetadataReport.create(
         target=TargetFacts("primary", "ebooks", "item-1", fields),
@@ -1312,12 +1535,12 @@ def test_work_plan_persists_ordered_qualified_creators_through_replay() -> None:
     )
     replay = MetadataReport.from_json(report.to_json())
     assert ("Zed Author", "Ada Author") == tuple(
-            claim.value
-            for claim in replay.providers[0].candidates[0].claims
-            if claim.kind is ClaimKind.CREATOR
-            and claim.state.value == "valid"
-            and claim.role == "author"
-        )
+        claim.value
+        for claim in replay.providers[0].candidates[0].claims
+        if claim.kind is ClaimKind.CREATOR
+        and claim.state.value == "valid"
+        and claim.role == "author"
+    )
 
 
 @pytest.mark.parametrize(
@@ -1341,7 +1564,9 @@ def test_work_plan_persists_ordered_qualified_creators_through_replay() -> None:
         ),
     ),
 )
-def test_work_plan_rejects_reordered_duplicate_invalid_and_overflow_authors(label, authors, expected) -> None:
+def test_work_plan_rejects_reordered_duplicate_invalid_and_overflow_authors(
+    label, authors, expected
+) -> None:
     title = _title()
     fields = tuple(
         TargetField(
@@ -1368,16 +1593,12 @@ def test_work_plan_rejects_reordered_duplicate_invalid_and_overflow_authors(labe
                     {
                         "key": "/works/OL5W",
                         "author_name": authors,  # noqa: B023 - closure is created and consumed within this iteration
-                        "editions": {
-                            "docs": [{"key": "/books/OL1M"}]
-                        },
+                        "editions": {"docs": [{"key": "/books/OL1M"}]},
                     }
                 ]
             }
         elif request.url.path == "/books/OL1M.json":
-            value = _edition(
-                "/books/OL1M", work="/works/OL5W"
-            )
+            value = _edition("/books/OL1M", work="/works/OL5W")
         else:
             assert "/works/OL5W.json" == request.url.path
             value = _work("/works/OL5W")
@@ -1394,11 +1615,15 @@ def test_work_plan_rejects_reordered_duplicate_invalid_and_overflow_authors(labe
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     ).observe(plan)
     assert expected == observation.status
-    assert (1 if expected is ProviderStatus.CANDIDATES else 0) == len(observation.candidates)
+    assert (1 if expected is ProviderStatus.CANDIDATES else 0) == len(
+        observation.candidates
+    )
     assert 3 == len(requests)
 
 
-def test_work_lookup_uses_complete_title_and_authors_then_retains_only_neutral_work_evidence() -> None:
+def test_work_lookup_uses_complete_title_and_authors_then_retains_only_neutral_work_evidence() -> (
+    None
+):
     requests: list[httpx.Request] = []
     values = {
         "/search.json": {
@@ -1441,7 +1666,10 @@ def test_work_lookup_uses_complete_title_and_authors_then_retains_only_neutral_w
     assert ProviderQueryKind.WORK == observation.query_kind
     assert "Local work title" == requests[0].url.params["title"]
     assert "Ada Example" == requests[0].url.params["author"]
-    assert "key,author_name,author_key,publisher,publish_date,language,edition_key,editions,editions.key" == requests[0].url.params["fields"]
+    assert (
+        "key,author_name,author_key,publisher,publish_date,language,edition_key,editions,editions.key"
+        == requests[0].url.params["fields"]
+    )
     qualified = qualify_provider_observation(observation, lookup)
     assert ProviderStatus.CANDIDATES == qualified.status
     candidate = qualified.candidates[0]
@@ -1453,32 +1681,36 @@ def test_work_lookup_uses_complete_title_and_authors_then_retains_only_neutral_w
         if claim.reference == binding.claim_reference
     )
     assert (
-            binding.identity,
-            binding.scope,
-            binding.role,
-            bound_claim.value,
-        ) == (
-            "open-library-author-OL7A",
-            ClaimScope.WORK,
-            "author",
-            "Ada Example",
-        )
+        binding.identity,
+        binding.scope,
+        binding.role,
+        bound_claim.value,
+    ) == (
+        "open-library-author-OL7A",
+        ClaimScope.WORK,
+        "author",
+        "Ada Example",
+    )
     assert not (
         {ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLISHER}
         & {claim.kind for claim in candidate.claims}
     )
     assert not (
         {ClaimKind.GENRE, ClaimKind.TAG}
-        & {
-            claim.kind
-            for claim in candidate.claims
-            if claim.state.value == "valid"
-        }
+        & {claim.kind for claim in candidate.claims if claim.state.value == "valid"}
     )
-    assert ProviderEvidenceKind.SUBJECT in {value.kind for value in observation.candidates[0].evidence}
-    assert ProviderEvidenceKind.CONTRIBUTOR_IDENTITY in {value.kind for value in observation.candidates[0].evidence}
-    assert ProviderEvidenceKind.SUBJECT not in {value.kind for value in candidate.evidence}
-    assert ProviderEvidenceKind.FIRST_PUBLICATION_DATE in {value.kind for value in candidate.evidence}
+    assert ProviderEvidenceKind.SUBJECT in {
+        value.kind for value in observation.candidates[0].evidence
+    }
+    assert ProviderEvidenceKind.CONTRIBUTOR_IDENTITY in {
+        value.kind for value in observation.candidates[0].evidence
+    }
+    assert ProviderEvidenceKind.SUBJECT not in {
+        value.kind for value in candidate.evidence
+    }
+    assert ProviderEvidenceKind.FIRST_PUBLICATION_DATE in {
+        value.kind for value in candidate.evidence
+    }
     retained = next(
         value
         for value in candidate.evidence
@@ -1486,10 +1718,9 @@ def test_work_lookup_uses_complete_title_and_authors_then_retains_only_neutral_w
     )
     assert () == retained.links
     assert all(
-            value.scope is ClaimScope.WORK
-            or value is retained
-            for value in candidate.evidence
-        )
+        value.scope is ClaimScope.WORK or value is retained
+        for value in candidate.evidence
+    )
     search_evidence = {
         (value.kind, value.value, value.scope)
         for value in observation.candidates[0].evidence
@@ -1502,11 +1733,15 @@ def test_work_lookup_uses_complete_title_and_authors_then_retains_only_neutral_w
         }
     }
     assert {
-            (ProviderEvidenceKind.SEARCH_PUBLISHER, "Search Press", ClaimScope.WORK),
-            (ProviderEvidenceKind.SEARCH_PUBLICATION_DATE, "not a typed publication date", ClaimScope.WORK),
-            (ProviderEvidenceKind.SEARCH_LANGUAGE, "eng", ClaimScope.WORK),
-            (ProviderEvidenceKind.SEARCH_EDITION, "OL1M", ClaimScope.WORK),
-        } == search_evidence
+        (ProviderEvidenceKind.SEARCH_PUBLISHER, "Search Press", ClaimScope.WORK),
+        (
+            ProviderEvidenceKind.SEARCH_PUBLICATION_DATE,
+            "not a typed publication date",
+            ClaimScope.WORK,
+        ),
+        (ProviderEvidenceKind.SEARCH_LANGUAGE, "eng", ClaimScope.WORK),
+        (ProviderEvidenceKind.SEARCH_EDITION, "OL1M", ClaimScope.WORK),
+    } == search_evidence
 
 
 def test_exact_search_details_rich_evidence_and_covers_are_bounded() -> None:
@@ -1550,47 +1785,50 @@ def test_exact_search_details_rich_evidence_and_covers_are_bounded() -> None:
 
     assert ProviderStatus.CANDIDATES == observation.status
     assert [
-            "open-library-edition-OL10M",
-            "open-library-edition-OL20M",
-        ] == [candidate.identity for candidate in observation.candidates]
+        "open-library-edition-OL10M",
+        "open-library-edition-OL20M",
+    ] == [candidate.identity for candidate in observation.candidates]
     assert [
-            "/search.json",
-            "/books/OL10M.json",
-            "/works/OL5W.json",
-            "/books/OL20M.json",
-        ] == [request.url.path for request in requests]
+        "/search.json",
+        "/books/OL10M.json",
+        "/works/OL5W.json",
+        "/books/OL20M.json",
+    ] == [request.url.path for request in requests]
     assert [0.0, 1.0, 2.0, 3.0] == request_starts
     search = requests[0]
     assert OPEN_LIBRARY_SEARCH_URL == str(search.url.copy_with(query=None))
     assert "isbn:9780306406157" == search.url.params["q"]
     assert "3" == search.url.params["limit"]
     assert "key,editions,editions.key,editions.isbn" == search.url.params["fields"]
-    assert "Mechanical-Librarian (operator@example.invalid)" == search.headers["user-agent"]
+    assert (
+        "Mechanical-Librarian (operator@example.invalid)"
+        == search.headers["user-agent"]
+    )
     candidate = observation.candidates[0]
     assert "open-library-work-OL5W" == candidate.work_identity
     kinds = {value.kind for value in candidate.evidence}
     assert {
-            ProviderEvidenceKind.REVISION,
-            ProviderEvidenceKind.LAST_MODIFIED,
-            ProviderEvidenceKind.OCLC,
-            ProviderEvidenceKind.LCCN,
-            ProviderEvidenceKind.WIKIDATA,
-            ProviderEvidenceKind.SUBJECT,
-            ProviderEvidenceKind.PERSON,
-            ProviderEvidenceKind.PLACE,
-            ProviderEvidenceKind.TIME,
-            ProviderEvidenceKind.DEWEY_CLASSIFICATION,
-            ProviderEvidenceKind.LC_CLASSIFICATION,
-            ProviderEvidenceKind.PHYSICAL_FORMAT,
-            ProviderEvidenceKind.PAGE_COUNT,
-            ProviderEvidenceKind.PAGINATION,
-            ProviderEvidenceKind.PUBLICATION_PLACE,
-            ProviderEvidenceKind.COPYRIGHT_DATE,
-            ProviderEvidenceKind.EDITION_WORK_RELATION,
-            ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
-            ProviderEvidenceKind.EDITION_COVER_ID,
-            ProviderEvidenceKind.WORK_COVER_ID,
-        }.issubset(kinds)
+        ProviderEvidenceKind.REVISION,
+        ProviderEvidenceKind.LAST_MODIFIED,
+        ProviderEvidenceKind.OCLC,
+        ProviderEvidenceKind.LCCN,
+        ProviderEvidenceKind.WIKIDATA,
+        ProviderEvidenceKind.SUBJECT,
+        ProviderEvidenceKind.PERSON,
+        ProviderEvidenceKind.PLACE,
+        ProviderEvidenceKind.TIME,
+        ProviderEvidenceKind.DEWEY_CLASSIFICATION,
+        ProviderEvidenceKind.LC_CLASSIFICATION,
+        ProviderEvidenceKind.PHYSICAL_FORMAT,
+        ProviderEvidenceKind.PAGE_COUNT,
+        ProviderEvidenceKind.PAGINATION,
+        ProviderEvidenceKind.PUBLICATION_PLACE,
+        ProviderEvidenceKind.COPYRIGHT_DATE,
+        ProviderEvidenceKind.EDITION_WORK_RELATION,
+        ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+        ProviderEvidenceKind.EDITION_COVER_ID,
+        ProviderEvidenceKind.WORK_COVER_ID,
+    }.issubset(kinds)
     work_title = next(
         claim
         for claim in candidate.claims
@@ -1599,25 +1837,26 @@ def test_exact_search_details_rich_evidence_and_covers_are_bounded() -> None:
     assert Comparison.AGREEMENT == work_title.links[0].outcome
     assert 3 == len(provider.cover_descriptors)
     assert {
-            cover_source_id(
-                CoverSourceKind.OPEN_LIBRARY,
-                "open_library:edition:/books/OL10M",
-            ),
-            cover_source_id(
-                CoverSourceKind.OPEN_LIBRARY,
-                "open_library:edition:/books/OL20M",
-            ),
-            cover_source_id(
-                CoverSourceKind.OPEN_LIBRARY,
-                "open_library:work:/works/OL5W",
-            ),
-        } == {value.source_id for value in provider.cover_descriptors}
+        cover_source_id(
+            CoverSourceKind.OPEN_LIBRARY,
+            "open_library:edition:/books/OL10M",
+        ),
+        cover_source_id(
+            CoverSourceKind.OPEN_LIBRARY,
+            "open_library:edition:/books/OL20M",
+        ),
+        cover_source_id(
+            CoverSourceKind.OPEN_LIBRARY,
+            "open_library:work:/works/OL5W",
+        ),
+    } == {value.source_id for value in provider.cover_descriptors}
     assert all(
-            value.provenance is not None
-            and value.provenance.provider == "open_library"
-            for value in provider.cover_descriptors
-        )
-    assert ProviderStatus.UNAVAILABLE == provider.observe(_isbn_lookup((_isbn(),))).status
+        value.provenance is not None and value.provenance.provider == "open_library"
+        for value in provider.cover_descriptors
+    )
+    assert (
+        ProviderStatus.UNAVAILABLE == provider.observe(_isbn_lookup((_isbn(),))).status
+    )
     assert 4 == len(requests)
 
 
@@ -1635,13 +1874,18 @@ def test_zero_or_multiple_usable_families_make_no_request(claims) -> None:
         "open_library",
         httpx.Client(
             transport=httpx.MockTransport(
-                lambda request: requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.  # noqa: B023 - closure is created and consumed within this iteration
-                or httpx.Response(500)
+                lambda request: (
+                    requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.  # noqa: B023 - closure is created and consumed within this iteration
+                    or httpx.Response(500)
+                )
             )
         ),
         65_536,
     )
-    assert ProviderStatus.INSUFFICIENT_INPUT == provider.observe(_isbn_lookup(claims)).status
+    assert (
+        ProviderStatus.INSUFFICIENT_INPUT
+        == provider.observe(_isbn_lookup(claims)).status
+    )
     assert [] == requests
 
 
@@ -1672,7 +1916,9 @@ def test_discovery_plan_searches_each_valid_family() -> None:
     ).observe(plan)
     assert 2 == len(requests)
     assert 2 == len(observation.lanes)
-    assert {"isbn:9780306406157", "isbn:9780140328721"} == {request.url.params["q"] for request in requests}
+    assert {"isbn:9780306406157", "isbn:9780140328721"} == {
+        request.url.params["q"] for request in requests
+    }
 
 
 def test_terminal_detail_failure_finalizes_reserved_details() -> None:
@@ -1689,9 +1935,7 @@ def test_terminal_detail_failure_finalizes_reserved_details() -> None:
         assert "/books/OL1M.json" == request.url.path
         return httpx.Response(404)
 
-    plan = metadata_discovery_plan(
-        TargetSnapshot("ebook", None, ()), (_isbn(),)
-    )
+    plan = metadata_discovery_plan(TargetSnapshot("ebook", None, ()), (_isbn(),))
     observation = OpenLibraryMetadataProvider(
         "open_library",
         httpx.Client(transport=httpx.MockTransport(handler)),
@@ -1710,7 +1954,9 @@ def test_terminal_detail_failure_finalizes_reserved_details() -> None:
     "oversized",
     (False, True),
 )
-def test_discovery_oversized_lane_stops_remaining_requests_at_exact_bound(oversized) -> None:
+def test_discovery_oversized_lane_stops_remaining_requests_at_exact_bound(
+    oversized,
+) -> None:
     plan = metadata_discovery_plan(
         TargetSnapshot("ebook", None, ()),
         (_isbn(), _isbn("9780140328721", applicability="print")),
@@ -1737,9 +1983,11 @@ def test_discovery_oversized_lane_stops_remaining_requests_at_exact_bound(oversi
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     ).observe(plan)
     assert (1 if oversized else 2) == len(requests)
-    assert ({ProviderStatus.OVERSIZED, ProviderStatus.INCOMPLETE}
-            if oversized
-            else {ProviderStatus.NO_MATCH}) == {lane.status for lane in observation.lanes}
+    assert (
+        {ProviderStatus.OVERSIZED, ProviderStatus.INCOMPLETE}
+        if oversized
+        else {ProviderStatus.NO_MATCH}
+    ) == {lane.status for lane in observation.lanes}
 
 
 def test_conflicting_lane_contributes_no_cover_descriptors() -> None:
@@ -1800,9 +2048,7 @@ def test_conflicting_lane_contributes_no_cover_descriptors() -> None:
                     ]
                 }
         elif request.url.path == "/books/OL1M.json":
-            value = _edition(
-                "/books/OL1M", work="/works/OL6W", cover=200
-            )
+            value = _edition("/books/OL1M", work="/works/OL6W", cover=200)
             value["isbn_13"] = ["9780306406157", "9780140328721"]
         elif request.url.path == "/books/OL9M.json":
             value = _edition("/books/OL9M", cover=100)
@@ -1839,7 +2085,9 @@ def test_conflicting_lane_contributes_no_cover_descriptors() -> None:
     assert 4 == len(provider.cover_descriptors)
 
 
-def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicability() -> None:
+def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicability() -> (
+    None
+):
     ebook = _isbn()
     print_only = _isbn("9780140328721", applicability="print")
     title = _title()
@@ -1905,9 +2153,7 @@ def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicabili
                                 "Dup Press",
                                 "bad\x00publisher",
                             ],
-                            "editions": {
-                                "docs": [{"key": "/books/OL1M"}]
-                            },
+                            "editions": {"docs": [{"key": "/books/OL1M"}]},
                         }
                     ]
                 }
@@ -1948,18 +2194,21 @@ def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicabili
     assert 7 == observation.diagnostics[0].count
     assert 1 == len(observation.candidates)
     assert {ProviderStatus.CANDIDATES} == {lane.status for lane in observation.lanes}
-    assert tuple(sorted(lane.identity for lane in plan.lanes)) == observation.convergence[0].lane_identities
+    assert (
+        tuple(sorted(lane.identity for lane in plan.lanes))
+        == observation.convergence[0].lane_identities
+    )
     lanes = {lane.matched_family: lane for lane in observation.lanes}
     assert (ebook.reference,) == lanes["9780306406157"].input_references
     assert (print_only.reference,) == lanes["9780140328721"].input_references
     assert (title.reference,) == lanes[None].input_references
     assert 3 == len(
-            {
-                candidate.reference
-                for lane in observation.lanes
-                for candidate in lane.candidates
-            }
-        )
+        {
+            candidate.reference
+            for lane in observation.lanes
+            for candidate in lane.candidates
+        }
+    )
 
     isbn_claims = tuple(
         claim
@@ -1967,49 +2216,45 @@ def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicabili
         if claim.kind is ClaimKind.ISBN and claim.value is not None
     )
     assert ("Zed Author", "Ada Author") == tuple(
-            claim.value
-            for claim in observation.candidates[0].claims
-            if claim.kind is ClaimKind.CREATOR
-            and claim.state.value == "valid"
-            and claim.role == "author"
-        )
+        claim.value
+        for claim in observation.candidates[0].claims
+        if claim.kind is ClaimKind.CREATOR
+        and claim.state.value == "valid"
+        and claim.role == "author"
+    )
     identities = tuple(
         evidence
         for evidence in observation.candidates[0].evidence
         if evidence.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY
     )
     assert {
-            "open-library-author-OL7A",
-            "open-library-author-OL9A",
-        } == {evidence.value for evidence in identities}
+        "open-library-author-OL7A",
+        "open-library-author-OL9A",
+    } == {evidence.value for evidence in identities}
     extra_identity = next(
         evidence
         for evidence in identities
         if evidence.value == "open-library-author-OL9A"
     )
-    assert max(
-            evidence.source_ordinal
-            for evidence in observation.candidates[0].evidence
-        ) == extra_identity.source_ordinal
+    assert (
+        max(evidence.source_ordinal for evidence in observation.candidates[0].evidence)
+        == extra_identity.source_ordinal
+    )
     publishers = tuple(
         evidence
         for evidence in observation.candidates[0].evidence
         if evidence.kind is ProviderEvidenceKind.SEARCH_PUBLISHER
     )
-    assert {"First Press", "Second Press", "Dup Press"} == {evidence.value for evidence in publishers}
+    assert {"First Press", "Second Press", "Dup Press"} == {
+        evidence.value for evidence in publishers
+    }
     assert 4 == len(publishers)
     converged_duplicates = tuple(
-        evidence
-        for evidence in publishers
-        if evidence.value == "Dup Press"
+        evidence for evidence in publishers if evidence.value == "Dup Press"
     )
     assert tuple(
-            evidence.source_ordinal
-            for evidence in isbn_duplicate_publishers
-        ) == tuple(
-            evidence.source_ordinal
-            for evidence in converged_duplicates
-        )
+        evidence.source_ordinal for evidence in isbn_duplicate_publishers
+    ) == tuple(evidence.source_ordinal for evidence in converged_duplicates)
     identical = open_library_metadata._canonical_evidence_union(
         isbn_duplicate_publishers,
         tuple(
@@ -2031,11 +2276,7 @@ def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicabili
     assert excess is not None
     assert 3 == len(excess or ())
     assert (
-        max(
-            evidence.source_ordinal
-            for evidence in isbn_duplicate_publishers
-        )
-        + 1
+        max(evidence.source_ordinal for evidence in isbn_duplicate_publishers) + 1
     ) == (excess or ())[-1].source_ordinal
     report = MetadataReport.create(
         target=TargetFacts("primary", "ebooks", "item-1", fields),
@@ -2049,49 +2290,46 @@ def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicabili
         repository = open_repository(Path(directory) / "reports.sqlite")
         try:
             repository.publish(report, lambda: True)
-            sqlite_replay = MetadataReport.from_json(
-                repository.get(report.report_id)
-            )
+            sqlite_replay = MetadataReport.from_json(repository.get(report.report_id))
         finally:
             repository.close()
     assert observation.candidates[0] == replay.providers[0].candidates[0]
     assert report.to_json() == sqlite_replay.to_json()
     assert tuple(
-            evidence.source_ordinal
-            for evidence in observation.candidates[0].evidence
-        ) == tuple(
-            evidence.source_ordinal
-            for evidence in replay.providers[0].candidates[0].evidence
-        )
+        evidence.source_ordinal for evidence in observation.candidates[0].evidence
+    ) == tuple(
+        evidence.source_ordinal
+        for evidence in replay.providers[0].candidates[0].evidence
+    )
     assert {
-            "9780306406157": {"ebook"},
-            "9780140328721": {"print"},
-        } == {
-            family: {
-                claim.applicability
-                for claim in isbn_claims
-                if isbn_family(claim.value) == family
-            }
-            for family in ("9780306406157", "9780140328721")
-        }
-    assert {
-            "9780306406157": {ebook.reference},
-            "9780140328721": {print_only.reference},
-        } == {
-            family: {
-                link.local_reference
-                for claim in isbn_claims
-                if isbn_family(claim.value) == family
-                for link in claim.links
-                if link.outcome is Comparison.AGREEMENT
-            }
-            for family in ("9780306406157", "9780140328721")
-        }
-    assert all(
-            {ebook.reference, print_only.reference}
-            == {link.local_reference for link in claim.links}
+        "9780306406157": {"ebook"},
+        "9780140328721": {"print"},
+    } == {
+        family: {
+            claim.applicability
             for claim in isbn_claims
-        )
+            if isbn_family(claim.value) == family
+        }
+        for family in ("9780306406157", "9780140328721")
+    }
+    assert {
+        "9780306406157": {ebook.reference},
+        "9780140328721": {print_only.reference},
+    } == {
+        family: {
+            link.local_reference
+            for claim in isbn_claims
+            if isbn_family(claim.value) == family
+            for link in claim.links
+            if link.outcome is Comparison.AGREEMENT
+        }
+        for family in ("9780306406157", "9780140328721")
+    }
+    assert all(
+        {ebook.reference, print_only.reference}
+        == {link.local_reference for link in claim.links}
+        for claim in isbn_claims
+    )
     assert 2 == len(provider.cover_descriptors)
     assert 2 == len({value.source_id for value in provider.cover_descriptors})
     edition_cover = next(
@@ -2100,7 +2338,10 @@ def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicabili
         if value.provenance is not None
         and value.provenance.edition_identity is not None
     )
-    assert CoverDesignation.EXACT_EDITION == cast(CoverProvenance, edition_cover.provenance).designation
+    assert (
+        CoverDesignation.EXACT_EDITION
+        == cast(CoverProvenance, edition_cover.provenance).designation
+    )
 
 
 def test_isbn_10_and_13_of_one_family_share_one_exact_search() -> None:
@@ -2122,7 +2363,10 @@ def test_isbn_10_and_13_of_one_family_share_one_exact_search() -> None:
         65_536,
     ).observe(_isbn_lookup((ten, thirteen)))
     assert ProviderStatus.NO_MATCH == observation.status
-    assert tuple(sorted((ten.reference, thirteen.reference))) == observation.input_references
+    assert (
+        tuple(sorted((ten.reference, thirteen.reference)))
+        == observation.input_references
+    )
     assert "isbn:9780306406157" == requests[0].url.params["q"]
     assert 1 == len(requests)
 
@@ -2136,10 +2380,10 @@ def test_isbn_10_and_13_of_one_family_share_one_exact_search() -> None:
         "9780306406157",
     )
     assert {"print"} == {
-            claim.applicability
-            for claim in print_candidate.claims
-            if claim.kind is ClaimKind.ISBN
-        }
+        claim.applicability
+        for claim in print_candidate.claims
+        if claim.kind is ClaimKind.ISBN
+    }
 
 
 def test_two_distinct_works_use_the_five_request_maximum_in_order() -> None:
@@ -2203,19 +2447,19 @@ def test_two_distinct_works_use_the_five_request_maximum_in_order() -> None:
     observation = provider.observe(_isbn_lookup((_isbn(),)))
     assert ProviderStatus.CANDIDATES == observation.status
     assert [
-            "/search.json",
-            "/books/OL1M.json",
-            "/works/OL5W.json",
-            "/books/OL2M.json",
-            "/works/OL9W.json",
-        ] == [request.url.path for request in requests]
+        "/search.json",
+        "/books/OL1M.json",
+        "/works/OL5W.json",
+        "/books/OL2M.json",
+        "/works/OL9W.json",
+    ] == [request.url.path for request in requests]
     assert 4 == len(provider.cover_descriptors)
     assert {
-            "https://covers.openlibrary.org/b/id/100-L.jpg?default=false",
-            "https://covers.openlibrary.org/b/id/200-L.jpg?default=false",
-            "https://covers.openlibrary.org/b/id/300-L.jpg?default=false",
-            "https://covers.openlibrary.org/b/id/400-L.jpg?default=false",
-        } == {value.url for value in provider.cover_descriptors}
+        "https://covers.openlibrary.org/b/id/100-L.jpg?default=false",
+        "https://covers.openlibrary.org/b/id/200-L.jpg?default=false",
+        "https://covers.openlibrary.org/b/id/300-L.jpg?default=false",
+        "https://covers.openlibrary.org/b/id/400-L.jpg?default=false",
+    } == {value.url for value in provider.cover_descriptors}
 
 
 def test_third_exact_candidate_is_terminal_before_detail_requests() -> None:
@@ -2229,9 +2473,7 @@ def test_third_exact_candidate_is_terminal_before_detail_requests() -> None:
             "/books/OL1M",
             "/books/OL2M",
         )
-        value["docs"][0]["editions"]["docs"][0]["isbn"] = [
-            "9780140328721"
-        ]
+        value["docs"][0]["editions"]["docs"][0]["isbn"] = ["9780140328721"]
         return httpx.Response(
             200,
             headers={"content-type": "application/json"},
@@ -2408,7 +2650,9 @@ def test_transient_retries_use_exact_status_retry_after_and_pacing(
         pacer=OpenLibraryPacer(sleep=lambda _: None),
         sleep=lambda _: pytest.fail("429 must never retry"),
     )
-    assert ProviderStatus.RATE_LIMITED == terminal.observe(_isbn_lookup((_isbn(),))).status
+    assert (
+        ProviderStatus.RATE_LIMITED == terminal.observe(_isbn_lookup((_isbn(),))).status
+    )
     assert 1 == calls
 
     deadline_calls = 0
@@ -2420,9 +2664,7 @@ def test_transient_retries_use_exact_status_retry_after_and_pacing(
 
     deadline_provider = OpenLibraryMetadataProvider(
         "open_library",
-        httpx.Client(
-            transport=httpx.MockTransport(deadline_failure)
-        ),
+        httpx.Client(transport=httpx.MockTransport(deadline_failure)),
         65_536,
         pacer=OpenLibraryPacer(
             clock=lambda: 0.0,
@@ -2431,9 +2673,10 @@ def test_transient_retries_use_exact_status_retry_after_and_pacing(
         clock=lambda: 0.0,
         sleep=lambda _: pytest.fail("deadline must refuse delay"),
     )
-    assert ProviderStatus.UNAVAILABLE == deadline_provider.observe(
-            _isbn_lookup((_isbn(),)), deadline=2.0
-        ).status
+    assert (
+        ProviderStatus.UNAVAILABLE
+        == deadline_provider.observe(_isbn_lookup((_isbn(),)), deadline=2.0).status
+    )
     assert 1 == deadline_calls
 
 
@@ -2441,9 +2684,7 @@ def test_transient_retries_use_exact_status_retry_after_and_pacing(
 def test_recovers_at_every_permitted_status_retry_ordinal(
     prior_failures,
 ) -> None:
-    responses = [
-        httpx.Response(503) for _ in range(prior_failures)
-    ]
+    responses = [httpx.Response(503) for _ in range(prior_failures)]
     responses.append(
         httpx.Response(
             200,
@@ -2454,9 +2695,7 @@ def test_recovers_at_every_permitted_status_retry_ordinal(
     provider = OpenLibraryMetadataProvider(
         "open_library",
         httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _, values=responses: values.pop(0)
-            )
+            transport=httpx.MockTransport(lambda _, values=responses: values.pop(0))
         ),
         65_536,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
@@ -2465,7 +2704,9 @@ def test_recovers_at_every_permitted_status_retry_ordinal(
     )
     assert ProviderStatus.NO_MATCH == provider.observe(_isbn_lookup((_isbn(),))).status
     assert prior_failures + 1 == len(provider.attempt_records)
-    assert ["retry"] * prior_failures + ["response_received"] == [record.outcome for record in provider.attempt_records]
+    assert ["retry"] * prior_failures + ["response_received"] == [
+        record.outcome for record in provider.attempt_records
+    ]
 
 
 def test_final_retry_after_is_retained_when_local_attempts_are_exhausted() -> None:
@@ -2481,7 +2722,9 @@ def test_final_retry_after_is_retained_when_local_attempts_are_exhausted() -> No
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    assert ProviderStatus.UNAVAILABLE == provider.observe(_isbn_lookup((_isbn(),))).status
+    assert (
+        ProviderStatus.UNAVAILABLE == provider.observe(_isbn_lookup((_isbn(),))).status
+    )
     assert "exhausted" == provider.attempt_records[-1].outcome
     assert 7.0 == provider.attempt_records[-1].delay_seconds
 
@@ -2512,7 +2755,10 @@ def test_error_response_bodies_are_charged_before_status_retry(
         pacer=OpenLibraryPacer(sleep=lambda _: None),
         sleep=lambda _: pytest.fail("oversized body must not retry"),
     )
-    assert ProviderStatus.OVERSIZED == oversized_provider.observe(_isbn_lookup((_isbn(),))).status
+    assert (
+        ProviderStatus.OVERSIZED
+        == oversized_provider.observe(_isbn_lookup((_isbn(),))).status
+    )
     assert 1 == oversized_calls
     assert 0 == oversized_provider._remaining_response_bytes
 
@@ -2523,9 +2769,7 @@ def test_error_response_bodies_are_charged_before_status_retry(
     )
     control = OpenLibraryMetadataProvider(
         "open_library",
-        httpx.Client(
-            transport=httpx.MockTransport(lambda _: success)
-        ),
+        httpx.Client(transport=httpx.MockTransport(lambda _: success)),
         1_024,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
@@ -2540,16 +2784,18 @@ def test_error_response_bodies_are_charged_before_status_retry(
     ]
     interrupted = OpenLibraryMetadataProvider(
         "open_library",
-        httpx.Client(
-            transport=httpx.MockTransport(lambda _: responses.pop(0))
-        ),
+        httpx.Client(transport=httpx.MockTransport(lambda _: responses.pop(0))),
         1_024,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    assert ProviderStatus.NO_MATCH == interrupted.observe(_isbn_lookup((_isbn(),))).status
-    assert control._remaining_response_bytes - 1 == interrupted._remaining_response_bytes
+    assert (
+        ProviderStatus.NO_MATCH == interrupted.observe(_isbn_lookup((_isbn(),))).status
+    )
+    assert (
+        control._remaining_response_bytes - 1 == interrupted._remaining_response_bytes
+    )
     calls = 0
 
     def encoded_error(_: httpx.Request) -> httpx.Response:
@@ -2563,14 +2809,10 @@ def test_error_response_bodies_are_charged_before_status_retry(
 
     encoded = OpenLibraryMetadataProvider(
         "open_library",
-        httpx.Client(
-            transport=httpx.MockTransport(encoded_error)
-        ),
+        httpx.Client(transport=httpx.MockTransport(encoded_error)),
         1_024,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
-        sleep=lambda _: pytest.fail(
-            "non-identity encoding must not retry"
-        ),
+        sleep=lambda _: pytest.fail("non-identity encoding must not retry"),
     )
     assert ProviderStatus.MALFORMED == encoded.observe(_isbn_lookup((_isbn(),))).status
     assert 1 == calls
@@ -2580,14 +2822,10 @@ def test_error_response_bodies_are_charged_before_status_retry(
     response.headers["content-encoding"] = "gzip"
     encoded = OpenLibraryMetadataProvider(
         "open_library",
-        httpx.Client(
-            transport=httpx.MockTransport(lambda _: response)
-        ),
+        httpx.Client(transport=httpx.MockTransport(lambda _: response)),
         1_024,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
-        sleep=lambda _: pytest.fail(
-            "preloaded non-identity response must not retry"
-        ),
+        sleep=lambda _: pytest.fail("preloaded non-identity response must not retry"),
     )
     assert ProviderStatus.MALFORMED == encoded.observe(_isbn_lookup((_isbn(),))).status
     assert 1_024 * 49 == encoded._remaining_response_bytes
@@ -2622,13 +2860,9 @@ def test_retry_budget_is_four_across_required_request_chain() -> None:
     }
     success = {
         "/search.json": search,
-        "/books/OL1M.json": _edition(
-            "/books/OL1M", work="/works/OL5W"
-        ),
+        "/books/OL1M.json": _edition("/books/OL1M", work="/works/OL5W"),
         "/works/OL5W.json": _work("/works/OL5W"),
-        "/books/OL2M.json": _edition(
-            "/books/OL2M", work="/works/OL9W"
-        ),
+        "/books/OL2M.json": _edition("/books/OL2M", work="/works/OL9W"),
         "/works/OL9W.json": _work("/works/OL9W"),
     }
     first_failures = {
@@ -2660,13 +2894,12 @@ def test_retry_budget_is_four_across_required_request_chain() -> None:
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    assert ProviderStatus.UNAVAILABLE == provider.observe(_isbn_lookup((_isbn(),))).status
+    assert (
+        ProviderStatus.UNAVAILABLE == provider.observe(_isbn_lookup((_isbn(),))).status
+    )
     assert 9 == sum(path_calls.values())
     assert 9 == len(provider.attempt_records)
-    assert 4 == sum(
-            record.outcome == "retry"
-            for record in provider.attempt_records
-        )
+    assert 4 == sum(record.outcome == "retry" for record in provider.attempt_records)
 
 
 def test_nine_lane_observation_is_capped_at_49_dispatches() -> None:
@@ -2715,9 +2948,7 @@ def test_nine_lane_observation_is_capped_at_49_dispatches() -> None:
         if path == "/search.json":
             search_index += 1
             ordinal = search_index * 10
-            family = request.url.params.get("q", "").removeprefix(
-                "isbn:"
-            )
+            family = request.url.params.get("q", "").removeprefix("isbn:")
             rows = []
             for offset in (1, 2):
                 edition_key = f"/books/OL{ordinal + offset}M"
@@ -2773,10 +3004,7 @@ def test_nine_lane_observation_is_capped_at_49_dispatches() -> None:
     observation = provider.observe(plan)
     assert 49 == request_count
     assert 49 == len(provider.attempt_records)
-    assert 4 == sum(
-            record.outcome == "retry"
-            for record in provider.attempt_records
-        )
+    assert 4 == sum(record.outcome == "retry" for record in provider.attempt_records)
     assert 9 == len(observation.lanes)
 
 
@@ -2835,7 +3063,9 @@ def test_interrupted_body_bytes_are_charged_before_retry() -> None:
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    assert ProviderStatus.RATE_LIMITED == provider.observe(_isbn_lookup((_isbn(),))).status
+    assert (
+        ProviderStatus.RATE_LIMITED == provider.observe(_isbn_lookup((_isbn(),))).status
+    )
     assert 2 == calls
     assert 48 == provider._remaining_response_bytes
 
@@ -2871,7 +3101,9 @@ def test_malformed_optional_cover_ids_do_not_erase_metadata() -> None:
     assert 1 == len(observation.candidates)
     assert 2 == len(provider.cover_descriptors)
     assert all(value.url is None for value in provider.cover_descriptors)
-    assert (CoverSourceState.REJECTED, CoverSourceState.REJECTED) == tuple(value.terminal_state for value in provider.cover_descriptors)
+    assert (CoverSourceState.REJECTED, CoverSourceState.REJECTED) == tuple(
+        value.terminal_state for value in provider.cover_descriptors
+    )
     assert not (
         {
             ProviderEvidenceKind.EDITION_COVER_ID,
@@ -2894,7 +3126,9 @@ def test_malformed_optional_cover_ids_do_not_erase_metadata() -> None:
         ),
     ),
 )
-def test_missing_and_empty_cover_ids_remain_absent_while_valid_ids_request(cover_fields, expected_url, expected_state) -> None:
+def test_missing_and_empty_cover_ids_remain_absent_while_valid_ids_request(
+    cover_fields, expected_url, expected_state
+) -> None:
     edition = {**_edition("/books/OL1M"), **cover_fields}
     values = {
         "/search.json": _search("/books/OL1M"),
@@ -2960,7 +3194,9 @@ def test_invalid_present_cover_ids_are_rejected(covers) -> None:
     assert ProviderStatus.CANDIDATES == observation.status
     assert CoverSourceState.REJECTED == provider.cover_descriptors[0].terminal_state
     assert provider.cover_descriptors[0].url is None
-    assert ProviderEvidenceKind.EDITION_COVER_ID not in {value.kind for value in observation.candidates[0].evidence}
+    assert ProviderEvidenceKind.EDITION_COVER_ID not in {
+        value.kind for value in observation.candidates[0].evidence
+    }
 
 
 def test_cover_context_at_its_limit_is_retained() -> None:
@@ -3148,7 +3384,9 @@ def test_malformed_cover_ids_precede_oversized_context() -> None:
     observation = provider.observe(_isbn_lookup((_isbn(),)))
 
     assert ProviderStatus.CANDIDATES == observation.status
-    assert (CoverSourceState.REJECTED, CoverSourceState.REJECTED) == tuple(value.terminal_state for value in provider.cover_descriptors)
+    assert (CoverSourceState.REJECTED, CoverSourceState.REJECTED) == tuple(
+        value.terminal_state for value in provider.cover_descriptors
+    )
     assert all(value.url is None for value in provider.cover_descriptors)
     assert not (
         {
@@ -3227,17 +3465,16 @@ def test_conflicting_detail_relation_preserves_bounded_candidates() -> None:
     assert ProviderStatus.CANDIDATES == observation.status
     assert 2 == len(observation.candidates)
     assert 1 == sum(
-            evidence.kind
-            is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
-            for candidate in observation.candidates
-            for evidence in candidate.evidence
-        )
+        evidence.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+        for candidate in observation.candidates
+        for evidence in candidate.evidence
+    )
     assert [
-            "/search.json",
-            "/books/OL1M.json",
-            "/works/OL5W.json",
-            "/books/OL2M.json",
-        ] == [request.url.path for request in requests]
+        "/search.json",
+        "/books/OL1M.json",
+        "/works/OL5W.json",
+        "/books/OL2M.json",
+    ] == [request.url.path for request in requests]
 
 
 @pytest.mark.parametrize(
@@ -3254,7 +3491,9 @@ def test_conflicting_detail_relation_preserves_bounded_candidates() -> None:
         ],
     ),
 )
-def test_conflicting_or_multiple_work_relations_keep_only_edition_authority(relations) -> None:
+def test_conflicting_or_multiple_work_relations_keep_only_edition_authority(
+    relations,
+) -> None:
     values = {
         "/search.json": _search("/books/OL1M"),
         "/books/OL1M.json": {
@@ -3280,51 +3519,46 @@ def test_conflicting_or_multiple_work_relations_keep_only_edition_authority(rela
     assert ProviderStatus.CANDIDATES == observation.status
     candidate = observation.candidates[0]
     assert () == candidate.identity_bindings
-    assert all(
-            claim.scope is ClaimScope.EDITION
-            for claim in candidate.claims
-        )
-    assert all(
-            evidence.scope is ClaimScope.EDITION
-            for evidence in candidate.evidence
-        )
+    assert all(claim.scope is ClaimScope.EDITION for claim in candidate.claims)
+    assert all(evidence.scope is ClaimScope.EDITION for evidence in candidate.evidence)
     assert [
-            "edition_work_relation",
-            "edition_work_relation_contradiction",
-        ] == sorted(
-            evidence.kind.value
-            for evidence in candidate.evidence
-            if evidence.kind
-            in {
-                ProviderEvidenceKind.EDITION_WORK_RELATION,
-                ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
-            }
-        )
+        "edition_work_relation",
+        "edition_work_relation_contradiction",
+    ] == sorted(
+        evidence.kind.value
+        for evidence in candidate.evidence
+        if evidence.kind
+        in {
+            ProviderEvidenceKind.EDITION_WORK_RELATION,
+            ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
+        }
+    )
     publication = next(
         evidence
         for evidence in candidate.evidence
-        if evidence.kind
-        is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
     )
     assert "2026-01-02" == publication.value
     assert DatePrecision.DAY == publication.date_precision
-    assert PublicationDateRelation.MANIFESTATION_INCOMPATIBLE == publication.links[0].publication_date_relation
+    assert (
+        PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+        == publication.links[0].publication_date_relation
+    )
     assert not any(
-            claim.kind is ClaimKind.PUBLICATION_DATE
-            for claim in candidate.claims
-        )
+        claim.kind is ClaimKind.PUBLICATION_DATE for claim in candidate.claims
+    )
 
 
 def test_edition_scalar_and_search_list_publish_dates_are_contextual() -> None:
     edition = _edition("/books/OL1M")
     assert 0 == open_library_metadata._optional_projection_rejections(
-            edition,
-            schema="edition_detail",
-        )
+        edition,
+        schema="edition_detail",
+    )
     assert 0 == open_library_metadata._optional_projection_rejections(
-            {"key": "/works/OL1W", "publish_date": ["2026"]},
-            search_projection=True,
-        )
+        {"key": "/works/OL1W", "publish_date": ["2026"]},
+        search_projection=True,
+    )
 
 
 @pytest.mark.parametrize("invalid", (7, {"value": "2026"}))
@@ -3332,9 +3566,9 @@ def test_optional_rejections_and_duplicate_search_identities_fail_closed(
     invalid,
 ) -> None:
     assert 1 == open_library_metadata._optional_projection_rejections(
-            {"key": "/works/OL1W", "publish_date": [invalid]},
-            search_projection=True,
-        )
+        {"key": "/works/OL1W", "publish_date": [invalid]},
+        search_projection=True,
+    )
     source = _search("/books/OL1M", "/books/OL1M")
     with pytest.raises(ValueError):
         open_library_metadata._admitted_candidates(source, "9780306406157")
@@ -3344,60 +3578,73 @@ def test_optional_rejections_and_duplicate_search_identities_fail_closed(
 
 def test_optional_projection_diagnostics_are_field_bounded() -> None:
     assert 1 == open_library_metadata._optional_projection_rejections(
-            {"key": "/works/OL1W", "contributions": ["Ada"]}
-        )
+        {"key": "/works/OL1W", "contributions": ["Ada"]}
+    )
 
 
 def test_optional_projection_shapes_are_exact_and_local() -> None:
     diagnostic = open_library_metadata._optional_projection_rejections
     assert 0 == diagnostic({"key": "/works/OL1W", "covers": [1, 2]})
     assert 1 == diagnostic({"key": "/works/OL1W", "covers": ["1"]})
-    scalars = ("edition_name", "edition_statement", "translation_of", "description", "copyright_date", "number_of_pages")
-    malformed: dict[str, object] = {key: 1 for key in scalars if key != "number_of_pages"}
+    scalars = (
+        "edition_name",
+        "edition_statement",
+        "translation_of",
+        "description",
+        "copyright_date",
+        "number_of_pages",
+    )
+    malformed: dict[str, object] = {
+        key: 1 for key in scalars if key != "number_of_pages"
+    }
     malformed["number_of_pages"] = "1"
     assert len(scalars) == diagnostic(
-            {"key": "/books/OL1M", **malformed},
-            schema="edition_detail",
-        )
+        {"key": "/books/OL1M", **malformed},
+        schema="edition_detail",
+    )
     assert 2 == diagnostic(
-            {
-                "key": "/books/OL1M",
-                "authors": [{"key": "/authors/bad"}],
-                "languages": [{"key": "/languages/toolong"}],
-            },
-            schema="edition_detail",
-        )
+        {
+            "key": "/books/OL1M",
+            "authors": [{"key": "/authors/bad"}],
+            "languages": [{"key": "/languages/toolong"}],
+        },
+        schema="edition_detail",
+    )
     assert 1 == diagnostic(
-            {"key": "/works/OL1W", "author_key": ["bad"]},
-            search_projection=True,
-        )
+        {"key": "/works/OL1W", "author_key": ["bad"]},
+        search_projection=True,
+    )
     assert 0 == diagnostic(_work())
     assert 1 == diagnostic({"key": "/works/OL1W", "authors": [{"key": 7}]})
     assert 1 == diagnostic(
-            {"key": "/books/OL1M", "languages": [{"key": 7}]},
-            schema="edition_detail",
-        )
+        {"key": "/books/OL1M", "languages": [{"key": 7}]},
+        schema="edition_detail",
+    )
     assert 1 == diagnostic({"key": "/works/OL1W", "covers": [0]})
     assert 1 == diagnostic(
-            {"key": "/books/OL1M", "number_of_pages": 0},
-            schema="edition_detail",
-        )
+        {"key": "/books/OL1M", "number_of_pages": 0},
+        schema="edition_detail",
+    )
     assert 1 == diagnostic(
-            {"key": "/books/OL1M", "edition_name": "bad\x00name"},
-            schema="edition_detail",
-        )
+        {"key": "/books/OL1M", "edition_name": "bad\x00name"},
+        schema="edition_detail",
+    )
     scalar_fields = (
-        "publish_date", "physical_format", "pagination", "by_statement", "imprint"
+        "publish_date",
+        "physical_format",
+        "pagination",
+        "by_statement",
+        "imprint",
     )
     document = {"key": "/books/OL1M", **{field: 7 for field in scalar_fields}}
     assert 5 == open_library_metadata._optional_projection_rejections(
-            document,
-            schema="edition_detail",
-        )
+        document,
+        schema="edition_detail",
+    )
     hostile = [object() for _ in range(open_library_metadata._MAX_VALUES + 1)]
     assert 1 == open_library_metadata._optional_projection_rejections(
-            {"key": "/works/OL1W", "subjects": hostile}
-        )
+        {"key": "/works/OL1W", "subjects": hostile}
+    )
 
 
 def test_optional_string_members_use_retention_bounds_without_double_counts() -> None:
@@ -3420,8 +3667,8 @@ def test_optional_string_members_use_retention_bounds_without_double_counts() ->
     }
     assert 10 == diagnostic(document, search_projection=True)
     assert ("valid",) == open_library_metadata._optional_string_list(
-            document["subjects"], open_library_metadata._MAX_VALUES
-        )
+        document["subjects"], open_library_metadata._MAX_VALUES
+    )
 
 
 _EDITION_OPTIONAL_FIELDS = (
@@ -3446,52 +3693,44 @@ _EDITION_OPTIONAL_FIELDS = (
 def test_explicit_null_optional_scalars_are_absent_not_rejected(field) -> None:
     edition_fields = _EDITION_OPTIONAL_FIELDS
     assert 0 == open_library_metadata._optional_projection_rejections(
-            {"key": "/books/OL1M", **dict.fromkeys(edition_fields)},
-            schema="edition_detail",
-        )
+        {"key": "/books/OL1M", **dict.fromkeys(edition_fields)},
+        schema="edition_detail",
+    )
     assert 0 == open_library_metadata._optional_projection_rejections(
-            {"key": "/works/OL1W", "first_publish_date": None}
-        )
+        {"key": "/works/OL1W", "first_publish_date": None}
+    )
     value: object = "bad\x00value"
     if field == "number_of_pages":
         value = "one"
     assert 1 == open_library_metadata._optional_projection_rejections(
-            {
-                "key": (
-                    "/works/OL1W"
-                    if field == "first_publish_date"
-                    else "/books/OL1M"
-                ),
-                field: value,
-            },
-            schema=(
-                "work_detail"
-                if field == "first_publish_date"
-                else "edition_detail"
-            ),
-        )
+        {
+            "key": ("/works/OL1W" if field == "first_publish_date" else "/books/OL1M"),
+            field: value,
+        },
+        schema=("work_detail" if field == "first_publish_date" else "edition_detail"),
+    )
 
 
 def test_search_author_keys_are_bare_canonical_and_index_local() -> None:
     assert (
-            ("Ada", "/authors/OL7A"),
-            ("Broken", None),
-            ("Zed", "/authors/OL9A"),
-            ("Unsafe", None),
-        ) == open_library_metadata._search_authors(
-            ["Ada", "Broken", "Zed", "Unsafe"],
-            ["OL7A", "/authors/OL8A", "OL9A", "bad\x00key"],
-        )
+        ("Ada", "/authors/OL7A"),
+        ("Broken", None),
+        ("Zed", "/authors/OL9A"),
+        ("Unsafe", None),
+    ) == open_library_metadata._search_authors(
+        ["Ada", "Broken", "Zed", "Unsafe"],
+        ["OL7A", "/authors/OL8A", "OL9A", "bad\x00key"],
+    )
     assert 1 == open_library_metadata._optional_projection_rejections(
-            {
-                "key": "/works/OL1W",
-                "author_key": ["OL7A", "/authors/OL8A"],
-            },
-            search_projection=True,
-        )
+        {
+            "key": "/works/OL1W",
+            "author_key": ["OL7A", "/authors/OL8A"],
+        },
+        search_projection=True,
+    )
     assert (("Ada", "/authors/OL7A"),) == open_library_metadata._search_authors(
-            ["Ada", "Ada"], ["OL7A", "OL9A"]
-        )
+        ["Ada", "Ada"], ["OL7A", "OL9A"]
+    )
 
 
 def test_duplicate_work_rows_with_different_editions_fail_closed() -> None:
