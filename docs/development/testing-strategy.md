@@ -56,6 +56,23 @@ the stall diagnostic still reaches an observer while the cohort's own output
 stays discarded, and `--tb=native` keeps a bounded traceback's retained tail
 ending at the assertion and the innermost frame.
 
+A tier supplies its own arguments and refuses to run under ambient ones. pytest
+incorporates `PYTEST_ADDOPTS`, `PYTEST_PLUGINS`, `PYTEST_DISABLE_PLUGIN_AUTOLOAD`,
+`PYTEST_DEBUG`, and `PYTEST_DEBUG_TEMPROOT` on its own, and any of them can
+change what a cohort runs or what it reports: `PYTEST_ADDOPTS='-k passing'`
+reduces a cohort to its passing subset and still reports the tier passed. The
+runner fails closed on all five, naming the variables and never their values,
+which may carry private paths. `PYTEST_THEME` and `PYTEST_THEME_MODE` remain
+permitted because they only colour a stream every tier discards.
+
+Tier accounting follows unittest's, not pytest's report stream. A case that
+raises `AssertionError` is a failure and anything else is an error, whichever
+phase raised it. A class-scoped `setUpClass` or `tearDownClass` failure is one
+class-level error that runs no tests, even though pytest reports it against
+every collected method; an instance `setUp` failure remains one error per case.
+An unexpected success refuses the tier, as `wasSuccessful()` did, and a tier
+passes only when pytest's exit code and the runner's own accounting agree.
+
 ## Test economy
 
 These are standing rules for every test written from here on, not a record of

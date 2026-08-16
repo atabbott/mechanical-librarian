@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import time
 import unittest
@@ -14,6 +15,8 @@ from uuid import uuid4
 from scripts.run_test_tier import (
     _MAX_TEST_TRACEBACK_BYTES,
     _MAX_TRACEBACK_STREAM_BYTES,
+    _REJECTED_PYTEST_ENVIRONMENT,
+    _SAFE_TEST_ID,
     _STALL_DIAGNOSTIC_SECONDS,
     COHORTS,
     _CohortSession,
@@ -66,6 +69,36 @@ def _synthetic_cohort(
     module = directory / f"test_synthetic_{uuid4().hex}.py"
     module.write_text("\n".join(lines), encoding="utf-8")
     return (str(module),)
+
+
+def _module(directory: Path, body: str) -> tuple[str, ...]:
+    """Write one real test module and name its path as a cohort target.
+
+    The name is unique per call because the engine imports it for real and a
+    reused name would collide with an earlier cohort in the same process.
+    """
+
+    module = directory / f"test_synthetic_{uuid4().hex}.py"
+    module.write_text(body, encoding="utf-8")
+    return (str(module),)
+
+
+def _cohort_summary(targets: tuple[str, ...]) -> tuple[bool, dict[str, Any]]:
+    """Run `targets` as a tier and return its verdict beside its JSON summary."""
+
+    summary = StringIO()
+    narrative = StringIO()
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        redirect_stderr(summary),
+        redirect_stdout(narrative),
+    ):
+        passed = run_cohort(Path.cwd(), "fast")
+    # A passing tier writes its summary to standard output; a failing one
+    # writes it to standard error, with only tracebacks on standard output.
+    stream = narrative if passed else summary
+    decoded: dict[str, Any] = json.loads(stream.getvalue().strip().splitlines()[-1])
+    return passed, decoded
 
 
 def _run_failing_cohort(targets: tuple[str, ...]) -> tuple[dict[str, Any], str]:
@@ -283,6 +316,170 @@ class TestTierTests(unittest.TestCase):
                 collect_cohort(root, "slow")
             with self.assertRaises(RuntimeError):
                 run_cohort(root, "slow")
+
+    def test_ambient_pytest_options_cannot_narrow_a_tier(self) -> None:
+        # `PYTEST_ADDOPTS='-k passing'` would otherwise reduce this cohort to
+        # its one passing case and report the tier passed while a failing case
+        # sat in it, unrun.
+        body = (
+            "import unittest\n"
+            "\n"
+            "class AmbientOptionTests(unittest.TestCase):\n"
+            "    def test_passing(self) -> None:\n"
+            "        pass\n"
+            "\n"
+            "    def test_failing(self) -> None:\n"
+            "        self.fail('this must be reported')\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            targets = _module(Path(directory), body)
+            for name in _REJECTED_PYTEST_ENVIRONMENT:
+                with self.subTest(variable=name):
+                    with patch.dict(os.environ, {name: "-k test_passing"}):
+                        with self.assertRaises(RuntimeError) as refusal:
+                            _cohort_summary(targets)
+                    self.assertEqual(
+                        str(refusal.exception), f"pytest_environment_override:{name}"
+                    )
+                    # The value is never echoed: it is arbitrary and may carry
+                    # a private path.
+                    self.assertNotIn("test_passing", str(refusal.exception))
+
+            # Colour-only variables reach nothing the tier reports, so they stay
+            # permitted rather than making a developer's shell fail the gate.
+            with patch.dict(
+                os.environ, {"PYTEST_THEME": "monokai", "PYTEST_THEME_MODE": "dark"}
+            ):
+                passed, summary = _cohort_summary(targets)
+            self.assertFalse(passed)
+            self.assertEqual(summary["tests_run"], 2)
+            self.assertEqual(summary["failures"], 1)
+
+    def test_shared_class_setup_failure_is_one_error_that_runs_no_tests(self) -> None:
+        body = (
+            "import unittest\n"
+            "\n"
+            "class SharedSetupTests(unittest.TestCase):\n"
+            "    @classmethod\n"
+            "    def setUpClass(cls) -> None:\n"
+            "        raise RuntimeError('shared setup exploded')\n"
+            "\n"
+            "    def test_first(self) -> None:\n"
+            "        pass\n"
+            "\n"
+            "    def test_second(self) -> None:\n"
+            "        pass\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            targets = _module(Path(directory), body)
+            passed, summary = _cohort_summary(targets)
+        self.assertFalse(passed)
+        # unittest reports no tests run and one class-level error. pytest emits
+        # a failed setup report per collected method, so without class-level
+        # accounting this reads as two run and two errors.
+        self.assertEqual(summary["tests_run"], 0)
+        self.assertEqual(summary["errors"], 1)
+        self.assertEqual(summary["failures"], 0)
+        self.assertEqual(len(summary["failed_test_ids"]), 1)
+        self.assertTrue(summary["failed_test_ids"][0].endswith(".SharedSetupTests.setUpClass"))
+
+    def test_instance_setup_failures_stay_one_error_per_case(self) -> None:
+        # The sibling of the class-level rule: an instance `setUp` failure runs
+        # inside the call phase and is still one error per case, so class-level
+        # accounting must not collapse these two into one.
+        body = (
+            "import unittest\n"
+            "\n"
+            "class InstanceSetupTests(unittest.TestCase):\n"
+            "    def setUp(self) -> None:\n"
+            "        raise RuntimeError('instance setup exploded')\n"
+            "\n"
+            "    def test_first(self) -> None:\n"
+            "        pass\n"
+            "\n"
+            "    def test_second(self) -> None:\n"
+            "        pass\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            targets = _module(Path(directory), body)
+            passed, summary = _cohort_summary(targets)
+        self.assertFalse(passed)
+        self.assertEqual(summary["tests_run"], 2)
+        self.assertEqual(summary["errors"], 2)
+        self.assertEqual(len(summary["failed_test_ids"]), 2)
+
+    def test_unexpected_success_refuses_the_tier(self) -> None:
+        # pytest returns success for a non-strict `xfail` that passes, so the
+        # engine's exit code alone would report the tier passed.
+        body = (
+            "import pytest\n"
+            "\n"
+            "@pytest.mark.xfail(reason='expected to fail', strict=False)\n"
+            "def test_unexpectedly_passes() -> None:\n"
+            "    assert True\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            targets = _module(Path(directory), body)
+            passed, summary = _cohort_summary(targets)
+        self.assertFalse(passed)
+        self.assertEqual(summary["unexpected_successes"], 1)
+        self.assertEqual(summary["status"], "failed")
+        self.assertEqual(len(summary["failed_test_ids"]), 1)
+
+    def test_native_case_identities_are_dotted_and_stall_safe(self) -> None:
+        # A native node id carries the file path and bracketed parameters,
+        # neither of which may reach a manifest or the stall diagnostic.
+        body = (
+            "import pytest\n"
+            "\n"
+            "def test_plain() -> None:\n"
+            "    pass\n"
+            "\n"
+            "@pytest.mark.parametrize('value', ['alpha', 'beta-two'])\n"
+            "def test_parameterized(value: str) -> None:\n"
+            "    assert value\n"
+            "\n"
+            "class TestNativeClass:\n"
+            "    def test_method(self) -> None:\n"
+            "        pass\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            targets = _module(Path(directory), body)
+            with patch(
+                "scripts.run_test_tier.cohort_targets", return_value=targets
+            ):
+                identifiers = collect_cohort(Path.cwd(), "fast")
+        self.assertEqual(len(identifiers), 4)
+        for identifier in identifiers:
+            with self.subTest(identifier=identifier):
+                self.assertIsNotNone(_SAFE_TEST_ID.fullmatch(identifier))
+                self.assertNotIn("/", identifier)
+                self.assertNotIn("::", identifier)
+        leaves = {identifier.rsplit(".", 2)[-2:][0] for identifier in identifiers}
+        self.assertIn("test_parameterized", leaves)
+        self.assertTrue(
+            any(identifier.endswith("test_parameterized.beta_two") for identifier in identifiers)
+        )
+
+    def test_colliding_case_identities_fail_closed(self) -> None:
+        # Reducing parameters to the safe alphabet can map two distinct cases
+        # onto one name. Silently shrinking the manifest is the one outcome the
+        # cohort accounting cannot tolerate.
+        body = (
+            "import pytest\n"
+            "\n"
+            "@pytest.mark.parametrize('value', ['a-b', 'a_b'])\n"
+            "def test_parameterized(value: str) -> None:\n"
+            "    assert value\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            targets = _module(Path(directory), body)
+            with patch(
+                "scripts.run_test_tier.cohort_targets", return_value=targets
+            ):
+                with self.assertRaises(RuntimeError) as collision:
+                    collect_cohort(Path.cwd(), "fast")
+        self.assertEqual(str(collision.exception), "test_cohort_identity_collision")
 
 
 if __name__ == "__main__":

@@ -7,6 +7,41 @@
 
 ## Unreleased
 
+- Stop the test-tier runner honouring ambient pytest configuration, and give
+  it unittest's accounting for shared setup, unexpected successes, and native
+  case identities. Four defects in the engine adoption, all found in review of
+  #661 and all about the runner being the gate.
+  `pytest.main` incorporates `PYTEST_ADDOPTS`, so `PYTEST_ADDOPTS='-k passing'`
+  reduced a cohort to its passing subset, returned success, and reported the
+  tier **passed** with a failing test sitting unrun beside it -- the gate could
+  be disabled from outside and still report green, and the exact-artifact
+  qualifier preserved the variable into its isolated environment. Ambient
+  `--capture=fd` would additionally have silenced the stall diagnostic. A tier
+  now refuses to run under any pytest variable that can reach collection,
+  execution, plugin loading, or the diagnostic streams, naming the offending
+  variables and never echoing their values, which may carry private paths.
+  `PYTEST_THEME` and `PYTEST_THEME_MODE` stay permitted and are documented as
+  such: they only colour a stream every tier already discards.
+  A `setUpClass` failure made the tier's machine-readable evidence least
+  accurate exactly when shared setup broke: pytest reports the failure against
+  every collected method, so an unexecuted two-method class read as two tests
+  run and two errors where unittest reports none run and one class-level
+  error. Class-scoped setup and teardown failures are now counted once, under
+  a `setUpClass`/`tearDownClass` identity, while an instance `setUp` failure
+  stays one error per case.
+  A non-strict `xfail` that unexpectedly passed left pytest's exit code at
+  success, so the tier reported passed while the runner's own accounting held
+  an unexpected success. A tier now passes only when the engine and that
+  accounting agree, and `xfail_strict` is declared so a native `xfail` fails at
+  the engine too.
+  A native pytest case had only its node id, which carries the file path and,
+  when parameterized, bracketed parameters. That id could never match the
+  stall diagnostic's safe-identity guard, so a native test running past the
+  threshold produced no diagnostic at all -- and the identity was not path-free
+  either, so a failing native case would have reported a filesystem path.
+  Native identities are now built like unittest's: dotted, path-free, and
+  reduced to the safe alphabet, with a cohort whose reduced identities are not
+  unique failing closed rather than silently shrinking its manifest. (#661)
 - Split the router tests by route and record the suite's standing test
   conventions. `frontend/tests/router.test.tsx` held 124 of the frontend's 149
   tests in one `describe` across 2,710 lines, with its first 108 lines given to

@@ -22,6 +22,19 @@ import pytest
 
 _STALL_DIAGNOSTIC_SECONDS = 30
 _SAFE_TEST_ID = re.compile(r"[A-Za-z0-9_.]{1,512}")
+_UNSAFE_IDENTITY_CHARACTER = re.compile(r"[^A-Za-z0-9_]")
+# Every variable pytest documents under `Environment variables` in `--help`
+# that can reach collection, execution, plugin loading, or the diagnostic
+# streams. `PYTEST_THEME` and `PYTEST_THEME_MODE` are deliberately absent:
+# they only colour the terminal stream, which every tier already discards to
+# `os.devnull`, and cannot change what runs or what either schema reports.
+_REJECTED_PYTEST_ENVIRONMENT = (
+    "PYTEST_ADDOPTS",
+    "PYTEST_DEBUG",
+    "PYTEST_DEBUG_TEMPROOT",
+    "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
+    "PYTEST_PLUGINS",
+)
 # Ceilings for the failure-diagnostic stream. A single traceback keeps its tail,
 # which holds the assertion and the innermost frame. The aggregate ceiling bounds
 # every emitted byte, framing included, so a broad failure stays readable in a
@@ -112,18 +125,68 @@ def cohort_targets(root: Path, name: str) -> tuple[str, ...]:
     return tuple(targets)
 
 
-def _case_identity(item: pytest.Item) -> str:
-    """Name a collected case the way `unittest.TestCase.id()` names it.
+def _verify_pytest_environment() -> None:
+    """Refuse to run a tier under ambient pytest configuration.
 
-    Cohort manifests, the stall diagnostic, and failure reporting are all
-    stated in these dotted, path-free identities, so they must not change when
-    the engine underneath them does.
+    pytest incorporates these variables on its own. The runner supplies the
+    exact arguments a tier's contract needs, so anything that adds options,
+    loads or suppresses plugins, or writes to the diagnostic streams can change
+    what runs or what is reported: `PYTEST_ADDOPTS='-k passing'` alone reduces a
+    cohort to its passing subset, returns success, and reports the tier passed,
+    while `PYTEST_ADDOPTS='--capture=fd'` silences the stall diagnostic. A tier
+    fails closed rather than proceeding under rules it did not choose.
+
+    Only the variable names are reported. They come from the closed list below,
+    so naming them stays path-free; the values are arbitrary and may carry
+    paths, so they are not echoed.
+    """
+
+    present = tuple(name for name in _REJECTED_PYTEST_ENVIRONMENT if os.environ.get(name))
+    if present:
+        raise RuntimeError(f"pytest_environment_override:{','.join(present)}")
+
+
+def _case_identity(item: pytest.Item) -> str:
+    """Name a collected case as a dotted, path-free identity.
+
+    A `unittest.TestCase` case keeps exactly the name `TestCase.id()` produces,
+    so a cohort digest is comparable across the engine change.
+
+    A native pytest case has only a node id, which carries the file path and,
+    when parameterized, its bracketed parameters. Neither may reach a cohort
+    manifest, a reported failure identity, or the stall diagnostic, whose
+    `_SAFE_TEST_ID` guard would withhold it entirely. It is rebuilt from the
+    same parts a unittest identity uses, with the parameters as one further
+    dotted component reduced to the safe alphabet.
     """
 
     cls = getattr(item, "cls", None)
-    if isinstance(cls, type) and issubclass(cls, unittest.TestCase):
-        return f"{cls.__module__}.{cls.__qualname__}.{item.name}"
-    return item.nodeid
+    if isinstance(cls, type):
+        prefix = f"{cls.__module__}.{cls.__qualname__}"
+    else:
+        module = getattr(item, "module", None)
+        prefix = getattr(module, "__name__", None) or item.nodeid.split("::")[0]
+    name, bracket, parameters = item.name.partition("[")
+    if not bracket:
+        return f"{prefix}.{name}"
+    reduced = _UNSAFE_IDENTITY_CHARACTER.sub("_", parameters.removesuffix("]"))
+    return f"{prefix}.{name}.{reduced}"
+
+
+def _shared_fixture_identity(owner: str | None, phase: str) -> str | None:
+    """Name a class-scoped setup or teardown failure once, as unittest does.
+
+    pytest injects `setUpClass`/`tearDownClass` as class-scoped fixtures and
+    reports their failure against every method of the class, so an unexecuted
+    two-method class would otherwise report two tests run and two errors where
+    unittest reports none run and one class-level error. A `TestCase` runs its
+    instance `setUp` inside the call phase, so a failure in any other phase
+    belongs to the class, not to the method it is reported against.
+    """
+
+    if owner is None or phase == "call":
+        return None
+    return f"{owner}.{'setUpClass' if phase == 'setup' else 'tearDownClass'}"
 
 
 def _load_tests_exclusions(items: list[pytest.Item]) -> list[pytest.Item]:
@@ -154,12 +217,31 @@ def _load_tests_exclusions(items: list[pytest.Item]) -> list[pytest.Item]:
     return excluded
 
 
+@dataclass(frozen=True, slots=True)
+class _PhaseRecord:
+    """One reported phase of one case, kept until the session can be accounted.
+
+    `pytest_runtest_logreport` fires before `pytest_exception_interact`, so the
+    exception type that separates a failure from an error is not known when a
+    report arrives. Nothing is counted until the session ends.
+    """
+
+    nodeid: str
+    identity: str
+    shared: str | None
+    phase: str
+    outcome: str
+    expected_failure: bool
+    detail: str
+
+
 class _CohortSession:
     """Observe one pytest session and account for it as a test tier.
 
     Failure and error accounting follows unittest's rule exactly: a case that
     raises `AssertionError` is a failure and anything else is an error,
-    whichever phase raised it.
+    whichever phase raised it; a class-scoped setup or teardown failure is one
+    class-level error and runs no tests.
     """
 
     def __init__(self) -> None:
@@ -167,8 +249,12 @@ class _CohortSession:
         self._current_test_id: str | None = None
         self._current_started_at = 0.0
         self._identities: dict[str, str] = {}
+        self._owners: dict[str, str] = {}
+        self._records: list[_PhaseRecord] = []
+        self._assertions: dict[tuple[str, str], bool] = {}
         self.identifiers: tuple[str, ...] = ()
         self.import_failed = False
+        self.identity_collision = False
         self.tests_run = 0
         self.failures = 0
         self.errors = 0
@@ -192,7 +278,17 @@ class _CohortSession:
             items[:] = [item for item in items if item.nodeid not in dropped]
             config.hook.pytest_deselected(items=excluded)
         self._identities = {item.nodeid: _case_identity(item) for item in items}
+        self._owners = {
+            item.nodeid: f"{item.cls.__module__}.{item.cls.__qualname__}"
+            for item in items
+            if isinstance(getattr(item, "cls", None), type)
+            and issubclass(item.cls, unittest.TestCase)
+        }
         self.identifiers = tuple(sorted(self._identities.values()))
+        # Reducing a parameter set to the safe alphabet could map two distinct
+        # cases onto one name, which would silently shrink the manifest. A
+        # cohort whose identities are not unique is not accountable.
+        self.identity_collision = len(set(self.identifiers)) != len(self.identifiers)
 
     def pytest_runtest_logstart(self, nodeid: str, location: object) -> None:
         identifier = self._identities.get(nodeid, nodeid)
@@ -215,24 +311,56 @@ class _CohortSession:
     ) -> None:
         if not isinstance(report, pytest.TestReport) or call.excinfo is None:
             return
-        if isinstance(call.excinfo.value, AssertionError):
-            self.failures += 1
-        else:
-            self.errors += 1
+        self._assertions[(report.nodeid, call.when)] = isinstance(
+            call.excinfo.value, AssertionError
+        )
 
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
-        if report.when == "setup":
-            self.tests_run += 1
-        identifier = self._identities.get(report.nodeid, report.nodeid)
-        expected_failure = hasattr(report, "wasxfail")
-        if report.skipped and not expected_failure:
-            self.skipped.add(identifier)
-        elif report.passed and expected_failure:
-            self.unexpected_successes += 1
-            self.failed_test_ids.add(identifier)
-        elif report.failed:
-            self.failed_test_ids.add(identifier)
-            self.tracebacks.append((identifier, report.longreprtext))
+        phase = report.when or "call"
+        self._records.append(
+            _PhaseRecord(
+                nodeid=report.nodeid,
+                identity=self._identities.get(report.nodeid, report.nodeid),
+                shared=_shared_fixture_identity(self._owners.get(report.nodeid), phase),
+                phase=phase,
+                outcome=report.outcome,
+                expected_failure=hasattr(report, "wasxfail"),
+                detail=report.longreprtext,
+            )
+        )
+
+    def account(self) -> None:
+        """Reduce the recorded phases to the tier's reported counts."""
+
+        shared_seen: set[str] = set()
+        for record in self._records:
+            if record.phase == "setup" and record.outcome != "failed":
+                self.tests_run += 1
+            if record.outcome == "skipped":
+                if not record.expected_failure:
+                    self.skipped.add(record.identity)
+                continue
+            if record.outcome == "passed":
+                if record.expected_failure:
+                    # A non-strict `xfail` that passes. unittest counts this
+                    # separately and still refuses to call the run successful.
+                    self.unexpected_successes += 1
+                    self.failed_test_ids.add(record.identity)
+                continue
+            if record.shared is not None:
+                if record.shared in shared_seen:
+                    continue
+                shared_seen.add(record.shared)
+                self.errors += 1
+                self.failed_test_ids.add(record.shared)
+                self.tracebacks.append((record.shared, record.detail))
+                continue
+            if self._assertions.get((record.nodeid, record.phase), False):
+                self.failures += 1
+            else:
+                self.errors += 1
+            self.failed_test_ids.add(record.identity)
+            self.tracebacks.append((record.identity, record.detail))
 
     def stalled_test(self, now: float) -> str | None:
         with self._progress_lock:
@@ -251,6 +379,7 @@ def _drive_pytest(
     *,
     collect_only: bool,
 ) -> pytest.ExitCode | int:
+    _verify_pytest_environment()
     targets = cohort_targets(root, name)
     if not targets:
         raise RuntimeError("empty test cohort")
@@ -267,6 +396,8 @@ def collect_cohort(root: Path, name: str) -> tuple[str, ...]:
     outcome = _drive_pytest(root, name, session, collect_only=True)
     if session.import_failed or outcome != pytest.ExitCode.OK:
         raise RuntimeError("test_cohort_import_failed")
+    if session.identity_collision:
+        raise RuntimeError("test_cohort_identity_collision")
     if not session.identifiers:
         raise RuntimeError("empty test cohort")
     return session.identifiers
@@ -299,11 +430,22 @@ def run_cohort(root: Path, name: str) -> bool:
         reporter.join(timeout=2)
     if session.import_failed:
         raise RuntimeError("test_cohort_import_failed")
+    if session.identity_collision:
+        raise RuntimeError("test_cohort_identity_collision")
     if not session.identifiers:
         raise RuntimeError("empty test cohort")
     if outcome not in _RUN_EXIT_CODES:
         raise RuntimeError("test_cohort_run_failed")
-    if outcome == pytest.ExitCode.OK:
+    session.account()
+    # pytest's exit code alone is not the tier's verdict. A non-strict `xfail`
+    # that passes leaves it `OK` while the run holds an unexpected success, and
+    # unittest refused to call such a run successful. The tier passes only when
+    # the engine and the runner's own accounting both find nothing.
+    if (
+        outcome == pytest.ExitCode.OK
+        and not session.failed_test_ids
+        and not session.unexpected_successes
+    ):
         print(
             json.dumps(
                 {

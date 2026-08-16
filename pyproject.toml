@@ -74,6 +74,10 @@ package = true
 # widen the cohort silently.
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+# An `xfail` that passes is a finding, not a pass. The tier runner refuses a
+# run holding an unexpected success either way, but declaring it here makes a
+# native `xfail` fail at the engine too rather than only in the accounting.
+xfail_strict = true
 
 [tool.ruff]
 # The gate lints the backend source, its tests, and its scripts.
