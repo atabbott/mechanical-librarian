@@ -55,18 +55,21 @@ Run the static architecture-boundary test whenever imports or packages move.
 - **Consolidation** — replacing two or more copies of the same logic — must be
   lighter than the copies it replaces. One that costs more lines than the
   longhand it consolidates is not an improvement: delete it and keep the
-  longhand. Measure the shared implementation against the implementation it
-  deletes. The shared module's header, imports and declaration are structure,
-  reported in that bucket rather than charged to the abstraction, as is
-  documentation the governing issue's acceptance demanded — report it with the
-  acceptance that required it. Structure costs the same for a good abstraction
-  and a bad one, so charging it to the abstraction judges the module boundary
-  instead, and rejects the small cross-file consolidations this rule most wants:
-  every one of them needs a shared home. The test still bites where it is meant
-  to. A shared implementation fatter than the copies it replaces fails it, and
-  the generalised helper carrying a configuration switch for each former call
-  site is the case it exists to stop — that helper removes no duplication, it
-  relabels it: delete it and keep the longhand. Worked, from #662.
+  longhand. Measure all the implementation it adds — the shared implementation
+  plus any plumbing it forces at the former call sites, wrappers, argument
+  mapping, conversions — against all the implementation it deletes. Two things
+  are exempt and nothing else is: the fixed structure of having a shared home,
+  which is the module's header, imports and declaration and one import line per
+  consumer; and documentation the governing issue's acceptance demanded,
+  reported with the acceptance that required it. Structure costs the same for a
+  good abstraction and a bad one, so charging it to the abstraction judges the
+  module boundary instead, and rejects the small cross-file consolidations this
+  rule most wants: every one of them needs a shared home. The test bites at both
+  ends. A shared implementation fatter than the copies fails it, and so does a
+  thin one that pushed its bulk out to the call sites. The generalised helper
+  carrying a configuration switch for each former call site is the case it
+  exists to stop — it removes no duplication, it relabels it: delete it and keep
+  the longhand. Worked, from #662.
   `coverChoices.ts` is 14 lines of implementation against 17 duplicated across
   two routes, so it passes, at a cost of 9 lines of header, import and
   declaration and 5 of comment — net `+16`. `labels.ts` is 4 lines against
