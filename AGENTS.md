@@ -88,8 +88,11 @@ Run the static architecture-boundary test whenever imports or packages move.
   from one line of implementation to two and from none of structure to two. A
   reflow forced at a former call site is plumbing like any other, so that added
   line counts with the rest: 17 and 2 and 1 is 20, against the 20 lines of
-  duplicated implementation the two routes delete. That is a tie, not a margin
-  — the test rejects a consolidation that costs more, and this costs the same.
+  duplicated implementation the two routes delete. Equal, and the clause does
+  not settle equal: it opens by requiring a consolidation to be lighter than
+  the copies it replaces and then rejects one that costs more lines, and those
+  two sentences part company at exactly this measurement. #721 owns which of
+  them governs a tie; this example reports the figures and does not decide it.
   `frontend/src/labels.ts` adds 3 against the 8 deleted with five formatter
   declarations and two copied patterns, and forces no plumbing. Both still grew
   the tree, `+16` and `+7`, on module structure, seven consumer imports, that
@@ -98,9 +101,10 @@ Run the static architecture-boundary test whenever imports or packages move.
   this rule requires, and one line of the whole change answers to no bucket
   below: the reflow's two structure lines belong to the structure bucket, and
   its one implementation line belongs to nothing. That single line is #719's,
-  recorded here and not closed here. Both would fail on module total, and both
-  passed here. Deciding a measurement basis is not a neutral act: it settles
-  cases the ambiguity left open, and these two are the cases it settles.
+  recorded here and not closed here. Both would fail on module total, and
+  `labels.ts` clears the test here. Deciding a measurement basis is not a
+  neutral act: it settles cases the ambiguity left open, and it is what puts
+  the cover module on the tie rather than past it.
 - **Extraction within a boundary** — pulling a helper out of code that could
   have kept it — with a single caller has to earn its place, and it can.
   Consolidating one copy is not consolidation, so the default is to keep the
