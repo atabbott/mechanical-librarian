@@ -7,6 +7,18 @@
 
 ## Unreleased
 
+- Declare the automatic-safety seam the served composition already binds.
+  `compose_review_application` builds the policy notebook and the owner-only
+  automatic-safety controls from one `policy_store`, but
+  `AutomaticSafetyControls` accepted `object` and cast to the protocol it
+  names, so no signature anywhere could catch a store that lacked the safety
+  members. A miswiring surfaced only at runtime, as "automatic safety is
+  unavailable" on every safety read, pause, suspend, and recover -- a
+  capability outage wearing a transient-storage message. That is not
+  hypothetical: it shipped during #658 and was caught in review. The composed
+  parameter now names both contracts it is bound to. No wiring, message, or
+  behaviour changed; the store passed there already implements both seams.
+  (#667)
 - Compose the `policy-preview` CLI only from a contract its repository
   satisfies in full. `run_policy_preview` handed `SQLiteShadowPreviewRepository`
   to six `compose_review_application` parameters it does not implement -- every

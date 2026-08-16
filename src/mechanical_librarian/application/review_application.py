@@ -18,6 +18,7 @@ from mechanical_librarian.application.cover_consideration import (
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.metadata_policy import (
     AutomaticSafetyControls,
+    AutomaticSafetyRepository,
     PolicyActivation,
     PolicyImpactRepository,
     PolicyNotebook,
@@ -68,6 +69,15 @@ class ReviewApplicationError(RuntimeError):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+class ReviewPolicyStore(PolicyImpactRepository, AutomaticSafetyRepository, Protocol):
+    """Both durable policy seams the served composition binds to one store.
+
+    `compose_review_application` builds a notebook and the owner-only safety
+    controls from the same argument, so the parameter names both contracts
+    rather than leaving the second one to a runtime failure.
+    """
 
 
 class BrowserStateOwner(Protocol):
@@ -942,7 +952,7 @@ def compose_review_application(
     case_store: CurrentReviewCaseStore,
     decision_store: HumanDecisionStore,
     library_store: ReviewLibraryStore,
-    policy_store: PolicyImpactRepository,
+    policy_store: ReviewPolicyStore,
     verify_password: Callable[[str], bool],
     clock: Callable[[], int],
     session_lifetime_seconds: int,
@@ -1016,6 +1026,7 @@ __all__ = [
     "PolicyOperations",
     "PolicyPreviewApplication",
     "PolicyPreviewOperations",
+    "ReviewPolicyStore",
     "ReviewApplication",
     "ReviewApplicationError",
     "compose_policy_preview_application",

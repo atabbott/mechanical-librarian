@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol
 
 from mechanical_librarian.application.review_cases import ReviewCaseError
 from mechanical_librarian.domain.automatic_decision import (
@@ -54,12 +54,8 @@ class AutomaticSafetyRepository(Protocol):
 class AutomaticSafetyControls:
     """Owner-only durable pause/suspension controls; recovery is explicit."""
 
-    def __init__(self, repository: object) -> None:
-        # The public parameter stays structural: every call below is wrapped in
-        # a try/except that converts a missing or failing member into
-        # ``MetadataPolicyApplicationError``, so the cast documents the seam
-        # this class requires without narrowing what callers may pass.
-        self._repository = cast("AutomaticSafetyRepository", repository)
+    def __init__(self, repository: AutomaticSafetyRepository) -> None:
+        self._repository = repository
 
     def state(self) -> AutomaticSafetyState:
         try:
