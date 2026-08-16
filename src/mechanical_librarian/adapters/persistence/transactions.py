@@ -13,6 +13,10 @@ enclosing caller's partial writes.
 from __future__ import annotations
 
 import sqlite3
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 
 
 class TransactionScope:
@@ -86,12 +90,18 @@ class ConnectionScoped:
     """Share one SQLite connection and the scope factory over it.
 
     Every aggregate repository composes over one connection owned by one
-    filesystem binding, so this carries the reference and the one line that
-    opens a scope on it rather than repeating both in each module.
+    filesystem binding, so this carries both references and the one line that
+    opens a scope on the connection, rather than repeating all three in each
+    module.
     """
 
-    def __init__(self, connection: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        connection: sqlite3.Connection,
+        binding: _LinuxDatabaseBinding | None = None,
+    ) -> None:
         self._connection = connection
+        self._binding = binding
 
     def _transaction(
         self, savepoint: str, *, deferred: bool = False

@@ -36,6 +36,11 @@ from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     ResolvedMetadataPolicy,
 )
+from mechanical_librarian.domain.metadata_report import (
+    REPORT_SCHEMA,
+    MetadataReport,
+    ReportValueError,
+)
 from mechanical_librarian.domain.proposal_set import POLICY_VERSION
 
 if sys.platform.startswith("linux"):
@@ -785,6 +790,21 @@ def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:
         raise MetadataReportError(
             "database is unavailable or incompatible"
         ) from error
+
+
+def _validate_report_row(row: tuple[object, ...]) -> str:
+    if len(row) != 9:
+        raise MetadataReportError("persisted report is invalid")
+    report_id, connection, library, item, file_identity, content_digest, schema, digest, document = row
+    if type(report_id) is not str or type(document) is not str or schema != REPORT_SCHEMA or type(digest) is not str or hashlib.sha256(document.encode("utf-8")).hexdigest() != digest:
+        raise MetadataReportError("persisted report is invalid")
+    try:
+        report = MetadataReport.from_json(document)
+    except ReportValueError as error:
+        raise MetadataReportError("persisted report is invalid") from error
+    if (report.report_id, report.target.connection, report.target.library, report.target.item, report.file.identity, report.file.content_digest) != (report_id, connection, library, item, file_identity, content_digest):
+        raise MetadataReportError("persisted report envelope disagrees")
+    return document
 
 
 def _provider_recovery_outbox_id(
