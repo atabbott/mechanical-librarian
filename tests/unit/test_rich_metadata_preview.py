@@ -40,8 +40,8 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     compile_rich_metadata_preview,
     project_f20_automatic_decision_value,
 )
+from tests.support.proposal_evidence import _claim, _fields, _provider, _report
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
-from tests.unit.test_proposal_set import _claim, _fields, _provider, _report
 
 
 class RichMetadataPreviewTests(unittest.TestCase):

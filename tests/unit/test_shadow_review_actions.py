@@ -31,12 +31,12 @@ from mechanical_librarian.domain.shadow_review_actions import (
     PolicyActionCompilationError,
     compile_shadow_review_actions,
 )
+from tests.support.proposal_evidence import _report
 from tests.unit.shadow_packet_fixtures import synthetic_packet
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source,
 )
-from tests.unit.test_proposal_set import _report
 
 
 def _packet_data() -> dict[str, object]:

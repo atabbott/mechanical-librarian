@@ -39,6 +39,88 @@ The public suite has four explicit qualification tiers. They retain every
 existing assertion while keeping independent feedback paths parallel and
 diagnosable.
 
+pytest is the execution engine beneath those tiers, not a second entry point
+beside them. `scripts/run_test_tier.py` remains the only way a tier is run or
+listed: it names each cohort's exact files, so a cohort still admits exactly
+what its `COHORTS` patterns match, and it derives its cohort manifest,
+`test-tier-stall-v1` diagnostic, and `test-tier-result-v1` summary from that
+one pytest session. Test identities stay the dotted, path-free names
+`unittest.TestCase.id()` produces, so a cohort digest is comparable across the
+engine change. pytest runs `unittest.TestCase` natively and adopts unittest's
+own `getTestCaseNames`, so an unconverted test file needs no change; the runner
+additionally honours the `load_tests` protocol, which pytest does not
+implement, so a module that selects a subset of its own namespace still
+contributes only that subset. Two of the runner's pytest arguments carry tier
+behaviour rather than taste: `--capture=sys` leaves file descriptor 2 alone so
+the stall diagnostic still reaches an observer while the cohort's own output
+stays discarded, and `--tb=native` keeps a bounded traceback's retained tail
+ending at the assertion and the innermost frame.
+
+A tier supplies its own arguments and refuses to run under ambient ones. pytest
+incorporates `PYTEST_ADDOPTS`, `PYTEST_PLUGINS`, `PYTEST_DISABLE_PLUGIN_AUTOLOAD`,
+`PYTEST_DEBUG`, and `PYTEST_DEBUG_TEMPROOT` on its own, and any of them can
+change what a cohort runs or what it reports: `PYTEST_ADDOPTS='-k passing'`
+reduces a cohort to its passing subset and still reports the tier passed. The
+runner fails closed on all five, naming the variables and never their values,
+which may carry private paths. `PYTEST_THEME` and `PYTEST_THEME_MODE` remain
+permitted because they only colour a stream every tier discards.
+
+Plugins are the same exposure one level over. pytest auto-loads every installed
+distribution exposing a `pytest11` entry point, so a `pytest-randomly` or
+`pytest-xdist` that happens to be in an environment could reorder, shard, or
+drop cases with no variable set and nothing to reject. A tier passes
+`--disable-plugin-autoload` and loads pytest's builtins and the runner's own
+plugin only. A tool the suite genuinely needs is pinned in the `dev` group and
+loaded explicitly, never inherited from whatever is installed.
+
+Tier accounting follows unittest's, not pytest's report stream. A case that
+raises `AssertionError` is a failure and anything else is an error, whichever
+phase raised it. A class-scoped `setUpClass` or `tearDownClass` failure is one
+class-level error that runs no tests, even though pytest reports it against
+every collected method; an instance `setUp` failure remains one error per case.
+An unexpected success refuses the tier, as `wasSuccessful()` did, and a tier
+passes only when pytest's exit code and the runner's own accounting agree.
+
+## Test economy
+
+These are standing rules for every test written from here on, not a record of
+one cleanup. They sit beside the `Code economy` rules in `AGENTS.md` and are
+read the same way: the rule, the reason it exists, and the case where the
+longhand stays.
+
+- Express variant cases through `@pytest.mark.parametrize` or vitest's
+  `it.each` rather than writing a near-duplicate method per variant. A variant
+  is a value, not a behaviour, and a copied method hides which value actually
+  failed. Case count is the invariant, never line count: collapsing four
+  methods into one parameterized case with four parameters keeps four
+  reported cases and four independent failures, while collapsing them into one
+  method with a loop deletes three. `parametrize` does not work on a
+  `unittest.TestCase` method -- it collects as a single case and then fails
+  with a missing-argument `TypeError` -- so a `TestCase` class either converts
+  or keeps `subTest`, which parameterizes the assertions without splitting the
+  case. Where a variant needs its own name to be diagnosable, leave it a
+  separate test and say why.
+- Build fixture data through a shared builder rather than inlining the same
+  payload in each test. A payload copied into thirty tests is thirty places to
+  update when a schema field is added, and the copies drift into thirty
+  slightly different documents that no longer agree on what the canonical one
+  is. Shared builders live in `tests/support/` for the backend and
+  `frontend/tests/fixtures.tsx` for the browser; a test module never imports
+  another test module's fixtures, because that makes one cohort a dependency
+  of another. Inline a payload only where its exact shape is the thing under
+  test, and keep it inline where a builder parameter would exist for one
+  caller.
+- Force a failure through a seam that survives relocation, not by substituting
+  a member on the object under test. Replacing a method on a live repository
+  or service and then calling a sibling that invokes it works only while both
+  members live on the same object. When the callee moves into an aggregate the
+  call becomes internal, the substitution stops reaching it, and the test does
+  not fail -- it stops testing, and stays green with its assertion silently
+  removed. Prefer a fake collaborator, an injected port, or a connection
+  substituted at construction, so the failure is forced across a boundary the
+  code must keep. Where a private member genuinely is the contract under test,
+  say so at the site.
+
 F19a adds focused source proof for clean-schema automatic bootstrap, exact
 qualified option/bundle admission, atomic human/automatic uniqueness,
 restart/idempotency/currentness, pause/suspension/recovery, and the selected

@@ -169,7 +169,7 @@ class MetadataPolicyTests(unittest.TestCase):
 
     def test_preview_uses_bounded_exact_current_pairs_without_effects(self) -> None:
         from mechanical_librarian.domain.proposal_set import evaluate_report
-        from tests.unit.test_proposal_set import _report
+        from tests.support.proposal_evidence import _report
 
         report = _report()
         proposal = evaluate_report(report)
@@ -214,7 +214,7 @@ class MetadataPolicyTests(unittest.TestCase):
             TargetFacts,
         )
         from mechanical_librarian.domain.proposal_set import evaluate_report
-        from tests.unit.test_proposal_set import _report
+        from tests.support.proposal_evidence import _report
 
         source = _report()
 

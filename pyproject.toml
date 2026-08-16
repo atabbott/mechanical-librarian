@@ -34,6 +34,7 @@ dev = [
   "hypothesis==6.165.2",
   "mypy==2.3.1",
   "playwright==1.61.0",
+  "pytest==9.1.1",
   "ruff==0.16.3",
   "setuptools==83.0.0",
 ]
@@ -62,6 +63,21 @@ where = ["src"]
 
 [tool.uv]
 package = true
+
+[tool.pytest.ini_options]
+# pytest is the execution engine under the tier system, not a second entry
+# point beside it. `scripts/run_test_tier.py` names each cohort's exact files
+# and supplies the arguments the tier contract needs, so these settings only
+# have to keep a bare `pytest` invocation admitting the same cohort the tiers
+# do: the public suite lives in `tests/`, and a test module is `test_*.py`.
+# pytest's other default, `*_test.py`, is not a name this suite uses and would
+# widen the cohort silently.
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+# An `xfail` that passes is a finding, not a pass. The tier runner refuses a
+# run holding an unexpected success either way, but declaring it here makes a
+# native `xfail` fail at the engine too rather than only in the accounting.
+xfail_strict = true
 
 [tool.ruff]
 # The gate lints the backend source, its tests, and its scripts.

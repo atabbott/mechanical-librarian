@@ -23,7 +23,7 @@ from mechanical_librarian.domain.shadow_review import (
     ShadowReviewPacket,
     ShadowReviewValueError,
 )
-from tests.unit.test_review_case_persistence import _report
+from tests.support.review_cases import _report
 
 
 def _snapshot(directory: Path) -> dict[str, tuple[bytes, tuple[int, ...]]]:
