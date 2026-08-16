@@ -103,6 +103,16 @@ target-version = "py313"
 # what the formatter targets and what `E501` rejects, so the two can never
 # disagree about the width they enforce.
 line-length = 88
+# Without this, an exclusion holds only for paths ruff discovers by walking a
+# directory, and is ignored for any path named on the command line. That is the
+# difference between `ruff format src` and `ruff format <one file>`, so the
+# formatter exclusion below would protect the gate's directory invocation and
+# nothing a contributor's editor, format-on-save, or pre-commit hook does --
+# each of which formats the single file it is holding, and would rewrite a
+# byte-frozen source. This makes the exclusion hold for every invocation.
+# It is scoped to exclusions: `ruff check` still lints those four files, which
+# is what keeps their per-file ignores below meaningful rather than moot.
+force-exclude = true
 
 [tool.ruff.format]
 # The four sources named under `[tool.ruff.lint.per-file-ignores]` below are
