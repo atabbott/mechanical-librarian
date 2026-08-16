@@ -7,6 +7,12 @@
 
 ## Unreleased
 
+- State that a single-caller extraction is not judged on line count, and give
+  the documentation an acceptance demands a fifth reporting bucket. The five
+  reconcile to the net delta except where a formatting reflow forced by the
+  change spreads implementation, left open as #719. #662's worked example now
+  measures its reflow into the cover consolidation, landing it on 20 against
+  20 — a tie the clause does not settle, left to #721. (#709)
 - Widen the provider-recovery transaction epilogue to the sites #662 left
   longhand, with each adopting site naming the extra exception types it admits.
   `_rollback_on_failure` now takes them as `*wrapped` and concatenates them onto

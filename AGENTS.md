@@ -79,18 +79,32 @@ Run the static architecture-boundary test whenever imports or packages move.
   site is the case it exists to stop — it removes no duplication, it relabels
   it: delete it and keep the longhand.
 - Worked, from #662. `frontend/src/coverChoices.ts` adds 17 lines of shared
-  implementation and one line of plumbing at each of its two call sites, against
-  the 20 lines of duplicated implementation the two routes delete: 19 against
-  20, which passes by one line. `frontend/src/labels.ts` adds 3 against the 8
-  deleted with five formatter declarations and two copied patterns, and forces
-  no plumbing. Both still grew the tree, `+16` and `+7`, on module structure,
-  seven consumer imports, a Prettier rewrap, and the nine comment lines that
-  change's acceptance demanded. #662's changelog entry reconciles every bucket
-  of both to those net figures, which is the arithmetic this rule requires and
-  the reason the example carries no bucket the entry does not account for. Both
-  would fail on module total, and both passed here. Deciding a measurement basis
-  is not a neutral act: it settles cases the ambiguity left open, and these two
-  are the cases it settles.
+  implementation and one line of plumbing at each of its two call sites, and the
+  longer name it introduces makes the formatter break Detail's prepare button
+  across four lines where it was one. Classify those four the way this rule
+  classifies any line: `<button` and `>` carry no expression and are structure,
+  while `disabled={disabled || cover.prepare.isPending}` and
+  `onClick={() => cover.prepare.mutate()}` each carry one, so the button goes
+  from one line of implementation to two and from none of structure to two. A
+  reflow forced at a former call site is plumbing like any other, so that added
+  line counts with the rest: 17 and 2 and 1 is 20, against the 20 lines of
+  duplicated implementation the two routes delete. Equal, and the clause does
+  not settle equal: it opens by requiring a consolidation to be lighter than
+  the copies it replaces and then rejects one that costs more lines, and those
+  two sentences part company at exactly this measurement. #721 owns which of
+  them governs a tie; this example reports the figures and does not decide it.
+  `frontend/src/labels.ts` adds 3 against the 8 deleted with five formatter
+  declarations and two copied patterns, and forces no plumbing. Both still grew
+  the tree, `+16` and `+7`, on module structure, seven consumer imports, that
+  reflow, and the nine comment lines that change's acceptance demanded. #662's
+  changelog entry reconciles both to those net figures, which is the arithmetic
+  this rule requires, and one line of the whole change answers to no bucket
+  below: the reflow's two structure lines belong to the structure bucket, and
+  its one implementation line belongs to nothing. That single line is #719's,
+  recorded here and not closed here. Both would fail on module total, and
+  `labels.ts` clears the test here. Deciding a measurement basis is not a
+  neutral act: it settles cases the ambiguity left open, and it is what puts
+  the cover module on the tie rather than past it.
 - **Extraction within a boundary** — pulling a helper out of code that could
   have kept it — with a single caller has to earn its place, and it can.
   Consolidating one copy is not consolidation, so the default is to keep the
@@ -98,7 +112,22 @@ Run the static architecture-boundary test whenever imports or packages move.
   does not: a name that carries meaning at the call site, a contract that can be
   tested directly, or a boundary a type checker can enforce. Say which, in the
   change. "It reads better" is a reason; it just has to be written down. A
-  helper that buys none of those is decoration — delete it.
+  helper that buys none of those is decoration — delete it. Line count is not a
+  factor. A line count is evidence about duplication — a consolidation heavier
+  than the copies it replaces removed none — and a single-caller extraction has
+  no duplication for it to weigh: the body moves, a call replaces it, and the
+  arithmetic lands in the same place whether the helper earned its place or not.
+  So an extraction is neither required to be lighter than the longhand nor
+  excused for being heavier; the three grounds above are the whole test, at
+  least one of them still has to hold, and none of them is weakened by this,
+  which is also why a helper that comes out line-neutral has shown nothing by
+  coming out line-neutral. It is still reported under the bullet below, like
+  every other change: unmeasured and unreported are different things. The
+  exemption belongs to the single caller and not to the word — a helper that
+  gains a second caller by replacing a copy of what it already does is a
+  consolidation, and is measured as one. One that is genuinely new at both
+  sites replaced no copy, so there is nothing to measure it against: it
+  answers to the vocabulary rule at the top of this section.
 - **Relocation** — moving code across a layer, module, or file boundary because
   its dependencies place it there — is judged differently, and the two rules
   above do not apply to it. Relocation necessarily adds a module header,
@@ -117,12 +146,20 @@ Run the static architecture-boundary test whenever imports or packages move.
 - A refactoring pull request reports its net line-count delta per changed
   module, attributing the lines to: code moved in or out unchanged, structure
   the change required (a move's header, imports and parameters; an extraction's
-  declaration and call site), copies consolidation removed, and checks newly
-  added. Those four reconcile to the net delta — a pure move shows the same
-  figure leaving one module and arriving in another. A site that gains a check it
-  never had is expected to grow, and that growth is a success. Never weaken,
-  skip, or narrow a check to reach a line count, and never manufacture a helper
-  to improve one.
+  declaration and call site), copies consolidation removed, checks newly added,
+  and documentation the governing issue's acceptance demanded, reported with
+  that acceptance. Those five reconcile to the net delta — a pure move shows the
+  same figure leaving one module and arriving in another. One exception is known
+  and still open: where a change makes an expression long enough that the
+  formatter re-wraps the line holding it, the implementation the reflow spreads
+  over more lines answers to no bucket here. That gap is #719's, not closed by
+  the bullet you are reading. Demanded documentation
+  earns a bucket rather than an exclusion because an exclusion stops the
+  arithmetic finishing: a reader could not tell a demanded comment from a bucket
+  the report forgot, and a report nobody can check is not evidence. A site that
+  gains a check it never had is expected to grow, and that growth is a success.
+  Never weaken, skip, or narrow a check to reach a line count, and never
+  manufacture a helper to improve one.
 - Exact-type checks are deliberate subclass rejection, not an accident of
   style. `type(value) is int` rejects `bool`, and `type(value) is str` rejects
   a `str` subclass, because a persisted document must carry the exact canonical
