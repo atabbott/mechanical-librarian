@@ -50,7 +50,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
-from tests.unit.test_review_case_persistence import _report
+from tests.support.review_cases import _report
 
 _PRODUCER = "f" * 64
 

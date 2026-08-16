@@ -78,6 +78,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from tests.support.review_cases import _report
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
     _source,
@@ -102,7 +103,6 @@ from tests.unit.test_proposal_set import (
 from tests.unit.test_proposal_set import (
     _report as _proposal_report,
 )
-from tests.unit.test_review_case_persistence import _report
 
 
 def _case(repository):

@@ -21,8 +21,8 @@ from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.interfaces.web import create_review_app
-from tests.unit.test_review_case_persistence import _report
-from tests.unit.test_review_web import _Repository
+from tests.support.review_cases import _report
+from tests.support.review_web_doubles import FakeReviewRepository
 
 
 class ComposedPolicyStoreContractTests(unittest.TestCase):
@@ -59,7 +59,7 @@ class ReviewApplicationTests(unittest.TestCase):
     def setUp(self) -> None:
         report = _report()
         self.case = ReviewCase.create(evaluate_report(report), report)
-        self.repository = _Repository(self.case, report)
+        self.repository = FakeReviewRepository(self.case, report)
         self.now = 1_000
         self.application = compose_review_application(
             state_owner=self.repository,
