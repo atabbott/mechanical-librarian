@@ -10,7 +10,8 @@
 - Decompose the 1,131-line `_package_report` EPUB extractor -- the largest
   function in the codebase and the one that parses the most hostile input in
   the system -- into twenty-nine named stages over four named state types, each
-  stage under 150 lines and each carrying one documented contract. `_package_report` is now a linear
+  stage under 150 lines and each carrying one documented contract.
+  `_package_report` is now a linear
   composition whose call order *is* the acceptance order, so what the extractor
   accepts, rejects and bounds can be read in one place instead of inferred from
   a 285-branch function. Each stage now has direct unit tests for the hostile
@@ -18,10 +19,14 @@
   unsupported versions, duplicate and ambiguous ids, refinement cycles,
   container path escapes (`../`, `..%2f`, `\`, absolute), oversize references,
   unsafe projection text, media-overlay and fallback abuse, and every
-  evidence-bound that must reject rather than truncate. Two hypothesis
-  properties cover the reference guard and the prefix vocabulary, with an
-  explicit coverage assertion so a strategy that stopped generating traversals
-  fails the suite rather than passing vacuously.
+  evidence-bound that must reject rather than truncate. Every one of the
+  twenty-nine stages is invoked directly by that suite, not only through a
+  parent stage. Two hypothesis properties cover the reference guard and the
+  prefix vocabulary; each pins both of its branches with explicit `@example`
+  inputs and then asserts that those exact inputs produced the recorded
+  outcome, so the guard fails when the behaviour regresses or the recording
+  breaks, and never merely because a seed explored the search space
+  differently.
   Nothing about extraction behaviour changed, and that was proven mechanically
   rather than argued: a corpus-digest gate captured a canonical digest of every
   `EpubPackageReport` the existing suites produce, plus the outcome and message

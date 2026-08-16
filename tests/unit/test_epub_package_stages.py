@@ -14,18 +14,20 @@ import zipfile
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 
-from hypothesis import given, settings
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
 from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     _archive_shape_warnings,
     _bounded_report,
+    _calibre_series_observations,
     _check_section_sequence,
     _consistency_warnings,
     _container_declarations,
     _cover_observations,
     _declared_resource_identity,
     _dublin_core_observations,
+    _dublin_core_value,
     _encryption_warnings,
     _Entry,
     _guide_declarations,
@@ -35,6 +37,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     _Manifest,
     _manifest_declarations,
     _manifest_integrity,
+    _manifest_item,
     _meta_observations,
     _metadata_field_observations,
     _metadata_refinements,
@@ -46,6 +49,7 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     _parse_xml,
     _prefix_vocabulary,
     _refinement_cycle_warnings,
+    _Refinements,
     _Rejected,
     _required_field_warnings,
     _selected_cover,
@@ -115,6 +119,16 @@ def _entries(*names: str) -> dict[str, _Entry]:
         name: _Entry(name, name.encode(), 0x0808, zipfile.ZIP_DEFLATED, 0, 1, 1, 0, 0, 0, 0)
         for name in names
     }
+
+
+def _item(attributes: str) -> _Node:
+    return _parse(f'<item xmlns="{_OPF}" {attributes}/>'.encode())
+
+
+def _no_refinements() -> _Refinements:
+    return _Refinements(
+        False, False, {"calibre:series": [], "calibre:series_index": []}, {}, {}
+    )
 
 
 def _package(
@@ -890,6 +904,161 @@ class BoundedReportStageTests(unittest.TestCase):
         )
 
 
+class DirectStageInvocationTests(unittest.TestCase):
+    """Stages driven directly, with no parent stage between test and contract.
+
+    `_dublin_core_value`, `_calibre_series_observations` and `_manifest_item`
+    are the three largest stages whose contracts were otherwise only reachable
+    through a parent, so their rejection behaviour is proven here at the stage
+    boundary that owns it.
+    """
+
+    def test_dublin_core_value_classifies_a_bad_date_at_its_own_boundary(self) -> None:
+        node = _parse(
+            b'<date xmlns="http://purl.org/dc/elements/1.1/" '
+            b'xmlns:opf="http://www.idpf.org/2007/opf" '
+            b'opf:event="copyright">1999-13-45</date>'
+        )
+        value, warnings = _dublin_core_value(
+            _request(), _PACKAGE, node, "date", None, {}, {}, _no_refinements()
+        )
+        self.assertIs(value.target_field, EpubPackageField.COPYRIGHT_DATE)
+        self.assertIs(value.applicability, EpubObservationApplicability.INAPPLICABLE)
+        self.assertTrue(value.preserve_only)
+        self.assertEqual(value.normalized, "1999-13-45")
+        self.assertEqual(_codes(warnings), ["invalid_date"])
+
+    def test_dublin_core_value_rejects_an_unsupported_date_event(self) -> None:
+        node = _parse(
+            b'<date xmlns="http://purl.org/dc/elements/1.1/" '
+            b'xmlns:opf="http://www.idpf.org/2007/opf" '
+            b'opf:event="vendor">2001-01-01</date>'
+        )
+        value, warnings = _dublin_core_value(
+            _request(), _PACKAGE, node, "date", None, {}, {}, _no_refinements()
+        )
+        self.assertIs(value.applicability, EpubObservationApplicability.INAPPLICABLE)
+        self.assertEqual(_codes(warnings), ["invalid_date"])
+
+    def test_dublin_core_value_registers_only_a_resolvable_identifier(self) -> None:
+        node = _parse(
+            b'<identifier xmlns="http://purl.org/dc/elements/1.1/" id="pub">'
+            b"urn:uuid:12345678-1234-1234-8234-123456789abc</identifier>"
+        )
+        registered: dict[str, _Node] = {}
+        value, warnings = _dublin_core_value(
+            _request(), _PACKAGE, node, "identifier", "pub", {"pub": node}, registered, _no_refinements()
+        )
+        self.assertEqual(registered, {"pub": node})
+        self.assertEqual(value.inferred_scheme, "UUID")
+        self.assertEqual(warnings, [])
+        withdrawn: dict[str, _Node] = {}
+        _dublin_core_value(
+            _request(), _PACKAGE, node, "identifier", "pub", {}, withdrawn, _no_refinements()
+        )
+        self.assertEqual(withdrawn, {})
+
+    def test_calibre_series_projects_only_paired_values(self) -> None:
+        series = _Node(f"{{{_OPF}}}meta", {"name": "calibre:series"}, ordinal=3)
+        first = _Node(f"{{{_OPF}}}meta", {"name": "calibre:series_index"}, ordinal=4)
+        second = _Node(f"{{{_OPF}}}meta", {"name": "calibre:series_index"}, ordinal=5)
+        refinements = _Refinements(
+            False,
+            False,
+            {
+                "calibre:series": [("Saga", series)],
+                "calibre:series_index": [("2", first), ("3", second)],
+            },
+            {},
+            {},
+        )
+        frame = _package_frame(_request(), _parse(_package()))
+        observations, warnings = _calibre_series_observations(
+            _request(), _PACKAGE, frame, refinements
+        )
+        self.assertEqual(
+            [item.field for item in observations],
+            [EpubPackageField.COLLECTION, EpubPackageField.COLLECTION_POSITION],
+        )
+        self.assertEqual(observations[1].citation.source_ordinal, 4)
+        self.assertEqual(_codes(warnings), ["incomplete_calibre_series"])
+
+    def test_calibre_series_defers_to_the_standard_vocabulary(self) -> None:
+        series = _Node(f"{{{_OPF}}}meta", {"name": "calibre:series"}, ordinal=3)
+        position = _Node(f"{{{_OPF}}}meta", {"name": "calibre:series_index"}, ordinal=4)
+        refinements = _Refinements(
+            True,
+            True,
+            {
+                "calibre:series": [("Saga", series)],
+                "calibre:series_index": [("2", position)],
+            },
+            {},
+            {},
+        )
+        frame = _package_frame(_request(), _parse(_package()))
+        observations, warnings = _calibre_series_observations(
+            _request(), _PACKAGE, frame, refinements
+        )
+        self.assertEqual([item.normalized_value for item in observations], [None, None])
+        self.assertEqual(warnings, [])
+
+    def test_manifest_item_rejects_a_traversal_at_its_own_boundary(self) -> None:
+        for href in ("../../etc/passwd", "..%2f..%2fetc", "/absolute"):
+            item = _item(f'id="a" href="{href}" media-type="application/xhtml+xml"')
+            with self.assertRaises(_Rejected) as raised:
+                _manifest_item(
+                    _request(), _PACKAGE, _entries("OEBPS/a.xhtml"), item, {"a": item}, _Manifest()
+                )
+            self.assertIs(raised.exception.outcome, EpubInspectionOutcome.MALFORMED)
+
+    def test_manifest_item_rejects_a_foreign_element_at_its_own_boundary(self) -> None:
+        node = _parse(f'<foreign xmlns="{_OPF}" id="a"/>'.encode())
+        with self.assertRaises(_Rejected) as raised:
+            _manifest_item(
+                _request(), _PACKAGE, _entries("OEBPS/a.xhtml"), node, {"a": node}, _Manifest()
+            )
+        self.assertIs(raised.exception.outcome, EpubInspectionOutcome.MALFORMED)
+
+    def test_manifest_item_accumulates_only_accepted_state(self) -> None:
+        state = _Manifest()
+        accepted = _item(
+            'id="a" href="a.xhtml" media-type="application/xhtml+xml" properties="nav"'
+        )
+        declarations, warnings = _manifest_item(
+            _request(), _PACKAGE, _entries("OEBPS/a.xhtml"), accepted, {"a": accepted}, state
+        )
+        self.assertEqual(warnings, [])
+        self.assertEqual(
+            [declaration.kind for declaration in declarations],
+            [
+                EpubPackageDeclarationKind.MANIFEST_ITEM,
+                EpubPackageDeclarationKind.NAVIGATION,
+            ],
+        )
+        self.assertEqual((set(state.ids), state.nav_count), ({"a"}, 1))
+        withdrawn = _item('id="b" href="a.xhtml" media-type="application/xhtml+xml"')
+        declarations, warnings = _manifest_item(
+            _request(), _PACKAGE, _entries("OEBPS/a.xhtml"), withdrawn, {}, state
+        )
+        self.assertEqual(declarations, [])
+        self.assertEqual(_codes(warnings), ["invalid_manifest_item"])
+        self.assertEqual(set(state.ids), {"a"})
+
+    def test_manifest_item_reports_a_repeated_resource_without_dropping_it(self) -> None:
+        state = _Manifest()
+        entries = _entries("OEBPS/a.xhtml")
+        first = _item('id="a" href="a.xhtml" media-type="application/xhtml+xml"')
+        _manifest_item(_request(), _PACKAGE, entries, first, {"a": first}, state)
+        second = _item('id="b" href="a.xhtml" media-type="application/xhtml+xml"')
+        declarations, warnings = _manifest_item(
+            _request(), _PACKAGE, entries, second, {"b": second}, state
+        )
+        self.assertEqual(len(declarations), 1)
+        self.assertEqual(_codes(warnings), ["duplicate_manifest_resource"])
+        self.assertEqual(set(state.ids), {"a", "b"})
+
+
 # Free text almost never produces a traversal or a well-formed prefix mapping, so
 # both strategies below are built from the tokens an attacker would actually use.
 _SEGMENTS = st.sampled_from(
@@ -908,31 +1077,51 @@ _PREFIX_DECLARATIONS = st.one_of(
     st.text(max_size=60),
 )
 
+# Inputs that pin each branch of each property. `@example` runs on every seed,
+# before any generated input, so the branch is reached by construction. The
+# strategies above widen the search; these decide whether the guard can pass.
+_TRAVERSAL_REFERENCE = "../../etc/passwd"
+_CONTAINED_REFERENCE = "a.xhtml"
+_CONTAINED_MEMBER = "OEBPS/a.xhtml"
+_MALFORMED_PREFIX = "dcterms:"
+_VALID_PREFIX = "dcterms: http://purl.org/dc/terms/"
+
 
 class ReferenceResolutionPropertyTests(unittest.TestCase):
-    """Properties over hostile stage inputs, each with its own coverage guard.
+    """Properties over hostile stage inputs, each with a deterministic guard.
 
-    Every guard is scoped to the single test that generates its evidence. Class
-    or module state would accumulate across repeated executions in one
-    interpreter, which would let a narrowed strategy be validated by evidence an
-    earlier run produced.
+    Coverage of both branches is pinned by `@example`, never inferred from what
+    a seed happened to generate: asserting that a random strategy explored a
+    branch is a probabilistic assertion that passes on most seeds and fails on
+    the rest. Each guard names the exact forced input it expects to see
+    recorded, so it fails when the recording wiring breaks, when the explicit
+    examples stop running, or when the behaviour under test regresses -- and
+    for no other reason.
+
+    Evidence is local to the single test that generates it. Class or module
+    state would accumulate across repeated executions in one interpreter,
+    letting a narrowed strategy be validated by an earlier run's evidence.
     """
 
     def test_the_reference_guard_has_both_outcomes(self) -> None:
-        entries = _entries("OEBPS/a.xhtml")
+        entries = _entries(_CONTAINED_MEMBER)
         with self.assertRaises(_Rejected) as raised:
-            _declared_resource_identity(_PACKAGE, "../../etc/passwd", entries)
+            _declared_resource_identity(_PACKAGE, _TRAVERSAL_REFERENCE, entries)
         self.assertIs(raised.exception.outcome, EpubInspectionOutcome.MALFORMED)
-        _identity, resolved = _declared_resource_identity(_PACKAGE, "a.xhtml", entries)
-        self.assertEqual(resolved, "OEBPS/a.xhtml")
+        _identity, resolved = _declared_resource_identity(
+            _PACKAGE, _CONTAINED_REFERENCE, entries
+        )
+        self.assertEqual(resolved, _CONTAINED_MEMBER)
 
     def test_declared_reference_is_rejected_or_stays_inside_the_container(self) -> None:
-        entries = _entries("OEBPS/a.xhtml")
+        entries = _entries(_CONTAINED_MEMBER)
         rejected: set[str] = set()
         accepted: set[str] = set()
 
         @settings(max_examples=400, deadline=None)
         @given(_REFERENCES)
+        @example(_TRAVERSAL_REFERENCE)
+        @example(_CONTAINED_REFERENCE)
         def check(reference: str) -> None:
             try:
                 identity, resolved = _declared_resource_identity(
@@ -961,30 +1150,25 @@ class ReferenceResolutionPropertyTests(unittest.TestCase):
                 )
 
         check()
-        # A run that collected nothing fails rather than passing silently, and a
-        # strategy that reached only one branch exercises half the guard.
-        self.assertTrue(rejected or accepted, "the strategy produced no evidence")
-        self.assertTrue(rejected, "the strategy never reached a rejection")
-        self.assertTrue(accepted, "the strategy never reached an accepted reference")
-        self.assertTrue(
-            any(".." in value for value in rejected),
-            "no traversal reached the container-escape guard",
-        )
+        self.assertIn(_TRAVERSAL_REFERENCE, rejected)
+        self.assertIn(_CONTAINED_MEMBER, accepted)
 
     def test_prefix_vocabulary_is_rejected_or_fully_validated(self) -> None:
         request = _request()
-        rejected: list[str] = []
+        rejected: set[str] = set()
         accepted: list[dict[str, str]] = []
 
         @settings(max_examples=400, deadline=None)
         @given(_PREFIX_DECLARATIONS)
+        @example(_MALFORMED_PREFIX)
+        @example(_VALID_PREFIX)
         def check(declaration: str) -> None:
             node = _Node("{" + _OPF + "}package", {"prefix": declaration})
             try:
                 prefixes = _prefix_vocabulary(request, node)
             except _Rejected as raised:
                 self.assertIs(raised.outcome, EpubInspectionOutcome.MALFORMED)
-                rejected.append(declaration)
+                rejected.add(declaration)
                 return
             accepted.append(prefixes)
             self.assertLessEqual(len(prefixes), request.limits.prefix_mappings)
@@ -993,12 +1177,8 @@ class ReferenceResolutionPropertyTests(unittest.TestCase):
                 self.assertNotIn(" ", iri)
 
         check()
-        self.assertTrue(rejected or accepted, "the strategy produced no evidence")
-        self.assertTrue(rejected, "the strategy never reached a rejection")
-        self.assertTrue(
-            any(mapping for mapping in accepted),
-            "the strategy never produced a non-empty prefix mapping",
-        )
+        self.assertIn(_MALFORMED_PREFIX, rejected)
+        self.assertIn({"dcterms": "http://purl.org/dc/terms/"}, accepted)
 
 
 if __name__ == "__main__":
