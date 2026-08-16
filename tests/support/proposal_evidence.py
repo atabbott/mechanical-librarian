@@ -1,0 +1,504 @@
+"""Shared proposal-policy evidence builders.
+
+Nine test modules built their reports, claims, and provider
+observations by importing these out of another module's tests.
+Their names are unchanged so relocating them touches no test body.
+"""
+
+
+from mechanical_librarian.application.metadata_report import (
+    ProviderLaneResult,
+    TargetSnapshot,
+    metadata_discovery_plan,
+    provider_observation,
+)
+from mechanical_librarian.domain.cover_evidence import (
+    CoverSource,
+)
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    FieldState,
+    FileFacts,
+    LocalClaim,
+    MetadataReport,
+    ProviderCandidate,
+    ProviderClaim,
+    ProviderEvidence,
+    ProviderEvidenceKind,
+    ProviderIdentityBinding,
+    ProviderObservation,
+    ProviderStatus,
+    TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+    default_target_fields,
+    finalize_candidate_comparisons,
+)
+from mechanical_librarian.domain.proposal_set import (
+    ProposalSet,
+)
+
+
+def _fields(
+    current_title: str | None = "Current title",
+    **overrides: TargetField,
+) -> tuple[TargetField, ...]:
+    values = {
+        value.destination: value
+        for value in default_target_fields(current_title)
+    }
+    values.update(
+        {
+            TargetDestination[key.upper()]: value
+            for key, value in overrides.items()
+        }
+    )
+    return tuple(values[destination] for destination in TargetDestination)
+
+
+def _claim(
+    provider: str,
+    candidate: str,
+    kind: ClaimKind,
+    value: str,
+    *,
+    scope: ClaimScope,
+    order: int = 0,
+    role: str | None = None,
+    applicability: str = "not_applicable",
+) -> ProviderClaim:
+    return ProviderClaim.create(
+        provider=provider,
+        candidate=candidate,
+        kind=kind,
+        value=value,
+        state=FieldState.VALID,
+        scope=scope,
+        applicability=applicability,
+        role=role,
+        raw_order=order,
+    )
+
+
+def _provider(
+    name: str,
+    candidate: str,
+    claims: tuple[ProviderClaim, ...],
+    evidence: tuple[ProviderEvidence, ...] = (),
+    authority: str | None = None,
+) -> ProviderObservation:
+    return ProviderObservation(
+        name,
+        ProviderStatus.CANDIDATES,
+        (),
+        (ProviderCandidate(candidate, f"{name}-work", claims, evidence),),
+        authority=authority,
+    )
+
+
+def _publication_local_isbn() -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="9780306406157",
+        applicability="unknown",
+        checksum="valid_isbn_13",
+        applicability_basis="unlabelled",
+        scope=ClaimScope.EDITION,
+    )
+
+
+def _explicit_local_ebook_isbn() -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+        scope=ClaimScope.EDITION,
+    )
+
+
+def _publication_provider(
+    name: str,
+    candidate: str,
+    values: tuple[str, ...],
+    *,
+    authority: str | None = None,
+) -> ProviderObservation:
+    claims = (
+        _claim(
+            name,
+            candidate,
+            ClaimKind.ISBN,
+            "9780306406157",
+            scope=ClaimScope.EDITION,
+            applicability="unknown",
+        ),
+        *(
+            _claim(
+                name,
+                candidate,
+                ClaimKind.PUBLICATION_DATE,
+                value,
+                scope=ClaimScope.EDITION,
+                order=index + 1,
+            )
+            for index, value in enumerate(values)
+        ),
+    )
+    return _provider(name, candidate, claims, authority=authority)
+
+
+def _manifestation_publisher_provider(
+    name: str,
+    candidate: str,
+    kind: ClaimKind,
+    value: str,
+    *,
+    isbn: str = "9780306406157",
+    applicability: str = "ebook",
+) -> ProviderObservation:
+    return _provider(
+        name,
+        candidate,
+        (
+            _claim(
+                name,
+                candidate,
+                ClaimKind.ISBN,
+                isbn,
+                scope=ClaimScope.EDITION,
+                applicability=applicability,
+            ),
+            _claim(
+                name,
+                candidate,
+                kind,
+                value,
+                scope=ClaimScope.EDITION,
+                order=1,
+            ),
+        ),
+    )
+
+
+def _contradictory_publication_provider(
+    name: str = "catalogue",
+    candidate: str = "edition-1",
+) -> ProviderObservation:
+    return _provider(
+        name,
+        candidate,
+        (
+            _claim(
+                name,
+                candidate,
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="unknown",
+            ),
+            _claim(
+                name,
+                candidate,
+                ClaimKind.PUBLICATION_DATE,
+                "2001-02-03",
+                scope=ClaimScope.EDITION,
+                order=1,
+            ),
+        ),
+        (
+            ProviderEvidence(
+                ProviderEvidenceKind.EDITION_WORK_RELATION,
+                f"{name}-work",
+                ClaimScope.EDITION,
+            ),
+            ProviderEvidence(
+                ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION,
+                "contradictory_or_multiple",
+                ClaimScope.EDITION,
+                source_ordinal=1,
+            ),
+        ),
+    )
+
+
+def _report(
+    *,
+    title: str | None = "Current title",
+    fields: tuple[TargetField, ...] | None = None,
+    local_claims: tuple[LocalClaim, ...] = (),
+    providers: tuple[ProviderObservation, ...] = (),
+    covers: tuple[CoverSource, ...] = (),
+) -> MetadataReport:
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary",
+            "ebooks",
+            "item-1",
+            _fields(title) if fields is None else fields,
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=local_claims,
+        local_reasons=(
+            ("opening_matter_creator",)
+            if local_claims
+            else ("no_opening_claims",)
+        ),
+        providers=tuple(sorted(providers, key=lambda value: value.provider)),
+        cover_sources=covers,
+    )
+
+
+def _local_subtitle(value: str, scope: ClaimScope) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.SUBTITLE,
+        observed=value,
+        canonical=value,
+        state=FieldState.VALID,
+        scope=scope,
+        basis="package_metadata",
+        excerpt=value,
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        occurrence=0,
+    )
+
+
+def _local_creator(
+    value: str,
+    *,
+    basis: str = "package_metadata",
+    occurrence: int = 0,
+) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.CREATOR,
+        observed=value,
+        canonical=value,
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        basis=basis,
+        excerpt=value,
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        role="author",
+        occurrence=occurrence,
+    )
+
+
+def _identity_bound_alias_report(
+    *, include_title: bool = False
+) -> MetadataReport:
+    local_claims = tuple(
+        _local_creator(value, occurrence=index)
+        for index, value in enumerate(("Ada Example", "Bob Example"))
+    )
+    creator_claims = tuple(
+        _claim(
+            "catalogue",
+            "edition-1",
+            ClaimKind.CREATOR,
+            value,
+            scope=ClaimScope.WORK,
+            role="author",
+            order=index,
+        )
+        for index, value in enumerate(
+            ("A. Example", "Ada Example", "Bob Example")
+        )
+    )
+    title_claims = (
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.TITLE,
+                "Candidate title",
+                scope=ClaimScope.WORK,
+                order=3,
+            ),
+        )
+        if include_title
+        else ()
+    )
+    bindings = tuple(
+        ProviderIdentityBinding(
+            claim.reference,
+            identity,
+            ClaimScope.WORK,
+            "author",
+            ordinal,
+        )
+        for claim, identity, ordinal in zip(
+            creator_claims,
+            ("author-1", "author-1", "author-2"),
+            (0, 2, 7),
+            strict=True,
+        )
+    )
+    candidate = finalize_candidate_comparisons(
+        ProviderCandidate(
+            "edition-1",
+            "catalogue-work",
+            creator_claims + title_claims,
+            (),
+            bindings,
+        ),
+        local_claims,
+    )
+    return _report(
+        title=None,
+        fields=_fields(
+            None,
+            authors=TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.MISSING,
+            ),
+        ),
+        local_claims=local_claims,
+        providers=(
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.CANDIDATES,
+                candidates=(candidate,),
+            ),
+        ),
+    )
+
+
+def _partially_bound_direct_author_report(
+    *, include_title: bool = False
+) -> MetadataReport:
+    local_claims = tuple(
+        _local_creator(value, occurrence=index)
+        for index, value in enumerate(("Ada Example", "Bob Example"))
+    )
+    creator_claims = tuple(
+        _claim(
+            "catalogue",
+            "edition-1",
+            ClaimKind.CREATOR,
+            value,
+            scope=ClaimScope.WORK,
+            role="author",
+            order=index,
+        )
+        for index, value in enumerate(("Ada Example", "Bob Example"))
+    )
+    title_claims = (
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.TITLE,
+                "Candidate title",
+                scope=ClaimScope.WORK,
+                order=2,
+            ),
+        )
+        if include_title
+        else ()
+    )
+    candidate = finalize_candidate_comparisons(
+        ProviderCandidate(
+            "edition-1",
+            "catalogue-work",
+            creator_claims + title_claims,
+            (),
+            (
+                ProviderIdentityBinding(
+                    creator_claims[0].reference,
+                    "author-1",
+                    ClaimScope.WORK,
+                    "author",
+                    0,
+                ),
+            ),
+        ),
+        local_claims,
+    )
+    return _report(
+        title=None,
+        fields=_fields(
+            None,
+            authors=TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.MISSING,
+            ),
+        ),
+        local_claims=local_claims,
+        providers=(
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.CANDIDATES,
+                candidates=(candidate,),
+            ),
+        ),
+    )
+
+
+def _result(proposal_set: ProposalSet, destination: TargetDestination):
+    return next(
+        value
+        for value in proposal_set.results
+        if value.destination is destination
+    )
+
+
+def _isbn_lane_observation(
+    provider: str,
+    candidate: ProviderCandidate,
+    authority: str,
+    lane,
+) -> ProviderObservation:
+    return provider_observation(
+        provider,
+        (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, (candidate,)),),
+        authority=authority,
+    )
+
+
+def _real_tigers_corroboration_report() -> MetadataReport:
+    fields = _fields(
+        "Real Tigers",
+        authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING),
+    )
+    isbn = _publication_local_isbn()
+    lane = metadata_discovery_plan(
+        TargetSnapshot("ebook", "Real Tigers", (), fields=fields), (isbn,),
+    ).lanes[0]
+    author_claim = _claim(
+        "open-library", "author-edition", ClaimKind.CREATOR, "Mick Herron",
+        scope=ClaimScope.WORK, role="author", order=1,
+    )
+    neutral_claim = _claim(
+        "hardcover", "neutral-edition", ClaimKind.CREATOR, "Mick Herron",
+        scope=ClaimScope.WORK, role=None, order=1,
+    )
+    author_candidate = ProviderCandidate(
+        "author-edition", "open-library-work",
+        (_claim("open-library", "author-edition", ClaimKind.TITLE, "Real Tigers", scope=ClaimScope.WORK), author_claim), (),
+        (ProviderIdentityBinding(author_claim.reference, "open-library-author-OL1", ClaimScope.WORK, "author"),),
+    )
+    neutral_candidate = ProviderCandidate(
+        "neutral-edition", "hardcover-work",
+        (_claim("hardcover", "neutral-edition", ClaimKind.TITLE, "Real Tigers", scope=ClaimScope.WORK), neutral_claim), (),
+        (ProviderIdentityBinding(neutral_claim.reference, "hardcover-author-0000000001", ClaimScope.WORK, None),),
+    )
+    return _report(
+        title="Real Tigers",
+        fields=fields,
+        local_claims=(isbn,),
+        providers=(
+            _isbn_lane_observation("hardcover", neutral_candidate, "hardcover", lane),
+            _isbn_lane_observation("open-library", author_candidate, "open_library", lane),
+        ),
+    )

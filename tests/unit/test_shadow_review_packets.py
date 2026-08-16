@@ -51,7 +51,7 @@ from mechanical_librarian.domain.shadow_review import (
     ShadowReviewValueError,
     canonical_json,
 )
-from tests.unit.test_proposal_set import (
+from tests.support.proposal_evidence import (
     _claim,
     _contradictory_publication_provider,
     _explicit_local_ebook_isbn,
@@ -61,8 +61,8 @@ from tests.unit.test_proposal_set import (
     _publication_local_isbn,
     _publication_provider,
 )
-from tests.unit.test_proposal_set import _fields as _proposal_fields
-from tests.unit.test_proposal_set import _report as _proposal_report
+from tests.support.proposal_evidence import _fields as _proposal_fields
+from tests.support.proposal_evidence import _report as _proposal_report
 
 
 def _local_isbn() -> LocalClaim:

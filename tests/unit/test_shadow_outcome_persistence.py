@@ -78,6 +78,14 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from tests.support.proposal_evidence import (
+    _claim,
+    _fields,
+    _provider,
+)
+from tests.support.proposal_evidence import (
+    _report as _proposal_report,
+)
 from tests.support.review_cases import _report
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
@@ -94,14 +102,6 @@ from tests.unit.test_cover_packets import (
 )
 from tests.unit.test_cover_packets import (
     _source as _cover_source,
-)
-from tests.unit.test_proposal_set import (
-    _claim,
-    _fields,
-    _provider,
-)
-from tests.unit.test_proposal_set import (
-    _report as _proposal_report,
 )
 
 

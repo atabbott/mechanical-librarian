@@ -39,21 +39,21 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support.proposal_evidence import (
+    _claim as _proposal_claim,
+)
+from tests.support.proposal_evidence import (
+    _provider as _proposal_provider,
+)
+from tests.support.proposal_evidence import (
+    _report as _proposal_report,
+)
 from tests.support.review_cases import _report
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
 )
 from tests.unit.test_bibliographic_bundles import (
     _source as _bibliographic_source,
-)
-from tests.unit.test_proposal_set import (
-    _claim as _proposal_claim,
-)
-from tests.unit.test_proposal_set import (
-    _provider as _proposal_provider,
-)
-from tests.unit.test_proposal_set import (
-    _report as _proposal_report,
 )
 
 
