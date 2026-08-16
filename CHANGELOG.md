@@ -7,6 +7,32 @@
 
 ## Unreleased
 
+- Run the public test tiers on pytest without changing what a tier is.
+  `scripts/run_test_tier.py` hand-rolled `unittest` discovery, which foreclosed
+  fixtures, `parametrize`, and assertion introspection for every future test in
+  the suite. Collection and execution now delegate to pytest while the tier
+  contract stays exactly where it was: the same `COHORTS` patterns, the same
+  dotted path-free test identities, the same `test-cohort-v1` manifest, the
+  same `test-tier-stall-v1` diagnostic on standard error, the same
+  `test-tier-result-v1` summary with #655's bounded failure tracebacks on
+  standard output, and the same fail-closed behaviour for an empty or
+  unimportable cohort. Every cohort manifest and `test_ids_sha256` is
+  byte-identical to the value the unittest engine produced -- fast 1,631 cases,
+  browser 6, slow 2, required-installed 15 -- and no test file changed to make
+  that true.
+  Two engine settings carry tier behaviour rather than taste. `--capture=sys`
+  replaces only `sys.stdout`/`sys.stderr`, exactly as the runner's own
+  redirection already did, so file descriptor 2 keeps pointing at the real
+  stream and the stall diagnostic still reaches an observer; descriptor-level
+  capture, pytest's default, swallows it silently. `--tb=native` keeps the
+  interpreter's traceback format, so a traceback truncated to its retained tail
+  still ends at the assertion and the innermost frame.
+  The runner also implements unittest's `load_tests` protocol, which pytest does
+  not. `tests/slow/test_continuous_review_scale.py` uses it to select one method
+  from a subclass of a fast-tier base; without that handling the slow cohort
+  would have grown from two cases to six and would have re-run two fast-tier
+  cases under a second identity, breaking tier disjointness rather than merely
+  the digest. (#661)
 - Distinguish consolidation from relocation in the code-economy rules, and let a
   single-consumer helper earn its place, so the requirement that an abstraction
   be lighter than what it replaces stops being read as a bar on moving code to

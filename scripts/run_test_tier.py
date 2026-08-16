@@ -16,6 +16,9 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
+
+import pytest
 
 _STALL_DIAGNOSTIC_SECONDS = 30
 _SAFE_TEST_ID = re.compile(r"[A-Za-z0-9_.]{1,512}")
@@ -28,42 +31,35 @@ _SAFE_TEST_ID = re.compile(r"[A-Za-z0-9_.]{1,512}")
 _MAX_TEST_TRACEBACK_BYTES = 4_096
 _MAX_TRACEBACK_STREAM_BYTES = 262_144
 
+# pytest is the execution engine; these arguments carry the properties the
+# `unittest` runner used to supply directly.
+#
+# `--capture=sys` replaces only `sys.stdout`/`sys.stderr`, exactly as the
+# `redirect_*` context managers below already do, so file descriptor 2 keeps
+# pointing at the real stream and the stall diagnostic still reaches an
+# observer while the cohort's own output stays discarded. Descriptor-level
+# capture would swallow it.
+#
+# `--tb=native` emits the interpreter's own traceback format rather than
+# pytest's annotated one, so a traceback truncated to its retained tail still
+# ends with the assertion and the innermost frame.
+#
+# `-p no:cacheprovider` leaves no `.pytest_cache` behind, so a qualified source
+# snapshot stays byte-identical to the commit it was taken from.
+_PYTEST_ARGUMENTS = (
+    "--capture=sys",
+    "--tb=native",
+    "-q",
+    "--no-header",
+    "-p",
+    "no:cacheprovider",
+)
+_RUN_EXIT_CODES = frozenset((pytest.ExitCode.OK, pytest.ExitCode.TESTS_FAILED))
+
 
 @dataclass(frozen=True, slots=True)
 class TestCohort:
     discoveries: tuple[tuple[str, str], ...]
-
-
-class _DiagnosticTestResult(unittest.TestResult):
-    def __init__(self) -> None:
-        super().__init__()
-        self._progress_lock = threading.Lock()
-        self._current_test_id: str | None = None
-        self._current_started_at = 0.0
-
-    def startTest(self, test: unittest.TestCase) -> None:
-        with self._progress_lock:
-            identifier = test.id()
-            self._current_test_id = (
-                identifier if _SAFE_TEST_ID.fullmatch(identifier) is not None else None
-            )
-            self._current_started_at = time.monotonic()
-        super().startTest(test)
-
-    def stopTest(self, test: unittest.TestCase) -> None:
-        with self._progress_lock:
-            self._current_test_id = None
-            self._current_started_at = 0.0
-        super().stopTest(test)
-
-    def stalled_test(self, now: float) -> str | None:
-        with self._progress_lock:
-            if (
-                self._current_test_id is None
-                or now - self._current_started_at < _STALL_DIAGNOSTIC_SECONDS
-            ):
-                return None
-            return self._current_test_id
 
 
 COHORTS = {
@@ -98,32 +94,186 @@ def _leaf_tests(suite: unittest.TestSuite) -> tuple[unittest.TestCase, ...]:
     return tuple(tests)
 
 
-def load_cohort(root: Path, name: str) -> unittest.TestSuite:
+def cohort_targets(root: Path, name: str) -> tuple[str, ...]:
+    """Resolve one cohort's discoveries to the exact files pytest is given.
+
+    Naming the files rather than the directories keeps the tier contract in
+    `COHORTS`: a cohort admits exactly the paths its declared patterns match,
+    and never a sibling that a directory-wide collection would sweep in.
+    """
+
     try:
         cohort = COHORTS[name]
     except KeyError:
         raise ValueError("unknown test cohort") from None
+    targets: list[str] = []
+    for relative, pattern in cohort.discoveries:
+        targets.extend(sorted(str(path) for path in (root / relative).glob(pattern)))
+    return tuple(targets)
+
+
+def _case_identity(item: pytest.Item) -> str:
+    """Name a collected case the way `unittest.TestCase.id()` names it.
+
+    Cohort manifests, the stall diagnostic, and failure reporting are all
+    stated in these dotted, path-free identities, so they must not change when
+    the engine underneath them does.
+    """
+
+    cls = getattr(item, "cls", None)
+    if isinstance(cls, type) and issubclass(cls, unittest.TestCase):
+        return f"{cls.__module__}.{cls.__qualname__}.{item.name}"
+    return item.nodeid
+
+
+def _load_tests_exclusions(items: list[pytest.Item]) -> list[pytest.Item]:
+    """Return the items a module's `load_tests` protocol excludes.
+
+    pytest does not implement `load_tests`, so a module that uses it to select
+    a subset of its own namespace would otherwise contribute every `TestCase`
+    reachable from that namespace -- including imported bases, whose cases
+    already belong to another tier. Ask unittest for the module's authoritative
+    case set and drop anything outside it.
+    """
+
     loader = unittest.TestLoader()
-    suites = [
-        loader.discover(
-            str(root / relative),
-            pattern=pattern,
-            top_level_dir=str(root),
-        )
-        for relative, pattern in cohort.discoveries
-    ]
-    if loader.errors:
-        raise RuntimeError("test_cohort_import_failed")
-    suite = unittest.TestSuite(suites)
-    if not _leaf_tests(suite):
+    admitted: dict[ModuleType, frozenset[str]] = {}
+    excluded: list[pytest.Item] = []
+    for item in items:
+        module = getattr(item, "module", None)
+        if module is None or not hasattr(module, "load_tests"):
+            continue
+        if module not in admitted:
+            admitted[module] = frozenset(
+                test.id() for test in _leaf_tests(loader.loadTestsFromModule(module))
+            )
+            if loader.errors:
+                raise RuntimeError("test_cohort_import_failed")
+        if _case_identity(item) not in admitted[module]:
+            excluded.append(item)
+    return excluded
+
+
+class _CohortSession:
+    """Observe one pytest session and account for it as a test tier.
+
+    Failure and error accounting follows unittest's rule exactly: a case that
+    raises `AssertionError` is a failure and anything else is an error,
+    whichever phase raised it.
+    """
+
+    def __init__(self) -> None:
+        self._progress_lock = threading.Lock()
+        self._current_test_id: str | None = None
+        self._current_started_at = 0.0
+        self._identities: dict[str, str] = {}
+        self.identifiers: tuple[str, ...] = ()
+        self.import_failed = False
+        self.tests_run = 0
+        self.failures = 0
+        self.errors = 0
+        self.unexpected_successes = 0
+        self.skipped: set[str] = set()
+        self.failed_test_ids: set[str] = set()
+        self.tracebacks: list[tuple[str, str]] = []
+
+    def pytest_collectreport(self, report: pytest.CollectReport) -> None:
+        if report.failed:
+            self.import_failed = True
+
+    def pytest_collection_modifyitems(
+        self,
+        config: pytest.Config,
+        items: list[pytest.Item],
+    ) -> None:
+        excluded = _load_tests_exclusions(items)
+        if excluded:
+            dropped = {item.nodeid for item in excluded}
+            items[:] = [item for item in items if item.nodeid not in dropped]
+            config.hook.pytest_deselected(items=excluded)
+        self._identities = {item.nodeid: _case_identity(item) for item in items}
+        self.identifiers = tuple(sorted(self._identities.values()))
+
+    def pytest_runtest_logstart(self, nodeid: str, location: object) -> None:
+        identifier = self._identities.get(nodeid, nodeid)
+        with self._progress_lock:
+            self._current_test_id = (
+                identifier if _SAFE_TEST_ID.fullmatch(identifier) is not None else None
+            )
+            self._current_started_at = time.monotonic()
+
+    def pytest_runtest_logfinish(self, nodeid: str, location: object) -> None:
+        with self._progress_lock:
+            self._current_test_id = None
+            self._current_started_at = 0.0
+
+    def pytest_exception_interact(
+        self,
+        node: pytest.Item | pytest.Collector,
+        call: pytest.CallInfo[object],
+        report: pytest.CollectReport | pytest.TestReport,
+    ) -> None:
+        if not isinstance(report, pytest.TestReport) or call.excinfo is None:
+            return
+        if isinstance(call.excinfo.value, AssertionError):
+            self.failures += 1
+        else:
+            self.errors += 1
+
+    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        if report.when == "setup":
+            self.tests_run += 1
+        identifier = self._identities.get(report.nodeid, report.nodeid)
+        expected_failure = hasattr(report, "wasxfail")
+        if report.skipped and not expected_failure:
+            self.skipped.add(identifier)
+        elif report.passed and expected_failure:
+            self.unexpected_successes += 1
+            self.failed_test_ids.add(identifier)
+        elif report.failed:
+            self.failed_test_ids.add(identifier)
+            self.tracebacks.append((identifier, report.longreprtext))
+
+    def stalled_test(self, now: float) -> str | None:
+        with self._progress_lock:
+            if (
+                self._current_test_id is None
+                or now - self._current_started_at < _STALL_DIAGNOSTIC_SECONDS
+            ):
+                return None
+            return self._current_test_id
+
+
+def _drive_pytest(
+    root: Path,
+    name: str,
+    session: _CohortSession,
+    *,
+    collect_only: bool,
+) -> pytest.ExitCode | int:
+    targets = cohort_targets(root, name)
+    if not targets:
         raise RuntimeError("empty test cohort")
-    return suite
+    arguments = [*_PYTEST_ARGUMENTS, *targets]
+    if collect_only:
+        arguments.insert(0, "--collect-only")
+    with Path(os.devnull).open("w", encoding="utf-8") as discarded:
+        with redirect_stdout(discarded), redirect_stderr(discarded):
+            return pytest.main(arguments, plugins=[session])
+
+
+def collect_cohort(root: Path, name: str) -> tuple[str, ...]:
+    session = _CohortSession()
+    outcome = _drive_pytest(root, name, session, collect_only=True)
+    if session.import_failed or outcome != pytest.ExitCode.OK:
+        raise RuntimeError("test_cohort_import_failed")
+    if not session.identifiers:
+        raise RuntimeError("empty test cohort")
+    return session.identifiers
 
 
 def cohort_manifest(root: Path, name: str) -> dict[str, object]:
-    identifiers = tuple(
-        sorted(test.id() for test in _leaf_tests(load_cohort(root, name)))
-    )
+    identifiers = collect_cohort(root, name)
     digest = hashlib.sha256("\n".join(identifiers).encode("utf-8")).hexdigest()
     return {
         "schema": "test-cohort-v1",
@@ -134,29 +284,33 @@ def cohort_manifest(root: Path, name: str) -> dict[str, object]:
 
 
 def run_cohort(root: Path, name: str) -> bool:
-    result = _DiagnosticTestResult()
+    session = _CohortSession()
     stopped = threading.Event()
     reporter = threading.Thread(
         target=_report_stalled_test,
-        args=(result, stopped),
+        args=(session, stopped),
         daemon=True,
     )
     reporter.start()
-    with Path(os.devnull).open("w", encoding="utf-8") as discarded:
-        try:
-            with redirect_stdout(discarded), redirect_stderr(discarded):
-                load_cohort(root, name).run(result)
-        finally:
-            stopped.set()
-            reporter.join(timeout=2)
-    if result.wasSuccessful():
+    try:
+        outcome = _drive_pytest(root, name, session, collect_only=False)
+    finally:
+        stopped.set()
+        reporter.join(timeout=2)
+    if session.import_failed:
+        raise RuntimeError("test_cohort_import_failed")
+    if not session.identifiers:
+        raise RuntimeError("empty test cohort")
+    if outcome not in _RUN_EXIT_CODES:
+        raise RuntimeError("test_cohort_run_failed")
+    if outcome == pytest.ExitCode.OK:
         print(
             json.dumps(
                 {
                     "schema": "test-tier-result-v1",
-                    "skipped": len(result.skipped),
+                    "skipped": len(session.skipped),
                     "status": "passed",
-                    "tests_run": result.testsRun,
+                    "tests_run": session.tests_run,
                     "tier": name,
                 },
                 sort_keys=True,
@@ -164,29 +318,20 @@ def run_cohort(root: Path, name: str) -> bool:
             )
         )
         return True
-    tracebacks = tuple(
-        sorted(
-            (test.id(), detail)
-            for test, detail in (*result.failures, *result.errors)
-        )
-    )
-    failed_ids = sorted(
-        [identifier for identifier, _detail in tracebacks]
-        + [test.id() for test in result.unexpectedSuccesses]
-    )
+    tracebacks = tuple(sorted(session.tracebacks))
     _report_failure_tracebacks(name, tracebacks)
     print(
         json.dumps(
             {
-                "errors": len(result.errors),
-                "failed_test_ids": failed_ids,
-                "failures": len(result.failures),
+                "errors": session.errors,
+                "failed_test_ids": sorted(session.failed_test_ids),
+                "failures": session.failures,
                 "reason": "test_tier_failed",
                 "schema": "test-tier-result-v1",
                 "status": "failed",
-                "tests_run": result.testsRun,
+                "tests_run": session.tests_run,
                 "tier": name,
-                "unexpected_successes": len(result.unexpectedSuccesses),
+                "unexpected_successes": session.unexpected_successes,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -240,12 +385,12 @@ def _report_failure_tracebacks(
 
 
 def _report_stalled_test(
-    result: _DiagnosticTestResult,
+    session: _CohortSession,
     stopped: threading.Event,
 ) -> None:
     reported: str | None = None
     while not stopped.wait(timeout=1):
-        identifier = result.stalled_test(time.monotonic())
+        identifier = session.stalled_test(time.monotonic())
         if identifier is None or identifier == reported:
             continue
         print(

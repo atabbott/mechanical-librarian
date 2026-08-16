@@ -39,6 +39,23 @@ The public suite has four explicit qualification tiers. They retain every
 existing assertion while keeping independent feedback paths parallel and
 diagnosable.
 
+pytest is the execution engine beneath those tiers, not a second entry point
+beside them. `scripts/run_test_tier.py` remains the only way a tier is run or
+listed: it names each cohort's exact files, so a cohort still admits exactly
+what its `COHORTS` patterns match, and it derives its cohort manifest,
+`test-tier-stall-v1` diagnostic, and `test-tier-result-v1` summary from that
+one pytest session. Test identities stay the dotted, path-free names
+`unittest.TestCase.id()` produces, so a cohort digest is comparable across the
+engine change. pytest runs `unittest.TestCase` natively and adopts unittest's
+own `getTestCaseNames`, so an unconverted test file needs no change; the runner
+additionally honours the `load_tests` protocol, which pytest does not
+implement, so a module that selects a subset of its own namespace still
+contributes only that subset. Two of the runner's pytest arguments carry tier
+behaviour rather than taste: `--capture=sys` leaves file descriptor 2 alone so
+the stall diagnostic still reaches an observer while the cohort's own output
+stays discarded, and `--tb=native` keeps a bounded traceback's retained tail
+ending at the assertion and the innermost frame.
+
 F19a adds focused source proof for clean-schema automatic bootstrap, exact
 qualified option/bundle admission, atomic human/automatic uniqueness,
 restart/idempotency/currentness, pause/suspension/recovery, and the selected

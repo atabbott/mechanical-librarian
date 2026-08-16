@@ -9,16 +9,17 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+from uuid import uuid4
 
 from scripts.run_test_tier import (
     _MAX_TEST_TRACEBACK_BYTES,
     _MAX_TRACEBACK_STREAM_BYTES,
     _STALL_DIAGNOSTIC_SECONDS,
     COHORTS,
-    _DiagnosticTestResult,
-    _leaf_tests,
+    _CohortSession,
     cohort_manifest,
-    load_cohort,
+    cohort_targets,
+    collect_cohort,
     run_cohort,
 )
 
@@ -36,40 +37,44 @@ _FAILURE_SUMMARY_KEYS = {
 
 
 def _synthetic_cohort(
+    directory: Path,
     count: int,
     detail: str,
     identifier_padding: int = 0,
-) -> unittest.TestSuite:
-    """Build a suite of `count` independently failing tests.
+) -> tuple[str, ...]:
+    """Write a module of `count` independently failing tests and name its path.
 
-    `identifier_padding` lengthens each generated class name, so a cohort can
-    carry long test identifiers with short failure bodies.
+    The engine collects and runs real files, so a synthetic cohort is a real
+    module. `identifier_padding` lengthens each generated class name, so a
+    cohort can carry long test identifiers with short failure bodies. The
+    module name is unique per call because the engine imports it for real and
+    a reused name would collide with an earlier cohort in the same process.
     """
 
-    suite = unittest.TestSuite()
+    padding = "N" * identifier_padding
+    lines = ["import unittest", ""]
     for index in range(count):
-        name = f"test_synthetic_{index:04d}"
-
-        def _failure(case: unittest.TestCase, message: str = detail) -> None:
-            print("suppressed-cohort-stdout")
-            case.fail(message)
-
-        cls = type(
-            f"SyntheticCohort{'N' * identifier_padding}{index:04d}",
-            (unittest.TestCase,),
-            {name: _failure},
+        lines.extend(
+            (
+                f"class SyntheticCohort{padding}{index:04d}(unittest.TestCase):",
+                f"    def test_synthetic_{index:04d}(self) -> None:",
+                '        print("suppressed-cohort-stdout")',
+                f"        self.fail({detail!r})",
+                "",
+            )
         )
-        suite.addTest(cls(name))
-    return suite
+    module = directory / f"test_synthetic_{uuid4().hex}.py"
+    module.write_text("\n".join(lines), encoding="utf-8")
+    return (str(module),)
 
 
-def _run_failing_cohort(suite: unittest.TestSuite) -> tuple[dict[str, Any], str]:
-    """Run `suite` as a tier and return its JSON summary and narrative stream."""
+def _run_failing_cohort(targets: tuple[str, ...]) -> tuple[dict[str, Any], str]:
+    """Run `targets` as a tier and return its JSON summary and narrative stream."""
 
     summary = StringIO()
     narrative = StringIO()
     with (
-        patch("scripts.run_test_tier.load_cohort", return_value=suite),
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
         redirect_stderr(summary),
         redirect_stdout(narrative),
     ):
@@ -82,22 +87,31 @@ def _run_failing_cohort(suite: unittest.TestSuite) -> tuple[dict[str, Any], str]
 
 class TestTierTests(unittest.TestCase):
     def test_stall_diagnostic_exposes_only_a_safe_test_identifier(self) -> None:
-        result = _DiagnosticTestResult()
-        test = self.__class__("test_empty_cohort_fails_closed")
-        result.startTest(test)
+        session = _CohortSession()
+        identifier = f"{__name__}.TestTierTests.test_empty_cohort_fails_closed"
+        session._identities = {
+            "node::safe": identifier,
+            "node::unsafe": "tests/unit/x.py::A::b",
+        }
+        session.pytest_runtest_logstart("node::safe", None)
         self.assertEqual(
-            result.stalled_test(time.monotonic() + _STALL_DIAGNOSTIC_SECONDS),
-            test.id(),
+            session.stalled_test(time.monotonic() + _STALL_DIAGNOSTIC_SECONDS),
+            identifier,
         )
-        result.stopTest(test)
+        session.pytest_runtest_logfinish("node::safe", None)
         self.assertIsNone(
-            result.stalled_test(time.monotonic() + _STALL_DIAGNOSTIC_SECONDS)
+            session.stalled_test(time.monotonic() + _STALL_DIAGNOSTIC_SECONDS)
+        )
+        # A path-shaped identity is withheld rather than published.
+        session.pytest_runtest_logstart("node::unsafe", None)
+        self.assertIsNone(
+            session.stalled_test(time.monotonic() + _STALL_DIAGNOSTIC_SECONDS)
         )
 
     def test_source_tiers_are_disjoint_and_own_every_public_test_file(self) -> None:
         root = Path(__file__).resolve().parents[2]
         identifiers = {
-            name: {test.id() for test in _leaf_tests(load_cohort(root, name))}
+            name: set(collect_cohort(root, name))
             for name in ("fast", "browser", "slow")
         }
         self.assertTrue(identifiers["fast"])
@@ -117,13 +131,21 @@ class TestTierTests(unittest.TestCase):
             path.resolve() for path in (root / "tests").rglob("test_*.py")
         }
         self.assertEqual(owned_files, expected_files)
+        # The engine is handed exactly those files, never a directory it would
+        # then sweep on its own collection rules.
+        self.assertEqual(
+            {
+                Path(target).resolve()
+                for cohort in ("fast", "browser", "slow")
+                for target in cohort_targets(root, cohort)
+            },
+            expected_files,
+        )
 
     def test_required_installed_is_an_explicit_fast_subset(self) -> None:
         root = Path(__file__).resolve().parents[2]
-        fast = {test.id() for test in _leaf_tests(load_cohort(root, "fast"))}
-        installed = {
-            test.id() for test in _leaf_tests(load_cohort(root, "required-installed"))
-        }
+        fast = set(collect_cohort(root, "fast"))
+        installed = set(collect_cohort(root, "required-installed"))
         self.assertTrue(installed)
         self.assertLess(installed, fast)
 
@@ -136,13 +158,17 @@ class TestTierTests(unittest.TestCase):
         self.assertNotIn(str(root), str(first))
 
     def test_representative_failure_reports_its_traceback(self) -> None:
-        summary, narrative = _run_failing_cohort(_synthetic_cohort(1, "explain-me"))
+        with tempfile.TemporaryDirectory() as directory:
+            summary, narrative = _run_failing_cohort(
+                _synthetic_cohort(Path(directory), 1, "explain-me")
+            )
         self.assertEqual(set(summary), _FAILURE_SUMMARY_KEYS)
         self.assertEqual(summary["schema"], "test-tier-result-v1")
         self.assertEqual(summary["reason"], "test_tier_failed")
         self.assertEqual(summary["status"], "failed")
         self.assertEqual(summary["tier"], "fast")
         self.assertEqual(summary["failures"], 1)
+        self.assertEqual(summary["errors"], 0)
         self.assertEqual(len(summary["failed_test_ids"]), 1)
         identifier = summary["failed_test_ids"][0]
 
@@ -156,17 +182,25 @@ class TestTierTests(unittest.TestCase):
         self.assertNotIn("suppressed-cohort-stdout", json.dumps(summary))
 
     def test_success_summary_carries_no_narrative_diagnostics(self) -> None:
-        class SyntheticPass(unittest.TestCase):
-            def test_pass(self) -> None:
-                print("suppressed-cohort-stdout")
-
-        suite = unittest.defaultTestLoader.loadTestsFromTestCase(SyntheticPass)
-        narrative = StringIO()
-        with (
-            patch("scripts.run_test_tier.load_cohort", return_value=suite),
-            redirect_stdout(narrative),
-        ):
-            self.assertTrue(run_cohort(Path.cwd(), "fast"))
+        with tempfile.TemporaryDirectory() as directory:
+            module = Path(directory) / f"test_synthetic_{uuid4().hex}.py"
+            module.write_text(
+                "import unittest\n"
+                "\n"
+                "class SyntheticPass(unittest.TestCase):\n"
+                "    def test_pass(self) -> None:\n"
+                '        print("suppressed-cohort-stdout")\n',
+                encoding="utf-8",
+            )
+            narrative = StringIO()
+            with (
+                patch(
+                    "scripts.run_test_tier.cohort_targets",
+                    return_value=(str(module),),
+                ),
+                redirect_stdout(narrative),
+            ):
+                self.assertTrue(run_cohort(Path.cwd(), "fast"))
         summary = json.loads(narrative.getvalue())
         self.assertEqual(
             summary,
@@ -180,7 +214,10 @@ class TestTierTests(unittest.TestCase):
         )
 
     def test_failed_identifiers_are_reported_without_truncation(self) -> None:
-        summary, narrative = _run_failing_cohort(_synthetic_cohort(40, "broad"))
+        with tempfile.TemporaryDirectory() as directory:
+            summary, narrative = _run_failing_cohort(
+                _synthetic_cohort(Path(directory), 40, "broad")
+            )
         self.assertEqual(summary["tests_run"], 40)
         self.assertEqual(len(summary["failed_test_ids"]), 40)
         self.assertEqual(
@@ -192,7 +229,10 @@ class TestTierTests(unittest.TestCase):
 
     def test_tracebacks_are_bounded_per_test_and_in_total(self) -> None:
         detail = "boundary-" + ("x" * 8_192) + "-tail"
-        summary, narrative = _run_failing_cohort(_synthetic_cohort(70, detail))
+        with tempfile.TemporaryDirectory() as directory:
+            summary, narrative = _run_failing_cohort(
+                _synthetic_cohort(Path(directory), 70, detail)
+            )
         self.assertEqual(len(summary["failed_test_ids"]), 70)
 
         emitted = narrative.encode("utf-8")
@@ -215,9 +255,10 @@ class TestTierTests(unittest.TestCase):
     def test_framing_bytes_are_charged_to_the_aggregate_bound(self) -> None:
         # Short bodies with long identifiers: the framing, not the traceback,
         # dominates the stream, so an uncharged header escapes every ceiling.
-        summary, narrative = _run_failing_cohort(
-            _synthetic_cohort(800, "short", identifier_padding=400)
-        )
+        with tempfile.TemporaryDirectory() as directory:
+            summary, narrative = _run_failing_cohort(
+                _synthetic_cohort(Path(directory), 800, "short", identifier_padding=400)
+            )
         self.assertEqual(len(summary["failed_test_ids"]), 800)
 
         emitted = len(narrative.encode("utf-8"))
@@ -237,8 +278,11 @@ class TestTierTests(unittest.TestCase):
             (root / "tests" / "slow").mkdir(parents=True)
             (root / "tests" / "__init__.py").touch()
             (root / "tests" / "slow" / "__init__.py").touch()
+            self.assertEqual(cohort_targets(root, "slow"), ())
             with self.assertRaises(RuntimeError):
-                load_cohort(root, "slow")
+                collect_cohort(root, "slow")
+            with self.assertRaises(RuntimeError):
+                run_cohort(root, "slow")
 
 
 if __name__ == "__main__":
