@@ -18,7 +18,10 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    ReportValueError,
+)
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_QUALIFICATION_CANDIDATE_SHA256,
 )
@@ -868,12 +871,13 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
     def test_activity_refuses_every_stored_report_the_parser_cannot_read(self) -> None:
         """Every unreadable stored report is `activity`, surrogates included.
 
-        `MetadataReport.from_json` does not funnel into one declared type: its
-        length guard encodes the document outside the block that converts
-        `UnicodeError` to `ReportValueError`, so a stored row holding an
-        unpaired surrogate escapes it as `UnicodeEncodeError`. Narrowing this
-        handler to `ReportValueError` let that reach the owner as an unhandled
-        codec fault instead of a refusal (#698).
+        `MetadataReport.from_json` used to run its length guard outside the
+        block converting `UnicodeError`, so a stored row holding an unpaired
+        surrogate escaped it as `UnicodeEncodeError` and narrowing this handler
+        to `ReportValueError` let that reach the owner as an unhandled codec
+        fault. The guard now sits under that boundary, so the handler narrows
+        and a fault in the parser itself is no longer refused as activity
+        (#698).
         """
         decision = self._decisions(1)[0]
 
@@ -905,20 +909,29 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
 
             return Repository
 
-        # The surrogate row is the regression: it reaches the handler as
-        # `UnicodeEncodeError`, not as the parser's declared refusal.
-        with self.assertRaises(UnicodeEncodeError):
+        # The fix: the surrogate row now reaches the handler as the parser's
+        # one declared refusal rather than as a raw codec fault.
+        with self.assertRaises(ReportValueError):
             MetadataReport.from_json('{"a": "\ud800"}')
 
-        for report_document in ('{"a": "\ud800"}', "{}"):
-            service = ContinuousGuardedApplication(
+        def application(report_document: str) -> ContinuousGuardedApplication:
+            return ContinuousGuardedApplication(
                 repository_for(report_document)([decision]),
                 cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
                 {("primary", "alpha"): _AllowedCapability()}, _Authority(),
                 (("primary", "alpha"),), lambda: 1, lambda *_: None,
             )
+
+        for report_document in ('{"a": "\ud800"}', "{}"):
             with self.assertRaisesRegex(GuardedApplicationError, "activity"):
-                service.activity()
+                application(report_document).activity()
+
+        # A fault in the parser itself is no longer refused as activity.
+        fault = RuntimeError("parser is broken")
+        with patch.object(MetadataReport, "from_json", side_effect=fault):
+            with self.assertRaises(RuntimeError) as surfaced:
+                application("{}").activity()
+            self.assertIs(surfaced.exception, fault)
 
     def test_successful_probe_preserves_unexpected_behavior_suspension(self) -> None:
         decision = self._decisions(1)[0]

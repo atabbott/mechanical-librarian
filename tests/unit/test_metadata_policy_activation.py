@@ -18,6 +18,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.application.metadata_policy import (
     MetadataPolicyApplicationError,
+    PolicyContentionError,
     PolicyImpactRepository,
     PolicyNotebook,
 )
@@ -248,6 +249,80 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         with self.assertRaises(MetadataPolicyApplicationError) as raised:
             notebook.confirm_automatic(2)
         self.assertEqual(str(raised.exception), "automatic posture is unavailable")
+
+    def test_policy_contention_is_read_from_the_condition_not_the_message(
+        self,
+    ) -> None:
+        """Control flow follows the seam's typed condition, not its wording.
+
+        `activate` and `retry` recognised contention with `"stale" in
+        str(error)`, so rewording an adapter message silently changed which
+        branch ran, and any unrelated failure whose message happened to contain
+        the word was reported to the owner as staleness -- a 409 telling them to
+        reload, for a fault reloading cannot fix. The condition travels on the
+        exception now, and the messages below deliberately carry none of the
+        words the old tests would have matched (#698).
+        """
+        repository = open_repository(self.path)
+        profile = MetadataPolicyProfile.create(
+            "Contention profile", dict(DEFAULT_OPTIONS),
+            {
+                category: "unsupported" if category == "explicit" else "ask"
+                for category in OPTION_CATALOGUE
+            },
+        )
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        notebook = PolicyNotebook(repository, (), {})
+        builtin = MetadataPolicyProfile.builtin().policy_id
+
+        def activation(failure: BaseException) -> str:
+            with patch.object(
+                type(repository), "activate_metadata_policy", side_effect=failure
+            ), self.assertRaises(MetadataPolicyApplicationError) as raised:
+                notebook.activate(profile.policy_id, builtin, 2)
+            return str(raised.exception)
+
+        # Each condition routes on its own, with a message carrying none of the
+        # words the branch used to search for.
+        for condition, message in (
+            ("stale", "policy activation is stale"),
+            ("processing", "policy transition is processing"),
+            ("unqualified", "policy activation is unqualified"),
+        ):
+            with self.subTest(condition=condition):
+                self.assertEqual(
+                    activation(PolicyContentionError(condition, "state moved")),
+                    message,
+                )
+
+        # The regression: an unrelated failure is no longer misread as
+        # contention because of a word in its message.
+        self.assertEqual(
+            activation(MetadataReportError("the stale cache could not be read")),
+            "policy activation is unavailable",
+        )
+
+        def retry(failure: BaseException) -> str:
+            with patch.object(
+                type(repository), "retry_metadata_policy_transition",
+                side_effect=failure,
+            ), self.assertRaises(MetadataPolicyApplicationError) as raised:
+                notebook.retry("policy_transition_" + "a" * 64, 3)
+            return str(raised.exception)
+
+        self.assertEqual(
+            retry(PolicyContentionError("stale", "state moved")),
+            "policy transition is stale",
+        )
+        self.assertEqual(
+            retry(MetadataReportError("the stale cache could not be read")),
+            "policy transition is unavailable",
+        )
+
+        # The condition vocabulary is closed, so a seam cannot invent one.
+        with self.assertRaises(MetadataReportError):
+            PolicyContentionError("wedged", "state moved")
+        repository.close()
 
     def test_library_override_cannot_turn_an_unqualified_option_automatic(self) -> None:
         repository = open_repository(self.path)

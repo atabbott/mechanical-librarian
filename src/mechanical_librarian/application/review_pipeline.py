@@ -230,14 +230,17 @@ class ReviewPreparationPipeline:
     handlers that do something other than convert -- the connection probe and
     the claimed-action epilogue -- record their own invariant where they stand.
 
-    The shape is not yet universal, and this says so rather than implying it.
-    ``check_connection``'s two durable transitions, ``hold_connection`` and
-    ``run_recovery_successor`` hold the repository open under a bare
-    ``try/finally``: they release the handle on every path but convert nothing,
-    so the bound repository's own error reaches their caller untyped. Only the
-    read above was converted, because only it is consumed by a lane a raw fault
-    ends outright; giving the other three the same shape moves an error
-    identity their callers see, which is a change of its own.
+    The shape is now universal. ``check_connection``'s two durable transitions,
+    ``hold_connection`` and ``run_recovery_successor`` held the repository open
+    under a bare ``try/finally``: they released the handle on every path but
+    converted nothing, so the bound repository's own error reached their caller
+    untyped. Each now converts like the rest, and the ``finally`` still releases
+    the handle. None of the three needed it to keep a lane alive -- the two
+    recovery callers run inside a handler that classifies every failure, and the
+    check is owner-triggered -- so the conversion is owed to the seam's contract
+    rather than to a thread, and no caller's outcome changes: the recovery
+    classifier already treated a raw fault and a ``ReviewPipelineError`` alike,
+    and the web boundary already answered ``persistence`` for both.
     """
 
     def __init__(
@@ -427,6 +430,10 @@ class ReviewPreparationPipeline:
         repository = self._open_repository()
         try:
             condition = repository.begin_target_connection_check(connection, self._clock())
+        except ReviewPipelineError:
+            raise
+        except Exception as error:
+            raise ReviewPipelineError("persistence") from error
         finally:
             repository.close()
         if condition is None:
@@ -445,6 +452,10 @@ class ReviewPreparationPipeline:
             repository.finish_target_connection_check(
                 connection, condition.epoch, code, self._clock()
             )
+        except ReviewPipelineError:
+            raise
+        except Exception as error:
+            raise ReviewPipelineError("persistence") from error
         finally:
             repository.close()
         return True
@@ -454,6 +465,10 @@ class ReviewPreparationPipeline:
         repository = self._open_repository()
         try:
             repository.hold_target_connection(connection, code, self._clock())
+        except ReviewPipelineError:
+            raise
+        except Exception as error:
+            raise ReviewPipelineError("persistence") from error
         finally:
             repository.close()
 
@@ -519,6 +534,10 @@ class ReviewPreparationPipeline:
                 if action is None:
                     return repository.provider_retry_complete(report_id)
             return False
+        except ReviewPipelineError:
+            raise
+        except Exception as error:
+            raise ReviewPipelineError("persistence") from error
         finally:
             repository.close()
 

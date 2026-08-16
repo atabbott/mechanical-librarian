@@ -2264,9 +2264,14 @@ class MetadataReport:
 
     @classmethod
     def from_json(cls, serialized: str) -> MetadataReport:
-        if type(serialized) is not str or not serialized or len(serialized.encode("utf-8")) > MAX_REPORT_BYTES:
-            raise ReportValueError("report document is invalid")
         try:
+            # The size guard encodes the document, so it belongs inside the
+            # conversion boundary: an unpaired surrogate makes ``encode`` raise
+            # ``UnicodeEncodeError``, and outside this block that escaped as
+            # itself and made the declared ``ReportValueError`` contract a
+            # half-truth callers could not narrow to.
+            if type(serialized) is not str or not serialized or len(serialized.encode("utf-8")) > MAX_REPORT_BYTES:
+                raise ReportValueError("report document is invalid")
             source = json.loads(
                 serialized,
                 object_pairs_hook=_unique_object,

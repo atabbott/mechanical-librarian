@@ -265,6 +265,7 @@ class CoverConsiderationService:
             return _ReviewerEvidence(replay_digest, None, "unavailable", None)
         reviewer = self._reviewer
         dispatched = False
+        observed = False
 
         def dispatch(
             profile: bytes,
@@ -281,41 +282,48 @@ class CoverConsiderationService:
             dispatched = True
             return reviewer(profile, instruction, packet, schema, images)
 
+        def settle() -> None:
+            # Marks the far edge of the contained process's contribution: the
+            # result document is back and has been validated against the
+            # request, so nothing after this point is an outcome of the
+            # reviewer.
+            nonlocal observed
+            observed = True
+
         try:
             observation_document = observe_cover_packet(
                 self._reviewer_profile,
                 packet_payload,
                 image_payloads,
                 dispatch,
+                observed=settle,
             ).document
             return _ReviewerEvidence(
                 replay_digest, observation_document, "completed", None
             )
         except Exception as error:
-            if not dispatched:
-                # ``observe_cover_packet`` binds the packet, loads it, and builds
-                # the request schema before it reaches the reviewer, and this
-                # layer produced every one of those inputs. A failure there is a
-                # fault in our own projection, not an outcome of the contained
-                # process, so it must surface instead of being recorded as
-                # reviewer failure evidence the owner is asked to read.
+            if not dispatched or observed:
+                # Two ends of the contained process, and this layer owns both.
+                # Before dispatch, ``observe_cover_packet`` binds the packet,
+                # loads it and builds the request schema, all from inputs we
+                # produced. After ``observed``, it assembles the report --
+                # binding rows to candidates from our own packet, sorting,
+                # hashing the instruction and schema, and canonicalising -- from
+                # inputs we produced and a result already validated. A fault at
+                # either end is a fault in our own projection, not an outcome of
+                # the contained process, so it must surface instead of being
+                # recorded as reviewer failure evidence the owner is asked to
+                # read.
                 raise
-            # Past dispatch this is a last resort over the rest of the
-            # observation, and the flag narrows it no further than that. The
-            # reviewer is a contained process reached through an injected
-            # profile, so its failures are transport, container, and protocol
-            # faults it does not declare, and a result document that will not
-            # parse or validate is the same reviewable outcome: no observation,
-            # recorded as failure evidence the owner can see. But
-            # ``observe_cover_packet`` also assembles the report after the
-            # reviewer returns -- binding rows to candidates from our own
-            # packet, sorting, hashing the instruction and schema, and
-            # canonicalising -- and a fault in that projection is recorded as
-            # reviewer failure too. That is this handler's known cost, not a
-            # claim it can narrow: the boundary the flag can see is dispatch,
-            # and the reviewer's return is not visible from here. Nothing is
-            # discarded -- the attempts and the failure code carried by the
-            # error are read off it and persisted below.
+            # Between those two marks this is a last resort, and it narrows no
+            # further. The reviewer is a contained process reached through an
+            # injected profile, so its failures are transport, container, and
+            # protocol faults it does not declare, and a result document that
+            # will not parse or validate against the request is the same
+            # reviewable outcome: no observation, recorded as failure evidence
+            # the owner can see. Nothing is discarded -- the attempts and the
+            # failure code carried by the error are read off it and persisted
+            # below.
             attempts = getattr(error, "attempts", ())
             failure: dict[str, object] = {
                 "attempts": [

@@ -22,9 +22,10 @@ from mechanical_librarian.domain.human_decision import (
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderLaneObservation,
+    ReportValueError,
     TargetDestination,
 )
-from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
     classify_review_field,
@@ -542,12 +543,15 @@ class RecordHumanDecision:
 
     ``HumanDecisionStore`` is a protocol with no declared error type, so the
     handlers over its individual calls stay broad and convert to a
-    ``ReviewWebError`` with the cause chained. ``HumanDecisionError`` and the
-    codes chosen here are re-raised ahead of every conversion so a domain
-    refusal is never relabelled as storage. Two handlers depart from that shape
-    and say so where they stand: the advisory readiness read, the only one that
-    discards its failure, and the last resort over the whole command, which is
-    not over a store call at all and covers this layer's own projection too.
+    ``ReviewWebError("persistence")`` with the cause chained. Every store call
+    now carries one, which is what makes ``persistence`` a true statement about
+    where the fault was rather than this command's answer for any cause it
+    cannot name. ``HumanDecisionError`` and the codes chosen here are re-raised
+    ahead of every conversion so a domain refusal is never relabelled as
+    storage. Two handlers depart from that shape and say so where they stand:
+    the advisory readiness read, the only one that discards its failure, and the
+    last resort over the whole command, which is over no store call at all and
+    answers ``unavailable`` for this layer's own projection.
     """
 
     def __init__(
@@ -600,12 +604,17 @@ class RecordHumanDecision:
                     idempotency_key=idempotency_key,
                 ):
                     raise ReviewWebError("idempotency_conflict")
-                stored_replay = HumanDecision.from_json(
-                    self._repository.record_human_decision(
-                        replay,
-                        cover_consideration_id=consideration_id,
+                try:
+                    stored_replay = HumanDecision.from_json(
+                        self._repository.record_human_decision(
+                            replay,
+                            cover_consideration_id=consideration_id,
+                        )
                     )
-                )
+                except HumanDecisionError:
+                    raise
+                except Exception as error:
+                    raise ReviewWebError("persistence") from error
                 return {
                     **_decision_projection(stored_replay),
                     "schema_version": "human-decision-ack-v1",
@@ -651,12 +660,17 @@ class RecordHumanDecision:
                 idempotency_key=idempotency_key,
                 occurred_at=self._clock(),
             )
-            stored = HumanDecision.from_json(
-                self._repository.record_human_decision(
-                    decision,
-                    cover_consideration_id=consideration_id,
+            try:
+                stored = HumanDecision.from_json(
+                    self._repository.record_human_decision(
+                        decision,
+                        cover_consideration_id=consideration_id,
+                    )
                 )
-            )
+            except HumanDecisionError:
+                raise
+            except Exception as error:
+                raise ReviewWebError("persistence") from error
             if stored.request_digest != decision.request_digest:
                 raise ReviewWebError("persistence")
             if (type(ready_at) is int and ready_at >= 0
@@ -676,17 +690,17 @@ class RecordHumanDecision:
         except HumanDecisionError as error:
             raise ReviewWebError(error.code) from None
         except Exception as error:
-            # Last resort over the whole command, and it narrows nothing. The
-            # two record-and-read-back store calls above are unguarded, but so
-            # is everything between them -- the idempotency digest, the case
-            # parse and projection, the clock reading, and the decision the
-            # domain builds from them -- and none of that is separable from a
-            # store fault without an error type the store never declared.
-            # ``persistence`` is what this layer answers with for a cause it
-            # cannot name, not a finding about where the fault was. Domain
-            # refusals and the codes chosen above keep their own identity, and
-            # the cause is chained, so the origin stays legible.
-            raise ReviewWebError("persistence") from error
+            # Last resort over the whole command. Every store call now carries
+            # its own ``persistence`` handler, so what reaches here touched no
+            # store: the idempotency digest, the case parse, the clock reading,
+            # the decision the domain builds from them, and the acknowledgement
+            # projection. Reporting those as ``persistence`` named a store that
+            # had answered correctly, or had not been asked at all. They are
+            # ``unavailable`` instead -- still one code for a cause this layer
+            # cannot name, but no longer a false finding about where the fault
+            # was. Domain refusals and the codes chosen above keep their own
+            # identity, and the cause is chained, so the origin stays legible.
+            raise ReviewWebError("unavailable") from error
 
 class BrowseReviewLibrary:
     def __init__(self, repository: ReviewLibraryStore) -> None:
@@ -1220,22 +1234,20 @@ def _case_and_report(
     try:
         case = ReviewCase.from_json(case_document)
         report = MetadataReport.from_json(report_document)
-        if (
-            case.report_id != report.report_id
-            or case.target != report.target.to_data()
-            or case.target_fingerprint != report.target.fingerprint
-            or case.file_identity != report.file.identity
-        ):
-            raise ValueError
-        return case, report
-    except ValueError as error:
-        # Every malformed-document outcome both parsers have is a ``ValueError``
-        # -- ``ReviewCaseValueError``, ``ReportValueError``, and the
-        # ``UnicodeEncodeError`` that ``MetadataReport.from_json`` lets past its
-        # own conversion -- and the agreement check below raises a bare one. So
-        # ``ValueError`` covers the documents a caller supplied, while a fault
-        # in this projection itself is not one and now surfaces as itself.
+    except (ReviewCaseValueError, ReportValueError) as error:
+        # Both parsers name their malformed-document outcome, so this matches
+        # those two types rather than the ``ValueError`` they happen to share
+        # with the rest of this projection. The agreement check below is this
+        # layer's own and refuses in its own right.
         raise ReviewWebError("unavailable") from error
+    if (
+        case.report_id != report.report_id
+        or case.target != report.target.to_data()
+        or case.target_fingerprint != report.target.fingerprint
+        or case.file_identity != report.file.identity
+    ):
+        raise ReviewWebError("unavailable")
+    return case, report
 
 
 def _needs_attention(proposal: dict[str, object], automatic_attention_destinations: tuple[str, ...] = ()) -> bool:
@@ -1326,13 +1338,11 @@ def _library_item(
             raise ReviewWebError("unavailable") from error
     try:
         report = MetadataReport.from_json(report_document)
-    except Exception as error:
-        # ``from_json`` does not funnel into one declared type: its length guard
-        # encodes the document outside the block that converts ``UnicodeError``
-        # to ``ReportValueError``, so an unpaired surrogate in a stored row
-        # escapes as ``UnicodeEncodeError``. Breadth is what keeps a row this
-        # surface cannot render one ``unavailable`` page rather than a raw codec
-        # fault, and the cause stays chained.
+    except ReportValueError as error:
+        # ``from_json`` now funnels every malformed-document outcome, the length
+        # guard's codec failure included, into its one declared type, so a row
+        # this surface cannot render is one ``unavailable`` page and a fault in
+        # the parser itself surfaces as itself.
         raise ReviewWebError("unavailable") from error
     case = None
     if case_document is not None:

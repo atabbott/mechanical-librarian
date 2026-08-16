@@ -267,6 +267,55 @@ class MetadataReportApplicationTests(unittest.TestCase):
         self.assertEqual(str(raised.exception), "provider construction failed")
         self.assertIsInstance(raised.exception.__cause__, TypeError)
 
+    def test_repository_release_failure_cannot_displace_the_failure_it_reports(
+        self,
+    ) -> None:
+        """A `close` that fails is noted on the failure, never raised over it.
+
+        Every handler that releases the report handle while a failure is in
+        flight called `close` unguarded, so a repository whose release itself
+        failed replaced the failure the caller asked about with a raw adapter
+        fault -- losing the identity, the message and the chained cause. The
+        release now follows `catalogue._release_refresh`: the cleanup failure is
+        noted on the original, which keeps its identity and its cause (#698).
+        """
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+
+        class UnreleasableRepository(FakeReportRepository):
+            def close(self) -> None:
+                raise OSError("database handle is wedged")
+
+        def broken():
+            raise TypeError("factory() takes no arguments")
+
+        service = GenerateMetadataReport(
+            target=FakeTarget([TargetSnapshot("ebook", "Title", (selected,))]),
+            inspector=FakeInspector(InspectionResult("c" * 64, ())),
+            repository_factory=UnreleasableRepository,
+            providers=(ProviderBinding("catalogue", True, broken),),
+            connection=TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/target"
+            ),
+            library=LibraryConfiguration(
+                "ebooks", "primary", "library-id", "ebook", "books",
+                ("catalogue",),
+            ),
+            mount=MediaMountConfiguration(
+                "books", "/media", "/library", True
+            ),
+            limits=ReportLimits(),
+        )
+        with self.assertRaises(MetadataReportError) as raised:
+            service.run("item-1", 0)
+
+        # The regression: this was an `OSError`, not the construction failure.
+        self.assertEqual(str(raised.exception), "provider construction failed")
+        self.assertIsInstance(raised.exception.__cause__, TypeError)
+        self.assertEqual(
+            [note for note in raised.exception.__notes__ if "release failed" in note],
+            ["report repository release failed: OSError('database handle is wedged')"],
+        )
+
     def test_failing_access_time_still_yields_the_promised_unavailable_lane(self) -> None:
         """A broken diagnostic cannot cost the lane the handler promises.
 

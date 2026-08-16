@@ -7,6 +7,12 @@
 
 ## Unreleased
 
+- Make the application layer's error identities name the failure they report.
+  The report parser refuses an unpaired surrogate as its declared type, so two
+  reverted narrowings are restored; cleanup can no longer displace the failure
+  it reports; policy staleness is read from a typed condition, not a word in a
+  message; and the publication, reviewer, persistence and connection identities
+  each name what failed rather than the outcome or the nearest seam. (#698)
 - Put the last frontend test that waited out a dwell on a real 360 ms sleep
   onto the fake clock, and pin the 320 ms confirmation dwell to the status only
   its continuation writes, so a dwell that suspends nothing fails. Records why
