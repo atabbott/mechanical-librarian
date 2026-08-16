@@ -42,7 +42,6 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package import (
     _Node,
     _package_frame,
     _package_identity_observations,
-    _package_version,
     _PackageFrame,
     _parse_xml,
     _prefix_vocabulary,
@@ -152,10 +151,11 @@ class PackageFrameStageTests(unittest.TestCase):
 
     def test_version_family_is_resolved_or_rejected(self) -> None:
         for declared, expected in (("1.0", "2.0"), ("2.0", "2.0"), ("2.0.1", "2.0"), ("3.0", "3.0"), ("3.3", "3.0")):
-            self.assertEqual(_package_version(_parse(_package(version=declared)))[0], expected)
+            frame = _package_frame(_request(), _parse(_package(version=declared)))
+            self.assertEqual((frame.version, frame.declared_version), (expected, declared))
         for declared in ("", "4.0", "2", "3", "3.x", " 3.0", "03.0"):
             with self.assertRaises(_Rejected) as raised:
-                _package_version(_parse(_package(version=declared)))
+                _package_frame(_request(), _parse(_package(version=declared)))
             self.assertIs(raised.exception.outcome, EpubInspectionOutcome.UNSUPPORTED_VERSION)
 
     def test_prefix_vocabulary_rejects_every_malformed_declaration(self) -> None:
@@ -890,25 +890,35 @@ class BoundedReportStageTests(unittest.TestCase):
         )
 
 
+# Free text almost never produces a traversal or a well-formed prefix mapping, so
+# both strategies below are built from the tokens an attacker would actually use.
+_SEGMENTS = st.sampled_from(
+    ["..", ".", "%2e%2e", "%2E%2e", "a", "OEBPS", "", "%2f", "%5c", "~", "a b", "\u202e"]
+)
+_REFERENCES = st.one_of(
+    st.lists(_SEGMENTS, max_size=6).map("/".join),
+    st.lists(_SEGMENTS, max_size=6).map("\\".join),
+    st.text(max_size=80),
+)
+_PREFIX_TOKENS = st.sampled_from(
+    ["a:", "dcterms:", "1bad:", "a", ":", "", "https://example.invalid/v", "not-an-iri", "a b"]
+)
+_PREFIX_DECLARATIONS = st.one_of(
+    st.lists(_PREFIX_TOKENS, max_size=6).map(" ".join),
+    st.text(max_size=60),
+)
+
+
 class ReferenceResolutionPropertyTests(unittest.TestCase):
-    """Property: no declared reference ever escapes the container."""
+    """Properties over hostile stage inputs, each with its own coverage guard.
 
-    _rejected: set[str] = set()
-    _resolved: set[str] = set()
+    Every guard is scoped to the single test that generates its evidence. Class
+    or module state would accumulate across repeated executions in one
+    interpreter, which would let a narrowed strategy be validated by evidence an
+    earlier run produced.
+    """
 
-    @classmethod
-    def tearDownClass(cls) -> None:
-        # Guards the property test against silently proving nothing. A strategy
-        # that only ever produced rejections -- or only ever produced accepted
-        # references -- would exercise half the guard and still pass.
-        if not (cls._rejected or cls._resolved):
-            return
-        assert any(".." in value for value in cls._rejected), (
-            "no traversal reached the container-escape guard"
-        )
-        assert cls._resolved, "no generated reference was ever accepted"
-
-    def test_the_guard_has_both_outcomes(self) -> None:
+    def test_the_reference_guard_has_both_outcomes(self) -> None:
         entries = _entries("OEBPS/a.xhtml")
         with self.assertRaises(_Rejected) as raised:
             _declared_resource_identity(_PACKAGE, "../../etc/passwd", entries)
@@ -916,61 +926,79 @@ class ReferenceResolutionPropertyTests(unittest.TestCase):
         _identity, resolved = _declared_resource_identity(_PACKAGE, "a.xhtml", entries)
         self.assertEqual(resolved, "OEBPS/a.xhtml")
 
-    # Free text almost never produces a traversal, so the strategy is built from
-    # the segments an attacker would actually use. The counters below prove the
-    # generated corpus reaches both the accepting and the rejecting branch.
-    _segments = st.sampled_from(
-        ["..", ".", "%2e%2e", "%2E%2e", "a", "OEBPS", "", "%2f", "%5c", "~", "a b", "\u202e"]
-    )
-    _references = st.one_of(
-        st.lists(_segments, max_size=6).map("/".join),
-        st.lists(_segments, max_size=6).map("\\".join),
-        st.text(max_size=80),
-    )
-
-    @settings(max_examples=400, deadline=None)
-    @given(_references)
-    def test_declared_reference_is_rejected_or_stays_inside_the_container(
-        self, reference: str
-    ) -> None:
+    def test_declared_reference_is_rejected_or_stays_inside_the_container(self) -> None:
         entries = _entries("OEBPS/a.xhtml")
-        try:
-            identity, resolved = _declared_resource_identity(_PACKAGE, reference, entries)
-        except _Rejected:
-            self._rejected.add(reference)
-            return
-        except (_InvalidReferenceSyntax, EvidenceValueError):
-            # `EvidenceValueError` escapes this helper for a reference whose
-            # resolved member name fails the shared evidence-text bounds; the
-            # extractor turns it into `MALFORMED` at its own boundary. Recorded
-            # as a finding, not changed here: this unit is behaviour-free.
-            return
-        self.assertRegex(identity, r"^[0-9a-f]{64}$")
-        if resolved is not None:
-            self._resolved.add(resolved)
-            self.assertFalse(resolved.startswith("/"))
-            self.assertFalse(resolved.startswith("../"))
-            self.assertNotIn("\\", resolved)
-            self.assertNotIn("/../", resolved)
-            self.assertLessEqual(
-                len(resolved.encode("utf-8")),
-                EpubPackageLimits.MEMBER_NAME_UTF8_BYTES_HARD_CAP,
-            )
+        rejected: set[str] = set()
+        accepted: set[str] = set()
 
-    @settings(max_examples=200, deadline=None)
-    @given(st.text(max_size=60))
-    def test_prefix_vocabulary_is_rejected_or_fully_validated(self, prefix: str) -> None:
+        @settings(max_examples=400, deadline=None)
+        @given(_REFERENCES)
+        def check(reference: str) -> None:
+            try:
+                identity, resolved = _declared_resource_identity(
+                    _PACKAGE, reference, entries
+                )
+            except _Rejected:
+                rejected.add(reference)
+                return
+            except (_InvalidReferenceSyntax, EvidenceValueError):
+                # `EvidenceValueError` escapes this helper for a reference whose
+                # resolved member name fails the shared evidence-text bounds; the
+                # extractor turns it into `MALFORMED` at its own boundary.
+                # Recorded as a finding, not changed here: this unit is
+                # behaviour-free.
+                return
+            self.assertRegex(identity, r"^[0-9a-f]{64}$")
+            if resolved is not None:
+                accepted.add(resolved)
+                self.assertFalse(resolved.startswith("/"))
+                self.assertFalse(resolved.startswith("../"))
+                self.assertNotIn("\\", resolved)
+                self.assertNotIn("/../", resolved)
+                self.assertLessEqual(
+                    len(resolved.encode("utf-8")),
+                    EpubPackageLimits.MEMBER_NAME_UTF8_BYTES_HARD_CAP,
+                )
+
+        check()
+        # A run that collected nothing fails rather than passing silently, and a
+        # strategy that reached only one branch exercises half the guard.
+        self.assertTrue(rejected or accepted, "the strategy produced no evidence")
+        self.assertTrue(rejected, "the strategy never reached a rejection")
+        self.assertTrue(accepted, "the strategy never reached an accepted reference")
+        self.assertTrue(
+            any(".." in value for value in rejected),
+            "no traversal reached the container-escape guard",
+        )
+
+    def test_prefix_vocabulary_is_rejected_or_fully_validated(self) -> None:
         request = _request()
-        node = _Node("{" + _OPF + "}package", {"prefix": prefix})
-        try:
-            prefixes = _prefix_vocabulary(request, node)
-        except _Rejected as rejected:
-            self.assertIs(rejected.outcome, EpubInspectionOutcome.MALFORMED)
-            return
-        self.assertLessEqual(len(prefixes), request.limits.prefix_mappings)
-        for name, iri in prefixes.items():
-            self.assertRegex(name, r"^[A-Za-z_][A-Za-z0-9_.-]{0,127}$")
-            self.assertNotIn(" ", iri)
+        rejected: list[str] = []
+        accepted: list[dict[str, str]] = []
+
+        @settings(max_examples=400, deadline=None)
+        @given(_PREFIX_DECLARATIONS)
+        def check(declaration: str) -> None:
+            node = _Node("{" + _OPF + "}package", {"prefix": declaration})
+            try:
+                prefixes = _prefix_vocabulary(request, node)
+            except _Rejected as raised:
+                self.assertIs(raised.outcome, EpubInspectionOutcome.MALFORMED)
+                rejected.append(declaration)
+                return
+            accepted.append(prefixes)
+            self.assertLessEqual(len(prefixes), request.limits.prefix_mappings)
+            for name, iri in prefixes.items():
+                self.assertRegex(name, r"^[A-Za-z_][A-Za-z0-9_.-]{0,127}$")
+                self.assertNotIn(" ", iri)
+
+        check()
+        self.assertTrue(rejected or accepted, "the strategy produced no evidence")
+        self.assertTrue(rejected, "the strategy never reached a rejection")
+        self.assertTrue(
+            any(mapping for mapping in accepted),
+            "the strategy never produced a non-empty prefix mapping",
+        )
 
 
 if __name__ == "__main__":

@@ -1005,20 +1005,6 @@ class _PackageFrame:
     tours: list[_Node]
 
 
-def _package_version(root: _Node) -> tuple[str, str]:
-    """Resolve the supported package version and its declared spelling.
-
-    Rejects any version outside the OPF 2.x and EPUB 3.x families rather than
-    falling back to a nearest supported one.
-    """
-    declared_version = _attribute(root, "version") or ""
-    if declared_version == "1.0" or re.fullmatch(r"2(?:\.[0-9]+)+", declared_version):
-        return "2.0", declared_version
-    if re.fullmatch(r"3(?:\.[0-9]+)+", declared_version):
-        return "3.0", declared_version
-    raise _Rejected(EpubInspectionOutcome.UNSUPPORTED_VERSION)
-
-
 def _prefix_vocabulary(request: EpubPackageRequest, root: _Node) -> dict[str, str]:
     """Parse ``@prefix`` into a bounded, unambiguous prefix mapping.
 
@@ -1091,14 +1077,21 @@ def _check_section_sequence(root: _Node, version: str) -> None:
 def _package_frame(request: EpubPackageRequest, root: _Node) -> _PackageFrame:
     """Resolve and bound the package shell before any field is read.
 
-    Rejects a non-OPF root element, an unsupported version, a malformed prefix
+    Rejects a non-OPF root element, a version outside the OPF 2.x and EPUB 3.x
+    families rather than falling back to a nearest supported one, a malformed prefix
     vocabulary, a missing or repeated section group, an unsupported top-level
     sequence, an empty manifest or spine, and any section whose declared node
     count exceeds its limit. Over-bound sections are rejected, never truncated.
     """
     if root.name != "{" + _OPF_NS + "}package":
         raise _Rejected(EpubInspectionOutcome.UNSUPPORTED_FORMAT)
-    version, declared_version = _package_version(root)
+    declared_version = _attribute(root, "version") or ""
+    if declared_version == "1.0" or re.fullmatch(r"2(?:\.[0-9]+)+", declared_version):
+        version = "2.0"
+    elif re.fullmatch(r"3(?:\.[0-9]+)+", declared_version):
+        version = "3.0"
+    else:
+        raise _Rejected(EpubInspectionOutcome.UNSUPPORTED_VERSION)
     prefixes = _prefix_vocabulary(request, root)
     metadata_groups = _children(root, "metadata", _OPF_NS)
     manifest_groups = _children(root, "manifest", _OPF_NS)

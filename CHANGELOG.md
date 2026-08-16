@@ -9,8 +9,8 @@
 
 - Decompose the 1,131-line `_package_report` EPUB extractor -- the largest
   function in the codebase and the one that parses the most hostile input in
-  the system -- into twenty-eight named stages, each under 150 lines and each
-  carrying one documented contract. `_package_report` is now a linear
+  the system -- into twenty-nine named stages over four named state types, each
+  stage under 150 lines and each carrying one documented contract. `_package_report` is now a linear
   composition whose call order *is* the acceptance order, so what the extractor
   accepts, rejects and bounds can be read in one place instead of inferred from
   a 285-branch function. Each stage now has direct unit tests for the hostile
