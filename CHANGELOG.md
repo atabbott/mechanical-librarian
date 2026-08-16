@@ -7,6 +7,22 @@
 
 ## Unreleased
 
+- Distinguish consolidation from relocation in the code-economy rules, and let a
+  single-consumer helper earn its place, so the requirement that an abstraction
+  be lighter than what it replaces stops being read as a bar on moving code to
+  where it belongs or on naming something worth naming. The rule was added
+  alongside a shared validation vocabulary and has since correctly deleted five
+  single-consumer helpers; it also drew six review findings against structural
+  work whose entire purpose was relocating logic across a layer boundary, which
+  necessarily adds a module header, imports, and explicit parameters for what
+  were implicit captures. The consolidation rule is unchanged. Relocation is
+  now judged on whether the code lives where its dependencies allow and whether
+  the move duplicated anything, and refactoring pull requests report their line
+  delta split three ways rather than two. A helper with no caller is still
+  deleted, but one with a single caller may be kept where it earns its place by
+  carrying a meaningful name, exposing a directly testable contract, or creating
+  an enforceable boundary — stated in the change rather than assumed. (#692)
+
 - Declare the automatic-safety seam the served composition already binds.
   `compose_review_application` builds the policy notebook and the owner-only
   automatic-safety controls from one `policy_store`, but

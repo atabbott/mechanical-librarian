@@ -50,15 +50,37 @@ Run the static architecture-boundary test whenever imports or packages move.
   validators live beside their mapping functions in `frontend/src/api/http.ts`.
   Extend a vocabulary when a check is genuinely new; do not reintroduce a
   hand-written copy of one it already names.
-- A new abstraction requires a current consumer in the same change and must be
-  lighter than the copies it replaces. A helper with no caller, or one that
-  costs more lines than the longhand it consolidates, is not an improvement:
-  delete it and keep the longhand.
+- A new abstraction requires a current consumer in the same change. A helper
+  with no caller is not an improvement: delete it.
+- A helper with **one** caller has to earn its place, and it can. Consolidating
+  a single copy is not consolidation, so the default is to keep the longhand —
+  but keep the helper where it makes something possible that the longhand does
+  not: a name that carries meaning at the call site, a contract that can be
+  tested directly, or a boundary a type checker can enforce. Say which, in the
+  change. "It reads better" is a reason; it just has to be written down.
+  A helper that only relocates a few lines and buys none of those is decoration
+  — delete it and keep the longhand.
+- That rule governs **consolidation** — replacing copies of the same logic.
+  It does not govern **relocation**: moving code across a layer, module, or
+  file boundary because it belongs there. Relocation necessarily adds a module
+  header, imports, a declaration, and explicit parameters for what were
+  implicit captures, so it is expected to add lines and is not required to be
+  lighter. Judge relocation on whether the code now lives where its
+  dependencies allow it to, and whether anything was duplicated in the move.
+  A relocation that leaves two copies of one implementation has failed; a
+  relocation that costs structure has not.
+- When both apply, they compose rather than conflict: relocate freely, and
+  where the move would leave copies of a check or a rejection rule behind,
+  express the shared part once through the vocabulary rather than duplicating
+  it. Prefer a shared function to an inheritance stack when both remove the
+  same duplication — the flatter shape is usually lighter and catches contract
+  errors at the definition site.
 - A refactoring pull request reports its net line-count delta per changed
-  module, and reports lines removed by consolidation separately from lines
-  added by new validation. A site that gains a check it never had is expected
-  to grow, and that growth is a success. Never weaken, skip, or narrow a check
-  to reach a line count.
+  module, split three ways: lines removed by consolidation, lines added by
+  relocation structure, and lines added by new validation. A site that gains a
+  check it never had is expected to grow, and that growth is a success. Never
+  weaken, skip, or narrow a check to reach a line count, and never manufacture
+  a helper to improve one.
 - Exact-type checks are deliberate subclass rejection, not an accident of
   style. `type(value) is int` rejects `bool`, and `type(value) is str` rejects
   a `str` subclass, because a persisted document must carry the exact canonical
