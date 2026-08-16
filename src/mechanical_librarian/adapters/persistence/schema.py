@@ -41,7 +41,12 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ReportValueError,
 )
-from mechanical_librarian.domain.proposal_set import POLICY_VERSION
+from mechanical_librarian.domain.proposal_set import (
+    POLICY_VERSION,
+    ProposalSet,
+    evaluate_report,
+)
+from mechanical_librarian.domain.review_case import ReviewCase
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -805,6 +810,38 @@ def _validate_report_row(row: tuple[object, ...]) -> str:
     if (report.report_id, report.target.connection, report.target.library, report.target.item, report.file.identity, report.file.content_digest) != (report_id, connection, library, item, file_identity, content_digest):
         raise MetadataReportError("persisted report envelope disagrees")
     return document
+
+
+def _validate_review_browse_row(
+    row: object, policy_destinations: dict[str, str] | None = None
+) -> tuple[str, str]:
+    if (
+        type(row) not in {tuple, sqlite3.Row}
+        or len(row) != 2  # type: ignore[arg-type]
+        or type(row[0]) is not str  # type: ignore[index]
+        or type(row[1]) is not str  # type: ignore[index]
+    ):
+        raise MetadataReportError("review browse row is invalid")
+    case = ReviewCase.from_json(row[0])  # type: ignore[index]
+    report = MetadataReport.from_json(row[1])  # type: ignore[index]
+    if (
+        case.report_id != report.report_id
+        or case.target != report.target.to_data()
+        or case.target_fingerprint != report.target.fingerprint
+        or case.file_identity != report.file.identity
+        or tuple(
+            value.to_data()
+            for value in evaluate_report(
+                report,
+                ProposalSet.from_json(case.proposal_document).resolved_policy_id,
+                policy_destinations,
+            ).results
+        )
+        != case.results
+    ):
+        raise MetadataReportError("review browse row disagrees")
+    return case.to_json(), report.to_json()
+
 
 
 def _provider_recovery_outbox_id(
