@@ -2452,103 +2452,39 @@ def _encryption_warnings(
     return warnings
 
 
-def _package_report(
-    request: EpubPackageRequest,
-    package_name: str,
-    root: _Node,
-    entries: dict[str, _Entry],
-    encryption_names: set[str],
-    encryption_declarations: list[tuple[str, _Node]],
-    encryption_present: bool,
-    usage: EpubPackageUsage,
-    rootfile_node: _Node,
-    noncanonical_mimetype: bool,
-) -> EpubPackageReport:
-    frame = _package_frame(request, root)
-    version = frame.version
-    metadata_nodes = frame.metadata_nodes
-    usage = replace(usage, metadata_nodes=len(metadata_nodes))
-    observations: list[EpubPackageObservation] = []
-    warnings: list[EpubPackageWarning] = _archive_shape_warnings(
-        entries, frame, noncanonical_mimetype
-    )
-    declarations: list[EpubPackageDeclaration] = _container_declarations(
-        request, package_name, root, rootfile_node, encryption_declarations
-    )
-    id_registry, registry_warnings = _identifier_registry(request, package_name, root)
-    warnings.extend(registry_warnings)
-    identifiers_by_id: dict[str, _Node] = {}
-    refinements, refinement_warnings = _metadata_refinements(frame, id_registry)
-    warnings.extend(refinement_warnings)
-    field_observations, field_warnings = _metadata_field_observations(
-        request, package_name, frame, id_registry, identifiers_by_id, refinements
-    )
-    observations.extend(field_observations)
-    warnings.extend(field_warnings)
-    calibre_observations, calibre_warnings = _calibre_series_observations(
-        request, package_name, frame, refinements
-    )
-    observations.extend(calibre_observations)
-    warnings.extend(calibre_warnings)
-    warnings.extend(_required_field_warnings(observations, version))
-    identity_observations, identity_warnings = _package_identity_observations(
-        request, package_name, frame, root, identifiers_by_id
-    )
-    observations.extend(identity_observations)
-    warnings.extend(identity_warnings)
-    manifest_state, manifest_declarations, manifest_warnings = _manifest_declarations(
-        request, package_name, frame, entries, id_registry
-    )
-    declarations.extend(manifest_declarations)
-    warnings.extend(manifest_warnings)
-    manifest_ids = manifest_state.ids
-    manifest_nodes = manifest_state.nodes
-    manifest_media_types = manifest_state.media_types
-    local_manifest_ids = manifest_state.local_ids
-    cover_current_ids = manifest_state.cover_ids
-    cover_current_resources = {
-        manifest_ids[identifier] for identifier in cover_current_ids
-    }
-    cover_current_id = (
-        cover_current_ids[0]
-        if cover_current_ids and len(cover_current_resources) == 1
+def _selected_cover(
+    manifest: _Manifest, metadata_nodes: tuple[_Node, ...]
+) -> tuple[str | None, _Node | None, list[EpubPackageWarning]]:
+    """Choose the one cover the package unambiguously declares.
+
+    The EPUB3 ``cover-image`` property wins outright when present; the legacy
+    ``<meta name="cover">`` is only consulted when it is absent. Either source
+    naming two different resources selects nothing and is reported, so a
+    contradictory package never has a cover picked for it.
+    """
+    warnings: list[EpubPackageWarning] = []
+    cover_resources = {manifest.ids[identifier] for identifier in manifest.cover_ids}
+    cover_id = (
+        manifest.cover_ids[0]
+        if manifest.cover_ids and len(cover_resources) == 1
         else None
-    )
-    spine_declarations, spine_warnings = _spine_declarations(
-        request, package_name, frame, manifest_state
-    )
-    declarations.extend(spine_declarations)
-    warnings.extend(spine_warnings)
-    ncx_declarations, ncx_warnings = _ncx_declaration(
-        request, package_name, frame, manifest_state
-    )
-    declarations.extend(ncx_declarations)
-    warnings.extend(ncx_warnings)
-    warnings.extend(_tours_warnings(package_name, frame, entries, manifest_state))
-    guide_declarations, guide_warnings = _guide_declarations(
-        request, package_name, root, entries
-    )
-    declarations.extend(guide_declarations)
-    warnings.extend(guide_warnings)
-    warnings.extend(
-        _encryption_warnings(package_name, encryption_names, encryption_present)
     )
     legacy_covers: list[tuple[str, _Node]] = []
     for node in metadata_nodes:
         if node.name == f"{{{_OPF_NS}}}meta" and _attribute(node, "name") == "cover":
-            cover_id = _attribute(node, "content")
+            legacy_id = _attribute(node, "content")
             if (
-                not cover_id
-                or cover_id not in local_manifest_ids
-                or manifest_media_types.get(cover_id)
+                not legacy_id
+                or legacy_id not in manifest.local_ids
+                or manifest.media_types.get(legacy_id)
                 not in {"image/gif", "image/jpeg", "image/png", "image/svg+xml", "image/webp"}
             ):
                 warnings.append(EpubPackageWarning("invalid_cover_declaration"))
                 continue
-            legacy_covers.append((cover_id, node))
+            legacy_covers.append((legacy_id, node))
     legacy_cover_ids = [identifier for identifier, _node in legacy_covers]
     legacy_cover_resources = {
-        manifest_ids[identifier] for identifier in legacy_cover_ids
+        manifest.ids[identifier] for identifier in legacy_cover_ids
     }
     legacy_cover_id = (
         legacy_cover_ids[0]
@@ -2561,22 +2497,51 @@ def _package_report(
     )
     if len(legacy_cover_resources) > 1:
         warnings.append(EpubPackageWarning("contradictory_cover_declaration"))
-    selected_cover_id = (
-        cover_current_id if cover_current_ids else legacy_cover_id
+    selected_cover_id = cover_id if manifest.cover_ids else legacy_cover_id
+    selected_cover_node = (
+        manifest.nodes.get(selected_cover_id or "")
+        if manifest.cover_ids
+        else legacy_cover_node
+    )
+    if manifest.cover_ids and any(
+        current_resource != legacy_resource
+        for current_resource in cover_resources
+        for legacy_resource in legacy_cover_resources
+    ):
+        warnings.append(EpubPackageWarning("contradictory_cover_declaration"))
+    return selected_cover_id, selected_cover_node, warnings
+
+
+def _cover_observations(
+    request: EpubPackageRequest,
+    package_name: str,
+    frame: _PackageFrame,
+    manifest: _Manifest,
+) -> tuple[
+    list[EpubPackageObservation],
+    list[EpubPackageDeclaration],
+    list[EpubPackageWarning],
+]:
+    """Project the selected cover as a file-level observation.
+
+    A legacy selection additionally earns a cover declaration, because the
+    manifest stage only declared covers that carried the EPUB3 property.
+    """
+    observations: list[EpubPackageObservation] = []
+    declarations: list[EpubPackageDeclaration] = []
+    selected_cover_id, cover_node, warnings = _selected_cover(
+        manifest, frame.metadata_nodes
     )
     selected_cover = (
-        manifest_ids[selected_cover_id] if selected_cover_id is not None else None
+        manifest.ids[selected_cover_id] if selected_cover_id is not None else None
     )
     if selected_cover:
-        # `selected_cover` is only truthy when `selected_cover_id` is not None.
-        cover_node = (
-            manifest_nodes[cast(str, selected_cover_id)]
-            if cover_current_ids
-            else legacy_cover_node
-        )
+        # `selected_cover` is only truthy when `selected_cover_id` is not None,
+        # and every selected id came from the accepted manifest, so the node
+        # that declared it is always present.
         assert cover_node is not None
-        observations.append(_observation(request, package_name, version, _Node(cover_node.name, cover_node.attributes, text_parts=[selected_cover], ordinal=cover_node.ordinal), EpubPackageField.COVER, applicability=EpubObservationApplicability.FILE))
-        if not cover_current_ids:
+        observations.append(_observation(request, package_name, frame.version, _Node(cover_node.name, cover_node.attributes, text_parts=[selected_cover], ordinal=cover_node.ordinal), EpubPackageField.COVER, applicability=EpubObservationApplicability.FILE))
+        if not manifest.cover_ids:
             declarations.append(
                 EpubPackageDeclaration(
                     EpubPackageDeclarationKind.COVER,
@@ -2584,18 +2549,23 @@ def _package_report(
                     _citation(request, package_name, EpubPackageCitationSection.COVER, cover_node),
                     selected_cover,
                     selected_cover_id,
-                    manifest_media_types[cast(str, selected_cover_id)],
+                    manifest.media_types[cast(str, selected_cover_id)],
                 )
             )
-    if (
-        cover_current_ids
-        and any(
-            current_resource != legacy_resource
-            for current_resource in cover_current_resources
-            for legacy_resource in legacy_cover_resources
-        )
-    ):
-        warnings.append(EpubPackageWarning("contradictory_cover_declaration"))
+    return observations, declarations, warnings
+
+
+def _consistency_warnings(
+    observations: list[EpubPackageObservation],
+) -> list[EpubPackageWarning]:
+    """Report where the package contradicts itself or had to be redacted.
+
+    Contradiction is reported, never resolved: two applicable titles stay two
+    observations and the report says the title is ambiguous. A value that
+    failed projection safety or its size bound was replaced by a digest
+    marker upstream, and this stage makes that substitution visible.
+    """
+    warnings: list[EpubPackageWarning] = []
     values_by_field: dict[EpubPackageField, set[str]] = {}
     for observation in observations:
         if observation.applicability is EpubObservationApplicability.INAPPLICABLE:
@@ -2651,6 +2621,26 @@ def _package_report(
         warnings.append(
             EpubPackageWarning("oversized_metadata_redacted", oversized.citation)
         )
+    return warnings
+
+
+def _bounded_report(
+    request: EpubPackageRequest,
+    observations: list[EpubPackageObservation],
+    declarations: list[EpubPackageDeclaration],
+    warnings: list[EpubPackageWarning],
+    usage: EpubPackageUsage,
+) -> EpubPackageReport:
+    """Account for every report bound and assemble the canonical report.
+
+    Repeated warnings collapse to one occurrence, and a package that still
+    exceeds the warning bound is summarized by distinct code -- the only
+    lossy step in the pipeline, and it is announced by
+    ``warning_occurrences_aggregated``. Every other bound rejects: too many
+    observations, declarations, values for one field, or a report that
+    exceeds its byte limit ends as ``RESOURCE_LIMIT`` rather than a truncated
+    report.
+    """
     warnings = list({warning.sort_key: warning for warning in warnings}.values())
     if len(warnings) > request.limits.MAX_WARNINGS:
         warnings = [
@@ -2690,6 +2680,92 @@ def _package_report(
         if str(error) == "local evidence report exceeds its byte limit":
             raise _Rejected(EpubInspectionOutcome.RESOURCE_LIMIT) from None
         raise
+
+
+def _package_report(
+    request: EpubPackageRequest,
+    package_name: str,
+    root: _Node,
+    entries: dict[str, _Entry],
+    encryption_names: set[str],
+    encryption_declarations: list[tuple[str, _Node]],
+    encryption_present: bool,
+    usage: EpubPackageUsage,
+    rootfile_node: _Node,
+    noncanonical_mimetype: bool,
+) -> EpubPackageReport:
+    """Compose the package stages into one bounded report.
+
+    Stage order is the acceptance order: a package rejected by an earlier
+    stage never reaches a later one, so this composition is the authoritative
+    statement of what the extractor accepts. Observations, declarations and
+    warnings accumulate in declared order and only `_bounded_report` sorts,
+    deduplicates or bounds them.
+    """
+    frame = _package_frame(request, root)
+    version = frame.version
+    metadata_nodes = frame.metadata_nodes
+    usage = replace(usage, metadata_nodes=len(metadata_nodes))
+    observations: list[EpubPackageObservation] = []
+    warnings: list[EpubPackageWarning] = _archive_shape_warnings(
+        entries, frame, noncanonical_mimetype
+    )
+    declarations: list[EpubPackageDeclaration] = _container_declarations(
+        request, package_name, root, rootfile_node, encryption_declarations
+    )
+    id_registry, registry_warnings = _identifier_registry(request, package_name, root)
+    warnings.extend(registry_warnings)
+    identifiers_by_id: dict[str, _Node] = {}
+    refinements, refinement_warnings = _metadata_refinements(frame, id_registry)
+    warnings.extend(refinement_warnings)
+    field_observations, field_warnings = _metadata_field_observations(
+        request, package_name, frame, id_registry, identifiers_by_id, refinements
+    )
+    observations.extend(field_observations)
+    warnings.extend(field_warnings)
+    calibre_observations, calibre_warnings = _calibre_series_observations(
+        request, package_name, frame, refinements
+    )
+    observations.extend(calibre_observations)
+    warnings.extend(calibre_warnings)
+    warnings.extend(_required_field_warnings(observations, version))
+    identity_observations, identity_warnings = _package_identity_observations(
+        request, package_name, frame, root, identifiers_by_id
+    )
+    observations.extend(identity_observations)
+    warnings.extend(identity_warnings)
+    manifest_state, manifest_declarations, manifest_warnings = _manifest_declarations(
+        request, package_name, frame, entries, id_registry
+    )
+    declarations.extend(manifest_declarations)
+    warnings.extend(manifest_warnings)
+    spine_declarations, spine_warnings = _spine_declarations(
+        request, package_name, frame, manifest_state
+    )
+    declarations.extend(spine_declarations)
+    warnings.extend(spine_warnings)
+    ncx_declarations, ncx_warnings = _ncx_declaration(
+        request, package_name, frame, manifest_state
+    )
+    declarations.extend(ncx_declarations)
+    warnings.extend(ncx_warnings)
+    warnings.extend(_tours_warnings(package_name, frame, entries, manifest_state))
+    guide_declarations, guide_warnings = _guide_declarations(
+        request, package_name, root, entries
+    )
+    declarations.extend(guide_declarations)
+    warnings.extend(guide_warnings)
+    warnings.extend(
+        _encryption_warnings(package_name, encryption_names, encryption_present)
+    )
+    cover_observations, cover_declarations, cover_warnings = _cover_observations(
+        request, package_name, frame, manifest_state
+    )
+    observations.extend(cover_observations)
+    declarations.extend(cover_declarations)
+    warnings.extend(cover_warnings)
+    warnings.extend(_consistency_warnings(observations))
+    return _bounded_report(request, observations, declarations, warnings, usage)
 
 
 def _expat_supported() -> bool:
