@@ -77,7 +77,10 @@ from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
 )
 from mechanical_librarian.application.metadata_policy import PolicyTransition
-from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.metadata_report import (
+    MetadataReportError,
+    ReportRepository,
+)
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     PipelineProgress,
@@ -946,7 +949,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         report: MetadataReport,
         currentness: Callable[[], bool],
         expected_current: str | None = None,
-        after_publication: Callable[[object, MetadataReport], None] | None = None,
+        after_publication: Callable[[ReportRepository, MetadataReport], None] | None = None,
         *,
         expected_package: tuple[str | None, str, str | None, int | None, str] | None = None,
     ) -> str:

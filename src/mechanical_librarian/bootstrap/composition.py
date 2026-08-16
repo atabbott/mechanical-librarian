@@ -957,11 +957,7 @@ def run_metadata_report_loaded(configuration: ApplicationConfiguration, database
         try:
             if recover_artifacts:
                 artifacts.recover_unreferenced(repository.artifact_is_referenced)
-            # The adapter implements every ``ReportRepository`` member; only its
-            # ``publish`` hook parameter is declared as ``object`` where the
-            # protocol names itself, which is a variance mismatch in the seam
-            # rather than a missing capability.
-            return cast("ReportRepository", repository)
+            return repository
         except Exception:
             repository.close()
             raise
