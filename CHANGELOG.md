@@ -7,6 +7,27 @@
 
 ## Unreleased
 
+- Keep installed pytest plugins and oversized parameter names out of the test
+  tiers. Two further defects in the engine adoption, both found in review of
+  #661.
+  Rejecting `PYTEST_PLUGINS` closed one door and left the next one open: pytest
+  auto-loads every installed distribution exposing a `pytest11` entry point, so
+  a `pytest-randomly` or `pytest-xdist` in a contributor's environment could
+  reorder, shard, or drop cases with no environment variable set and nothing
+  rejected. A tier now passes `--disable-plugin-autoload` and loads pytest's
+  builtins and the runner's own plugin only. Cohort membership is unchanged:
+  the two distributions currently installed, `anyio` and hypothesis's pytest
+  integration, contribute no cases, and the suite's hypothesis tests pass
+  without the integration because they run through `unittest.TestCase`.
+  A long parameter set produced an identity past the stall diagnostic's
+  512-character safe bound, so the diagnostic was withheld from exactly the
+  parameterized style this milestone's conventions recommend. The parameter
+  component is now bounded, with its retained head paired with a digest of the
+  exact parameters rather than truncated: bare truncation would map distinct
+  parameter sets onto one identity and make the collision guard refuse a
+  legitimate cohort. Module, class, and function names are left verbatim, so a
+  `unittest.TestCase` identity is still exactly what `TestCase.id()` produces.
+  (#661)
 - Stop the test-tier runner honouring ambient pytest configuration, and give
   it unittest's accounting for shared setup, unexpected successes, and native
   case identities. Four defects in the engine adoption, all found in review of

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import importlib
 import json
 import os
+import sys
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from collections.abc import Iterator
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
 from typing import Any
@@ -13,8 +16,10 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from scripts.run_test_tier import (
+    _MAX_IDENTITY_CHARACTERS,
     _MAX_TEST_TRACEBACK_BYTES,
     _MAX_TRACEBACK_STREAM_BYTES,
+    _PYTEST_ARGUMENTS,
     _REJECTED_PYTEST_ENVIRONMENT,
     _SAFE_TEST_ID,
     _STALL_DIAGNOSTIC_SECONDS,
@@ -81,6 +86,38 @@ def _module(directory: Path, body: str) -> tuple[str, ...]:
     module = directory / f"test_synthetic_{uuid4().hex}.py"
     module.write_text(body, encoding="utf-8")
     return (str(module),)
+
+
+@contextmanager
+def _installed_pytest_plugin(directory: Path) -> Iterator[None]:
+    """Install a real `pytest11` distribution that would hijack collection.
+
+    Written as a distribution rather than a stub because auto-loading is what
+    is under test: pytest discovers entry points through `importlib.metadata`,
+    so only a discoverable distribution proves the runner keeps one out.
+    """
+
+    name = f"ml_collection_hijack_{uuid4().hex}"
+    (directory / f"{name}.py").write_text(
+        "def pytest_collection_modifyitems(items):\n    del items[1:]\n",
+        encoding="utf-8",
+    )
+    metadata = directory / f"{name}-0.0.0.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text(
+        f"Metadata-Version: 2.1\nName: {name}\nVersion: 0.0.0\n", encoding="utf-8"
+    )
+    (metadata / "entry_points.txt").write_text(
+        f"[pytest11]\n{name} = {name}\n", encoding="utf-8"
+    )
+    sys.path.insert(0, str(directory))
+    importlib.invalidate_caches()
+    try:
+        yield
+    finally:
+        sys.path.remove(str(directory))
+        sys.modules.pop(name, None)
+        importlib.invalidate_caches()
 
 
 def _cohort_summary(targets: tuple[str, ...]) -> tuple[bool, dict[str, Any]]:
@@ -480,6 +517,66 @@ class TestTierTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError) as collision:
                     collect_cohort(Path.cwd(), "fast")
         self.assertEqual(str(collision.exception), "test_cohort_identity_collision")
+
+    def test_installed_plugins_cannot_change_a_cohort(self) -> None:
+        # Rejecting `PYTEST_PLUGINS` closed one door; auto-loading every
+        # installed `pytest11` entry point left the next one open, with no
+        # environment variable set and nothing to reject.
+        body = (
+            "import unittest\n"
+            "\n"
+            "class AutoloadTests(unittest.TestCase):\n"
+            "    def test_first(self) -> None:\n"
+            "        pass\n"
+            "\n"
+            "    def test_second(self) -> None:\n"
+            "        pass\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            targets = _module(root, body)
+            with _installed_pytest_plugin(root):
+                passed, summary = _cohort_summary(targets)
+                self.assertTrue(passed)
+                self.assertEqual(summary["tests_run"], 2)
+
+                # And the plugin genuinely would have taken a case away, so the
+                # assertion above cannot pass because nothing was installed.
+                permissive = tuple(
+                    argument
+                    for argument in _PYTEST_ARGUMENTS
+                    if argument != "--disable-plugin-autoload"
+                )
+                with patch(
+                    "scripts.run_test_tier._PYTEST_ARGUMENTS", permissive
+                ):
+                    _, hijacked = _cohort_summary(targets)
+        self.assertEqual(hijacked["tests_run"], 1)
+
+    def test_oversized_parameters_stay_bounded_and_distinct(self) -> None:
+        # A long parameter set produced an identity past the safe bound, so the
+        # stall diagnostic was withheld from exactly the parameterized style
+        # the suite's conventions recommend.
+        shared = "A" * 600
+        body = (
+            "import pytest\n"
+            "\n"
+            f"@pytest.mark.parametrize('value', [1, 2], ids=['{shared}one', '{shared}two'])\n"
+            "def test_parameterized(value: int) -> None:\n"
+            "    assert value\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            targets = _module(Path(directory), body)
+            with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
+                identifiers = collect_cohort(Path.cwd(), "fast")
+        self.assertEqual(len(identifiers), 2)
+        for identifier in identifiers:
+            with self.subTest(identifier=identifier[:48]):
+                self.assertLessEqual(len(identifier), _MAX_IDENTITY_CHARACTERS)
+                self.assertIsNotNone(_SAFE_TEST_ID.fullmatch(identifier))
+        # The two differ only past the truncation point, so a bound that merely
+        # truncated would collapse them and refuse a legitimate cohort.
+        self.assertEqual(len(set(identifiers)), 2)
 
 
 if __name__ == "__main__":

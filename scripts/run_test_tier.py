@@ -23,6 +23,11 @@ import pytest
 _STALL_DIAGNOSTIC_SECONDS = 30
 _SAFE_TEST_ID = re.compile(r"[A-Za-z0-9_.]{1,512}")
 _UNSAFE_IDENTITY_CHARACTER = re.compile(r"[^A-Za-z0-9_]")
+# The bound `_SAFE_TEST_ID` already enforces, applied where an identity can
+# actually grow: a parameter set is arbitrary text, while the module, class,
+# and function names before it are Python identifiers.
+_MAX_IDENTITY_CHARACTERS = 512
+_PARAMETER_DIGEST_CHARACTERS = 16
 # Every variable pytest documents under `Environment variables` in `--help`
 # that can reach collection, execution, plugin loading, or the diagnostic
 # streams. `PYTEST_THEME` and `PYTEST_THEME_MODE` are deliberately absent:
@@ -59,11 +64,19 @@ _MAX_TRACEBACK_STREAM_BYTES = 262_144
 #
 # `-p no:cacheprovider` leaves no `.pytest_cache` behind, so a qualified source
 # snapshot stays byte-identical to the commit it was taken from.
+#
+# `--disable-plugin-autoload` keeps the cohort out of reach of whatever happens
+# to be installed. Every distribution exposing a `pytest11` entry point is
+# loaded automatically, so a `pytest-randomly` or `pytest-xdist` in a
+# contributor's environment could reorder, shard, or drop cases with no
+# environment variable set and nothing rejected. A tier loads pytest's builtins
+# and the runner's own plugin, and nothing else.
 _PYTEST_ARGUMENTS = (
     "--capture=sys",
     "--tb=native",
     "-q",
     "--no-header",
+    "--disable-plugin-autoload",
     "-p",
     "no:cacheprovider",
 )
@@ -146,6 +159,27 @@ def _verify_pytest_environment() -> None:
         raise RuntimeError(f"pytest_environment_override:{','.join(present)}")
 
 
+def _reduced_parameters(parameters: str, available: int) -> str:
+    """Reduce one parameter set to a bounded component of the safe alphabet.
+
+    Reduction alone leaves the identity as long as the parameters, so a long
+    one still fails `_SAFE_TEST_ID` and still costs the stall diagnostic.
+    Truncating alone would map distinct parameter sets onto one identity, which
+    the collision guard would then refuse -- correctly, but on a legitimate
+    cohort. The retained head is therefore paired with a digest of the exact
+    parameters, so distinct parameters keep distinct identities and the guard
+    stays a backstop rather than a tripwire.
+    """
+
+    reduced = _UNSAFE_IDENTITY_CHARACTER.sub("_", parameters)
+    if len(reduced) <= available:
+        return reduced
+    digest = hashlib.sha256(parameters.encode("utf-8")).hexdigest()
+    digest = digest[:_PARAMETER_DIGEST_CHARACTERS]
+    head = reduced[: max(0, available - _PARAMETER_DIGEST_CHARACTERS - 1)]
+    return f"{head}_{digest}"
+
+
 def _case_identity(item: pytest.Item) -> str:
     """Name a collected case as a dotted, path-free identity.
 
@@ -167,10 +201,11 @@ def _case_identity(item: pytest.Item) -> str:
         module = getattr(item, "module", None)
         prefix = getattr(module, "__name__", None) or item.nodeid.split("::")[0]
     name, bracket, parameters = item.name.partition("[")
+    stem = f"{prefix}.{name}"
     if not bracket:
-        return f"{prefix}.{name}"
-    reduced = _UNSAFE_IDENTITY_CHARACTER.sub("_", parameters.removesuffix("]"))
-    return f"{prefix}.{name}.{reduced}"
+        return stem
+    available = _MAX_IDENTITY_CHARACTERS - len(stem) - 1
+    return f"{stem}.{_reduced_parameters(parameters.removesuffix(']'), available)}"
 
 
 def _shared_fixture_identity(owner: str | None, phase: str) -> str | None:

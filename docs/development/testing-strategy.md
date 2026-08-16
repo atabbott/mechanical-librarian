@@ -65,6 +65,14 @@ runner fails closed on all five, naming the variables and never their values,
 which may carry private paths. `PYTEST_THEME` and `PYTEST_THEME_MODE` remain
 permitted because they only colour a stream every tier discards.
 
+Plugins are the same exposure one level over. pytest auto-loads every installed
+distribution exposing a `pytest11` entry point, so a `pytest-randomly` or
+`pytest-xdist` that happens to be in an environment could reorder, shard, or
+drop cases with no variable set and nothing to reject. A tier passes
+`--disable-plugin-autoload` and loads pytest's builtins and the runner's own
+plugin only. A tool the suite genuinely needs is pinned in the `dev` group and
+loaded explicitly, never inherited from whatever is installed.
+
 Tier accounting follows unittest's, not pytest's report stream. A case that
 raises `AssertionError` is a failure and anything else is an error, whichever
 phase raised it. A class-scoped `setUpClass` or `tearDownClass` failure is one
