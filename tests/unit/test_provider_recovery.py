@@ -1031,3 +1031,109 @@ class TransactionEpilogueTests(unittest.TestCase):
             self.assertNotIn("COMMIT", proxy.statements)
             self.assertFalse(proxy.in_transaction)
             store.close()
+
+
+def _full_store(directory: str) -> SQLiteProviderRecoveryStore:
+    """Open a store whose database cannot grow by one more page.
+
+    ``max_page_count`` produces the same ``SQLITE_FULL`` a full disk produces,
+    and SQLite ends the transaction itself on that error rather than leaving it
+    open.  That is the state the two inner handlers have to survive: by the
+    time they run, the transaction they mean to abandon is already gone.  Tiny
+    pages and maximum-length identities make the limit bite on the first write
+    rather than on however much slack the last page happens to hold.
+    """
+    path = Path(directory) / "recovery.sqlite"
+    prepared = sqlite3.connect(path, isolation_level=None)
+    prepared.execute("PRAGMA page_size=512")
+    prepared.execute("VACUUM")
+    prepared.close()
+    store = SQLiteProviderRecoveryStore.open(path)
+    for index in range(60):
+        store.record(
+            ProviderRecovery("c" * 60 + f"{index:04d}", "a" * 64, "s" * 64, 1, "waiting", 0, 1),
+            occurred_at=0,
+        )
+    pages = store._connection.execute("PRAGMA page_count").fetchone()[0]
+    store._connection.execute(f"PRAGMA max_page_count={pages}")
+    return store
+
+
+class InnerTransactionEpilogueTests(unittest.TestCase):
+    """Pin the two write paths that abandon their transaction inline.
+
+    ``_claim_one`` and ``_record`` keep a nested handler instead of the shared
+    epilogue, so they need the same guard the shared one carries.  Without it
+    the ``ROLLBACK`` they issue against an already-closed transaction raises,
+    and that failure -- not the one that ended the transaction -- becomes the
+    ``__cause__`` the operator reads.
+    """
+
+    def test_a_full_database_reports_the_disk_failure_from_a_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = _full_store(directory)
+            with self.assertRaises(ProviderRecoveryStoreError) as raised:
+                store.claim_one(generation=1, now=10, token="t" * 128)
+            self.assertIsInstance(raised.exception.__cause__, sqlite3.OperationalError)
+            self.assertEqual("database or disk is full", str(raised.exception.__cause__))
+            self.assertFalse(store._connection.in_transaction)
+            store.close()
+
+    def test_a_full_database_reports_the_disk_failure_from_a_record(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store = _full_store(directory)
+            with self.assertRaises(ProviderRecoveryStoreError) as raised:
+                store.record(
+                    ProviderRecovery("z" * 64, "a" * 64, "s" * 64, 1, "waiting", 0, 1),
+                    occurred_at=1,
+                )
+            self.assertIsInstance(raised.exception.__cause__, sqlite3.OperationalError)
+            self.assertEqual("database or disk is full", str(raised.exception.__cause__))
+            self.assertFalse(store._connection.in_transaction)
+            store.close()
+
+    def test_a_rejected_claim_argument_still_abandons_its_open_transaction(self) -> None:
+        """The other half of the guard: an open transaction is still rolled back.
+
+        ``claim_one`` validates ``blocked_targets`` after ``BEGIN IMMEDIATE``,
+        and the ``ProviderRecoveryStoreError`` it raises is caught by neither
+        outer handler.  That makes the inner one load-bearing on exactly this
+        path, so guarding it must not turn it off.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "recovery.sqlite"
+            store = SQLiteProviderRecoveryStore.open(path)
+            with self.assertRaises(ProviderRecoveryStoreError) as raised:
+                store.claim_one(
+                    generation=1, now=10, token="owner",
+                    blocked_targets=frozenset({"x" * 65}),
+                )
+            self.assertEqual("provider recovery claim is invalid", str(raised.exception))
+            self.assertFalse(store._connection.in_transaction)
+            store.close()
+
+    def test_a_committed_claim_survives_a_failure_building_its_return_value(self) -> None:
+        """The recorded decision: the lease is kept, and it expires on its own."""
+        def _reject(*_: object) -> ProviderRecovery:
+            raise ProviderRecoveryError("row is not a valid recovery")
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "recovery.sqlite"
+            store = SQLiteProviderRecoveryStore.open(path)
+            store.record(
+                ProviderRecovery("google", "google_books", "books", 1, "waiting", 0, 1),
+                occurred_at=0,
+            )
+            with patch.object(recovery_persistence, "ProviderRecovery", _reject):
+                with self.assertRaises(ProviderRecoveryStoreError) as raised:
+                    store.claim_one(generation=1, now=10, token="owner")
+            self.assertIsInstance(raised.exception.__cause__, ProviderRecoveryError)
+            self.assertEqual(
+                ("checking", "owner"),
+                store._connection.execute(
+                    "SELECT state,claim_token FROM provider_recovery_health"
+                ).fetchone(),
+            )
+            self.assertFalse(store._connection.in_transaction)
+            self.assertIsNotNone(store.claim_one(generation=1, now=1_000, token="later"))
+            store.close()

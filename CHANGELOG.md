@@ -7,6 +7,35 @@
 
 ## Unreleased
 
+- Report the failure that actually ended a provider-recovery transaction. Two
+  of the store's transactional write paths abandoned theirs with an unguarded
+  `ROLLBACK`, and SQLite can end a transaction itself when a statement fails
+  with `SQLITE_FULL`, `SQLITE_IOERR`, or `SQLITE_NOMEM`. The rollback then
+  raised `cannot rollback - no transaction is active`, and that became the
+  `__cause__` of the reported `ProviderRecoveryStoreError` while the failure
+  worth reading survived only as `__context__`. On a full disk an operator was
+  told the transaction was missing rather than that the disk was full. Both
+  handlers now carry the `in_transaction` guard the shared epilogue has always
+  carried, so `database or disk is full` reaches the operator intact. This is
+  not a module sweep: `open()`'s schema-creation rollback has the same shape
+  and is left alone here, because correcting it would change another path's
+  error identity. #715 owns it.
+  #713 scoped this to the claim path, on the reasoning that the sibling's
+  `COMMIT` is the last statement in its `try` and its handler is therefore only
+  ever reached with the transaction still open. That holds for a failure after
+  the commit but not for one during it: a failing `INSERT` reaches that handler
+  with the transaction already gone, and the sibling masked the disk failure
+  identically. Both are fixed, and the ticket's note recording the sibling as a
+  verified non-defect is corrected. The claim's post-`COMMIT` statements also
+  move out of its handler, and a claim whose `ProviderRecovery` cannot be built
+  now stays committed: the lease is the recovery, because the claim query
+  reclaims a `checking` row once `claim_expires_at` passes, where a
+  compensating write after the commit would add a failure nothing could handle.
+  Reaching that path at all needs a row the health table's `CHECK` constraints
+  admit and the dataclass rejects — an identity carrying an embedded NUL
+  qualifies, since SQLite's `length()` stops counting there and Python's `len()`
+  does not — and no method on the store writes one, so the cost is one lease
+  period per row some other writer put in the table. (#713)
 - State which lines the code-economy consolidation test measures, so two
   readers measuring the same change reach the same verdict. #692 required a
   consolidation to be lighter than the copies it replaces without saying whether

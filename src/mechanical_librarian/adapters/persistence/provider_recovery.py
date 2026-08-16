@@ -399,7 +399,8 @@ class SQLiteProviderRecoveryStore:
                     self._connection.execute("INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)", (recovery.connection, recovery.adapter, recovery.scope, recovery.generation, recovery.state, recovery.attempt, recovery.next_eligible_at, occurred_at))
                 self._connection.execute("COMMIT")
             except Exception:
-                self._connection.execute("ROLLBACK")
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
                 raise
         except ProviderRecoveryStoreError:
             if self._connection.in_transaction:
@@ -466,6 +467,28 @@ class SQLiteProviderRecoveryStore:
             raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
     def _claim_one(self, generation: int, now: int, token: str, blocked_targets: frozenset[str], lease_seconds: int) -> ProviderRecovery | None:
+        """Lease one due scope, keeping the lease once its ``COMMIT`` lands.
+
+        Two rules keep the reported failure truthful.  The rollback is guarded
+        because SQLite ends the transaction itself when a statement fails with
+        ``SQLITE_FULL``, ``SQLITE_IOERR``, or ``SQLITE_NOMEM``; an unguarded
+        one then raises ``cannot rollback - no transaction is active`` and that
+        replaces the disk failure the caller needed to see.  The snapshot and
+        the return value sit outside the handler because the claim is durable
+        once committed and must not be reported as an abandoned transaction.
+
+        A claim whose ``ProviderRecovery`` cannot be constructed therefore
+        stays committed and the caller is told the claim failed.  The lease is
+        the recovery: the query below reclaims a ``checking`` row once
+        ``claim_expires_at`` passes, so the scope returns on its own without a
+        compensating write whose own failure nothing could handle.  Reaching
+        that path at all needs a row the health table's ``CHECK`` constraints
+        admit and the dataclass rejects, which is narrower than it sounds: an
+        identity carrying an embedded NUL qualifies, because SQLite's
+        ``length()`` stops counting there and Python's ``len()`` does not.  No
+        method here writes one, so the cost is one lease period per row some
+        other writer put in the table.
+        """
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             try:
@@ -479,11 +502,12 @@ class SQLiteProviderRecoveryStore:
                     self._connection.execute("COMMIT")
                     return None
                 self._connection.execute("COMMIT")
-                self._claim_snapshots[(*row[:4], token)] = (row[4:], None, None)
-                return ProviderRecovery(*cast(_HealthIdentity, row[:4]), "checking", row[5], None)
             except Exception:
-                self._connection.execute("ROLLBACK")
+                if self._connection.in_transaction:
+                    self._connection.execute("ROLLBACK")
                 raise
+            self._claim_snapshots[(*row[:4], token)] = (row[4:], None, None)
+            return ProviderRecovery(*cast(_HealthIdentity, row[:4]), "checking", row[5], None)
         except (sqlite3.Error, OverflowError, ProviderRecoveryError) as error:
             if self._connection.in_transaction:
                 self._connection.execute("ROLLBACK")
