@@ -27,6 +27,13 @@ const nextUnresolved = (
         field !== undefined && actionable(field),
     )
 }
+// One idempotency key per decision attempt, so a retry of the same command is
+// recognised as the same command rather than recorded twice. Lives beside the
+// controller that puts it on a `DecisionCommand`; both routes import it.
+export const requestKey = () =>
+  typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `decision-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 const sameCommand = (left: DecisionCommand, right: DecisionCommand) =>
   left.idempotencyKey === right.idempotencyKey
 

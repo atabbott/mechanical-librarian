@@ -14,7 +14,7 @@ import type {
 import { useRouteReadyFocus } from '../focus'
 import { fieldLabel, labelWords, opaqueSource } from '../labels'
 import { detailQuery, libraryRoute, PreparationNotice, useReviewContext } from '../router'
-import { actionable, useReviewDecisionController } from '../reviewDecisionController'
+import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
 import { automaticChoiceSelected } from '../reviewAutomaticSelection'
 import { ownerChoiceCount } from '../reviewChoiceCounts'
 
@@ -35,10 +35,6 @@ const initials = (title: string) =>
     .slice(0, 2)
     .map((word) => word[0]?.toUpperCase())
     .join('') || 'ML'
-const requestKey = () =>
-  typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `decision-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 const bounded = (value: string, fallback: string) =>
   opaqueSource.test(value) ? fallback : value.length > 160 ? `${value.slice(0, 157)}…` : value
 const decisionValue = (field: ReviewField) => {

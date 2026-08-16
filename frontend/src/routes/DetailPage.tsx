@@ -13,16 +13,12 @@ import type {
 import { useRouteReadyFocus } from '../focus'
 import { fieldLabel, labelWords, opaqueSource } from '../labels'
 import { detailRoute, PreparationNotice, useReviewContext } from '../router'
-import { useReviewDecisionController } from '../reviewDecisionController'
+import { requestKey, useReviewDecisionController } from '../reviewDecisionController'
 import { automaticChoiceSelected } from '../reviewAutomaticSelection'
 import { ownerChoiceCount } from '../reviewChoiceCounts'
 
 const reviewedSource = (value: string, index: number) =>
   opaqueSource.test(value) ? `Evidence record ${String(index + 1)}` : fieldLabel(value)
-const requestKey = () =>
-  typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `decision-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 const recordedValue = (value: unknown, current: string) =>
   value === null
     ? current
