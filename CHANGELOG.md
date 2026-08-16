@@ -17,11 +17,15 @@
   necessarily adds a module header, imports, and explicit parameters for what
   were implicit captures. The consolidation rule is unchanged. Relocation is
   now judged on whether the code lives where its dependencies allow and whether
-  the move duplicated anything, and refactoring pull requests report their line
-  delta split three ways rather than two. A helper with no caller is still
-  deleted, but one with a single caller may be kept where it earns its place by
-  carrying a meaningful name, exposing a directly testable contract, or creating
-  an enforceable boundary — stated in the change rather than assumed. (#692)
+  the move duplicated anything, and stands on correct ownership however few
+  lines it carries. Consolidation keeps its requirement to be lighter than the
+  copies it replaces. A helper with no caller is still deleted, but one with a
+  single caller extracted within a boundary may be kept where it earns its place
+  by carrying a meaningful name, exposing a directly testable contract, or
+  creating an enforceable boundary — stated in the change rather than assumed.
+  Refactoring pull requests attribute their line delta to moved code, structure
+  the move required, copies consolidation removed, and checks newly added, which
+  reconcile to the net figure. (#692)
 
 - Declare the automatic-safety seam the served composition already binds.
   `compose_review_application` builds the policy notebook and the owner-only
