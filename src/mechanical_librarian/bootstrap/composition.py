@@ -141,13 +141,14 @@ from mechanical_librarian.application.proposal_sets import (
     GetProposalSet,
     ProposalCurrentnessError,
 )
-from mechanical_librarian.application.provider_recovery_evidence import (
-    TargetConnectionHeld as _TargetConnectionHeld,
+from mechanical_librarian.application.provider_recovery_activation import (
+    ProviderRecoveryActivation,
+    ProviderRecoveryRepository,
 )
 from mechanical_librarian.application.provider_recovery_evidence import (
     classify_provider_recovery_failure as _classify_provider_recovery_failure,
 )
-from mechanical_librarian.application.provider_recovery_evidence import (
+from mechanical_librarian.application.provider_recovery_evidence import (  # noqa: F401  # reason: the composition root keeps this established private alias so tests/integration/test_provider_recovery_composition.py reaches the relocated helper unchanged
     provider_recovery_jobs as _provider_recovery_jobs,
 )
 from mechanical_librarian.application.provider_recovery_evidence import (
@@ -161,7 +162,6 @@ from mechanical_librarian.application.provider_recovery_runner import (
 )
 from mechanical_librarian.application.provider_retry_successor import (
     ConfiguredProviderRetry,
-    GenerateProviderRetrySuccessor,
     ProviderRetryDisabled,
     ProviderRetrySuccessorError,
 )
@@ -212,7 +212,6 @@ from mechanical_librarian.domain.metadata_report import (
     claim_scope,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet
-from mechanical_librarian.domain.provider_recovery import ProviderRecoveryJob
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionResult,
     ReviewAdmissionStaleError,
@@ -256,15 +255,19 @@ if TYPE_CHECKING:
     from mechanical_librarian.application.catalogue import CatalogueEntry
     from mechanical_librarian.application.configuration import (
         ApplicationConfiguration,
+        LibraryConfiguration,
         ReviewWebConfiguration,
+        TargetConnectionConfiguration,
     )
     from mechanical_librarian.application.continuous_field_effects import (
         ContinuousFieldEffectRepository,
     )
     from mechanical_librarian.application.field_effects import CapabilityObserver
     from mechanical_librarian.application.metadata_report import (
+        EpubInspector,
         MetadataProvider,
         ReportRepository,
+        TargetReader,
     )
     from mechanical_librarian.application.operations import StageTimer
     from mechanical_librarian.application.provider_recovery_runner import RecoveryRun
@@ -272,7 +275,6 @@ if TYPE_CHECKING:
     from mechanical_librarian.application.review_pipeline import (
         ReviewPipelineRepository,
     )
-    from mechanical_librarian.domain.provider_recovery import ProviderRecovery
 
 
 class _PublicationReceiptRepository(Protocol):
@@ -293,10 +295,6 @@ class _PublicationReceiptRepository(Protocol):
         claim_next: bool = False,
         provider_failure_root: str | None = None,
     ) -> None: ...
-
-    def stage_provider_retry_successor(
-        self, source_report_id: str, report: MetadataReport, staged_at: int
-    ) -> str: ...
 
 
 class _ManifestEntry(TypedDict):
@@ -1215,53 +1213,12 @@ def create_review_pipeline(
 
     pipeline_holder: dict[str, ReviewPreparationPipeline] = {}
 
-    def retry_member(
-        recovery_state: ProviderRecovery, job: ProviderRecoveryJob,
-        heartbeat: Callable[[], None],
-    ) -> None:
-        staged_report_id: str | None = None
-        repository = repository_factory()
-        try:
-            completed_report_id = repository.completed_provider_retry_successor(
-                job.source_report_id
-            )
-            if completed_report_id is not None:
-                return
-            package = repository.current_review_package(job.target_connection, job.library, job.item)
-            if package != (job.package_proposal_id, job.package_report_id, job.package_case_id, job.package_checkpoint, job.package_outcome):
-                raise CurrentnessError("target or media changed")
-            current_document = repository.current_optional(
-                job.target_connection, job.library, job.item, job.file_identity,
-            )
-            if current_document is not None:
-                current_report_id = MetadataReport.from_json(current_document).report_id
-                if current_report_id != job.source_report_id:
-                    try:
-                        repository.provider_retry_work_id(current_report_id)
-                    except MetadataReportError:
-                        raise CurrentnessError("target or media changed") from None
-                    staged_report_id = current_report_id
-        finally:
-            repository.close()
-        pipeline = pipeline_holder.get("pipeline")
-        if staged_report_id is not None:
-            if pipeline is None or not pipeline.run_recovery_successor(
-                staged_report_id, heartbeat
-            ):
-                raise ProviderRetrySuccessorError("provider retry package incomplete")
-            repository = repository_factory()
-            try:
-                package = repository.current_review_package(
-                    job.target_connection, job.library, job.item
-                )
-                if package is None or package[1] != staged_report_id:
-                    raise ProviderRetrySuccessorError("provider retry package incomplete")
-            finally:
-                repository.close()
-            return
-        connection, library, mount, _ = configuration.select(job.target_connection, job.library)
-        if mount is None:
-            raise CurrentnessError("target or media changed")
+    def retry_observers(
+        connection: TargetConnectionConfiguration,
+        library: LibraryConfiguration,
+        mount: MediaMountConfiguration,
+    ) -> tuple[TargetReader, EpubInspector]:
+        """Build one successor observation's adapters from validated selections."""
         artifacts = CoverArtifactStore(artifact_store_path, create=False)
         target = AudiobookshelfItemReader(
             client_factory=lambda: target_client(connection.endpoint, connection.secret_file, configuration.limits.timeout_seconds),
@@ -1270,69 +1227,29 @@ def create_review_pipeline(
             maximum_bytes=configuration.limits.target_response_bytes,
             timeout_seconds=configuration.limits.timeout_seconds,
         )
-        try:
-            serialized = GenerateProviderRetrySuccessor(
-                target=target, inspector=_IsolatedEpubInspector(artifacts),
-                repository_factory=cast(
-                    "Callable[[], ReportRepository]", repository_factory
-                ),
-                provider_resolver=retry_resolver,
-                mount=mount, limits=configuration.limits,
-                # The staged work id is deliberately discarded here; the seam
-                # types the hook as returning nothing.
-                after_publication=cast(
-                    "Callable[[ReportRepository, MetadataReport], None]",
-                    lambda bound, report: cast(
-                        "_PublicationReceiptRepository", bound
-                    ).stage_provider_retry_successor(
-                        job.source_report_id, report, int(time.time())
-                    ),
-                ),
-                heartbeat=heartbeat,
-            ).run(
-                job.source_report_id, tuple(json.loads(job.lane_ids)),
-                provider_name=job.connection, adapter=job.adapter,
-                generation=job.generation,
-                generation_woken=recovery_state.attempt == 0,
-            )
-        except TargetConnectionError as error:
-            if pipeline is not None:
-                pipeline.hold_connection(job.target_connection, error.code)
-            # This is a target hold, not provider evidence: retain the
-            # completed provider observation and stop successor backoff.
-            raise _TargetConnectionHeld("target connection is held") from None
-        except CurrentnessError as error:
-            # Currentness deliberately hides target details at the report
-            # boundary, but retains the closed target condition as its cause.
-            # Recover that safe taxonomy here so this successor cannot be
-            # mistaken for a provider transient/backoff condition.
-            cause = error.__cause__
-            while cause is not None and not isinstance(cause, TargetConnectionError):
-                cause = cause.__cause__
-            if isinstance(cause, TargetConnectionError):
-                if pipeline is not None:
-                    pipeline.hold_connection(job.target_connection, cause.code)
-                raise _TargetConnectionHeld("target connection is held") from None
-            raise
-        successor = MetadataReport.from_json(serialized)
-        if pipeline is None or not pipeline.run_recovery_successor(
-            successor.report_id, heartbeat
-        ):
-            raise ProviderRetrySuccessorError("provider retry package incomplete")
-        repository = repository_factory()
-        try:
-            package = repository.current_review_package(
-                job.target_connection, job.library, job.item
-            )
-            if package is None or package[1] != successor.report_id:
-                raise ProviderRetrySuccessorError("provider retry package incomplete")
-        finally:
-            repository.close()
+        return target, _IsolatedEpubInspector(artifacts)
+
+    runner_holder: dict[str, ScopedProviderRecoveryRunner] = {}
+    activation = ProviderRecoveryActivation(
+        configuration=configuration,
+        # The concrete repository carries every member of this contract; the
+        # ``publish`` hook alone declares its own protocol as ``object``, which
+        # is a variance mismatch in the seam rather than a missing capability.
+        repository_factory=cast(
+            "Callable[[], ProviderRecoveryRepository]", repository_factory
+        ),
+        observers=retry_observers,
+        provider_resolver=retry_resolver,
+        pipeline=lambda: pipeline_holder.get("pipeline"),
+        enqueue=lambda jobs: runner_holder["runner"].enqueue(jobs),
+        clock=lambda: int(time.time()),
+    )
 
     recovery_cancel = threading.Event()
     recovery_runner = ScopedProviderRecoveryRunner(
         store=provider_recovery, generation=configuration.provider_recovery_generation,
-        retry=retry_member, classify_failure=_classify_provider_recovery_failure,
+        retry=activation.retry_member,
+        classify_failure=_classify_provider_recovery_failure,
         clock=lambda: int(time.time()), cancelled=recovery_cancel.is_set,
         blocked_targets=lambda: frozenset(
             condition.connection for condition in pipeline_holder["pipeline"].connection_conditions()
@@ -1340,54 +1257,11 @@ def create_review_pipeline(
         ),
     )
 
-    def drain_provider_recovery_outbox(
-        repository: SQLiteMetadataReportRepository | None = None,
-    ) -> None:
-        """Deliver exact package cutovers idempotently into recovery state."""
-        owns_repository = repository is None
-        if repository is None:
-            repository = repository_factory()
-        try:
-            while rows := repository.pending_provider_recovery_outbox(limit=100):
-                for row in rows:
-                    # The outbox query projects exactly this column order and
-                    # nullability; see ``pending_provider_recovery_outbox``.
-                    (
-                        outbox_id, target_connection, library_name, item_id,
-                        proposal_id, report_id, case_id, checkpoint, outcome,
-                        created_at,
-                    ) = cast(
-                        "tuple[str, str, str, str, str | None, str, str | None, int | None, str, int]",
-                        row,
-                    )
-                    package = (proposal_id, report_id, case_id, checkpoint, outcome)
-                    current = repository.current_review_package(
-                        target_connection, library_name, item_id,
-                    )
-                    if current == package:
-                        report = MetadataReport.from_json(repository.get(report_id))
-                        if (
-                            report.target.connection != target_connection
-                            or report.target.library != library_name
-                            or report.target.item != item_id
-                        ):
-                            raise ReviewPipelineError("projection")
-                        jobs = _provider_recovery_jobs(
-                            report, package=package, configuration=configuration,
-                            scope=report.target.library,
-                        )
-                        if jobs:
-                            recovery_runner.enqueue(jobs)
-                    repository.complete_provider_recovery_outbox(
-                        outbox_id, delivered_at=max(int(time.time()), created_at),
-                    )
-        finally:
-            if owns_repository:
-                repository.close()
+    runner_holder["runner"] = recovery_runner
 
     def recover_provider(now: int) -> RecoveryRun:
         try:
-            drain_provider_recovery_outbox()
+            activation.drain_outbox()
             return recovery_runner.run_one(now=now)
         except ProviderRecoveryStoreError as error:
             raise ReviewPipelineError("recovery") from error
@@ -1604,8 +1478,8 @@ def create_review_pipeline(
             or (action.stage == "admission" and output_id is None)
         ) or action.report_id is None:
             return
-        drain_provider_recovery_outbox(
-            cast("SQLiteMetadataReportRepository", pipeline_repository)
+        activation.drain_outbox(
+            cast("ProviderRecoveryRepository", pipeline_repository)
         )
 
     def check_connection(connection: str) -> None:
@@ -1655,7 +1529,7 @@ def create_review_pipeline(
     provider_recovery.require_generation_compatible(
         generation=configuration.provider_recovery_generation
     )
-    drain_provider_recovery_outbox()
+    activation.drain_outbox()
     provider_recovery.reconcile_generation(
         generation=configuration.provider_recovery_generation, now=int(time.time())
     )
