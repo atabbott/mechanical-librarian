@@ -27,8 +27,10 @@ def test_every_exact_revision_reference_resolves_for_both_events() -> None:
 
 def test_concurrency_never_cancels_post_merge_verification() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert ("group: public-gate-${{ github.workflow }}-"
-        "${{ github.event.pull_request.number || github.sha }}\n") in workflow
+    assert (
+        "group: public-gate-${{ github.workflow }}-"
+        "${{ github.event.pull_request.number || github.sha }}\n"
+    ) in workflow
     assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in workflow
     assert "cancel-in-progress: true" not in workflow
 
@@ -66,8 +68,10 @@ def test_builds_the_shipped_container_from_the_exact_revision() -> None:
 
 def test_caches_the_pinned_chromium_payload_but_still_verifies_it() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert ("key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-"
-        "${{ steps.playwright.outputs.version }}\n") in workflow
+    assert (
+        "key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-"
+        "${{ steps.playwright.outputs.version }}\n"
+    ) in workflow
     assert workflow.count("path: ~/.cache/ms-playwright") == 2
     assert "uv run playwright install --with-deps chromium" in workflow
     assert "run: uv run python scripts/verify_playwright_browser.py" in workflow
@@ -95,5 +99,7 @@ def test_every_action_is_sha_pinned_without_persisted_credentials() -> None:
         pinned = revision.split()[0]
         assert len(pinned) == 40, reference
         assert all(value in "0123456789abcdef" for value in pinned), reference
-    assert workflow.count("persist-credentials: false") == workflow.count("actions/checkout@")
+    assert workflow.count("persist-credentials: false") == workflow.count(
+        "actions/checkout@"
+    )
     assert "permissions:\n  contents: read\n" in workflow

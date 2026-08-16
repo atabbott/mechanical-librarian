@@ -150,12 +150,18 @@ class ProviderConnectionConfiguration:
 
     def __post_init__(self) -> None:
         _name(self.name, "provider connection name")
-        if self.adapter not in {"google_books", "hardcover", "open_library"} or type(self.enabled) is not bool or type(self.cover_enabled) is not bool:
+        if (
+            self.adapter not in {"google_books", "hardcover", "open_library"}
+            or type(self.enabled) is not bool
+            or type(self.cover_enabled) is not bool
+        ):
             raise ConfigurationError("provider connection is invalid")
         if self.cover_enabled and not self.enabled:
             raise ConfigurationError("cover enablement requires provider enablement")
         if self.adapter == "hardcover":
-            if self.contact_email is not None or self.enabled != (self.secret_file is not None):
+            if self.contact_email is not None or self.enabled != (
+                self.secret_file is not None
+            ):
                 raise ConfigurationError("provider connection is invalid")
         elif self.adapter == "google_books":
             if (
@@ -176,7 +182,10 @@ class ProviderConnectionConfiguration:
             )
         ):
             raise ConfigurationError("provider connection is invalid")
-        if self.adapter in {"google_books", "hardcover"} and self.secret_file is not None:
+        if (
+            self.adapter in {"google_books", "hardcover"}
+            and self.secret_file is not None
+        ):
             _absolute_path(self.secret_file, "provider secret file")
 
     def __repr__(self) -> str:
@@ -192,7 +201,13 @@ class MediaMountConfiguration:
 
     def __post_init__(self) -> None:
         _name(self.name, "media mount name")
-        if type(self.container_path) is not str or not self.container_path.startswith("/") or type(self.service_path) is not str or not self.service_path.startswith("/") or self.read_only is not True:
+        if (
+            type(self.container_path) is not str
+            or not self.container_path.startswith("/")
+            or type(self.service_path) is not str
+            or not self.service_path.startswith("/")
+            or self.read_only is not True
+        ):
             raise ConfigurationError("media mount is invalid")
 
     def __repr__(self) -> str:
@@ -212,7 +227,11 @@ class LibraryConfiguration:
     def __post_init__(self) -> None:
         _name(self.name, "library name")
         _name(self.connection, "library connection")
-        if type(self.library_id) is not str or not 1 <= len(self.library_id) <= 128 or self.media_kind not in {"book", "ebook", "audiobook"}:
+        if (
+            type(self.library_id) is not str
+            or not 1 <= len(self.library_id) <= 128
+            or self.media_kind not in {"book", "ebook", "audiobook"}
+        ):
             raise ConfigurationError("library is invalid")
         if self.mount is not None:
             _name(self.mount, "library mount")
@@ -222,21 +241,27 @@ class LibraryConfiguration:
             or self.provider_connections
             != tuple(sorted(set(self.provider_connections)))
         ):
-            raise ConfigurationError("library provider references are duplicated or invalid")
+            raise ConfigurationError(
+                "library provider references are duplicated or invalid"
+            )
         for value in self.provider_connections:
             _name(value, "library provider reference")
         if self.policy_override is not None:
             if type(self.policy_override) is not dict:
                 raise ConfigurationError("library policy override is invalid")
             try:
-                resolve_policy(MetadataPolicyProfile.builtin(), self.name, self.policy_override)
+                resolve_policy(
+                    MetadataPolicyProfile.builtin(), self.name, self.policy_override
+                )
             except MetadataPolicyError as error:
                 # The profile and the library name are already exact here, so
                 # the override is the only value under test and
                 # ``MetadataPolicyError`` is the only refusal ``resolve_policy``
                 # raises. Anything else is a fault in the builtin profile or in
                 # this validation, which is not an invalid override.
-                raise ConfigurationError("library policy override is invalid") from error
+                raise ConfigurationError(
+                    "library policy override is invalid"
+                ) from error
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,10 +273,14 @@ class ReportLimits:
 
     def __post_init__(self) -> None:
         if (
-            type(self.target_response_bytes) is not int or not 1_024 <= self.target_response_bytes <= 4_194_304
-            or type(self.provider_response_bytes) is not int or not 1_024 <= self.provider_response_bytes <= 262_144
-            or type(self.source_archive_bytes) is not int or not 1_024 <= self.source_archive_bytes <= 268_435_456
-            or type(self.timeout_seconds) is not int or not 1 <= self.timeout_seconds <= 60
+            type(self.target_response_bytes) is not int
+            or not 1_024 <= self.target_response_bytes <= 4_194_304
+            or type(self.provider_response_bytes) is not int
+            or not 1_024 <= self.provider_response_bytes <= 262_144
+            or type(self.source_archive_bytes) is not int
+            or not 1_024 <= self.source_archive_bytes <= 268_435_456
+            or type(self.timeout_seconds) is not int
+            or not 1 <= self.timeout_seconds <= 60
         ):
             raise ConfigurationError("report limits are invalid")
 
@@ -274,7 +303,10 @@ class ApplicationConfiguration:
         # generation.  There is no file watcher, hash, or environment override:
         # changing credentials or provider configuration requires an increment
         # and process restart before a dormant provider may be considered again.
-        if type(self.provider_recovery_generation) is not int or self.provider_recovery_generation < 1:
+        if (
+            type(self.provider_recovery_generation) is not int
+            or self.provider_recovery_generation < 1
+        ):
             raise ConfigurationError("provider recovery generation is invalid")
         if self.review is not None and type(self.review) is not ReviewWebConfiguration:
             raise ConfigurationError("review web configuration is invalid")
@@ -285,7 +317,9 @@ class ApplicationConfiguration:
             (self.providers, ProviderConnectionConfiguration, "provider connections"),
         )
         for values, expected, label in typed:
-            if type(values) is not tuple or any(type(value) is not expected for value in values):
+            if type(values) is not tuple or any(
+                type(value) is not expected for value in values
+            ):
                 raise ConfigurationError(f"{label} are invalid")
             names = tuple(value.name for value in values)
             if names != tuple(sorted(set(names))):
@@ -294,26 +328,51 @@ class ApplicationConfiguration:
         mount_names = {value.name for value in self.mounts}
         provider_names = {value.name for value in self.providers}
         for library in self.libraries:
-            if library.connection not in connection_names or (library.mount is not None and library.mount not in mount_names) or not set(library.provider_connections).issubset(provider_names):
+            if (
+                library.connection not in connection_names
+                or (library.mount is not None and library.mount not in mount_names)
+                or not set(library.provider_connections).issubset(provider_names)
+            ):
                 raise ConfigurationError("library references are invalid")
 
     def __repr__(self) -> str:
         return "ApplicationConfiguration(<redacted>)"
 
-    def select(self, connection: str, library: str) -> tuple[TargetConnectionConfiguration, LibraryConfiguration, MediaMountConfiguration | None, tuple[ProviderConnectionConfiguration, ...]]:
-        matches = tuple(value for value in self.libraries if value.name == library and value.connection == connection)
+    def select(
+        self, connection: str, library: str
+    ) -> tuple[
+        TargetConnectionConfiguration,
+        LibraryConfiguration,
+        MediaMountConfiguration | None,
+        tuple[ProviderConnectionConfiguration, ...],
+    ]:
+        matches = tuple(
+            value
+            for value in self.libraries
+            if value.name == library and value.connection == connection
+        )
         if len(matches) != 1:
             raise ConfigurationError("requested connection or library is unavailable")
         selected = matches[0]
         target = next(value for value in self.connections if value.name == connection)
-        mount = None if selected.mount is None else next(value for value in self.mounts if value.name == selected.mount)
+        mount = (
+            None
+            if selected.mount is None
+            else next(value for value in self.mounts if value.name == selected.mount)
+        )
         providers_by_name = {value.name: value for value in self.providers}
-        providers = tuple(providers_by_name[name] for name in sorted(selected.provider_connections))
+        providers = tuple(
+            providers_by_name[name] for name in sorted(selected.provider_connections)
+        )
         return target, selected, mount, providers
 
 
 __all__ = [
-    "ApplicationConfiguration", "ConfigurationError", "LibraryConfiguration",
-    "MediaMountConfiguration", "ProviderConnectionConfiguration", "ReportLimits",
+    "ApplicationConfiguration",
+    "ConfigurationError",
+    "LibraryConfiguration",
+    "MediaMountConfiguration",
+    "ProviderConnectionConfiguration",
+    "ReportLimits",
     "TargetConnectionConfiguration",
 ]

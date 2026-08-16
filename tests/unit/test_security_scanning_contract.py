@@ -106,7 +106,9 @@ def test_an_expired_acceptance_fails() -> None:
     document = _register(
         f'id = "GHSA-0000-0000-0001"\nignoreUntil = 2026-08-14\n{_REASON}'
     )
-    assert register_failures(document, _TODAY) == ("IgnoredVulns[GHSA-0000-0000-0001]: acceptance expired on 2026-08-14",)
+    assert register_failures(document, _TODAY) == (
+        "IgnoredVulns[GHSA-0000-0000-0001]: acceptance expired on 2026-08-14",
+    )
 
 
 def test_an_acceptance_expiring_today_has_already_expired() -> None:
@@ -142,8 +144,12 @@ def test_an_acceptance_without_an_expiry_fails() -> None:
 
 
 def test_a_repository_wide_loosening_fails() -> None:
-    document = tomllib.loads('[[PackageOverrides]]\nname = "starlette"\nignore = true\n')
-    assert register_failures(document, _TODAY) == ("PackageOverrides: only [[IgnoredVulns]] may appear in the register",)
+    document = tomllib.loads(
+        '[[PackageOverrides]]\nname = "starlette"\nignore = true\n'
+    )
+    assert register_failures(document, _TODAY) == (
+        "PackageOverrides: only [[IgnoredVulns]] may appear in the register",
+    )
 
 
 def test_the_committed_register_holds_no_expired_or_open_ended_acceptance() -> None:
@@ -214,7 +220,9 @@ def declared_permissions(source: str) -> tuple[tuple[int, str, str], ...]:
         indent = len(line) - len(line.lstrip())
         inline = _without_comment(line.strip().removeprefix("permissions:"))
         if inline:
-            declared.extend((indent, scope, value) for scope, value in _inline_permissions(inline))
+            declared.extend(
+                (indent, scope, value) for scope, value in _inline_permissions(inline)
+            )
             continue
         for following in lines[position + 1 :]:
             if not following.strip():
@@ -237,7 +245,9 @@ def action_pin_failures(name: str, source: str) -> tuple[str, ...]:
         reference = stripped.removeprefix("uses:").strip()
         _, separator, revision = reference.partition("@")
         pinned = revision.split()[0] if separator and revision.split() else ""
-        if len(pinned) != 40 or any(value not in "0123456789abcdef" for value in pinned):
+        if len(pinned) != 40 or any(
+            value not in "0123456789abcdef" for value in pinned
+        ):
             failures.append(f"{name}: {reference} is not pinned to a commit")
         elif "#" not in revision:
             failures.append(f"{name}: {reference} carries no version comment")
@@ -253,7 +263,11 @@ def checkout_credential_failures(name: str, source: str) -> tuple[str, ...]:
 
 
 def default_permission_failures(name: str, source: str) -> tuple[str, ...]:
-    top = tuple((scope, value) for indent, scope, value in declared_permissions(source) if indent == 0)
+    top = tuple(
+        (scope, value)
+        for indent, scope, value in declared_permissions(source)
+        if indent == 0
+    )
     if top != (("contents", "read"),):
         return (f"{name}: workflow permissions must be exactly contents: read",)
     return ()
@@ -306,7 +320,9 @@ def test_a_yaml_workflow_with_a_mutable_action_reference_is_flagged() -> None:
 
 def test_a_pin_without_its_version_comment_is_flagged() -> None:
     pinned = "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5"
-    name, source = _probe("bare.yaml", f"jobs:\n  a:\n    steps:\n      - uses: {pinned}\n")
+    name, source = _probe(
+        "bare.yaml", f"jobs:\n  a:\n    steps:\n      - uses: {pinned}\n"
+    )
     assert len(action_pin_failures(name, source)) == 1
 
 
@@ -353,7 +369,9 @@ def test_every_write_scope_is_rejected_not_only_the_familiar_ones(scope: str) ->
 
 def test_the_write_all_shorthand_is_rejected() -> None:
     name, source = _probe("shorthand.yaml", "permissions: write-all\n")
-    assert write_permission_failures(name, source) == ("shorthand.yaml: workflow permissions grant all: write",)
+    assert write_permission_failures(name, source) == (
+        "shorthand.yaml: workflow permissions grant all: write",
+    )
 
 
 def test_the_read_all_shorthand_is_accepted() -> None:
@@ -367,7 +385,9 @@ def test_a_named_allow_list_entry_admits_exactly_its_own_scope() -> None:
         "permissions:\n  contents: read\n\njobs:\n  a:\n    permissions:\n      security-events: write\n      issues: write\n",
     )
     permitted = {("future.yaml", "security-events"): "CodeQL uploads results."}
-    assert write_permission_failures(name, source, permitted) == ("future.yaml: job permissions grant issues: write",)
+    assert write_permission_failures(name, source, permitted) == (
+        "future.yaml: job permissions grant issues: write",
+    )
 
 
 def test_a_workflow_without_read_only_defaults_is_flagged() -> None:
@@ -405,5 +425,5 @@ def test_every_permitted_write_scope_names_a_workflow_scope_and_reason() -> None
     # Empty today, so the loop stays a loop: parameterizing an empty mapping
     # would collect no case at all and retire the guard silently.
     for (workflow, scope), reason in PERMITTED_WRITE_SCOPES.items():
-        assert (workflow.strip() and scope.strip())
+        assert workflow.strip() and scope.strip()
         assert len(reason.strip()) >= MIN_REASON_CHARACTERS

@@ -42,9 +42,7 @@ def test_cli_failure_is_path_free_and_bounded() -> None:
         private_path = Path(directory) / "missing"
         diagnostics = StringIO()
         with redirect_stderr(diagnostics):
-            result = cli(
-                ("--path", str(private_path), "--platform", "darwin-arm64")
-            )
+            result = cli(("--path", str(private_path), "--platform", "darwin-arm64"))
     assert result == 1
     assert '"reason":"browser_verification_failed"' in diagnostics.getvalue()
     assert str(private_path) not in diagnostics.getvalue()

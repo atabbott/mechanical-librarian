@@ -38,8 +38,12 @@ class LocalTimingStore:
             return
         with self._lock:
             values = [*self.list(), timing][-MAX_TIMINGS:]
-            self._write({"schema_version": "stage-timings-v1",
-                         "timings": [value.to_data() for value in values]})
+            self._write(
+                {
+                    "schema_version": "stage-timings-v1",
+                    "timings": [value.to_data() for value in values],
+                }
+            )
 
     def list(self) -> tuple[StageTiming, ...]:
         if not self._enabled:
@@ -53,20 +57,30 @@ class LocalTimingStore:
                 information = self._path.lstat()
             except FileNotFoundError:
                 return ()
-            if (not stat.S_ISREG(information.st_mode)
-                    or stat.S_IMODE(information.st_mode) != 0o600
-                    or information.st_uid != os.geteuid()
-                    or information.st_size > MAX_SUPPORT_BYTES):
+            if (
+                not stat.S_ISREG(information.st_mode)
+                or stat.S_IMODE(information.st_mode) != 0o600
+                or information.st_uid != os.geteuid()
+                or information.st_size > MAX_SUPPORT_BYTES
+            ):
                 raise OperationsError("timing_unavailable")
             try:
                 value = json.loads(self._path.read_text(encoding="utf-8"))
-                if type(value) is not dict or set(value) != {"schema_version", "timings"} \
-                        or value["schema_version"] != "stage-timings-v1" \
-                        or type(value["timings"]) is not list \
-                        or len(value["timings"]) > MAX_TIMINGS:
+                if (
+                    type(value) is not dict
+                    or set(value) != {"schema_version", "timings"}
+                    or value["schema_version"] != "stage-timings-v1"
+                    or type(value["timings"]) is not list
+                    or len(value["timings"]) > MAX_TIMINGS
+                ):
                     raise OperationsError("timing_unavailable")
                 return tuple(StageTiming.from_data(item) for item in value["timings"])
-            except (OSError, UnicodeError, json.JSONDecodeError, OperationsError) as error:
+            except (
+                OSError,
+                UnicodeError,
+                json.JSONDecodeError,
+                OperationsError,
+            ) as error:
                 raise OperationsError("timing_unavailable") from error
 
     def _write(self, value: dict[str, object]) -> None:
@@ -81,14 +95,19 @@ class LocalTimingStore:
         except FileNotFoundError:
             pass
         else:
-            if (not stat.S_ISREG(incomplete.st_mode)
-                    or incomplete.st_uid != os.geteuid()
-                    or stat.S_IMODE(incomplete.st_mode) != 0o600
-                    or incomplete.st_size > MAX_SUPPORT_BYTES):
+            if (
+                not stat.S_ISREG(incomplete.st_mode)
+                or incomplete.st_uid != os.geteuid()
+                or stat.S_IMODE(incomplete.st_mode) != 0o600
+                or incomplete.st_size > MAX_SUPPORT_BYTES
+            ):
                 raise OperationsError("timing_unavailable")
             temporary.unlink()
-        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL
-                             | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        descriptor = os.open(
+            temporary,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
         try:
             remaining = memoryview(payload)
             while remaining:
@@ -102,8 +121,7 @@ class LocalTimingStore:
         os.replace(temporary, self._path)
         root = os.open(
             self._path.parent,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
         )
         try:
             os.fsync(root)
@@ -126,13 +144,27 @@ class SupportBundle:
                 raise OperationsError("support_configuration")
             sections[name] = _redact(producer(), depth=0)
         payload: dict[str, object] = {
-            "schema_version": "support-bundle-v1", "sections": sections,
+            "schema_version": "support-bundle-v1",
+            "sections": sections,
         }
         encoded = canonical_support(payload)
-        return {"bytes": len(encoded), "excluded": [
-            "auth", "covers", "databases", "environment", "excerpts",
-            "media", "metadata_values", "private_paths", "recovery_store", "secrets",
-        ], "payload": payload, "schema_version": "support-preview-v1"}
+        return {
+            "bytes": len(encoded),
+            "excluded": [
+                "auth",
+                "covers",
+                "databases",
+                "environment",
+                "excerpts",
+                "media",
+                "metadata_values",
+                "private_paths",
+                "recovery_store",
+                "secrets",
+            ],
+            "payload": payload,
+            "schema_version": "support-preview-v1",
+        }
 
     def export(self) -> bytes:
         # Re-run every producer and redaction at export; the preview is never

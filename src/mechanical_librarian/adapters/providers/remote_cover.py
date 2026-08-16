@@ -59,24 +59,39 @@ class CoverDeadline:
 
     def next_attempt(self, *, now: float | None = None) -> "CoverDeadline":
         started = time.monotonic() if now is None else now
-        return type(self)(self.aggregate_deadline, min(self.aggregate_deadline, started + 20.0))
+        return type(self)(
+            self.aggregate_deadline, min(self.aggregate_deadline, started + 20.0)
+        )
 
     def remaining_phase(self, *, now: float | None = None) -> float:
         current = time.monotonic() if now is None else now
-        value = min(5.0, self.aggregate_deadline - current, self.attempt_deadline - current)
+        value = min(
+            5.0, self.aggregate_deadline - current, self.attempt_deadline - current
+        )
         if value <= 0:
             raise RemoteCoverTimeout("aggregate deadline elapsed")
         return value
 
 
-def _pinned_address(url: str, deadline: float | CoverDeadline | None = None) -> tuple[str, str, str]:
+def _pinned_address(
+    url: str, deadline: float | CoverDeadline | None = None
+) -> tuple[str, str, str]:
     _validate_url(url)
     parts = _parts(url)
-    if parts.scheme != "https" or not parts.hostname or parts.port not in (None, 443) or parts.username or parts.password or parts.fragment:
+    if (
+        parts.scheme != "https"
+        or not parts.hostname
+        or parts.port not in (None, 443)
+        or parts.username
+        or parts.password
+        or parts.fragment
+    ):
         raise RemoteCoverError("unsafe remote cover")
     host = parts.hostname
     addresses = _resolve(host, deadline)
-    if not addresses or any(not ipaddress.ip_address(item[4][0]).is_global for item in addresses):
+    if not addresses or any(
+        not ipaddress.ip_address(item[4][0]).is_global for item in addresses
+    ):
         raise RemoteCoverError("unsafe remote cover")
     selected = addresses[0][4][0]
     return host, selected, _parts(url).path or "/"
@@ -84,11 +99,13 @@ def _pinned_address(url: str, deadline: float | CoverDeadline | None = None) -> 
 
 def _resolve(host: str, deadline: float | CoverDeadline | None) -> list[_AddressInfo]:
     result: list[object] = []
+
     def resolve() -> None:
         try:
             result.append(socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM))
         except BaseException as error:
             result.append(error)
+
     worker = threading.Thread(target=resolve, daemon=True)
     worker.start()
     worker.join(_remaining(deadline))
@@ -100,7 +117,12 @@ def _resolve(host: str, deadline: float | CoverDeadline | None) -> list[_Address
 
 
 def _validate_url(url: str) -> None:
-    if type(url) is not str or not url or any(ord(value) < 0x21 or ord(value) > 0x7E for value in url) or "\\" in url:
+    if (
+        type(url) is not str
+        or not url
+        or any(ord(value) < 0x21 or ord(value) > 0x7E for value in url)
+        or "\\" in url
+    ):
         raise RemoteCoverError("unsafe remote cover")
 
 
@@ -118,13 +140,17 @@ def _remaining(deadline: float | CoverDeadline | None) -> float:
         return deadline.remaining_phase()
     # The ``CoverDeadline`` form already returned above, so the remaining
     # non-``None`` form is the plain float deadline.
-    value = 5.0 if deadline is None else min(5.0, cast(float, deadline) - time.monotonic())
+    value = (
+        5.0 if deadline is None else min(5.0, cast(float, deadline) - time.monotonic())
+    )
     if value <= 0:
         raise RemoteCoverTimeout("aggregate deadline elapsed")
     return value
 
 
-def _receive(secured: ssl.SSLSocket, maximum: int, deadline: float | CoverDeadline | None) -> bytes:
+def _receive(
+    secured: ssl.SSLSocket, maximum: int, deadline: float | CoverDeadline | None
+) -> bytes:
     secured.settimeout(_remaining(deadline))
     value = secured.recv(maximum)
     return value
@@ -156,7 +182,16 @@ def _response_headers(
         if value.startswith(" "):
             value = value[1:]
         lowered = name.lower()
-        if not separator or not name or lowered in headers or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-" for character in lowered) or value != value.strip(" \t"):
+        if (
+            not separator
+            or not name
+            or lowered in headers
+            or any(
+                character not in "abcdefghijklmnopqrstuvwxyz0123456789-"
+                for character in lowered
+            )
+            or value != value.strip(" \t")
+        ):
             raise RemoteCoverError("remote cover response is invalid")
         headers[lowered] = value
     return int(match.group(1)), headers
@@ -175,7 +210,11 @@ def _response_body(
             raise RemoteCoverError("remote cover response is invalid")
         body = _chunked_body(secured, deadline)
     elif length_text is not None:
-        if not length_text.isascii() or not length_text.isdigit() or len(length_text) > 10:
+        if (
+            not length_text.isascii()
+            or not length_text.isdigit()
+            or len(length_text) > 10
+        ):
             raise RemoteCoverError("remote cover response is invalid")
         length = int(length_text)
         if length > MAX_BYTES:
@@ -220,13 +259,19 @@ def _framing_line(
     return line
 
 
-def _chunked_body(secured: ssl.SSLSocket, deadline: float | CoverDeadline | None) -> bytes:
+def _chunked_body(
+    secured: ssl.SSLSocket, deadline: float | CoverDeadline | None
+) -> bytes:
     buffer = bytearray()
     output = bytearray()
     while True:
         line = _framing_line(secured, buffer, deadline)
         size_text = line.split(b";", 1)[0]
-        if not size_text or len(size_text) > 8 or any(value not in b"0123456789abcdefABCDEF" for value in size_text):
+        if (
+            not size_text
+            or len(size_text) > 8
+            or any(value not in b"0123456789abcdefABCDEF" for value in size_text)
+        ):
             raise RemoteCoverError("remote cover response is invalid")
         size = int(size_text, 16)
         if size == 0:
@@ -255,7 +300,14 @@ def _redirect_target(current: str, location: str | None) -> str:
         raise RemoteCoverError("unsafe remote cover") from error
     _validate_url(target)
     parts = _parts(target)
-    if parts.scheme != "https" or not parts.hostname or parts.port not in (None, 443) or parts.username or parts.password or parts.fragment:
+    if (
+        parts.scheme != "https"
+        or not parts.hostname
+        or parts.port not in (None, 443)
+        or parts.username
+        or parts.password
+        or parts.fragment
+    ):
         raise RemoteCoverError("remote redirect is invalid")
     return target
 
@@ -288,7 +340,9 @@ def _pinned_fetch(
         with context.wrap_socket(raw, server_hostname=host) as secured:
             secured.settimeout(_remaining(deadline))
             agent = "" if user_agent is None else f"User-Agent: {user_agent}\r\n"
-            request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\n{agent}Accept-Encoding: identity\r\nConnection: close\r\n\r\n".encode("ascii")
+            request = f"GET {path} HTTP/1.1\r\nHost: {host}\r\n{agent}Accept-Encoding: identity\r\nConnection: close\r\n\r\n".encode(
+                "ascii"
+            )
             secured.sendall(request)
             status, headers = _response_headers(secured, deadline)
             if status in _REDIRECT_STATUSES:
@@ -313,18 +367,15 @@ def fetch_remote_cover(
     user_agent: str | None = None,
 ) -> RemoteCover:
     """One no-retry request chain; every redirect is revalidated before use."""
-    if (
-        type(allow_redirects) is not bool
-        or (
-            user_agent is not None
-            and (
-                type(user_agent) is not str
-                or not 1 <= len(user_agent) <= 512
-                or user_agent.strip() != user_agent
-                or any(
-                    ord(character) < 0x20 or ord(character) > 0x7E
-                    for character in user_agent
-                )
+    if type(allow_redirects) is not bool or (
+        user_agent is not None
+        and (
+            type(user_agent) is not str
+            or not 1 <= len(user_agent) <= 512
+            or user_agent.strip() != user_agent
+            or any(
+                ord(character) < 0x20 or ord(character) > 0x7E
+                for character in user_agent
             )
         )
     ):
@@ -359,4 +410,9 @@ def fetch_remote_cover(
         raise RemoteCoverError("remote cover unavailable") from error
 
 
-__all__ = ["RemoteCover", "RemoteCoverError", "RemoteCoverTimeout", "fetch_remote_cover"]
+__all__ = [
+    "RemoteCover",
+    "RemoteCoverError",
+    "RemoteCoverTimeout",
+    "fetch_remote_cover",
+]

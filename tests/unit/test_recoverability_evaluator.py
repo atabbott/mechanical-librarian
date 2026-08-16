@@ -17,7 +17,9 @@ SPEC.loader.exec_module(MODULE)
 
 
 def load():
-    return json.loads((ROOT / "tests/support/recoverability_mini_corpus.json").read_text())
+    return json.loads(
+        (ROOT / "tests/support/recoverability_mini_corpus.json").read_text()
+    )
 
 
 def test_categories_exclusions_and_arithmetic_are_exhaustive():
@@ -26,9 +28,18 @@ def test_categories_exclusions_and_arithmetic_are_exhaustive():
     assert set(supported["categories"]) == set(MODULE.CATEGORIES)
     assert sum(supported["categories"].values()) == supported["readable_denominator"]
     assert result["excluded"] == {state: 1 for state in MODULE.EXCLUDED}
-    assert result["isbn"]["counts"] == {"accepted": 1, "associated": 2, "unrelated": 1, "invalid": 1, "unresolved": 1}
+    assert result["isbn"]["counts"] == {
+        "accepted": 1,
+        "associated": 2,
+        "unrelated": 1,
+        "invalid": 1,
+        "unresolved": 1,
+    }
     assert result["isbn"]["accepted_recall"] == {"numerator": 1, "denominator": 6}
-    assert result["inspection_failure_subtypes"] == {"whole_item": 1, "extraction_stage": 0}
+    assert result["inspection_failure_subtypes"] == {
+        "whole_item": 1,
+        "extraction_stage": 0,
+    }
 
 
 @pytest.mark.parametrize("comparison", ("complete", "semantic", "partial"))
@@ -48,9 +59,24 @@ def test_exploratory_positive_negative_and_ambiguous_rows_never_change_supported
 def test_whole_item_failure_is_not_exploratory_recoverable_evidence():
     document = load()
     before = MODULE.evaluate(document)["exploratory_recoverable_recall"]["denominator"]
-    row = next(row for row in document["rows"] if row.get("field") == "edition" and row.get("state") == "value")
-    row.update({"inspection": "failure", "source": "unavailable", "extraction": "not_attempted", "projection": "not_projected", "comparison": "none"})
-    assert MODULE.evaluate(document)["exploratory_recoverable_recall"]["denominator"] == before - 1
+    row = next(
+        row
+        for row in document["rows"]
+        if row.get("field") == "edition" and row.get("state") == "value"
+    )
+    row.update(
+        {
+            "inspection": "failure",
+            "source": "unavailable",
+            "extraction": "not_attempted",
+            "projection": "not_projected",
+            "comparison": "none",
+        }
+    )
+    assert (
+        MODULE.evaluate(document)["exploratory_recoverable_recall"]["denominator"]
+        == before - 1
+    )
 
 
 @pytest.mark.parametrize(
@@ -72,7 +98,15 @@ def test_stage_tuples_reject_every_cross_stage_contradiction(key, value):
 
 def test_extraction_stage_failure_is_categorized_as_an_inspection_failure():
     extraction_failure = load()
-    extraction_failure["rows"][2].update({"inspection": "success", "source": "present", "extraction": "failure", "projection": "not_projected", "comparison": "none"})
+    extraction_failure["rows"][2].update(
+        {
+            "inspection": "success",
+            "source": "present",
+            "extraction": "failure",
+            "projection": "not_projected",
+            "comparison": "none",
+        }
+    )
     assert MODULE._category(extraction_failure["rows"][2]) == "inspection_failure"
 
 
@@ -127,13 +161,21 @@ def test_private_values_paths_and_unicode_identifiers_are_rejected_or_omitted():
     "payload",
     (
         b"x" * (MODULE.MAX_BYTES + 1),
-        b'{"schema":"a","schema":"b"}', b'{"number":1.1}', b'{"number":NaN}',
-        b'{"number":1234567890123}', b'\xff',
+        b'{"schema":"a","schema":"b"}',
+        b'{"number":1.1}',
+        b'{"number":NaN}',
+        b'{"number":1234567890123}',
+        b"\xff",
         (b"[" * 22) + (b"]" * 22),
     ),
     ids=(
-        "oversized_file", "duplicate_key", "fractional", "not_a_number",
-        "oversized_integer", "invalid_utf8", "deep_nesting",
+        "oversized_file",
+        "duplicate_key",
+        "fractional",
+        "not_a_number",
+        "oversized_integer",
+        "invalid_utf8",
+        "deep_nesting",
     ),
 )
 def test_loader_rejects_size_depth_utf8_duplicate_and_numeric_abuse(payload):
@@ -150,8 +192,17 @@ def test_cli_fails_without_echoing_private_path():
         target = Path(directory) / "output.json"
         source.write_text('{"secret":"/private/library/Secret"}', encoding="utf-8")
         result = subprocess.run(
-            ["python3", str(ROOT / "scripts/recoverability_evaluator.py"), "--input", str(source), "--output", str(target)],
-            capture_output=True, text=True, check=False,
+            [
+                "python3",
+                str(ROOT / "scripts/recoverability_evaluator.py"),
+                "--input",
+                str(source),
+                "--output",
+                str(target),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
         )
         assert result.returncode != 0
         assert result.stderr == "Recoverability evaluation failed safely.\n"

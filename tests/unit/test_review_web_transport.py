@@ -51,7 +51,9 @@ def web() -> Iterator[ReviewWebContext[FakeReviewRepository]]:
     yield from review_web_context(FakeReviewRepository)
 
 
-def test_only_liveness_and_login_are_anonymous(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_only_liveness_and_login_are_anonymous(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     live = web.client.get("/health/live")
     assert live.status_code == 200
     assert len(live.content) <= 3
@@ -64,26 +66,51 @@ def test_only_liveness_and_login_are_anonymous(web: ReviewWebContext[FakeReviewR
     assert denied.headers["cache-control"] == "no-store, private"
 
 
-def test_operational_status_and_support_are_authenticated_bounded_surfaces(web: ReviewWebContext[FakeReviewRepository]) -> None:
-    web.repository.operational_snapshot = lambda: {"signals": [{
-        "kind": "backup_failure", "cause": "backup", "scope": "field",
-        "connection": "primary", "library": "fiction", "category": None,
-        "work_id": "book-1", "field": "title",
-    }]}
+def test_operational_status_and_support_are_authenticated_bounded_surfaces(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    web.repository.operational_snapshot = lambda: {
+        "signals": [
+            {
+                "kind": "backup_failure",
+                "cause": "backup",
+                "scope": "field",
+                "connection": "primary",
+                "library": "fiction",
+                "category": None,
+                "work_id": "book-1",
+                "field": "title",
+            }
+        ]
+    }
     configuration = ReviewWebConfiguration(
         canonical_origin="https://review.test",
         owner_password_hash_file=str(web.hash_path),
         session_lifetime_seconds=600,
     )
     timings = LocalTimingStore(Path(web.temporary.name) / "timings.json")
-    support = SupportBundle((("runtime", lambda: {
-        "status": "degraded", "secret": "never-export",
-    }),))
+    support = SupportBundle(
+        (
+            (
+                "runtime",
+                lambda: {
+                    "status": "degraded",
+                    "secret": "never-export",
+                },
+            ),
+        )
+    )
     web.client.close()
-    web.client = TestClient(create_transport_test_app(
-        web.repository, configuration, clock=lambda: web.now,
-        operational_timings=timings, operational_support=support,
-    ), base_url="https://review.test")
+    web.client = TestClient(
+        create_transport_test_app(
+            web.repository,
+            configuration,
+            clock=lambda: web.now,
+            operational_timings=timings,
+            operational_support=support,
+        ),
+        base_url="https://review.test",
+    )
     web.cleanup.enter_context(web.client)
     assert web.client.get("/health/ready").status_code == 200
     assert web.client.get("/api/v1/operations/status").status_code == 401
@@ -108,7 +135,9 @@ def test_operational_status_and_support_are_authenticated_bounded_surfaces(web: 
     assert failed.json()["error"]["code"] == "operations_unavailable"
 
 
-def test_trust_boundary_failures_match_declared_api_statuses(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_trust_boundary_failures_match_declared_api_statuses(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     bad_host = web.client.get(
         f"/api/v1/review-cases/{web.case.review_case_id}",
         headers={"Host": "elsewhere.invalid"},
@@ -124,7 +153,9 @@ def test_trust_boundary_failures_match_declared_api_statuses(web: ReviewWebConte
     assert bad_origin.json()["error"]["code"] == "origin"
 
 
-def test_host_header_cannot_relabel_a_routed_path_as_a_health_probe(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_host_header_cannot_relabel_a_routed_path_as_a_health_probe(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     # `request.url` is reconstructed from the `Host` header, so a header
     # carrying a path plus a `#` terminator reads as an exact health path
     # on a request the router dispatched somewhere else entirely
@@ -163,7 +194,9 @@ def test_host_header_cannot_relabel_a_routed_path_as_a_health_probe(web: ReviewW
     assert web.client.get("/library").status_code == 200
 
 
-def test_an_encoded_fragment_cannot_borrow_the_health_exemption(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_an_encoded_fragment_cannot_borrow_the_health_exemption(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     # `%23` decodes into the routed ASGI path but still terminates the
     # reconstructed URL's path component, so `/health/live%23x` routes
     # nowhere while `request.url.path` reads as the health endpoint. The
@@ -179,7 +212,9 @@ def test_an_encoded_fragment_cannot_borrow_the_health_exemption(web: ReviewWebCo
     assert probe.text == "ok\n"
 
 
-def test_build_identity_gate_reads_the_routed_path_behind_a_trusted_proxy(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_build_identity_gate_reads_the_routed_path_behind_a_trusted_proxy(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     # Behind a trusted proxy the origin decision moves to `X-Forwarded-Host`
     # while `request.url` keeps following the raw `Host` header, so the two
     # path-based decisions have to be pinned separately: here the trust
@@ -193,9 +228,7 @@ def test_build_identity_gate_reads_the_routed_path_behind_a_trusted_proxy(web: R
     )
     web.client.close()
     web.client = TestClient(
-        create_transport_test_app(
-            web.repository, configuration, clock=lambda: web.now
-        ),
+        create_transport_test_app(web.repository, configuration, clock=lambda: web.now),
         base_url="https://review.test",
         client=("127.0.0.1", 50_000),
     )
@@ -234,7 +267,9 @@ def test_build_identity_gate_reads_the_routed_path_behind_a_trusted_proxy(web: R
     assert accepted.status_code == 204, accepted.text
 
 
-def test_decision_authentication_precedes_required_input_validation(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_decision_authentication_precedes_required_input_validation(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     web.client.cookies.set("ml_session", "malformed")
     denied = web.client.post(
         f"/api/v1/review-cases/{web.case.review_case_id}/decisions",
@@ -245,7 +280,9 @@ def test_decision_authentication_precedes_required_input_validation(web: ReviewW
     assert denied.json()["error"]["code"] == "unauthorized"
 
 
-def test_login_case_evidence_history_and_logout_round_trip(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_login_case_evidence_history_and_logout_round_trip(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     login = web.login()
     cookie = web.client.cookies.get("ml_session")
     assert cookie is not None
@@ -262,11 +299,11 @@ def test_login_case_evidence_history_and_logout_round_trip(web: ReviewWebContext
     assert len(contexts) == len(title["proposed_values"]) + 1
     assert contexts[0]["selection"] == "current"
     assert contexts[0]["evidence"][0]["source"] == "Local library record"
-    assert contexts[0]["rationale"] == "Keep the value currently held by the local library."
-    assert all(
-        context["recommendation"] == "no_recommendation"
-        for context in contexts
+    assert (
+        contexts[0]["rationale"]
+        == "Keep the value currently held by the local library."
     )
+    assert all(context["recommendation"] == "no_recommendation" for context in contexts)
     assert all(
         "{" not in observation["observation"]
         for context in contexts
@@ -277,7 +314,9 @@ def test_login_case_evidence_history_and_logout_round_trip(web: ReviewWebContext
     assert ["insufficient_independent_corroboration"] == contexts[1]["limitations"]
     assert not detail.json()["fields"][-1]["needs_attention"]
     assert "model_advice" not in detail.json()
-    evidence = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}/evidence")
+    evidence = web.client.get(
+        f"/api/v1/review-cases/{web.case.review_case_id}/evidence"
+    )
     history = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}/history")
     assert evidence.status_code == 200
     assert evidence.json()["items"][0]["source"] == "local"
@@ -308,7 +347,9 @@ def test_login_case_evidence_history_and_logout_round_trip(web: ReviewWebContext
     assert denied.status_code == 401
 
 
-def test_logout_persistence_failure_keeps_the_session_active(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_logout_persistence_failure_keeps_the_session_active(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     login = web.login()
     web.repository.revoke_failure = True
     failed = web.client.post(
@@ -318,13 +359,13 @@ def test_logout_persistence_failure_keeps_the_session_active(web: ReviewWebConte
     assert failed.status_code == 503
     assert failed.json()["error"]["code"] == "persistence"
     assert web.client.cookies.get("ml_session") is not None
-    detail = web.client.get(
-        f"/api/v1/review-cases/{web.case.review_case_id}"
-    )
+    detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}")
     assert detail.status_code == 200
 
 
-def test_logout_concurrent_revocation_is_unauthorized_not_an_outage(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_logout_concurrent_revocation_is_unauthorized_not_an_outage(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     login = web.login()
     web.repository.revoke_result = "unauthorized"
     failed = web.client.post(
@@ -336,7 +377,9 @@ def test_logout_concurrent_revocation_is_unauthorized_not_an_outage(web: ReviewW
     assert "set-cookie" not in failed.headers
 
 
-def test_logout_maps_expired_and_malformed_sessions_to_unauthorized(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_logout_maps_expired_and_malformed_sessions_to_unauthorized(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     web.login()
     web.now += 601
     expired = web.client.post(
@@ -358,11 +401,11 @@ def test_logout_maps_expired_and_malformed_sessions_to_unauthorized(web: ReviewW
     assert "set-cookie" not in malformed.headers
 
 
-def test_absent_decision_case_is_not_a_persistence_outage(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_absent_decision_case_is_not_a_persistence_outage(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     login = web.login()
-    detail = web.client.get(
-        f"/api/v1/review-cases/{web.case.review_case_id}"
-    ).json()
+    detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}").json()
     field = detail["fields"][0]
     payload = {
         "destination": field["destination"],
@@ -403,15 +446,15 @@ def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
     web.client.close()
     web.client = TestClient(
         create_transport_test_app(
-            web.repository, configuration, clock=lambda: web.now,
+            web.repository,
+            configuration,
+            clock=lambda: web.now,
             operational_timings=timings,
         ),
         base_url="https://review.test",
     )
     login = web.login()
-    detail = web.client.get(
-        f"/api/v1/review-cases/{web.case.review_case_id}"
-    ).json()
+    detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}").json()
     field = detail["fields"][0]
     payload = {
         "destination": field["destination"],
@@ -438,14 +481,14 @@ def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["outcome"] == "accept"
     assert [
-            (value.stage, value.wait_class, value.duration_ms)
-            for value in timings.list()
-        ] == [("human_wait", "owner", 10_000)]
-    refreshed = web.client.get(
-        f"/api/v1/review-cases/{web.case.review_case_id}"
-    ).json()
+        (value.stage, value.wait_class, value.duration_ms) for value in timings.list()
+    ] == [("human_wait", "owner", 10_000)]
+    refreshed = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}").json()
     assert not refreshed["fields"][0]["needs_attention"]
-    assert refreshed["fields"][0]["human_decision"]["decision_id"] == accepted.json()["decision_id"]
+    assert (
+        refreshed["fields"][0]["human_decision"]["decision_id"]
+        == accepted.json()["decision_id"]
+    )
     web.repository.case_current = False
     web.now += 1
     replay = web.client.post(
@@ -475,18 +518,20 @@ def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
     assert len(web.repository.decisions) == 1
 
 
-def test_review_page_rotates_one_memory_only_csrf_token(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_review_page_rotates_one_memory_only_csrf_token(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     login = web.login()
     inactive = web.client.get("/api/v1/review-preparation")
     assert inactive.status_code == 200, inactive.text
     assert inactive.json() == {
-            "schema_version": "review-preparation-v1",
-            "libraries": [],
-            "paused": False,
-            "active": False,
-            "actionable": False,
-            "connections": [],
-        }
+        "schema_version": "review-preparation-v1",
+        "libraries": [],
+        "paused": False,
+        "active": False,
+        "actionable": False,
+        "connections": [],
+    }
     page = web.client.get(f"/review/{web.case.review_case_id}")
     assert page.status_code == 200, page.text
     match = re.search(r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', page.text)
@@ -495,13 +540,11 @@ def test_review_page_rotates_one_memory_only_csrf_token(web: ReviewWebContext[Fa
     browser_csrf = match.group(1)
     assert browser_csrf != login["csrf_token"]
     assert f'data-build-identity="{TEST_REACT_BUILD_IDENTITY}"' in page.text
-    script = web.client.get(
-        "/assets/review-app/assets/index-deadbeef.js"
-    )
+    script = web.client.get("/assets/review-app/assets/index-deadbeef.js")
     assert script.status_code == 200
-    field = web.client.get(
-        f"/api/v1/review-cases/{web.case.review_case_id}"
-    ).json()["fields"][0]
+    field = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}").json()[
+        "fields"
+    ][0]
     payload = {
         "destination": field["destination"],
         "outcome": "keep_current",
@@ -561,8 +604,10 @@ def test_authenticated_page_preserves_expired_rotation_as_unauthorized(
         assert denied.json()["error"]["code"] == "unauthorized", path
 
 
-def test_malformed_case_decision_body_is_bounded_before_validation(web: ReviewWebContext[FakeReviewRepository]) -> None:
-    oversized = b'{' + b'"private":"' + b'x' * 9_000 + b'"}'
+def test_malformed_case_decision_body_is_bounded_before_validation(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    oversized = b"{" + b'"private":"' + b"x" * 9_000 + b'"}'
     declared = web.client.post(
         "/api/v1/review-cases/not-a-case/decisions",
         headers={**web.origin, "Content-Type": "application/json"},
@@ -579,7 +624,9 @@ def test_malformed_case_decision_body_is_bounded_before_validation(web: ReviewWe
     assert b"private" not in streamed.content
 
 
-def test_origin_host_proxy_expiry_and_throttle_fail_closed(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_origin_host_proxy_expiry_and_throttle_fail_closed(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     invalid_origin = web.client.post(
         "/api/v1/session/login",
         headers={"Origin": "https://evil.test"},
@@ -593,9 +640,7 @@ def test_origin_host_proxy_expiry_and_throttle_fail_closed(web: ReviewWebContext
         "x-frame-options",
     ):
         assert name in invalid_origin.headers
-    forwarded = web.client.get(
-        "/login", headers={"X-Forwarded-Host": "review.test"}
-    )
+    forwarded = web.client.get("/login", headers={"X-Forwarded-Host": "review.test"})
     assert forwarded.status_code == 400
     for name in (
         "cache-control",
@@ -624,7 +669,9 @@ def test_origin_host_proxy_expiry_and_throttle_fail_closed(web: ReviewWebContext
     assert expired.status_code == 401
 
 
-def test_openapi_is_deterministic_and_secret_free(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_openapi_is_deterministic_and_secret_free(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     anonymous = web.client.get("/api/v1/openapi.json")
     assert anonymous.status_code == 401
     web.login()
@@ -632,13 +679,17 @@ def test_openapi_is_deterministic_and_secret_free(web: ReviewWebContext[FakeRevi
     second = web.client.get("/api/v1/openapi.json")
     assert first.content == second.content
     expected = json.loads(
-        Path("docs/reference/review-openapi-v1.json").read_text(
-            encoding="utf-8"
-        )
+        Path("docs/reference/review-openapi-v1.json").read_text(encoding="utf-8")
     )
     assert first.json() == expected
-    assert "413" in expected["paths"]["/api/v1/metadata-policy/drafts"]["post"]["responses"]
-    assert "413" in expected["paths"]["/api/v1/metadata-policy/activate"]["post"]["responses"]
+    assert (
+        "413"
+        in expected["paths"]["/api/v1/metadata-policy/drafts"]["post"]["responses"]
+    )
+    assert (
+        "413"
+        in expected["paths"]["/api/v1/metadata-policy/activate"]["post"]["responses"]
+    )
     for path, path_item in expected["paths"].items():
         if path == "/api/v1/session/login":
             continue
@@ -666,32 +717,46 @@ def test_openapi_is_deterministic_and_secret_free(web: ReviewWebContext[FakeRevi
         field = properties["field"]["const"]
         disposition = properties["disposition"]["const"]
         option_schema = properties["option"]
-        options = option_schema["enum"] if "enum" in option_schema else [
-            option_schema["const"]
-        ]
+        options = (
+            option_schema["enum"]
+            if "enum" in option_schema
+            else [option_schema["const"]]
+        )
         closed_qualification.update(
             {f"{field}:{option}": disposition for option in options}
         )
     assert dict(F20_OPTION_DISPOSITIONS) == closed_qualification
     assert "HTTPValidationError" not in schemas
     assert all(
-            schema.get("additionalProperties") is False
-            for schema in schemas.values()
-            if schema.get("type") == "object"
-        )
+        schema.get("additionalProperties") is False
+        for schema in schemas.values()
+        if schema.get("type") == "object"
+    )
     for path, schema in (
         ("/api/v1/metadata-policy/automatic-safety/pause", "_AutomaticPauseRequest"),
-        ("/api/v1/metadata-policy/automatic-safety/recover", "_AutomaticRecoveryRequest"),
-        ("/api/v1/metadata-policy/automatic-safety/suspend", "_AutomaticSuspendRequest"),
+        (
+            "/api/v1/metadata-policy/automatic-safety/recover",
+            "_AutomaticRecoveryRequest",
+        ),
+        (
+            "/api/v1/metadata-policy/automatic-safety/suspend",
+            "_AutomaticSuspendRequest",
+        ),
     ):
-        assert {"$ref": f"#/components/schemas/{schema}"} == expected["paths"][path]["post"]["requestBody"]["content"]["application/json"]["schema"]
+        assert {"$ref": f"#/components/schemas/{schema}"} == expected["paths"][path][
+            "post"
+        ]["requestBody"]["content"]["application/json"]["schema"]
     assert str(web.hash_path).encode() not in first.content
     assert b"correct horse" not in first.content
     decision_operation = expected["paths"][
         "/api/v1/review-cases/{review_case_id}/decisions"
     ]["post"]
     assert "404" in decision_operation["responses"]
-    assert expected["components"]["securitySchemes"]["OwnerSession"] == {"in": "cookie", "name": "ml_session", "type": "apiKey"}
+    assert expected["components"]["securitySchemes"]["OwnerSession"] == {
+        "in": "cookie",
+        "name": "ml_session",
+        "type": "apiKey",
+    }
     assert decision_operation["security"] == [{"OwnerSession": []}]
     protected_operations = {
         (method, path)
@@ -700,110 +765,180 @@ def test_openapi_is_deterministic_and_secret_free(web: ReviewWebContext[FakeRevi
         if operation.get("security") == [{"OwnerSession": []}]
     }
     assert protected_operations == {
-            ("get", "/api/v1/activity"),
-            ("post", "/api/v1/activity/consent"),
-            ("post", "/api/v1/activity/{connection}/{library}/revoke"),
-            ("get", "/api/v1/attention"),
-            ("get", "/api/v1/library"),
-            ("get", "/api/v1/operations/status"),
-            ("get", "/api/v1/operations/support/preview"),
-            ("post", "/api/v1/operations/support/export"),
-            ("get", "/api/v1/field-effects/{plan_id}"),
-            ("post", "/api/v1/review-cases/{review_case_id}/fields/{destination}/return-to-automatic"),
-            ("post", "/api/v1/field-effects/{plan_id}/apply"),
-            ("post", "/api/v1/field-effects/{plan_id}/reconcile"),
-            ("post", "/api/v1/field-effects/pause"),
-            ("post", "/api/v1/field-effects/resume"),
-            ("post", "/api/v1/metadata-policy/activate"),
-            ("post", "/api/v1/metadata-policy/drafts"),
-            ("get", "/api/v1/metadata-policy/drafts/{policy_id}"),
-            ("post", "/api/v1/metadata-policy/preview"),
-            ("get", "/api/v1/metadata-policy/shadow"),
-            ("post", "/api/v1/metadata-policy/shadow/enter"),
-            ("post", "/api/v1/metadata-policy/shadow/confirm-automatic"),
-            ("get", "/api/v1/metadata-policy/shadow/leave-preview"),
-            ("get", "/api/v1/metadata-policy/shadow/outcomes"),
-            ("get", "/api/v1/metadata-policy/automatic-safety"),
-            ("post", "/api/v1/metadata-policy/automatic-safety/pause"),
-            ("post", "/api/v1/metadata-policy/automatic-safety/recover"),
-            ("post", "/api/v1/metadata-policy/automatic-safety/suspend"),
-            ("get", "/api/v1/metadata-policy/state"),
-            ("get", "/api/v1/metadata-policy/transition"),
-            (
-                "post",
-                "/api/v1/metadata-policy/transitions/{transition_id}/acknowledge",
-            ),
-            (
-                "post",
-                "/api/v1/metadata-policy/transitions/{transition_id}/retry",
-            ),
-            ("post", "/api/v1/metadata-policy/validate"),
-            ("get", "/api/v1/review-preparation"),
-            ("get", "/api/v1/review-cases/{review_case_id}"),
-            (
-                "get",
-                "/api/v1/review-cases/{review_case_id}/cover-considerations/{consideration_id}/images/{reference}",
-            ),
-            (
-                "post",
-                "/api/v1/review-cases/{review_case_id}/cover-considerations/retry",
-            ),
-            ("get", "/api/v1/review-cases/{review_case_id}/evidence"),
-            ("get", "/api/v1/review-cases/{review_case_id}/history"),
-            ("post", "/api/v1/review-cases/{review_case_id}/decisions"),
-            (
-                "post",
-                "/api/v1/review-preparation/{connection}/{library_name}/scan",
-            ),
-            (
-                "post",
-                "/api/v1/review-preparation/{connection}/{library_name}/retry",
-            ),
-            ("post", "/api/v1/review-preparation/{connection}/check-connection"),
-            ("post", "/api/v1/review-preparation/pause"),
-            ("post", "/api/v1/review-preparation/resume"),
-            ("post", "/api/v1/session/logout"),
-        }
+        ("get", "/api/v1/activity"),
+        ("post", "/api/v1/activity/consent"),
+        ("post", "/api/v1/activity/{connection}/{library}/revoke"),
+        ("get", "/api/v1/attention"),
+        ("get", "/api/v1/library"),
+        ("get", "/api/v1/operations/status"),
+        ("get", "/api/v1/operations/support/preview"),
+        ("post", "/api/v1/operations/support/export"),
+        ("get", "/api/v1/field-effects/{plan_id}"),
+        (
+            "post",
+            "/api/v1/review-cases/{review_case_id}/fields/{destination}/return-to-automatic",
+        ),
+        ("post", "/api/v1/field-effects/{plan_id}/apply"),
+        ("post", "/api/v1/field-effects/{plan_id}/reconcile"),
+        ("post", "/api/v1/field-effects/pause"),
+        ("post", "/api/v1/field-effects/resume"),
+        ("post", "/api/v1/metadata-policy/activate"),
+        ("post", "/api/v1/metadata-policy/drafts"),
+        ("get", "/api/v1/metadata-policy/drafts/{policy_id}"),
+        ("post", "/api/v1/metadata-policy/preview"),
+        ("get", "/api/v1/metadata-policy/shadow"),
+        ("post", "/api/v1/metadata-policy/shadow/enter"),
+        ("post", "/api/v1/metadata-policy/shadow/confirm-automatic"),
+        ("get", "/api/v1/metadata-policy/shadow/leave-preview"),
+        ("get", "/api/v1/metadata-policy/shadow/outcomes"),
+        ("get", "/api/v1/metadata-policy/automatic-safety"),
+        ("post", "/api/v1/metadata-policy/automatic-safety/pause"),
+        ("post", "/api/v1/metadata-policy/automatic-safety/recover"),
+        ("post", "/api/v1/metadata-policy/automatic-safety/suspend"),
+        ("get", "/api/v1/metadata-policy/state"),
+        ("get", "/api/v1/metadata-policy/transition"),
+        (
+            "post",
+            "/api/v1/metadata-policy/transitions/{transition_id}/acknowledge",
+        ),
+        (
+            "post",
+            "/api/v1/metadata-policy/transitions/{transition_id}/retry",
+        ),
+        ("post", "/api/v1/metadata-policy/validate"),
+        ("get", "/api/v1/review-preparation"),
+        ("get", "/api/v1/review-cases/{review_case_id}"),
+        (
+            "get",
+            "/api/v1/review-cases/{review_case_id}/cover-considerations/{consideration_id}/images/{reference}",
+        ),
+        (
+            "post",
+            "/api/v1/review-cases/{review_case_id}/cover-considerations/retry",
+        ),
+        ("get", "/api/v1/review-cases/{review_case_id}/evidence"),
+        ("get", "/api/v1/review-cases/{review_case_id}/history"),
+        ("post", "/api/v1/review-cases/{review_case_id}/decisions"),
+        (
+            "post",
+            "/api/v1/review-preparation/{connection}/{library_name}/scan",
+        ),
+        (
+            "post",
+            "/api/v1/review-preparation/{connection}/{library_name}/retry",
+        ),
+        ("post", "/api/v1/review-preparation/{connection}/check-connection"),
+        ("post", "/api/v1/review-preparation/pause"),
+        ("post", "/api/v1/review-preparation/resume"),
+        ("post", "/api/v1/session/logout"),
+    }
     response_statuses = {
         (method, path): set(operation["responses"])
         for path, path_item in expected["paths"].items()
         for method, operation in path_item.items()
     }
-    assert response_statuses[("post", "/api/v1/session/login")] == {"200", "400", "401", "403", "413", "422", "429", "503"}
-    assert response_statuses[("post", "/api/v1/session/logout")] == {"204", "400", "401", "403", "409", "422", "503"}
+    assert response_statuses[("post", "/api/v1/session/login")] == {
+        "200",
+        "400",
+        "401",
+        "403",
+        "413",
+        "422",
+        "429",
+        "503",
+    }
+    assert response_statuses[("post", "/api/v1/session/logout")] == {
+        "204",
+        "400",
+        "401",
+        "403",
+        "409",
+        "422",
+        "503",
+    }
     assert response_statuses[
-            ("post", "/api/v1/review-cases/{review_case_id}/decisions")
-        ] == {"200", "400", "401", "403", "404", "409", "413", "422", "503"}
+        ("post", "/api/v1/review-cases/{review_case_id}/decisions")
+    ] == {"200", "400", "401", "403", "404", "409", "413", "422", "503"}
     for path in (
         "/api/v1/review-cases/{review_case_id}",
         "/api/v1/review-cases/{review_case_id}/evidence",
         "/api/v1/review-cases/{review_case_id}/history",
     ):
-        assert response_statuses[("get", path)] == {"200", "400", "401", "404", "409", "422"}
+        assert response_statuses[("get", path)] == {
+            "200",
+            "400",
+            "401",
+            "404",
+            "409",
+            "422",
+        }
     for path in ("/api/v1/library", "/api/v1/attention"):
         assert response_statuses[("get", path)] == {"200", "400", "401", "422", "503"}
-    assert response_statuses[("get", "/api/v1/review-preparation")] == {"200", "401", "503"}
-    assert response_statuses[("get", "/api/v1/field-effects/{plan_id}")] == {"200", "401", "404", "422", "503"}
+    assert response_statuses[("get", "/api/v1/review-preparation")] == {
+        "200",
+        "401",
+        "503",
+    }
+    assert response_statuses[("get", "/api/v1/field-effects/{plan_id}")] == {
+        "200",
+        "401",
+        "404",
+        "422",
+        "503",
+    }
     for path in (
         "/api/v1/field-effects/{plan_id}/apply",
         "/api/v1/field-effects/{plan_id}/reconcile",
     ):
-        assert response_statuses[("post", path)] == {"200", "401", "403", "404", "409", "422", "503"}
+        assert response_statuses[("post", path)] == {
+            "200",
+            "401",
+            "403",
+            "404",
+            "409",
+            "422",
+            "503",
+        }
     for path in (
         "/api/v1/field-effects/pause",
         "/api/v1/field-effects/resume",
     ):
-        assert response_statuses[("post", path)] == {"204", "401", "403", "409", "422", "503"}
+        assert response_statuses[("post", path)] == {
+            "204",
+            "401",
+            "403",
+            "409",
+            "422",
+            "503",
+        }
     assert response_statuses[
-            (
-                "post",
-                "/api/v1/review-preparation/{connection}/{library_name}/scan",
-            )
-        ] == {"202", "400", "401", "403", "404", "409", "422", "503"}
-    assert response_statuses[("post", "/api/v1/review-preparation/pause")] == {"200", "401", "403", "409", "422", "503"}
-    assert response_statuses[("post", "/api/v1/review-preparation/resume")] == {"200", "401", "403", "409", "422", "503"}
-    assert response_statuses[("post", "/api/v1/review-preparation/{connection}/{library_name}/retry")] == {"202", "401", "403", "404", "409", "422", "503"}
-    assert response_statuses[("post", "/api/v1/review-preparation/{connection}/check-connection")] == {"200", "401", "403", "404", "409", "422", "503"}
+        (
+            "post",
+            "/api/v1/review-preparation/{connection}/{library_name}/scan",
+        )
+    ] == {"202", "400", "401", "403", "404", "409", "422", "503"}
+    assert response_statuses[("post", "/api/v1/review-preparation/pause")] == {
+        "200",
+        "401",
+        "403",
+        "409",
+        "422",
+        "503",
+    }
+    assert response_statuses[("post", "/api/v1/review-preparation/resume")] == {
+        "200",
+        "401",
+        "403",
+        "409",
+        "422",
+        "503",
+    }
+    assert response_statuses[
+        ("post", "/api/v1/review-preparation/{connection}/{library_name}/retry")
+    ] == {"202", "401", "403", "404", "409", "422", "503"}
+    assert response_statuses[
+        ("post", "/api/v1/review-preparation/{connection}/check-connection")
+    ] == {"200", "401", "403", "404", "409", "422", "503"}
     headers = {
         value["name"]: value
         for value in decision_operation["parameters"]
@@ -820,7 +955,9 @@ def test_openapi_is_deterministic_and_secret_free(web: ReviewWebContext[FakeRevi
     assert b"private-value" not in invalid.content
 
 
-def test_parallel_failures_reserve_the_five_attempt_bound(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_parallel_failures_reserve_the_five_attempt_bound(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     def attempt(_: int) -> int:
         return web.client.post(
             "/api/v1/session/login",
@@ -834,7 +971,9 @@ def test_parallel_failures_reserve_the_five_attempt_bound(web: ReviewWebContext[
     assert len(web.repository.failures) == 5
 
 
-def test_login_body_is_bounded_before_json_parsing_or_throttling(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_login_body_is_bounded_before_json_parsing_or_throttling(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     oversized = web.client.post(
         "/api/v1/session/login",
         headers=web.origin,
@@ -852,15 +991,17 @@ def test_login_body_is_bounded_before_json_parsing_or_throttling(web: ReviewWebC
     assert web.repository.failures == []
 
 
-def test_browser_asset_loads_all_read_models_without_html_injection(web: ReviewWebContext[FakeReviewRepository]) -> None:
-    script = web.client.get(
-        "/assets/review-app/assets/index-deadbeef.js"
-    )
+def test_browser_asset_loads_all_read_models_without_html_injection(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    script = web.client.get("/assets/review-app/assets/index-deadbeef.js")
     assert script.status_code == 200
     assert script.headers["content-type"].startswith("text/javascript")
 
 
-def test_argon2i_hash_file_is_rejected(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_argon2i_hash_file_is_rejected(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     web.client.close()
     web.hash_path.write_text(
         PasswordHasher(type=Type.I).hash("correct horse"), encoding="utf-8"
@@ -874,14 +1015,14 @@ def test_argon2i_hash_file_is_rejected(web: ReviewWebContext[FakeReviewRepositor
         create_transport_test_app(web.repository, configuration)
 
 
-def test_composition_opens_the_single_database_for_worker_threads(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_composition_opens_the_single_database_for_worker_threads(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     from tests.support.tls import synthetic_tls_identity
 
     repository = Mock()
     database = Path(web.temporary.name) / "application.sqlite3"
-    certificate, private_key = synthetic_tls_identity(
-        Path(web.temporary.name)
-    )
+    certificate, private_key = synthetic_tls_identity(Path(web.temporary.name))
     configuration = ReviewWebConfiguration(
         canonical_origin="https://review.test",
         owner_password_hash_file=str(web.hash_path),
@@ -926,7 +1067,9 @@ def test_composition_opens_the_single_database_for_worker_threads(web: ReviewWeb
     )
 
 
-def test_served_composition_keeps_automatic_safety_reachable(web: ReviewWebContext[FakeReviewRepository]) -> None:
+def test_served_composition_keeps_automatic_safety_reachable(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
     # Every other test in this suite hands `compose_review_application` a
     # repository directly, so nothing exercised what the server actually
     # composes. `AutomaticSafetyControls` duck-types through `object` and

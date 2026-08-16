@@ -118,6 +118,7 @@ class TargetFile:
 @dataclass(frozen=True, slots=True)
 class TargetCover:
     """Opaque target cover tuple retained solely for a before/after drift check."""
+
     identity: str
     path: str
     item: str = ""
@@ -135,10 +136,7 @@ class TargetSnapshot:
         if not self.fields:
             object.__setattr__(self, "fields", default_target_fields(self.title))
         facts = TargetFacts("snapshot", "snapshot", "snapshot", self.fields)
-        if (
-            self.cover is None
-            and facts.fields[-1].state is TargetFieldState.VALUE
-        ):
+        if self.cover is None and facts.fields[-1].state is TargetFieldState.VALUE:
             raise MetadataReportError("target cover field is inconsistent")
 
 
@@ -238,22 +236,20 @@ class MetadataDiscoveryPlan:
         ):
             raise MetadataReportError("provider discovery plan is invalid")
         known = {value.reference for value in self.local_claims}
-        if any(
-            not set(lane.input_references).issubset(known) for lane in self.lanes
-        ) or (
-            len(
-                {
-                    lane.matched_family
-                    for lane in self.lanes
-                    if lane.kind is ProviderQueryKind.ISBN
-                }
+        if (
+            any(not set(lane.input_references).issubset(known) for lane in self.lanes)
+            or (
+                len(
+                    {
+                        lane.matched_family
+                        for lane in self.lanes
+                        if lane.kind is ProviderQueryKind.ISBN
+                    }
+                )
+                != sum(lane.kind is ProviderQueryKind.ISBN for lane in self.lanes)
             )
-            != sum(
-                lane.kind is ProviderQueryKind.ISBN for lane in self.lanes
-            )
-        ) or sum(
-            lane.kind is ProviderQueryKind.WORK for lane in self.lanes
-        ) > 1:
+            or sum(lane.kind is ProviderQueryKind.WORK for lane in self.lanes) > 1
+        ):
             raise MetadataReportError("provider discovery plan is invalid")
 
 
@@ -274,7 +270,12 @@ class ProviderLaneResult:
             or (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates)
             or (
                 self.edition_enrichment_overflow is not None
-                and (type(self.edition_enrichment_overflow) is not EditionEnrichmentOverflow or self.status is not ProviderStatus.CANDIDATE_LIMIT_EXCEEDED or self.candidates)
+                and (
+                    type(self.edition_enrichment_overflow)
+                    is not EditionEnrichmentOverflow
+                    or self.status is not ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+                    or self.candidates
+                )
             )
         ):
             raise MetadataReportError("provider lane result is invalid")
@@ -334,10 +335,9 @@ def metadata_discovery_plan(
         and type(authors.value) is tuple
         and bool(authors.value)
         and all(type(value) is str for value in authors.value)
-        and len({
-            normalize_title(cast("str", value)).casefold()
-            for value in authors.value
-        })
+        and len(
+            {normalize_title(cast("str", value)).casefold() for value in authors.value}
+        )
         == len(authors.value)
     )
     if complete_work:
@@ -345,15 +345,13 @@ def metadata_discovery_plan(
         # a ``str`` and the authors are a non-empty tuple of ``str``.
         normalized_title = normalize_title(cast("str", title.value))
         normalized_authors = tuple(
-            normalize_title(value)
-            for value in cast("tuple[str, ...]", authors.value)
+            normalize_title(value) for value in cast("tuple[str, ...]", authors.value)
         )
         title_references = tuple(
             sorted(
                 claim.reference
                 for claim in local_claims
-                if claim.kind is ClaimKind.TITLE
-                and claim.basis == "target_metadata"
+                if claim.kind is ClaimKind.TITLE and claim.basis == "target_metadata"
             )
         )
         if title_references:
@@ -397,8 +395,7 @@ def provider_observation(
     conflict = False
     aggregate_failure: ProviderStatus | None = None
     overflow_results = tuple(
-        result for result in results
-        if result.edition_enrichment_overflow is not None
+        result for result in results if result.edition_enrichment_overflow is not None
     )
     for result in results:
         for candidate in result.candidates:
@@ -415,10 +412,9 @@ def provider_observation(
             candidate_claims = set(candidate.claims)
             previous_evidence = set(previous.evidence)
             candidate_evidence = set(candidate.evidence)
-            if (
-                previous_claims.issubset(candidate_claims)
-                and previous_evidence.issubset(candidate_evidence)
-            ):
+            if previous_claims.issubset(
+                candidate_claims
+            ) and previous_evidence.issubset(candidate_evidence):
                 candidates_by_identity[candidate.identity] = candidate
             elif not (
                 candidate_claims.issubset(previous_claims)
@@ -529,9 +525,7 @@ def provider_observation(
         ProviderQueryKind.NONE
         if not results
         else (
-            results[0].lane.kind
-            if len(results) == 1
-            else ProviderQueryKind.DISCOVERY
+            results[0].lane.kind if len(results) == 1 else ProviderQueryKind.DISCOVERY
         )
     )
     return ProviderObservation(
@@ -656,12 +650,22 @@ class TargetReader(Protocol):
 
 
 class TargetCoverReader(TargetReader, Protocol):
-    def read_cover(self, cover: TargetCover, *, deadline: float | None = None) -> bytes | None: ...
+    def read_cover(
+        self, cover: TargetCover, *, deadline: float | None = None
+    ) -> bytes | None: ...
 
 
 class EpubInspector(Protocol):
-    def inspect(self, mount: MediaMountConfiguration, relative_path: str, maximum_bytes: int) -> InspectionResult: ...
-    def unchanged(self, mount: MediaMountConfiguration, relative_path: str, expected_digest: str, maximum_bytes: int) -> bool: ...
+    def inspect(
+        self, mount: MediaMountConfiguration, relative_path: str, maximum_bytes: int
+    ) -> InspectionResult: ...
+    def unchanged(
+        self,
+        mount: MediaMountConfiguration,
+        relative_path: str,
+        expected_digest: str,
+        maximum_bytes: int,
+    ) -> bool: ...
 
 
 class MetadataProvider(Protocol):
@@ -695,15 +699,28 @@ class ReportRepository(Protocol):
         after_publication: Callable[[ReportRepository, MetadataReport], None]
         | None = None,
         *,
-        expected_package: tuple[str | None, str, str | None, int | None, str] | None = None,
+        expected_package: tuple[str | None, str, str | None, int | None, str]
+        | None = None,
     ) -> str: ...
     def get(self, report_id: str) -> str: ...
-    def current(self, connection: str, library: str, item: str, file_identity: str) -> str: ...
-    def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None: ...
-    def current_review_package(self, connection: str, library: str, item: str) -> tuple[str | None, str, str | None, int | None, str] | None: ...
-    def current_review_package_report(self, connection: str, library: str, item: str) -> str | None: ...
-    def pending_provider_recovery_outbox(self, *, limit: int = 100) -> tuple[tuple[object, ...], ...]: ...
-    def complete_provider_recovery_outbox(self, outbox_id: str, *, delivered_at: int) -> None: ...
+    def current(
+        self, connection: str, library: str, item: str, file_identity: str
+    ) -> str: ...
+    def current_optional(
+        self, connection: str, library: str, item: str, file_identity: str
+    ) -> str | None: ...
+    def current_review_package(
+        self, connection: str, library: str, item: str
+    ) -> tuple[str | None, str, str | None, int | None, str] | None: ...
+    def current_review_package_report(
+        self, connection: str, library: str, item: str
+    ) -> str | None: ...
+    def pending_provider_recovery_outbox(
+        self, *, limit: int = 100
+    ) -> tuple[tuple[object, ...], ...]: ...
+    def complete_provider_recovery_outbox(
+        self, outbox_id: str, *, delivered_at: int
+    ) -> None: ...
     def close(self) -> None: ...
 
 
@@ -773,9 +790,7 @@ def metadata_lookup(
         ProviderQueryKind.WORK,
         local_claims,
         normalize_title(title.value),
-        tuple(
-            normalize_title(cast("str", value)) for value in authors.value
-        ),
+        tuple(normalize_title(cast("str", value)) for value in authors.value),
     )
 
 
@@ -798,20 +813,25 @@ def qualify_provider_observation(
         )
     if observation.edition_enrichment_overflow is not None:
         witness = observation.edition_enrichment_overflow
-        expected_authors = tuple(normalize_title(value).casefold() for value in lookup.authors)
+        expected_authors = tuple(
+            normalize_title(value).casefold() for value in lookup.authors
+        )
         actual_authors = tuple(
-            normalize_title(author.value or "").casefold()
-            for author in witness.authors
+            normalize_title(author.value or "").casefold() for author in witness.authors
         )
         qualified_witness = (
-            normalize_title(witness.title).casefold() == normalize_title(lookup.title or "").casefold()
+            normalize_title(witness.title).casefold()
+            == normalize_title(lookup.title or "").casefold()
             and actual_authors == expected_authors
             and not _variant_marker(witness.title)
         )
         return ProviderObservation(
             observation.provider,
             ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
-            (), (), ProviderQueryKind.WORK, observation.authority,
+            (),
+            (),
+            ProviderQueryKind.WORK,
+            observation.authority,
             accessed_at=observation.accessed_at,
             diagnostics=observation.diagnostics,
             request_accounting=observation.request_accounting,
@@ -887,10 +907,7 @@ def qualify_provider_observation(
         if (
             titles == (expected_title,)
             and (
-                (
-                    len(authors) == len(expected_authors)
-                    and authors == expected_authors
-                )
+                (len(authors) == len(expected_authors) and authors == expected_authors)
                 or (
                     untyped_creators == expected_authors
                     and neutral_bindings is not None
@@ -921,24 +938,21 @@ def qualify_provider_observation(
         and claim.role is None
     )
     neutral_bindings = complete_creator_identity_bindings(candidate, neutral_creators)
-    reject_neutral_creators = (
-        neutral_bindings is not None
-        and len({binding.identity for binding in neutral_bindings})
-        != len(neutral_bindings)
-    )
+    reject_neutral_creators = neutral_bindings is not None and len(
+        {binding.identity for binding in neutral_bindings}
+    ) != len(neutral_bindings)
     reject_mixed_author_creators = _mixed_work_creator_roles(candidate)
-    reject_creator_authority = (
-        reject_neutral_creators or reject_mixed_author_creators
+    reject_creator_authority = reject_neutral_creators or reject_mixed_author_creators
+    rejected_creator_references = (
+        {claim.reference for claim in neutral_creators}
+        if reject_neutral_creators
+        else set()
     )
-    rejected_creator_references = {
-        claim.reference for claim in neutral_creators
-    } if reject_neutral_creators else set()
     if reject_mixed_author_creators:
         rejected_creator_references.update(
             claim.reference
             for claim in candidate.claims
-            if claim.scope is ClaimScope.WORK
-            and claim.kind is ClaimKind.CREATOR
+            if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
         )
     allowed_claims = {
         ClaimKind.TITLE,
@@ -987,19 +1001,16 @@ def qualify_provider_observation(
             if (
                 not (
                     reject_creator_authority
-                    and value.kind in {
+                    and value.kind
+                    in {
                         ProviderEvidenceKind.AUTHOR_IDENTITY,
                         ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
                     }
                 )
-                and (
-                    value.scope is ClaimScope.WORK
-                    and value.kind in allowed_evidence
-                )
+                and (value.scope is ClaimScope.WORK and value.kind in allowed_evidence)
                 or (
                     value.scope is ClaimScope.EDITION
-                    and value.kind
-                    is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+                    and value.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
                     and value.date_normalized is not None
                     and value.date_confidence is DateLinkConfidence.UNRESOLVED
                     and (
@@ -1049,16 +1060,14 @@ def _complete_work_creators(
             for claim in creators
         )
         or any(
-            claim.scope is ClaimScope.WORK
-            and claim.kind is ClaimKind.CONTRIBUTOR
+            claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CONTRIBUTOR
             for claim in candidate.claims
         )
     ):
         return None
     # The guard above returned for any creator whose value is None.
     return tuple(
-        normalize_title(cast("str", claim.value)).casefold()
-        for claim in creators
+        normalize_title(cast("str", claim.value)).casefold() for claim in creators
     )
 
 
@@ -1126,7 +1135,9 @@ class GenerateMetadataReport:
         self._require_singular_target = require_singular_target
         self._timing = timing or StageTimer(None)
 
-    def run(self, item: str, file_index: int, expected_file_identity: str | None = None) -> str:
+    def run(
+        self, item: str, file_index: int, expected_file_identity: str | None = None
+    ) -> str:
         if self._mount is None:
             raise UnsupportedMediaError("unsupported media")
         initial = self._safe_read(item)
@@ -1137,7 +1148,10 @@ class GenerateMetadataReport:
         ):
             raise UnsupportedMediaError("unsupported media")
         selected = initial.files[file_index]
-        if expected_file_identity is not None and selected.identity != expected_file_identity:
+        if (
+            expected_file_identity is not None
+            and selected.identity != expected_file_identity
+        ):
             raise CurrentnessError("target file changed")
         if selected.format != "epub":
             raise UnsupportedMediaError("unsupported media")
@@ -1157,7 +1171,8 @@ class GenerateMetadataReport:
             try:
                 with self._timing.measure("extraction", "none"):
                     local = self._inspector.inspect(
-                        self._mount, selected.relative_path,
+                        self._mount,
+                        selected.relative_path,
                         self._limits.source_archive_bytes,
                     )
             except MetadataReportError:
@@ -1221,7 +1236,8 @@ class GenerateMetadataReport:
                 )
                 observations.append(
                     ProviderObservation(
-                        binding.name, ProviderStatus.DISABLED,
+                        binding.name,
+                        ProviderStatus.DISABLED,
                         query_kind=(
                             disabled_lanes[0].kind
                             if len(disabled_lanes) == 1
@@ -1372,8 +1388,16 @@ class GenerateMetadataReport:
             )
         )
         try:
-            cover_sources = local.cover_sources if self._cover_observer is None else self._cover_observer.observe(
-                initial, tuple(observations), local.cover_sources, tuple(descriptors), cover_aggregate_deadline
+            cover_sources = (
+                local.cover_sources
+                if self._cover_observer is None
+                else self._cover_observer.observe(
+                    initial,
+                    tuple(observations),
+                    local.cover_sources,
+                    tuple(descriptors),
+                    cover_aggregate_deadline,
+                )
             )
             report = MetadataReport.create(
                 target=TargetFacts(
@@ -1383,7 +1407,8 @@ class GenerateMetadataReport:
                     initial.fields,
                 ),
                 file=FileFacts(file_index, selected.identity, local.content_digest),
-                local_claims=combined_claims, local_reasons=reasons,
+                local_claims=combined_claims,
+                local_reasons=reasons,
                 providers=tuple(sorted(observations, key=lambda value: value.provider)),
                 field_results=derive_field_results(combined_claims),
                 cover_sources=cover_sources,
@@ -1398,6 +1423,7 @@ class GenerateMetadataReport:
             _release_repository(repository, error)
             raise
         try:
+
             def currentness() -> bool:
                 if self._publication_authority_guard is not None:
                     self._publication_authority_guard()
@@ -1420,7 +1446,10 @@ class GenerateMetadataReport:
                     self._publication_receipt,
                 )
             )
-            if persisted != report.to_json() or repository.get(report.report_id) != persisted:
+            if (
+                persisted != report.to_json()
+                or repository.get(report.report_id) != persisted
+            ):
                 raise MetadataReportError("persisted report readback failed")
             return persisted
         except TargetConnectionError:
@@ -1511,8 +1540,7 @@ def require_report_current(
         None,
     )
     expected_absent = any(
-        source.kind is CoverSourceKind.ABS
-        and source.state is CoverSourceState.ABSENT
+        source.kind is CoverSourceKind.ABS and source.state is CoverSourceState.ABSENT
         for source in report.cover_sources
     )
     if expected_cover is not None or expected_absent:
@@ -1536,17 +1564,38 @@ def require_report_current(
 
 
 __all__ = [
-    "CoverObserver", "CoverReadError", "CoverSourceChangedError", "CoverTimeoutError", "CredentialError", "CurrentnessError", "EpubInspector", "GenerateMetadataReport",
-    "ArtifactAuthorityError", "InspectionResult", "ItemInspectionError",
-    "MetadataDiscoveryLane", "MetadataDiscoveryPlan", "MetadataLookup",
-    "MetadataProvider", "MetadataReportError",
-    "ProviderBinding", "ProviderCoverDescriptor",
+    "CoverObserver",
+    "CoverReadError",
+    "CoverSourceChangedError",
+    "CoverTimeoutError",
+    "CredentialError",
+    "CurrentnessError",
+    "EpubInspector",
+    "GenerateMetadataReport",
+    "ArtifactAuthorityError",
+    "InspectionResult",
+    "ItemInspectionError",
+    "MetadataDiscoveryLane",
+    "MetadataDiscoveryPlan",
+    "MetadataLookup",
+    "MetadataProvider",
+    "MetadataReportError",
+    "ProviderBinding",
+    "ProviderCoverDescriptor",
     "ProviderLaneResult",
-    "ReportRepository", "TargetFile", "TargetNotFoundError", "TargetReader", "TargetSnapshot",
+    "ReportRepository",
+    "TargetFile",
+    "TargetNotFoundError",
+    "TargetReader",
+    "TargetSnapshot",
     "UnsupportedMediaError",
-    "merge_provider_cover_descriptor", "merge_provider_cover_descriptors",
+    "merge_provider_cover_descriptor",
+    "merge_provider_cover_descriptors",
     "merge_provider_diagnostics",
     "metadata_discovery_plan",
-    "metadata_lookup", "provider_isbn_applicability", "provider_observation",
-    "qualify_provider_observation", "require_report_current",
+    "metadata_lookup",
+    "provider_isbn_applicability",
+    "provider_observation",
+    "qualify_provider_observation",
+    "require_report_current",
 ]

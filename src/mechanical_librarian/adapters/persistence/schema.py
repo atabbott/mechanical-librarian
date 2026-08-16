@@ -101,9 +101,7 @@ _PROPOSAL_SETS_SQL = (
     "CREATE TABLE proposal_sets ("
     "proposal_set_id TEXT PRIMARY KEY NOT NULL CHECK (proposal_set_id GLOB 'proposal_set_[0-9a-f]*' AND length(proposal_set_id) = 77), "
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
-    "policy_version TEXT NOT NULL CHECK (policy_version = '"
-    + POLICY_VERSION
-    + "'), "
+    "policy_version TEXT NOT NULL CHECK (policy_version = '" + POLICY_VERSION + "'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152))"
 )
 _METADATA_POLICY_DRAFTS_SQL = (
@@ -423,7 +421,7 @@ _FIELD_EFFECT_CLEANUPS_SQL = (
 _FIELD_EFFECT_EVENTS_SQL = (
     "CREATE TABLE field_effect_events ("
     "event_id TEXT PRIMARY KEY NOT NULL CHECK(event_id GLOB 'effect_event_[0-9a-f]*' AND length(event_id)=77), "
-        "plan_id TEXT NOT NULL REFERENCES field_effects(plan_id), sequence INTEGER NOT NULL CHECK(sequence>=1), "
+    "plan_id TEXT NOT NULL REFERENCES field_effects(plan_id), sequence INTEGER NOT NULL CHECK(sequence>=1), "
     "kind TEXT NOT NULL CHECK(kind IN ('planned','claimed','applying','reconciling','retryable','verified','stale','superseded','abandoned')), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072), "
@@ -484,10 +482,6 @@ _SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL = "CREATE TRIGGER shadow_decision_outcome
 _SHADOW_DECISION_OUTCOME_NO_DELETE_SQL = "CREATE TRIGGER shadow_decision_outcomes_no_delete BEFORE DELETE ON shadow_decision_outcomes BEGIN SELECT RAISE(ABORT, 'shadow decision outcomes are append-only'); END"
 
 
-
-
-
-
 def _create_schema(connection: sqlite3.Connection) -> None:
     """Build the exact schema and seed its singleton rows.
 
@@ -517,9 +511,12 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     )
     connection.execute(_METADATA_POLICY_RESOLUTIONS_SQL)
     connection.execute(_METADATA_POLICY_TRANSITIONS_SQL)
-    bootstrap_transition_id = "policy_transition_" + hashlib.sha256(
-        ("automatic-bootstrap-v1:" + builtin_policy.policy_id).encode("utf-8")
-    ).hexdigest()
+    bootstrap_transition_id = (
+        "policy_transition_"
+        + hashlib.sha256(
+            ("automatic-bootstrap-v1:" + builtin_policy.policy_id).encode("utf-8")
+        ).hexdigest()
+    )
     connection.execute(
         "INSERT INTO metadata_policy_transitions(transition_id,from_policy_id,to_policy_id,generation,state,total,acknowledged,created_at,updated_at) VALUES(?,?,?,1,'completed',0,0,0,0)",
         (bootstrap_transition_id, builtin_policy.policy_id, builtin_policy.policy_id),
@@ -549,9 +546,13 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_COVER_CONSIDERATION_EVENTS_SQL)
     connection.execute(_AUTOMATIC_DECISIONS_SQL)
     connection.execute(_AUTOMATIC_SAFETY_SQL)
-    connection.execute("INSERT INTO automatic_safety_state(singleton,paused,global_suspension,category_suspensions_document,updated_at) VALUES(1,0,NULL,'[]',0)")
+    connection.execute(
+        "INSERT INTO automatic_safety_state(singleton,paused,global_suspension,category_suspensions_document,updated_at) VALUES(1,0,NULL,'[]',0)"
+    )
     connection.execute(_FIELD_EFFECT_CONTROL_SQL)
-    connection.execute("INSERT INTO field_effect_control(singleton,paused,updated_at) VALUES(1,0,0)")
+    connection.execute(
+        "INSERT INTO field_effect_control(singleton,paused,updated_at) VALUES(1,0,0)"
+    )
     connection.execute(_FIELD_EFFECT_SUSPENSIONS_SQL)
     connection.execute(_FIELD_EFFECT_AUTHORITIES_SQL)
     connection.execute(_FIELD_EFFECT_CONSENTS_SQL)
@@ -607,142 +608,252 @@ def _validate_existing_read_only(path: Path, descriptor: int) -> None:
             connection.close()
 
 
-
-
 def _validate_schema(connection: sqlite3.Connection) -> None:
-    objects = connection.execute("SELECT type,name,sql FROM sqlite_master ORDER BY type,name").fetchall()
-    expected_objects = sorted((
-        ("index", "sqlite_autoindex_current_metadata_reports_1", None),
-        ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
-        ("index", "sqlite_autoindex_current_review_case_lineages_1", None),
-        ("index", "sqlite_autoindex_current_review_packages_1", None),
-        ("index", "sqlite_autoindex_provider_recovery_outbox_1", None),
-        ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
-        ("index", "metadata_report_cover_references_artifact_id", _COVER_ARTIFACT_INDEX_SQL),
-        ("index", "metadata_report_cover_references_preview_digest", _COVER_PREVIEW_INDEX_SQL),
-        ("index", "sqlite_autoindex_human_decision_events_1", None),
-        ("index", "sqlite_autoindex_human_decision_events_2", None),
-        ("index", "sqlite_autoindex_human_decisions_1", None),
-        ("index", "sqlite_autoindex_human_decisions_2", None),
-        ("index", "sqlite_autoindex_cover_considerations_1", None),
-        ("index", "sqlite_autoindex_current_cover_considerations_1", None),
-        ("index", "sqlite_autoindex_current_cover_considerations_2", None),
-        ("index", "sqlite_autoindex_cover_consideration_events_1", None),
-        ("index", "sqlite_autoindex_automatic_decisions_1", None),
-        ("index", "sqlite_autoindex_automatic_decisions_2", None),
-        ("index", "sqlite_autoindex_automatic_decisions_3", None),
-        ("index", "sqlite_autoindex_field_effect_events_1", None),
-        ("index", "sqlite_autoindex_field_effect_events_2", None),
-        # WITHOUT ROWID is deliberate: only the explicit unique event identity
-        # has an autoindex; the primary key does not.
-        ("index", "sqlite_autoindex_field_effect_no_changes_2", None),
-        ("index", "sqlite_autoindex_field_effect_suspensions_1", None),
-        ("index", "sqlite_autoindex_field_effect_actions_1", None),
-        ("index", "sqlite_autoindex_field_effect_actions_2", None),
-        ("index", "sqlite_autoindex_field_effect_authorities_1", None),
-        ("index", "sqlite_autoindex_field_effect_cleanups_1", None),
-        ("index", "sqlite_autoindex_field_effect_consents_1", None),
-        ("index", "sqlite_autoindex_field_effect_manual_holds_1", None),
-        ("index", "sqlite_autoindex_field_effects_1", None),
-        ("index", "sqlite_autoindex_metadata_reports_1", None),
-        ("index", "sqlite_autoindex_metadata_reports_2", None),
-        ("index", "sqlite_autoindex_metadata_policy_drafts_1", None),
-        ("index", "sqlite_autoindex_metadata_policy_resolutions_1", None),
-        ("index", "sqlite_autoindex_metadata_policy_transitions_1", None),
-        ("index", "sqlite_autoindex_metadata_policy_transitions_2", None),
-        ("index", "sqlite_autoindex_metadata_policy_transition_items_1", None),
-        ("index", "sqlite_autoindex_proposal_sets_1", None),
-        ("index", "sqlite_autoindex_review_cases_1", None),
-        ("index", "sqlite_autoindex_review_case_transitions_1", None),
-        ("index", "sqlite_autoindex_review_case_transitions_2", None),
-        ("index", "sqlite_autoindex_review_preparation_absences_1", None),
-        ("index", "sqlite_autoindex_review_preparation_connection_conditions_1", None),
-        ("index", "sqlite_autoindex_review_preparation_scans_1", None),
-        ("index", "sqlite_autoindex_review_preparation_work_1", None),
-        ("index", "sqlite_autoindex_review_preparation_work_2", None),
+    objects = connection.execute(
+        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+    ).fetchall()
+    expected_objects = sorted(
         (
-            "index",
-            "review_preparation_work_aged_claim",
-            _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
-        ),
-        (
-            "index",
-            "review_preparation_work_recent_claim",
-            _REVIEW_WORK_RECENT_CLAIM_INDEX_SQL,
-        ),
-        ("index", "sqlite_autoindex_review_login_failures_1", None),
-        ("index", "sqlite_autoindex_review_sessions_1", None),
-        ("index", "sqlite_autoindex_shadow_decision_outcomes_1", None),
-        ("table", "current_metadata_reports", _CURRENT_SQL),
-        ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
-        ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
-        ("table", "current_review_packages", _CURRENT_REVIEW_PACKAGES_SQL),
-        ("table", "provider_recovery_outbox", _PROVIDER_RECOVERY_OUTBOX_SQL),
-        ("table", "cover_considerations", _COVER_CONSIDERATIONS_SQL),
-        ("table", "current_cover_considerations", _CURRENT_COVER_CONSIDERATIONS_SQL),
-        ("table", "cover_consideration_events", _COVER_CONSIDERATION_EVENTS_SQL),
-        ("table", "human_decision_events", _HUMAN_DECISION_EVENTS_SQL),
-        ("table", "human_decisions", _HUMAN_DECISIONS_SQL),
-        ("table", "automatic_decisions", _AUTOMATIC_DECISIONS_SQL),
-        ("table", "automatic_safety_state", _AUTOMATIC_SAFETY_SQL),
-        ("table", "field_effect_control", _FIELD_EFFECT_CONTROL_SQL),
-        ("table", "field_effect_suspensions", _FIELD_EFFECT_SUSPENSIONS_SQL),
-        ("table", "field_effect_actions", _FIELD_EFFECT_ACTIONS_SQL),
-        ("table", "field_effect_authorities", _FIELD_EFFECT_AUTHORITIES_SQL),
-        ("table", "field_effect_cleanups", _FIELD_EFFECT_CLEANUPS_SQL),
-        ("table", "field_effect_consents", _FIELD_EFFECT_CONSENTS_SQL),
-        ("table", "field_effect_manual_holds", _FIELD_EFFECT_MANUAL_HOLDS_SQL),
-        ("table", "field_effect_events", _FIELD_EFFECT_EVENTS_SQL),
-        ("table", "field_effect_no_changes", _FIELD_EFFECT_NO_CHANGES_SQL),
-        ("table", "field_effects", _FIELD_EFFECTS_SQL),
-        ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
-        ("table", "metadata_reports", _REPORTS_SQL),
-        ("table", "metadata_policy_drafts", _METADATA_POLICY_DRAFTS_SQL),
-        ("table", "metadata_policy_resolutions", _METADATA_POLICY_RESOLUTIONS_SQL),
-        ("table", "metadata_policy_state", _METADATA_POLICY_STATE_SQL),
-        ("table", "metadata_policy_transitions", _METADATA_POLICY_TRANSITIONS_SQL),
-        ("table", "metadata_policy_transition_items", _METADATA_POLICY_TRANSITION_ITEMS_SQL),
-        ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
-        ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
-        ("table", "review_cases", _REVIEW_CASES_SQL),
-        ("table", "review_preparation_control", _REVIEW_CONTROL_SQL),
-        ("table", "review_preparation_connection_conditions", _REVIEW_CONNECTION_CONDITIONS_SQL),
-        ("table", "review_preparation_scans", _REVIEW_SCANS_SQL),
-        ("table", "review_preparation_absences", _REVIEW_ABSENCES_SQL),
-        ("table", "review_preparation_work", _REVIEW_WORK_SQL),
-        ("table", "review_login_failures", _REVIEW_LOGIN_FAILURES_SQL),
-        ("table", "review_sessions", _REVIEW_SESSIONS_SQL),
-        ("table", "shadow_decision_outcomes", _SHADOW_DECISION_OUTCOMES_SQL),
-        ("trigger", "metadata_report_cover_references_no_delete", _COVER_NO_DELETE_SQL),
-        ("trigger", "metadata_report_cover_references_no_update", _COVER_NO_UPDATE_SQL),
-        ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL),
-        ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL),
-        ("trigger", "metadata_policy_drafts_no_delete", _METADATA_POLICY_DRAFT_NO_DELETE_SQL),
-        ("trigger", "metadata_policy_drafts_no_update", _METADATA_POLICY_DRAFT_NO_UPDATE_SQL),
-        ("trigger", "human_decision_events_no_delete", _HUMAN_DECISION_EVENT_NO_DELETE_SQL),
-        ("trigger", "human_decision_events_no_update", _HUMAN_DECISION_EVENT_NO_UPDATE_SQL),
-        ("trigger", "human_decisions_no_delete", _HUMAN_DECISION_NO_DELETE_SQL),
-        ("trigger", "human_decisions_no_update", _HUMAN_DECISION_NO_UPDATE_SQL),
-        ("trigger", "cover_considerations_no_delete", _COVER_CONSIDERATION_NO_DELETE_SQL),
-        ("trigger", "cover_considerations_no_update", _COVER_CONSIDERATION_NO_UPDATE_SQL),
-        ("trigger", "cover_consideration_events_no_delete", _COVER_CONSIDERATION_EVENT_NO_DELETE_SQL),
-        ("trigger", "cover_consideration_events_no_update", _COVER_CONSIDERATION_EVENT_NO_UPDATE_SQL),
-        ("trigger", "automatic_decisions_no_delete", _AUTOMATIC_DECISION_NO_DELETE_SQL),
-        ("trigger", "automatic_decisions_no_update", _AUTOMATIC_DECISION_NO_UPDATE_SQL),
-        ("trigger", "field_effect_events_no_delete", _FIELD_EFFECT_EVENT_NO_DELETE_SQL),
-        ("trigger", "field_effect_events_no_update", _FIELD_EFFECT_EVENT_NO_UPDATE_SQL),
-        ("trigger", "field_effect_no_changes_no_delete", _FIELD_EFFECT_NO_CHANGE_NO_DELETE_SQL),
-        ("trigger", "field_effect_no_changes_no_update", _FIELD_EFFECT_NO_CHANGE_NO_UPDATE_SQL),
-        ("trigger", "proposal_sets_no_delete", _PROPOSAL_NO_DELETE_SQL),
-        ("trigger", "proposal_sets_no_update", _PROPOSAL_NO_UPDATE_SQL),
-        ("trigger", "review_case_transitions_no_delete", _REVIEW_TRANSITION_NO_DELETE_SQL),
-        ("trigger", "review_case_transitions_no_update", _REVIEW_TRANSITION_NO_UPDATE_SQL),
-        ("trigger", "review_cases_no_delete", _REVIEW_NO_DELETE_SQL),
-        ("trigger", "review_cases_no_update", _REVIEW_NO_UPDATE_SQL),
-        ("trigger", "shadow_decision_outcomes_no_delete", _SHADOW_DECISION_OUTCOME_NO_DELETE_SQL),
-        ("trigger", "shadow_decision_outcomes_no_update", _SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL),
-    ))
-    if objects != expected_objects or connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",):
+            ("index", "sqlite_autoindex_current_metadata_reports_1", None),
+            ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
+            ("index", "sqlite_autoindex_current_review_case_lineages_1", None),
+            ("index", "sqlite_autoindex_current_review_packages_1", None),
+            ("index", "sqlite_autoindex_provider_recovery_outbox_1", None),
+            ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
+            (
+                "index",
+                "metadata_report_cover_references_artifact_id",
+                _COVER_ARTIFACT_INDEX_SQL,
+            ),
+            (
+                "index",
+                "metadata_report_cover_references_preview_digest",
+                _COVER_PREVIEW_INDEX_SQL,
+            ),
+            ("index", "sqlite_autoindex_human_decision_events_1", None),
+            ("index", "sqlite_autoindex_human_decision_events_2", None),
+            ("index", "sqlite_autoindex_human_decisions_1", None),
+            ("index", "sqlite_autoindex_human_decisions_2", None),
+            ("index", "sqlite_autoindex_cover_considerations_1", None),
+            ("index", "sqlite_autoindex_current_cover_considerations_1", None),
+            ("index", "sqlite_autoindex_current_cover_considerations_2", None),
+            ("index", "sqlite_autoindex_cover_consideration_events_1", None),
+            ("index", "sqlite_autoindex_automatic_decisions_1", None),
+            ("index", "sqlite_autoindex_automatic_decisions_2", None),
+            ("index", "sqlite_autoindex_automatic_decisions_3", None),
+            ("index", "sqlite_autoindex_field_effect_events_1", None),
+            ("index", "sqlite_autoindex_field_effect_events_2", None),
+            # WITHOUT ROWID is deliberate: only the explicit unique event identity
+            # has an autoindex; the primary key does not.
+            ("index", "sqlite_autoindex_field_effect_no_changes_2", None),
+            ("index", "sqlite_autoindex_field_effect_suspensions_1", None),
+            ("index", "sqlite_autoindex_field_effect_actions_1", None),
+            ("index", "sqlite_autoindex_field_effect_actions_2", None),
+            ("index", "sqlite_autoindex_field_effect_authorities_1", None),
+            ("index", "sqlite_autoindex_field_effect_cleanups_1", None),
+            ("index", "sqlite_autoindex_field_effect_consents_1", None),
+            ("index", "sqlite_autoindex_field_effect_manual_holds_1", None),
+            ("index", "sqlite_autoindex_field_effects_1", None),
+            ("index", "sqlite_autoindex_metadata_reports_1", None),
+            ("index", "sqlite_autoindex_metadata_reports_2", None),
+            ("index", "sqlite_autoindex_metadata_policy_drafts_1", None),
+            ("index", "sqlite_autoindex_metadata_policy_resolutions_1", None),
+            ("index", "sqlite_autoindex_metadata_policy_transitions_1", None),
+            ("index", "sqlite_autoindex_metadata_policy_transitions_2", None),
+            ("index", "sqlite_autoindex_metadata_policy_transition_items_1", None),
+            ("index", "sqlite_autoindex_proposal_sets_1", None),
+            ("index", "sqlite_autoindex_review_cases_1", None),
+            ("index", "sqlite_autoindex_review_case_transitions_1", None),
+            ("index", "sqlite_autoindex_review_case_transitions_2", None),
+            ("index", "sqlite_autoindex_review_preparation_absences_1", None),
+            (
+                "index",
+                "sqlite_autoindex_review_preparation_connection_conditions_1",
+                None,
+            ),
+            ("index", "sqlite_autoindex_review_preparation_scans_1", None),
+            ("index", "sqlite_autoindex_review_preparation_work_1", None),
+            ("index", "sqlite_autoindex_review_preparation_work_2", None),
+            (
+                "index",
+                "review_preparation_work_aged_claim",
+                _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
+            ),
+            (
+                "index",
+                "review_preparation_work_recent_claim",
+                _REVIEW_WORK_RECENT_CLAIM_INDEX_SQL,
+            ),
+            ("index", "sqlite_autoindex_review_login_failures_1", None),
+            ("index", "sqlite_autoindex_review_sessions_1", None),
+            ("index", "sqlite_autoindex_shadow_decision_outcomes_1", None),
+            ("table", "current_metadata_reports", _CURRENT_SQL),
+            ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
+            ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
+            ("table", "current_review_packages", _CURRENT_REVIEW_PACKAGES_SQL),
+            ("table", "provider_recovery_outbox", _PROVIDER_RECOVERY_OUTBOX_SQL),
+            ("table", "cover_considerations", _COVER_CONSIDERATIONS_SQL),
+            (
+                "table",
+                "current_cover_considerations",
+                _CURRENT_COVER_CONSIDERATIONS_SQL,
+            ),
+            ("table", "cover_consideration_events", _COVER_CONSIDERATION_EVENTS_SQL),
+            ("table", "human_decision_events", _HUMAN_DECISION_EVENTS_SQL),
+            ("table", "human_decisions", _HUMAN_DECISIONS_SQL),
+            ("table", "automatic_decisions", _AUTOMATIC_DECISIONS_SQL),
+            ("table", "automatic_safety_state", _AUTOMATIC_SAFETY_SQL),
+            ("table", "field_effect_control", _FIELD_EFFECT_CONTROL_SQL),
+            ("table", "field_effect_suspensions", _FIELD_EFFECT_SUSPENSIONS_SQL),
+            ("table", "field_effect_actions", _FIELD_EFFECT_ACTIONS_SQL),
+            ("table", "field_effect_authorities", _FIELD_EFFECT_AUTHORITIES_SQL),
+            ("table", "field_effect_cleanups", _FIELD_EFFECT_CLEANUPS_SQL),
+            ("table", "field_effect_consents", _FIELD_EFFECT_CONSENTS_SQL),
+            ("table", "field_effect_manual_holds", _FIELD_EFFECT_MANUAL_HOLDS_SQL),
+            ("table", "field_effect_events", _FIELD_EFFECT_EVENTS_SQL),
+            ("table", "field_effect_no_changes", _FIELD_EFFECT_NO_CHANGES_SQL),
+            ("table", "field_effects", _FIELD_EFFECTS_SQL),
+            ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
+            ("table", "metadata_reports", _REPORTS_SQL),
+            ("table", "metadata_policy_drafts", _METADATA_POLICY_DRAFTS_SQL),
+            ("table", "metadata_policy_resolutions", _METADATA_POLICY_RESOLUTIONS_SQL),
+            ("table", "metadata_policy_state", _METADATA_POLICY_STATE_SQL),
+            ("table", "metadata_policy_transitions", _METADATA_POLICY_TRANSITIONS_SQL),
+            (
+                "table",
+                "metadata_policy_transition_items",
+                _METADATA_POLICY_TRANSITION_ITEMS_SQL,
+            ),
+            ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
+            ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
+            ("table", "review_cases", _REVIEW_CASES_SQL),
+            ("table", "review_preparation_control", _REVIEW_CONTROL_SQL),
+            (
+                "table",
+                "review_preparation_connection_conditions",
+                _REVIEW_CONNECTION_CONDITIONS_SQL,
+            ),
+            ("table", "review_preparation_scans", _REVIEW_SCANS_SQL),
+            ("table", "review_preparation_absences", _REVIEW_ABSENCES_SQL),
+            ("table", "review_preparation_work", _REVIEW_WORK_SQL),
+            ("table", "review_login_failures", _REVIEW_LOGIN_FAILURES_SQL),
+            ("table", "review_sessions", _REVIEW_SESSIONS_SQL),
+            ("table", "shadow_decision_outcomes", _SHADOW_DECISION_OUTCOMES_SQL),
+            (
+                "trigger",
+                "metadata_report_cover_references_no_delete",
+                _COVER_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "metadata_report_cover_references_no_update",
+                _COVER_NO_UPDATE_SQL,
+            ),
+            ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL),
+            ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL),
+            (
+                "trigger",
+                "metadata_policy_drafts_no_delete",
+                _METADATA_POLICY_DRAFT_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "metadata_policy_drafts_no_update",
+                _METADATA_POLICY_DRAFT_NO_UPDATE_SQL,
+            ),
+            (
+                "trigger",
+                "human_decision_events_no_delete",
+                _HUMAN_DECISION_EVENT_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "human_decision_events_no_update",
+                _HUMAN_DECISION_EVENT_NO_UPDATE_SQL,
+            ),
+            ("trigger", "human_decisions_no_delete", _HUMAN_DECISION_NO_DELETE_SQL),
+            ("trigger", "human_decisions_no_update", _HUMAN_DECISION_NO_UPDATE_SQL),
+            (
+                "trigger",
+                "cover_considerations_no_delete",
+                _COVER_CONSIDERATION_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "cover_considerations_no_update",
+                _COVER_CONSIDERATION_NO_UPDATE_SQL,
+            ),
+            (
+                "trigger",
+                "cover_consideration_events_no_delete",
+                _COVER_CONSIDERATION_EVENT_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "cover_consideration_events_no_update",
+                _COVER_CONSIDERATION_EVENT_NO_UPDATE_SQL,
+            ),
+            (
+                "trigger",
+                "automatic_decisions_no_delete",
+                _AUTOMATIC_DECISION_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "automatic_decisions_no_update",
+                _AUTOMATIC_DECISION_NO_UPDATE_SQL,
+            ),
+            (
+                "trigger",
+                "field_effect_events_no_delete",
+                _FIELD_EFFECT_EVENT_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "field_effect_events_no_update",
+                _FIELD_EFFECT_EVENT_NO_UPDATE_SQL,
+            ),
+            (
+                "trigger",
+                "field_effect_no_changes_no_delete",
+                _FIELD_EFFECT_NO_CHANGE_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "field_effect_no_changes_no_update",
+                _FIELD_EFFECT_NO_CHANGE_NO_UPDATE_SQL,
+            ),
+            ("trigger", "proposal_sets_no_delete", _PROPOSAL_NO_DELETE_SQL),
+            ("trigger", "proposal_sets_no_update", _PROPOSAL_NO_UPDATE_SQL),
+            (
+                "trigger",
+                "review_case_transitions_no_delete",
+                _REVIEW_TRANSITION_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "review_case_transitions_no_update",
+                _REVIEW_TRANSITION_NO_UPDATE_SQL,
+            ),
+            ("trigger", "review_cases_no_delete", _REVIEW_NO_DELETE_SQL),
+            ("trigger", "review_cases_no_update", _REVIEW_NO_UPDATE_SQL),
+            (
+                "trigger",
+                "shadow_decision_outcomes_no_delete",
+                _SHADOW_DECISION_OUTCOME_NO_DELETE_SQL,
+            ),
+            (
+                "trigger",
+                "shadow_decision_outcomes_no_update",
+                _SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL,
+            ),
+        )
+    )
+    if (
+        objects != expected_objects
+        or connection.execute("PRAGMA foreign_key_check").fetchall()
+        or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",)
+    ):
         raise MetadataReportError("database is unavailable or incompatible")
     _validate_metadata_policy_documents(connection)
     _validate_field_effect_state(connection)
@@ -764,10 +875,7 @@ def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:
             raise MetadataPolicyError("metadata policy state is empty")
         for policy_id, document in drafts:
             profile = MetadataPolicyProfile.from_data(json.loads(document))
-            if (
-                profile.policy_id != policy_id
-                or profile.canonical_json != document
-            ):
+            if profile.policy_id != policy_id or profile.canonical_json != document:
                 raise MetadataPolicyError("metadata policy draft is invalid")
         for generation, library, resolved_id, document in connection.execute(
             "SELECT generation,library_name,resolved_policy_id,document "
@@ -781,9 +889,7 @@ def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:
                 or resolved.resolved_id != resolved_id
                 or resolved.canonical_json != document
             ):
-                raise MetadataPolicyError(
-                    "metadata policy resolution is invalid"
-                )
+                raise MetadataPolicyError("metadata policy resolution is invalid")
     except (
         json.JSONDecodeError,
         MetadataPolicyError,
@@ -792,22 +898,43 @@ def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:
         UnicodeError,
         sqlite3.Error,
     ) as error:
-        raise MetadataReportError(
-            "database is unavailable or incompatible"
-        ) from error
+        raise MetadataReportError("database is unavailable or incompatible") from error
 
 
 def _validate_report_row(row: tuple[object, ...]) -> str:
     if len(row) != 9:
         raise MetadataReportError("persisted report is invalid")
-    report_id, connection, library, item, file_identity, content_digest, schema, digest, document = row
-    if type(report_id) is not str or type(document) is not str or schema != REPORT_SCHEMA or type(digest) is not str or hashlib.sha256(document.encode("utf-8")).hexdigest() != digest:
+    (
+        report_id,
+        connection,
+        library,
+        item,
+        file_identity,
+        content_digest,
+        schema,
+        digest,
+        document,
+    ) = row
+    if (
+        type(report_id) is not str
+        or type(document) is not str
+        or schema != REPORT_SCHEMA
+        or type(digest) is not str
+        or hashlib.sha256(document.encode("utf-8")).hexdigest() != digest
+    ):
         raise MetadataReportError("persisted report is invalid")
     try:
         report = MetadataReport.from_json(document)
     except ReportValueError as error:
         raise MetadataReportError("persisted report is invalid") from error
-    if (report.report_id, report.target.connection, report.target.library, report.target.item, report.file.identity, report.file.content_digest) != (report_id, connection, library, item, file_identity, content_digest):
+    if (
+        report.report_id,
+        report.target.connection,
+        report.target.library,
+        report.target.item,
+        report.file.identity,
+        report.file.content_digest,
+    ) != (report_id, connection, library, item, file_identity, content_digest):
         raise MetadataReportError("persisted report envelope disagrees")
     return document
 
@@ -843,34 +970,54 @@ def _validate_review_browse_row(
     return case.to_json(), report.to_json()
 
 
-
 def _provider_recovery_outbox_id(
-    connection: str, library: str, item: str, proposal_id: str | None,
-    report_id: str, case_id: str | None, checkpoint: int | None, outcome: str,
+    connection: str,
+    library: str,
+    item: str,
+    proposal_id: str | None,
+    report_id: str,
+    case_id: str | None,
+    checkpoint: int | None,
+    outcome: str,
 ) -> str:
-    document = _canonical_json({
-        "case_id": case_id, "checkpoint": checkpoint, "connection": connection,
-        "item": item, "library": library, "outcome": outcome,
-        "proposal_id": proposal_id, "report_id": report_id,
-    })
+    document = _canonical_json(
+        {
+            "case_id": case_id,
+            "checkpoint": checkpoint,
+            "connection": connection,
+            "item": item,
+            "library": library,
+            "outcome": outcome,
+            "proposal_id": proposal_id,
+            "report_id": report_id,
+        }
+    )
     return "recovery_outbox_" + hashlib.sha256(document.encode("utf-8")).hexdigest()
 
 
 def _validate_provider_recovery_outbox_row(row: tuple[object, ...]) -> None:
     if (
         len(row) != 10
-        or not all(type(row[index]) is str and row[index] for index in (0, 1, 2, 3, 5, 8))
+        or not all(
+            type(row[index]) is str and row[index] for index in (0, 1, 2, 3, 5, 8)
+        )
         or (row[4] is not None and (type(row[4]) is not str or not row[4]))
         or (row[6] is not None and (type(row[6]) is not str or not row[6]))
         or (row[7] is not None and (type(row[7]) is not int or row[7] < 1))
-        or type(row[9]) is not int or row[9] < 0
+        or type(row[9]) is not int
+        or row[9] < 0
         # Short-circuit evaluation: reaching this disjunct means every column
         # test above passed, fixing each column's exact type.
-        or row[0] != _provider_recovery_outbox_id(
-            cast(str, row[1]), cast(str, row[2]), cast(str, row[3]),
-            row[4], cast(str, row[5]), row[6], row[7], cast(str, row[8]),
+        or row[0]
+        != _provider_recovery_outbox_id(
+            cast(str, row[1]),
+            cast(str, row[2]),
+            cast(str, row[3]),
+            row[4],
+            cast(str, row[5]),
+            row[6],
+            row[7],
+            cast(str, row[8]),
         )
     ):
         raise MetadataReportError("provider recovery outbox is invalid")
-
-

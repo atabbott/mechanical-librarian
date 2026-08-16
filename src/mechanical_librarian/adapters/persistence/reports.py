@@ -55,9 +55,11 @@ class SQLiteReportRepository(ConnectionScoped):
         report: MetadataReport,
         currentness: Callable[[], bool],
         expected_current: str | None = None,
-        after_publication: Callable[[ReportRepository, MetadataReport], None] | None = None,
+        after_publication: Callable[[ReportRepository, MetadataReport], None]
+        | None = None,
         *,
-        expected_package: tuple[str | None, str, str | None, int | None, str] | None = None,
+        expected_package: tuple[str | None, str, str | None, int | None, str]
+        | None = None,
         # The repository handed to `after_publication`. That callback receives
         # the bound repository and calls review-pipeline methods on it, so the
         # composing facade supplies itself rather than this aggregate.
@@ -87,9 +89,13 @@ class SQLiteReportRepository(ConnectionScoped):
             transaction.begin()
             if self._binding is not None:
                 self._binding.require_current()
-            if expected_package is not None and self.current_review_package(
-                report.target.connection, report.target.library, report.target.item
-            ) != expected_package:
+            if (
+                expected_package is not None
+                and self.current_review_package(
+                    report.target.connection, report.target.library, report.target.item
+                )
+                != expected_package
+            ):
                 raise MetadataReportError("current review package changed")
             current = self._connection.execute(
                 "SELECT r.report_id,r.connection_name,r.library_name,r.item_id,r.file_identity,r.content_digest,r.schema_version,r.document_digest,r.document FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
@@ -98,8 +104,15 @@ class SQLiteReportRepository(ConnectionScoped):
             if current is not None:
                 document = _validate_report_row(current)
                 persisted = MetadataReport.from_json(document)
-                if (persisted.target.connection, persisted.target.library, persisted.target.item, persisted.file.identity) != values[1:5]:
-                    raise MetadataReportError("persisted current report scope disagrees")
+                if (
+                    persisted.target.connection,
+                    persisted.target.library,
+                    persisted.target.item,
+                    persisted.file.identity,
+                ) != values[1:5]:
+                    raise MetadataReportError(
+                        "persisted current report scope disagrees"
+                    )
                 if (
                     persisted.report_id != report.report_id
                     and persisted.report_id != expected_current
@@ -118,28 +131,49 @@ class SQLiteReportRepository(ConnectionScoped):
                 )
                 for source in report.cover_sources:
                     self._connection.execute(
-                    "INSERT INTO metadata_report_cover_references(report_id,source_id,artifact_id,preview_digest,preview_variant) VALUES(?,?,?,?,?)",
+                        "INSERT INTO metadata_report_cover_references(report_id,source_id,artifact_id,preview_digest,preview_variant) VALUES(?,?,?,?,?)",
                         (
                             report.report_id,
                             source.source_id,
-                            None if source.artifact is None else source.artifact.artifact_id,
-                            None if source.artifact is None else source.artifact.preview_digest,
-                            None if source.artifact is None else source.artifact.preview_variant,
+                            None
+                            if source.artifact is None
+                            else source.artifact.artifact_id,
+                            None
+                            if source.artifact is None
+                            else source.artifact.preview_digest,
+                            None
+                            if source.artifact is None
+                            else source.artifact.preview_variant,
                         ),
                     )
             else:
                 if existing != values[1:]:
                     raise MetadataReportError("persisted report identity conflicts")
                 expected_references = tuple(
-                    (source.source_id, None if source.artifact is None else source.artifact.artifact_id, None if source.artifact is None else source.artifact.preview_digest, None if source.artifact is None else source.artifact.preview_variant)
+                    (
+                        source.source_id,
+                        None
+                        if source.artifact is None
+                        else source.artifact.artifact_id,
+                        None
+                        if source.artifact is None
+                        else source.artifact.preview_digest,
+                        None
+                        if source.artifact is None
+                        else source.artifact.preview_variant,
+                    )
                     for source in report.cover_sources
                 )
-                actual_references = tuple(self._connection.execute(
-                    "SELECT source_id,artifact_id,preview_digest,preview_variant FROM metadata_report_cover_references WHERE report_id=? ORDER BY source_id",
-                    (report.report_id,),
-                ))
+                actual_references = tuple(
+                    self._connection.execute(
+                        "SELECT source_id,artifact_id,preview_digest,preview_variant FROM metadata_report_cover_references WHERE report_id=? ORDER BY source_id",
+                        (report.report_id,),
+                    )
+                )
                 if tuple(sorted(expected_references)) != actual_references:
-                    raise MetadataReportError("persisted report cover references conflict")
+                    raise MetadataReportError(
+                        "persisted report cover references conflict"
+                    )
             self._connection.execute(
                 "INSERT INTO current_metadata_reports(connection_name,library_name,item_id,file_identity,report_id) VALUES(?,?,?,?,?) "
                 "ON CONFLICT(connection_name,library_name,item_id,file_identity) DO UPDATE SET report_id=excluded.report_id",
@@ -148,13 +182,23 @@ class SQLiteReportRepository(ConnectionScoped):
             self._connection.execute(
                 "INSERT INTO current_metadata_report_lineages(connection_name,library_name,item_id,report_id) VALUES(?,?,?,?) "
                 "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET report_id=excluded.report_id",
-                (report.target.connection, report.target.library, report.target.item, report.report_id),
+                (
+                    report.target.connection,
+                    report.target.library,
+                    report.target.item,
+                    report.report_id,
+                ),
             )
             if after_publication is None:
                 self._connection.execute(
                     "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) VALUES(?,?,?,NULL,?,NULL,NULL,'report_only') "
                     "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=NULL,report_id=excluded.report_id,review_case_id=NULL,checkpoint=NULL,outcome='report_only'",
-                    (report.target.connection, report.target.library, report.target.item, report.report_id),
+                    (
+                        report.target.connection,
+                        report.target.library,
+                        report.target.item,
+                        report.report_id,
+                    ),
                 )
             if after_publication is not None:
                 after_publication(bound, report)
@@ -173,7 +217,9 @@ class SQLiteReportRepository(ConnectionScoped):
             raise MetadataReportError("report publication failed") from error
         except Exception as error:
             transaction.rollback()
-            raise MetadataReportError("report publication precondition failed") from error
+            raise MetadataReportError(
+                "report publication precondition failed"
+            ) from error
 
     def get(self, report_id: str) -> str:
         try:
@@ -190,7 +236,9 @@ class SQLiteReportRepository(ConnectionScoped):
                 raise
             raise MetadataReportError("persisted report is invalid") from error
 
-    def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None:
+    def current_optional(
+        self, connection: str, library: str, item: str, file_identity: str
+    ) -> str | None:
         try:
             row = self._connection.execute(
                 "SELECT c.report_id,r.schema_version,r.connection_name,r.library_name,r.item_id,r.file_identity FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
@@ -216,19 +264,36 @@ class SQLiteReportRepository(ConnectionScoped):
             raise MetadataReportError("persisted current report scope disagrees")
         return document
 
-    def preview_digest(self, report_id: str, artifact_id: str, preview_variant: str) -> str:
+    def preview_digest(
+        self, report_id: str, artifact_id: str, preview_variant: str
+    ) -> str:
         """Return only a preview explicitly referenced by one exact report."""
-        if type(report_id) is not str or type(artifact_id) is not str or preview_variant != "preview-320x480-rgba-png-v1":
+        if (
+            type(report_id) is not str
+            or type(artifact_id) is not str
+            or preview_variant != "preview-320x480-rgba-png-v1"
+        ):
             raise MetadataReportError("persisted cover is unavailable")
         try:
             row = self._connection.execute(
                 "SELECT c.preview_digest,r.document FROM metadata_report_cover_references c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.report_id=? AND c.artifact_id=? AND c.preview_variant=?",
                 (report_id, artifact_id, preview_variant),
             ).fetchone()
-            if row is None or len(row) != 2 or type(row[0]) is not str or type(row[1]) is not str:
+            if (
+                row is None
+                or len(row) != 2
+                or type(row[0]) is not str
+                or type(row[1]) is not str
+            ):
                 raise MetadataReportError("persisted cover is unavailable")
             report = MetadataReport.from_json(self.get(report_id))
-            if not any(source.artifact is not None and source.artifact.artifact_id == artifact_id and source.artifact.preview_variant == preview_variant and source.artifact.preview_digest == row[0] for source in report.cover_sources):
+            if not any(
+                source.artifact is not None
+                and source.artifact.artifact_id == artifact_id
+                and source.artifact.preview_variant == preview_variant
+                and source.artifact.preview_digest == row[0]
+                for source in report.cover_sources
+            ):
                 raise MetadataReportError("persisted cover is unavailable")
             return row[0]
         except MetadataReportError:
@@ -236,7 +301,9 @@ class SQLiteReportRepository(ConnectionScoped):
         except sqlite3.Error as error:
             raise MetadataReportError("persisted cover is unavailable") from error
 
-    def preview_digest_for_artifact(self, artifact_id: str, preview_variant: str) -> str:
+    def preview_digest_for_artifact(
+        self, artifact_id: str, preview_variant: str
+    ) -> str:
         """Resolve the one immutable preview identity shared by report references."""
         try:
             rows = self._connection.execute(
@@ -264,24 +331,31 @@ class SQLiteReportRepository(ConnectionScoped):
             ).fetchone()
             if row is not None:
                 return True
-            documents = tuple(self._connection.execute(
-                "SELECT report_id,document FROM metadata_reports WHERE document LIKE ? ORDER BY report_id",
-                ("%" + digest + "%",),
-            ))
+            documents = tuple(
+                self._connection.execute(
+                    "SELECT report_id,document FROM metadata_reports WHERE document LIKE ? ORDER BY report_id",
+                    ("%" + digest + "%",),
+                )
+            )
         except sqlite3.Error as error:
-            raise MetadataReportError("persisted cover references are invalid") from error
+            raise MetadataReportError(
+                "persisted cover references are invalid"
+            ) from error
         for report_id, document in documents:
             if type(report_id) is not str or type(document) is not str:
                 raise MetadataReportError("persisted cover references are invalid")
             try:
                 report = MetadataReport.from_json(document)
             except (ReportValueError, TypeError) as error:
-                raise MetadataReportError("persisted cover references are invalid") from error
+                raise MetadataReportError(
+                    "persisted cover references are invalid"
+                ) from error
             if report.report_id != report_id:
                 raise MetadataReportError("persisted cover references are invalid")
             if any(
                 source.artifact is not None
-                and digest in {
+                and digest
+                in {
                     source.artifact.original_digest,
                     source.artifact.preview_digest,
                 }

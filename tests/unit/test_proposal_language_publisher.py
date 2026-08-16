@@ -77,11 +77,13 @@ def test_language_policy_preserves_supported_regional_target() -> None:
     assert ProposalOutcome.KEEP == result.outcome
     assert ("field_policy_preservation",) == result.reasons
     assert result.selected_alternative_id is None
-    assert {"en", "eng"} == {alternative.value.value for alternative in result.alternatives}
+    assert {"en", "eng"} == {
+        alternative.value.value for alternative in result.alternatives
+    }
     assert all(
-            alternative.assessment is ProposalAssessment.PRESERVES_TARGET
-            for alternative in result.alternatives
-        )
+        alternative.assessment is ProposalAssessment.PRESERVES_TARGET
+        for alternative in result.alternatives
+    )
 
 
 def test_language_policy_rejects_candidate_that_contradicts_target_detail() -> None:
@@ -129,9 +131,9 @@ def test_language_policy_rejects_candidate_that_contradicts_target_detail() -> N
     assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
     assert ("field_policy_conflict",) == result.reasons
     assert {
-            ProposalAssessment.PRESERVES_TARGET,
-            ProposalAssessment.REPLACES_TARGET,
-        } == {alternative.assessment for alternative in result.alternatives}
+        ProposalAssessment.PRESERVES_TARGET,
+        ProposalAssessment.REPLACES_TARGET,
+    } == {alternative.assessment for alternative in result.alternatives}
 
 
 _TARGET_DETAIL_CONTROLS = (
@@ -142,9 +144,13 @@ _TARGET_DETAIL_CONTROLS = (
 
 @pytest.mark.parametrize(
     ("target", "candidate"),
-    tuple(pytest.param(*control[1:], id=control[0]) for control in _TARGET_DETAIL_CONTROLS),
+    tuple(
+        pytest.param(*control[1:], id=control[0]) for control in _TARGET_DETAIL_CONTROLS
+    ),
 )
-def test_language_policy_rejects_sole_target_detail_contradiction(target, candidate) -> None:
+def test_language_policy_rejects_sole_target_detail_contradiction(
+    target, candidate
+) -> None:
     fields = _fields(
         language=TargetField(
             TargetDestination.LANGUAGE,
@@ -174,9 +180,7 @@ def test_language_policy_rejects_sole_target_detail_contradiction(target, candid
     )
 
     result = _result(
-        evaluate_report(
-            _report(fields=fields, providers=providers)
-        ),
+        evaluate_report(_report(fields=fields, providers=providers)),
         TargetDestination.LANGUAGE,
     )
 
@@ -256,15 +260,15 @@ def test_equivalent_language_candidates_are_an_acceptable_choice() -> None:
         )
     )
 
-    proposal_set = evaluate_report(
-        _report(fields=fields, providers=providers)
-    )
+    proposal_set = evaluate_report(_report(fields=fields, providers=providers))
     result = _result(proposal_set, TargetDestination.LANGUAGE)
 
     assert ProposalOutcome.ACCEPTABLE_CHOICE == result.outcome
     assert ("field_policy_acceptable_choice",) == result.reasons
     assert result.selected_alternative_id is None
-    assert {"en", "eng"} == {alternative.value.value for alternative in result.alternatives}
+    assert {"en", "eng"} == {
+        alternative.value.value for alternative in result.alternatives
+    }
     assert proposal_set == ProposalSet.from_json(proposal_set.to_json())
 
 
@@ -292,13 +296,13 @@ def test_deprecated_bh_language_alias_maps_to_favored_bih() -> None:
         )
     )
 
-    proposal_set = evaluate_report(
-        _report(fields=fields, providers=providers)
-    )
+    proposal_set = evaluate_report(_report(fields=fields, providers=providers))
     result = _result(proposal_set, TargetDestination.LANGUAGE)
 
     assert ProposalOutcome.ACCEPTABLE_CHOICE == result.outcome
-    assert {"bh", "bih"} == {alternative.value.value for alternative in result.alternatives}
+    assert {"bh", "bih"} == {
+        alternative.value.value for alternative in result.alternatives
+    }
     assert proposal_set == ProposalSet.from_json(proposal_set.to_json())
 
 
@@ -312,9 +316,14 @@ _LANGUAGE_CONFLICT_CONTROLS = (
 
 @pytest.mark.parametrize(
     ("left", "right"),
-    tuple(pytest.param(*control[1:], id=control[0]) for control in _LANGUAGE_CONFLICT_CONTROLS),
+    tuple(
+        pytest.param(*control[1:], id=control[0])
+        for control in _LANGUAGE_CONFLICT_CONTROLS
+    ),
 )
-def test_language_policy_rejects_base_script_region_and_malformed_conflicts(left, right) -> None:
+def test_language_policy_rejects_base_script_region_and_malformed_conflicts(
+    left, right
+) -> None:
     fields = _fields(
         language=TargetField(
             TargetDestination.LANGUAGE,
@@ -350,9 +359,7 @@ def test_language_policy_rejects_base_script_region_and_malformed_conflicts(left
         ),
     )
     result = _result(
-        evaluate_report(
-            _report(fields=fields, providers=providers)
-        ),
+        evaluate_report(_report(fields=fields, providers=providers)),
         TargetDestination.LANGUAGE,
     )
     assert ProposalOutcome.UNRESOLVED_CHOICE == result.outcome
@@ -404,9 +411,13 @@ _PRIVATE_USE_CONTROLS = (
 
 @pytest.mark.parametrize(
     ("value", "outcome", "reasons", "selected"),
-    tuple(pytest.param(*control[1:], id=control[0]) for control in _PRIVATE_USE_CONTROLS),
+    tuple(
+        pytest.param(*control[1:], id=control[0]) for control in _PRIVATE_USE_CONTROLS
+    ),
 )
-def test_private_use_language_region_cannot_be_selected(value, outcome, reasons, selected) -> None:
+def test_private_use_language_region_cannot_be_selected(
+    value, outcome, reasons, selected
+) -> None:
     fields = _fields(
         language=TargetField(
             TargetDestination.LANGUAGE,
@@ -428,9 +439,7 @@ def test_private_use_language_region_cannot_be_selected(value, outcome, reasons,
     )
 
     result = _result(
-        evaluate_report(
-            _report(fields=fields, providers=(provider,))
-        ),
+        evaluate_report(_report(fields=fields, providers=(provider,))),
         TargetDestination.LANGUAGE,
     )
 
@@ -489,7 +498,9 @@ def test_publisher_policy_keeps_distinct_supported_business_levels() -> None:
 
     assert ProposalOutcome.KEEP == result.outcome
     assert ("field_policy_preservation",) == result.reasons
-    assert {"Tor Books", "Tor", "Macmillan Publishing Group"} == {alternative.value.value for alternative in result.alternatives}
+    assert {"Tor Books", "Tor", "Macmillan Publishing Group"} == {
+        alternative.value.value for alternative in result.alternatives
+    }
     references = {
         reference
         for alternative in result.alternatives
@@ -497,11 +508,11 @@ def test_publisher_policy_keeps_distinct_supported_business_levels() -> None:
     }
     assert local_publisher.reference in references
     assert {
-            claim.reference
-            for provider in providers
-            for claim in provider.candidates[0].claims
-            if claim.kind in {ClaimKind.PUBLISHER, ClaimKind.IMPRINT}
-        }.issubset(references)
+        claim.reference
+        for provider in providers
+        for claim in provider.candidates[0].claims
+        if claim.kind in {ClaimKind.PUBLISHER, ClaimKind.IMPRINT}
+    }.issubset(references)
 
 
 def test_distinct_publishers_without_a_supported_target_are_acceptable_choice() -> None:
@@ -540,7 +551,9 @@ def test_distinct_publishers_without_a_supported_target_are_acceptable_choice() 
     assert ProposalOutcome.ACCEPTABLE_CHOICE == result.outcome
     assert ("field_policy_acceptable_choice",) == result.reasons
     assert result.selected_alternative_id is None
-    assert {"Tor", "Macmillan"} == {alternative.value.value for alternative in result.alternatives}
+    assert {"Tor", "Macmillan"} == {
+        alternative.value.value for alternative in result.alternatives
+    }
 
 
 def test_publisher_policy_requires_valid_manifestation_bound_evidence() -> None:
@@ -690,9 +703,14 @@ _PUBLISHER_ANCHOR_CONTROLS = (
 
 @pytest.mark.parametrize(
     ("local_claims", "applicability", "relation", "outcome"),
-    tuple(pytest.param(*control[1:], id=control[0]) for control in _PUBLISHER_ANCHOR_CONTROLS),
+    tuple(
+        pytest.param(*control[1:], id=control[0])
+        for control in _PUBLISHER_ANCHOR_CONTROLS
+    ),
 )
-def test_publisher_provider_requires_accepted_identifier_anchor(local_claims, applicability, relation, outcome) -> None:
+def test_publisher_provider_requires_accepted_identifier_anchor(
+    local_claims, applicability, relation, outcome
+) -> None:
     fields = _fields(
         publisher=TargetField(
             TargetDestination.PUBLISHER,
@@ -725,12 +743,9 @@ def test_publisher_provider_requires_accepted_identifier_anchor(local_claims, ap
 
     assert {relation} == provider_relations
     assert outcome == result.outcome
-    assert (("Bound Press",)
-        if outcome is ProposalOutcome.PROPOSE_CHANGE
-        else ()) == tuple(
-            alternative.value.value
-            for alternative in result.alternatives
-        )
+    assert (
+        ("Bound Press",) if outcome is ProposalOutcome.PROPOSE_CHANGE else ()
+    ) == tuple(alternative.value.value for alternative in result.alternatives)
 
 
 def test_publisher_anchor_must_reference_accepted_edition_isbn() -> None:
@@ -796,9 +811,9 @@ def test_publisher_anchor_must_reference_accepted_edition_isbn() -> None:
     )
 
     assert {
-            (ClaimScope.EDITION, "unknown"): IdentifierRelation.ASSOCIATED,
-            (ClaimScope.WORK, "ebook"): IdentifierRelation.ACCEPTED,
-        } == provider_evidence
+        (ClaimScope.EDITION, "unknown"): IdentifierRelation.ASSOCIATED,
+        (ClaimScope.WORK, "ebook"): IdentifierRelation.ACCEPTED,
+    } == provider_evidence
     assert ProposalOutcome.INELIGIBLE == result.outcome
     assert () == result.alternatives
 

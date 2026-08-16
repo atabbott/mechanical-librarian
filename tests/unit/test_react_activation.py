@@ -38,9 +38,9 @@ def _write_bundle(root: Path) -> str:
         destination.write_bytes(payload)
         records.append(
             {
-                "kind": "shell" if path == "index.html" else (
-                    "style" if path.endswith(".css") else "script"
-                ),
+                "kind": "shell"
+                if path == "index.html"
+                else ("style" if path.endswith(".css") else "script"),
                 "path": path,
                 "sha256": hashlib.sha256(payload).hexdigest(),
                 "size": len(payload),
@@ -143,13 +143,13 @@ def test_authenticated_routes_share_shell_and_rotate_csrf(case: _Case) -> None:
         response = case.client.get(path)
         assert response.status_code == 200, response.text
         assert f'data-build-identity="{case.identity}"' in response.text
-        match = re.search(
-            r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', response.text
-        )
+        match = re.search(r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', response.text)
         assert match is not None
         tokens.append(match.group(1))
         normalized.append(
-            re.sub(r'data-csrf-token="[A-Za-z0-9_-]+"', "data-csrf-token", response.text)
+            re.sub(
+                r'data-csrf-token="[A-Za-z0-9_-]+"', "data-csrf-token", response.text
+            )
         )
     assert len(set(normalized)) == 1
     assert len(set(tokens)) == len(paths)
@@ -176,9 +176,7 @@ def test_root_and_unknown_review_entry_preserve_client_recovery(case: _Case) -> 
 def test_only_manifest_admitted_non_shell_assets_are_served(
     case: _Case, retired: str
 ) -> None:
-    script = case.client.get(
-        "/assets/review-app/assets/index-deadbeef.js"
-    )
+    script = case.client.get("/assets/review-app/assets/index-deadbeef.js")
     assert script.status_code == 200
     assert script.content == b"window.reviewReady=true;"
     assert script.headers["content-type"].startswith("text/javascript")
@@ -203,9 +201,7 @@ def test_build_identity_fails_closed_before_logout_authority(case: _Case) -> Non
     )
     assert mismatch.status_code == 409
     current_page = case.client.get("/library")
-    current_csrf = re.search(
-        r'data-csrf-token="([A-Za-z0-9_-]+)"', current_page.text
-    )
+    current_csrf = re.search(r'data-csrf-token="([A-Za-z0-9_-]+)"', current_page.text)
     assert current_csrf is not None
     accepted = case.client.post(
         "/api/v1/session/logout",

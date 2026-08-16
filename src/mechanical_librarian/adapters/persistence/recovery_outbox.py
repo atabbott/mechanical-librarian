@@ -41,18 +41,23 @@ class SQLiteRecoveryOutboxRepository(ConnectionScoped):
         the cutover must be atomic with it.
         """
         outbox_id = _provider_recovery_outbox_id(
-            connection, library, item, *pointer,
+            connection,
+            library,
+            item,
+            *pointer,
         )
         self._connection.execute(
             "INSERT INTO provider_recovery_outbox(outbox_id,connection_name,"
             "library_name,item_id,proposal_set_id,report_id,review_case_id,"
             "checkpoint,outcome,created_at,delivered_at) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,NULL) ON CONFLICT(outbox_id) DO NOTHING",
-            (outbox_id, connection, library, item,
-             *pointer, created_at),
+            (outbox_id, connection, library, item, *pointer, created_at),
         )
+
     def pending_provider_recovery_outbox(
-        self, *, limit: int = 100,
+        self,
+        *,
+        limit: int = 100,
     ) -> tuple[tuple[object, ...], ...]:
         """Return bounded exact package cutovers awaiting recovery enqueue."""
         if type(limit) is not int or not 1 <= limit <= 100:
@@ -62,7 +67,8 @@ class SQLiteRecoveryOutboxRepository(ConnectionScoped):
                 "SELECT outbox_id,connection_name,library_name,item_id,"
                 "proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at "
                 "FROM provider_recovery_outbox WHERE delivered_at IS NULL "
-                "ORDER BY created_at,outbox_id LIMIT ?", (limit,),
+                "ORDER BY created_at,outbox_id LIMIT ?",
+                (limit,),
             ).fetchall()
             for row in rows:
                 _validate_provider_recovery_outbox_row(row)
@@ -75,11 +81,17 @@ class SQLiteRecoveryOutboxRepository(ConnectionScoped):
             ) from error
 
     def complete_provider_recovery_outbox(
-        self, outbox_id: str, *, delivered_at: int,
+        self,
+        outbox_id: str,
+        *,
+        delivered_at: int,
     ) -> None:
         """Mark one exact cutover delivered only after idempotent enqueue."""
-        if (type(outbox_id) is not str or type(delivered_at) is not int
-                or delivered_at < 0):
+        if (
+            type(outbox_id) is not str
+            or type(delivered_at) is not int
+            or delivered_at < 0
+        ):
             raise MetadataReportError("provider recovery outbox completion is invalid")
         transaction = self._transaction("complete_provider_recovery_outbox")
         try:
@@ -94,11 +106,15 @@ class SQLiteRecoveryOutboxRepository(ConnectionScoped):
                 raise MetadataReportError("provider recovery outbox changed")
             _validate_provider_recovery_outbox_row(row[:10])
             if row[10] is None:
-                if delivered_at < row[9] or self._connection.execute(
-                    "UPDATE provider_recovery_outbox SET delivered_at=? "
-                    "WHERE outbox_id=? AND delivered_at IS NULL",
-                    (delivered_at, outbox_id),
-                ).rowcount != 1:
+                if (
+                    delivered_at < row[9]
+                    or self._connection.execute(
+                        "UPDATE provider_recovery_outbox SET delivered_at=? "
+                        "WHERE outbox_id=? AND delivered_at IS NULL",
+                        (delivered_at, outbox_id),
+                    ).rowcount
+                    != 1
+                ):
                     raise MetadataReportError("provider recovery outbox changed")
             elif type(row[10]) is not int or row[10] < row[9]:
                 raise MetadataReportError("provider recovery outbox changed")
@@ -111,5 +127,6 @@ class SQLiteRecoveryOutboxRepository(ConnectionScoped):
             raise MetadataReportError(
                 "provider recovery outbox is unavailable"
             ) from error
+
 
 __all__ = ["SQLiteRecoveryOutboxRepository"]

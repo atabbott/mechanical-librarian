@@ -47,10 +47,19 @@ from tests.support.epub_packages import (
 
 def request(value: bytes, *, cancelled: bool = False) -> EpubPackageRequest:
     return EpubPackageRequest(
-        TargetId(AdapterId("synthetic"), ConnectionId("local"), LibraryId("library"), ExternalItemId("book")),
+        TargetId(
+            AdapterId("synthetic"),
+            ConnectionId("local"),
+            LibraryId("library"),
+            ExternalItemId("book"),
+        ),
         FileReference("books", "generated/book.epub"),
-        EpubPackageSource(len(value), lambda offset, size: value[offset : offset + size]),
-        Fingerprint("sha256", SchemaVersion("source-v1"), hashlib.sha256(value).hexdigest()),
+        EpubPackageSource(
+            len(value), lambda offset, size: value[offset : offset + size]
+        ),
+        Fingerprint(
+            "sha256", SchemaVersion("source-v1"), hashlib.sha256(value).hexdigest()
+        ),
         EpubPackageCapability.PACKAGE,
         EpubPackageLimits(),
         datetime.now(timezone.utc) + timedelta(seconds=30),
@@ -76,7 +85,13 @@ def request_with_limits(value: bytes, limits: EpubPackageLimits) -> EpubPackageR
 
 @pytest.mark.parametrize(
     ("value", "expected_linear", "warned"),
-    ((None, True, False), ("yes", True, False), ("no", False, False), ("YES", False, True), (" no ", False, True)),
+    (
+        (None, True, False),
+        ("yes", True, False),
+        ("no", False, False),
+        ("YES", False, True),
+        (" no ", False, True),
+    ),
 )
 def test_spine_linearity_is_exact_and_invalid_values_are_non_linear(
     value: str | None,
@@ -84,12 +99,28 @@ def test_spine_linearity_is_exact_and_invalid_values_are_non_linear(
     warned: bool,
 ) -> None:
     original = b'<itemref idref="chapter"/>'
-    itemref = original if value is None else f'<itemref idref="chapter" linear="{value}"/>'.encode()
-    report = EpubPackageExtractor().extract(request(epub_bytes(package=EPUB3_PACKAGE.replace(original, itemref))))
-    slot = next(item for item in report.declarations if item.kind is EpubPackageDeclarationKind.SPINE_SLOT)
-    item = next(item for item in report.declarations if item.kind is EpubPackageDeclarationKind.SPINE_ITEM)
+    itemref = (
+        original
+        if value is None
+        else f'<itemref idref="chapter" linear="{value}"/>'.encode()
+    )
+    report = EpubPackageExtractor().extract(
+        request(epub_bytes(package=EPUB3_PACKAGE.replace(original, itemref)))
+    )
+    slot = next(
+        item
+        for item in report.declarations
+        if item.kind is EpubPackageDeclarationKind.SPINE_SLOT
+    )
+    item = next(
+        item
+        for item in report.declarations
+        if item.kind is EpubPackageDeclarationKind.SPINE_ITEM
+    )
     assert (slot.linear, item.linear) == (expected_linear, expected_linear)
-    assert ("invalid_spine_item" in {warning.code for warning in report.warnings}) == warned
+    assert (
+        "invalid_spine_item" in {warning.code for warning in report.warnings}
+    ) == warned
 
 
 def test_epub3_package_is_deterministic_and_cited() -> None:
@@ -101,9 +132,26 @@ def test_epub3_package_is_deterministic_and_cited() -> None:
     assert first.outcome == EpubInspectionOutcome.SUCCESS
     assert first == second
     assert first.source_fingerprint.digest == hashlib.sha256(value).hexdigest()  # type: ignore[union-attr]  # reason: the test has just asserted `SUCCESS`, and a successful report always carries a source fingerprint; a `None` here would still fail this assertion loudly.
-    assert {EpubPackageField.TITLE, EpubPackageField.CREATOR, EpubPackageField.PACKAGE_IDENTIFIER, EpubPackageField.COVER}.issubset({item.field for item in first.observations})
-    assert sum(item.kind is EpubPackageDeclarationKind.NAVIGATION for item in first.declarations) == 1
-    assert sum(item.kind is EpubPackageDeclarationKind.MANIFEST_ITEM for item in first.declarations) == 3
+    assert {
+        EpubPackageField.TITLE,
+        EpubPackageField.CREATOR,
+        EpubPackageField.PACKAGE_IDENTIFIER,
+        EpubPackageField.COVER,
+    }.issubset({item.field for item in first.observations})
+    assert (
+        sum(
+            item.kind is EpubPackageDeclarationKind.NAVIGATION
+            for item in first.declarations
+        )
+        == 1
+    )
+    assert (
+        sum(
+            item.kind is EpubPackageDeclarationKind.MANIFEST_ITEM
+            for item in first.declarations
+        )
+        == 3
+    )
     assert "unsupported_vendor_metadata" in {item.code for item in first.warnings}
 
 
@@ -125,12 +173,28 @@ def test_data_descriptors_are_exact_and_unsafe_general_flags_are_rejected() -> N
     local = unsafe_flag.find(b"PK\x03\x04", 1)
     assert central > 0
     assert local > 0
-    struct.pack_into("<H", unsafe_flag, central + 8, struct.unpack_from("<H", unsafe_flag, central + 8)[0] | 0x20)
-    struct.pack_into("<H", unsafe_flag, local + 6, struct.unpack_from("<H", unsafe_flag, local + 6)[0] | 0x20)
+    struct.pack_into(
+        "<H",
+        unsafe_flag,
+        central + 8,
+        struct.unpack_from("<H", unsafe_flag, central + 8)[0] | 0x20,
+    )
+    struct.pack_into(
+        "<H",
+        unsafe_flag,
+        local + 6,
+        struct.unpack_from("<H", unsafe_flag, local + 6)[0] | 0x20,
+    )
 
     assert valid.outcome == EpubInspectionOutcome.SUCCESS
-    assert EpubPackageExtractor().extract(request(bytes(corrupted))).outcome == EpubInspectionOutcome.INTEGRITY_FAILURE
-    assert EpubPackageExtractor().extract(request(bytes(unsafe_flag))).outcome == EpubInspectionOutcome.MALFORMED
+    assert (
+        EpubPackageExtractor().extract(request(bytes(corrupted))).outcome
+        == EpubInspectionOutcome.INTEGRITY_FAILURE
+    )
+    assert (
+        EpubPackageExtractor().extract(request(bytes(unsafe_flag))).outcome
+        == EpubInspectionOutcome.MALFORMED
+    )
 
 
 @pytest.mark.parametrize(
@@ -144,7 +208,10 @@ def test_descriptor_signature_ambiguity_and_local_placeholders_are_validated(
         descriptor_signature=signed,
         crc_signature_member=True,
     )
-    assert EpubPackageExtractor().extract(request(value)).outcome == EpubInspectionOutcome.SUCCESS
+    assert (
+        EpubPackageExtractor().extract(request(value)).outcome
+        == EpubInspectionOutcome.SUCCESS
+    )
 
     described = epub_data_descriptor_bytes()
     first_local = described.find(b"PK\x03\x04")
@@ -156,23 +223,35 @@ def test_descriptor_signature_ambiguity_and_local_placeholders_are_validated(
     for offset in (14, 18, 22):
         corrupted = bytearray(described)
         struct.pack_into("<L", corrupted, second_local + offset, 1)
-        assert EpubPackageExtractor().extract(request(bytes(corrupted))).outcome == EpubInspectionOutcome.INTEGRITY_FAILURE
+        assert (
+            EpubPackageExtractor().extract(request(bytes(corrupted))).outcome
+            == EpubInspectionOutcome.INTEGRITY_FAILURE
+        )
 
     invalid_version = bytearray(described)
     struct.pack_into("<H", invalid_version, second_local + 4, 0)
     struct.pack_into("<H", invalid_version, second_central + 6, 0)
-    assert EpubPackageExtractor().extract(request(bytes(invalid_version))).outcome == EpubInspectionOutcome.MALFORMED
+    assert (
+        EpubPackageExtractor().extract(request(bytes(invalid_version))).outcome
+        == EpubInspectionOutcome.MALFORMED
+    )
 
 
 def test_epub2_preserves_legacy_declarations_without_dereferencing() -> None:
     report = EpubPackageExtractor().extract(request(epub_bytes(version=2)))
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert EpubPackageDeclarationKind.NCX in {item.kind for item in report.declarations}
-    assert EpubPackageDeclarationKind.GUIDE_REFERENCE in {item.kind for item in report.declarations}
-    assert EpubPackageField.PUBLICATION_DATE in {item.field for item in report.observations}
+    assert EpubPackageDeclarationKind.GUIDE_REFERENCE in {
+        item.kind for item in report.declarations
+    }
+    assert EpubPackageField.PUBLICATION_DATE in {
+        item.field for item in report.observations
+    }
     assert EpubPackageField.CREATOR_ROLE in {item.field for item in report.observations}
     assert EpubPackageField.SORT_KEY in {item.field for item in report.observations}
-    assert EpubPackageField.IDENTIFIER_SCHEME in {item.field for item in report.observations}
+    assert EpubPackageField.IDENTIFIER_SCHEME in {
+        item.field for item in report.observations
+    }
     primary = next(
         item
         for item in report.observations
@@ -182,22 +261,22 @@ def test_epub2_preserves_legacy_declarations_without_dereferencing() -> None:
     assert primary.normalized_value == "0306406152"
     assert primary.applicability is EpubObservationApplicability.UNKNOWN
 
-    tours = b'''<tours>
+    tours = b"""<tours>
     <tour title="Synthetic route">
       <site title="Synthetic stop" href="chapter.xhtml#start"/>
     </tour>
   </tours>
-  '''
+  """
     toured_package = EPUB2_PACKAGE.replace(b"  <guide>", b"  " + tours + b"<guide>")
-    toured = EpubPackageExtractor().extract(
-        request(epub_bytes(package=toured_package))
-    )
+    toured = EpubPackageExtractor().extract(request(epub_bytes(package=toured_package)))
     assert toured.outcome == EpubInspectionOutcome.SUCCESS
     assert "deprecated_tours" in {item.code for item in toured.warnings}
 
     invalid_tours = (
         EPUB2_PACKAGE.replace(b"  <guide>", b"  <tours/>\n  <guide>"),
-        toured_package.replace(b'href="chapter.xhtml#start"', b'href="missing.xhtml"', 1),
+        toured_package.replace(
+            b'href="chapter.xhtml#start"', b'href="missing.xhtml"', 1
+        ),
         toured_package.replace(b'title="Synthetic stop" ', b""),
         EPUB3_PACKAGE.replace(b"</package>", tours + b"</package>"),
     )
@@ -206,7 +285,9 @@ def test_epub2_preserves_legacy_declarations_without_dereferencing() -> None:
             request(epub_bytes(package=package))
         )
         assert invalid_tour_report.outcome == EpubInspectionOutcome.SUCCESS
-        assert "invalid_deprecated_tours" in {item.code for item in invalid_tour_report.warnings}
+        assert "invalid_deprecated_tours" in {
+            item.code for item in invalid_tour_report.warnings
+        }
 
 
 def test_epub2_deprecated_metadata_wrappers_preserve_evidence_and_bounds() -> None:
@@ -217,7 +298,7 @@ def test_epub2_deprecated_metadata_wrappers_preserve_evidence_and_bounds() -> No
         b'xmlns:opf="http://www.idpf.org/2007/opf"><dc-metadata>',
     ).replace(
         b'    <meta name="cover" content="cover"/>',
-        b'  </dc-metadata><x-metadata>'
+        b"  </dc-metadata><x-metadata>"
         b'<meta name="cover" content="cover"/></x-metadata>',
     )
     value = epub_bytes(version=2, package=wrapped)
@@ -227,37 +308,36 @@ def test_epub2_deprecated_metadata_wrappers_preserve_evidence_and_bounds() -> No
     assert first.outcome == EpubInspectionOutcome.SUCCESS
     assert first == second
     assert first.usage.metadata_nodes == 6
-    assert ({
-            EpubPackageField.TITLE,
-            EpubPackageField.CREATOR,
-            EpubPackageField.LANGUAGE,
-            EpubPackageField.PACKAGE_IDENTIFIER,
-            EpubPackageField.COVER,
-        }
-        <= {item.field for item in first.observations})
-    assert EpubPackageExtractor().extract(
-            request_with_limits(value, EpubPackageLimits(metadata_nodes=6))
-        ).outcome == EpubInspectionOutcome.SUCCESS
-    assert EpubPackageExtractor().extract(
-            request_with_limits(value, EpubPackageLimits(metadata_nodes=5))
-        ).outcome == EpubInspectionOutcome.RESOURCE_LIMIT
+    assert {
+        EpubPackageField.TITLE,
+        EpubPackageField.CREATOR,
+        EpubPackageField.LANGUAGE,
+        EpubPackageField.PACKAGE_IDENTIFIER,
+        EpubPackageField.COVER,
+    } <= {item.field for item in first.observations}
+    assert (
+        EpubPackageExtractor()
+        .extract(request_with_limits(value, EpubPackageLimits(metadata_nodes=6)))
+        .outcome
+        == EpubInspectionOutcome.SUCCESS
+    )
+    assert (
+        EpubPackageExtractor()
+        .extract(request_with_limits(value, EpubPackageLimits(metadata_nodes=5)))
+        .outcome
+        == EpubInspectionOutcome.RESOURCE_LIMIT
+    )
 
 
 def test_epub2_ncx_reference_is_required_and_rejects_fallback_information() -> None:
-    ncx_item = (
-        b'<item id="ncx" href="toc.ncx" '
-        b'media-type="application/x-dtbncx+xml"/>'
-    )
+    ncx_item = b'<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>'
     invalid_packages = (
         EPUB2_PACKAGE.replace(b'<spine toc="ncx">', b"<spine>"),
         EPUB2_PACKAGE.replace(b'<spine toc="ncx">', b'<spine toc="">'),
         *(
             EPUB2_PACKAGE.replace(
                 ncx_item,
-                ncx_item[:-2]
-                + b" "
-                + attribute
-                + b'="chapter"/>',
+                ncx_item[:-2] + b" " + attribute + b'="chapter"/>',
             )
             for attribute in (
                 b"fallback",
@@ -273,16 +353,14 @@ def test_epub2_ncx_reference_is_required_and_rejects_fallback_information() -> N
         assert report.outcome == EpubInspectionOutcome.SUCCESS
         assert "invalid_ncx_declaration" in {item.code for item in report.warnings}
         assert not any(
-                item.kind is EpubPackageDeclarationKind.NCX
-                for item in report.declarations
-            )
+            item.kind is EpubPackageDeclarationKind.NCX for item in report.declarations
+        )
 
     epub3 = EpubPackageExtractor().extract(request(epub_bytes()))
     assert "invalid_ncx_declaration" not in {item.code for item in epub3.warnings}
 
     epub3_with_fallback = EPUB3_PACKAGE.replace(
-        b'<item id="chapter" href="chapter.xhtml" '
-        b'media-type="application/xhtml+xml"/>',
+        b'<item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>',
         b'<item id="ncx" href="toc.ncx" '
         b'media-type="application/x-dtbncx+xml" fallback="chapter"/>'
         b'<item id="chapter" href="chapter.xhtml" '
@@ -291,8 +369,12 @@ def test_epub2_ncx_reference_is_required_and_rejects_fallback_information() -> N
     fallback_report = EpubPackageExtractor().extract(
         request(epub_bytes(package=epub3_with_fallback))
     )
-    assert "invalid_ncx_declaration" not in {item.code for item in fallback_report.warnings}
-    assert EpubPackageDeclarationKind.NCX in {item.kind for item in fallback_report.declarations}
+    assert "invalid_ncx_declaration" not in {
+        item.code for item in fallback_report.warnings
+    }
+    assert EpubPackageDeclarationKind.NCX in {
+        item.kind for item in fallback_report.declarations
+    }
 
 
 def test_remote_manifest_resource_is_hashed_and_never_fetched_or_disclosed() -> None:
@@ -302,7 +384,13 @@ def test_remote_manifest_resource_is_hashed_and_never_fetched_or_disclosed() -> 
     )
     report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     assert report.outcome == EpubInspectionOutcome.SUCCESS
-    assert sum(item.kind is EpubPackageDeclarationKind.MANIFEST_ITEM for item in report.declarations) == 4
+    assert (
+        sum(
+            item.kind is EpubPackageDeclarationKind.MANIFEST_ITEM
+            for item in report.declarations
+        )
+        == 4
+    )
 
 
 def test_namespaces_spine_cardinality_percent_paths_and_global_ids_are_strict() -> None:
@@ -318,30 +406,40 @@ def test_namespaces_spine_cardinality_percent_paths_and_global_ids_are_strict() 
         b'<spine><itemref idref="chapter"/></spine>', b"<spine/>"
     )
     encoded_path = EPUB3_PACKAGE.replace(b"chapter.xhtml", b"chapter%20one.xhtml")
-    duplicate_id = EPUB3_PACKAGE.replace(
-        b'<item id="nav"', b'<item id="title"', 1
-    )
+    duplicate_id = EPUB3_PACKAGE.replace(b'<item id="nav"', b'<item id="title"', 1)
     outcomes = (
-        EpubPackageExtractor().extract(request(epub_bytes(container=foreign_container))).outcome,
-        EpubPackageExtractor().extract(request(epub_bytes(package=foreign_package))).outcome,
-        EpubPackageExtractor().extract(request(epub_bytes(package=empty_spine))).outcome,
-        EpubPackageExtractor().extract(
+        EpubPackageExtractor()
+        .extract(request(epub_bytes(container=foreign_container)))
+        .outcome,
+        EpubPackageExtractor()
+        .extract(request(epub_bytes(package=foreign_package)))
+        .outcome,
+        EpubPackageExtractor()
+        .extract(request(epub_bytes(package=empty_spine)))
+        .outcome,
+        EpubPackageExtractor()
+        .extract(
             request(
                 epub_bytes(
                     package=encoded_path,
-                    extra_entries=(("EPUB/chapter one.xhtml", b"opaque", zipfile.ZIP_STORED),),
+                    extra_entries=(
+                        ("EPUB/chapter one.xhtml", b"opaque", zipfile.ZIP_STORED),
+                    ),
                 )
             )
-        ).outcome,
-        EpubPackageExtractor().extract(request(epub_bytes(package=duplicate_id))).outcome,
+        )
+        .outcome,
+        EpubPackageExtractor()
+        .extract(request(epub_bytes(package=duplicate_id)))
+        .outcome,
     )
     assert outcomes == (
-            EpubInspectionOutcome.MALFORMED,
-            EpubInspectionOutcome.MALFORMED,
-            EpubInspectionOutcome.MALFORMED,
-            EpubInspectionOutcome.SUCCESS,
-            EpubInspectionOutcome.SUCCESS,
-        )
+        EpubInspectionOutcome.MALFORMED,
+        EpubInspectionOutcome.MALFORMED,
+        EpubInspectionOutcome.MALFORMED,
+        EpubInspectionOutcome.SUCCESS,
+        EpubInspectionOutcome.SUCCESS,
+    )
     duplicate_report = EpubPackageExtractor().extract(
         request(epub_bytes(package=duplicate_id))
     )
@@ -358,15 +456,23 @@ def test_invalid_and_ambiguous_ids_are_omitted_from_semantic_lookups() -> None:
         request(epub_bytes(package=duplicate_primary))
     )
     assert duplicate_primary_report.outcome == EpubInspectionOutcome.SUCCESS
-    assert "ambiguous_package_id" in {item.code for item in duplicate_primary_report.warnings}
-    assert EpubPackageField.PACKAGE_IDENTIFIER not in {item.field for item in duplicate_primary_report.observations}
+    assert "ambiguous_package_id" in {
+        item.code for item in duplicate_primary_report.warnings
+    }
+    assert EpubPackageField.PACKAGE_IDENTIFIER not in {
+        item.field for item in duplicate_primary_report.observations
+    }
 
     invalid_primary = EPUB3_PACKAGE.replace(b'id="pub-id"', b'id="bad id"', 1)
     invalid_primary_report = EpubPackageExtractor().extract(
         request(epub_bytes(package=invalid_primary))
     )
-    assert "invalid_package_id" in {item.code for item in invalid_primary_report.warnings}
-    assert EpubPackageField.PACKAGE_IDENTIFIER not in {item.field for item in invalid_primary_report.observations}
+    assert "invalid_package_id" in {
+        item.code for item in invalid_primary_report.warnings
+    }
+    assert EpubPackageField.PACKAGE_IDENTIFIER not in {
+        item.field for item in invalid_primary_report.observations
+    }
 
     duplicate_manifest_id = EPUB3_PACKAGE.replace(
         b'<item id="nav"', b'<item id="chapter"', 1
@@ -376,22 +482,20 @@ def test_invalid_and_ambiguous_ids_are_omitted_from_semantic_lookups() -> None:
     )
     assert duplicate_manifest_report.outcome == EpubInspectionOutcome.SUCCESS
     assert not any(
-            item.kind is EpubPackageDeclarationKind.SPINE_ITEM and item.identifier == "chapter"
-            for item in duplicate_manifest_report.declarations
-        )
-    assert ({"ambiguous_package_id", "invalid_manifest_item", "invalid_spine_item"}
-        <= {item.code for item in duplicate_manifest_report.warnings})
+        item.kind is EpubPackageDeclarationKind.SPINE_ITEM
+        and item.identifier == "chapter"
+        for item in duplicate_manifest_report.declarations
+    )
+    assert {"ambiguous_package_id", "invalid_manifest_item", "invalid_spine_item"} <= {
+        item.code for item in duplicate_manifest_report.warnings
+    }
 
 
 def test_duplicate_cover_resource_keeps_cover_item_provenance() -> None:
-    package = EPUB3_PACKAGE.replace(
-        b'href="cover.jpg"', b'href="chapter.xhtml"'
-    )
+    package = EPUB3_PACKAGE.replace(b'href="cover.jpg"', b'href="chapter.xhtml"')
     report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     cover_observation = next(
-        item
-        for item in report.observations
-        if item.field is EpubPackageField.COVER
+        item for item in report.observations if item.field is EpubPackageField.COVER
     )
     cover_declaration = next(
         item
@@ -400,18 +504,16 @@ def test_duplicate_cover_resource_keeps_cover_item_provenance() -> None:
     )
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert "duplicate_manifest_resource" in {item.code for item in report.warnings}
-    assert cover_observation.citation.source_ordinal == cover_declaration.citation.source_ordinal
+    assert (
+        cover_observation.citation.source_ordinal
+        == cover_declaration.citation.source_ordinal
+    )
 
 
 def test_missing_guide_target_is_warned_and_omitted() -> None:
-    reference = (
-        b'<reference type="text" title="Start" '
-        b'href="chapter.xhtml#start"/>'
-    )
+    reference = b'<reference type="text" title="Start" href="chapter.xhtml#start"/>'
     invalid_references = (
-        reference.replace(
-            b'href="chapter.xhtml#start"', b'href="missing.xhtml#start"'
-        ),
+        reference.replace(b'href="chapter.xhtml#start"', b'href="missing.xhtml#start"'),
         b'<reference type="text" title="Start"/>',
         b'<landmark type="text" title="Start" href="chapter.xhtml#start"/>',
         b'<reference type="text" title="Start" href="chapter.xhtml#start">'
@@ -428,9 +530,9 @@ def test_missing_guide_target_is_warned_and_omitted() -> None:
         assert report.outcome == EpubInspectionOutcome.SUCCESS
         assert "invalid_guide_reference" in {item.code for item in report.warnings}
         assert not any(
-                item.kind is EpubPackageDeclarationKind.GUIDE_REFERENCE
-                for item in report.declarations
-            )
+            item.kind is EpubPackageDeclarationKind.GUIDE_REFERENCE
+            for item in report.declarations
+        )
 
     fragment_only = EPUB2_PACKAGE.replace(
         b'href="chapter.xhtml#start"', b'href="#start"'
@@ -447,15 +549,12 @@ def test_missing_guide_target_is_warned_and_omitted() -> None:
     (b"a:b", b"chapter.xhtml?edition=1", b"chapter%ZZ.xhtml"),
 )
 def test_invalid_optional_resource_syntax_is_warned_and_omitted(href: bytes) -> None:
-    package = EPUB3_PACKAGE.replace(
-        b'href="chapter.xhtml"', b'href="' + href + b'"', 1
-    )
-    report = EpubPackageExtractor().extract(
-        request(epub_bytes(package=package))
-    )
+    package = EPUB3_PACKAGE.replace(b'href="chapter.xhtml"', b'href="' + href + b'"', 1)
+    report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     assert report.outcome == EpubInspectionOutcome.SUCCESS
-    assert ({"invalid_manifest_item", "invalid_spine_item"}
-        <= {item.code for item in report.warnings})
+    assert {"invalid_manifest_item", "invalid_spine_item"} <= {
+        item.code for item in report.warnings
+    }
 
     package = EPUB2_PACKAGE.replace(
         b'href="chapter.xhtml#start"', b'href="' + href + b'"', 1
@@ -466,12 +565,12 @@ def test_invalid_optional_resource_syntax_is_warned_and_omitted(href: bytes) -> 
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert "invalid_guide_reference" in {item.code for item in report.warnings}
 
-    tours = b'''<tours>
+    tours = b"""<tours>
     <tour title="Synthetic route">
       <site title="Synthetic stop" href="a:b"/>
     </tour>
   </tours>
-  '''
+  """
     toured = EPUB2_PACKAGE.replace(b"  <guide>", b"  " + tours + b"<guide>")
     report = EpubPackageExtractor().extract(
         request(epub_bytes(version=2, package=toured))
@@ -502,9 +601,9 @@ def test_spine_requires_compatible_content_or_local_fallback(package: bytes) -> 
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert "invalid_spine_item" in {item.code for item in report.warnings}
     assert not any(
-            item.kind is EpubPackageDeclarationKind.SPINE_ITEM
-            for item in report.declarations
-        )
+        item.kind is EpubPackageDeclarationKind.SPINE_ITEM
+        for item in report.declarations
+    )
 
     fallback_package = EPUB3_PACKAGE.replace(
         b'<item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>',
@@ -515,9 +614,7 @@ def test_spine_requires_compatible_content_or_local_fallback(package: bytes) -> 
         request(
             epub_bytes(
                 package=fallback_package,
-                extra_entries=(
-                    ("EPUB/fallback.xhtml", b"opaque", zipfile.ZIP_STORED),
-                ),
+                extra_entries=(("EPUB/fallback.xhtml", b"opaque", zipfile.ZIP_STORED),),
             )
         )
     )
@@ -571,19 +668,21 @@ def test_repeated_spine_itemrefs_are_cited_warned_and_omitted(
         if item.kind is EpubPackageDeclarationKind.SPINE_ITEM
     ]
     duplicate_warnings = [
-        item
-        for item in first.warnings
-        if item.code == "invalid_spine_item"
+        item for item in first.warnings if item.code == "invalid_spine_item"
     ]
-    first_ordinal, duplicate_ordinal, second_ordinal = (
-        expected_ordinals[version]
-    )
+    first_ordinal, duplicate_ordinal, second_ordinal = expected_ordinals[version]
 
     assert first.outcome == EpubInspectionOutcome.SUCCESS
     assert first == second
     assert [item.identifier for item in spine_items] == ["chapter", "second"]
-    assert [item.source_ordinal for item in spine_items] == [first_ordinal, second_ordinal]
-    assert [item.citation.source_ordinal for item in spine_items] == [first_ordinal, second_ordinal]
+    assert [item.source_ordinal for item in spine_items] == [
+        first_ordinal,
+        second_ordinal,
+    ]
+    assert [item.citation.source_ordinal for item in spine_items] == [
+        first_ordinal,
+        second_ordinal,
+    ]
     assert len(duplicate_warnings) == 1
     assert duplicate_warnings[0].citation is not None
     assert duplicate_warnings[0].citation.source_ordinal == duplicate_ordinal
@@ -627,10 +726,10 @@ def test_distinct_spine_itemrefs_remain_distinct(
 
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert [
-            item.identifier
-            for item in report.declarations
-            if item.kind is EpubPackageDeclarationKind.SPINE_ITEM
-        ] == ["chapter", "second"]
+        item.identifier
+        for item in report.declarations
+        if item.kind is EpubPackageDeclarationKind.SPINE_ITEM
+    ] == ["chapter", "second"]
     assert "invalid_spine_item" not in {item.code for item in report.warnings}
 
 
@@ -661,9 +760,7 @@ def test_malformed_spine_itemref_does_not_claim_first_valid_occurrence(
             if item.kind is EpubPackageDeclarationKind.SPINE_ITEM
         ]
         invalid_warnings = [
-            item
-            for item in report.warnings
-            if item.code == "invalid_spine_item"
+            item for item in report.warnings if item.code == "invalid_spine_item"
         ]
 
         assert report.outcome == EpubInspectionOutcome.SUCCESS
@@ -672,7 +769,9 @@ def test_malformed_spine_itemref_does_not_claim_first_valid_occurrence(
         assert len(invalid_warnings) == 1
         assert invalid_warnings[0].citation is not None
         assert invalid_warnings[0].citation.section == EpubPackageCitationSection.SPINE
-        assert invalid_warnings[0].citation.source_ordinal < spine_items[0].source_ordinal
+        assert (
+            invalid_warnings[0].citation.source_ordinal < spine_items[0].source_ordinal
+        )
         assert spine_items[0].source_ordinal == spine_items[0].citation.source_ordinal
 
 
@@ -694,9 +793,7 @@ def test_malformed_spine_itemref_does_not_claim_first_valid_occurrence(
 def test_manifest_semantics_require_safe_local_compatible_resources(
     package: bytes,
 ) -> None:
-    report = EpubPackageExtractor().extract(
-        request(epub_bytes(package=package))
-    )
+    report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert "unsafe_manifest_item" in {item.code for item in report.warnings}
 
@@ -720,9 +817,7 @@ def test_manifest_semantics_require_safe_local_compatible_resources(
     assert excessive_report.outcome == EpubInspectionOutcome.SUCCESS
     assert "invalid_manifest_item" in {item.code for item in excessive_report.warnings}
 
-    missing_cover = EPUB3_PACKAGE.replace(
-        b'href="cover.jpg"', b'href="missing.jpg"'
-    )
+    missing_cover = EPUB3_PACKAGE.replace(b'href="cover.jpg"', b'href="missing.jpg"')
     wrong_cover = EPUB3_PACKAGE.replace(
         b'media-type="image/jpeg" properties="cover-image"',
         b'media-type="application/xhtml+xml" properties="cover-image"',
@@ -752,9 +847,7 @@ def test_manifest_semantics_require_safe_local_compatible_resources(
             EpubPackageField.NAVIGATION,
         ),
     ):
-        report = EpubPackageExtractor().extract(
-            request(epub_bytes(package=package))
-        )
+        report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
         assert report.outcome == EpubInspectionOutcome.SUCCESS
         assert warning in {item.code for item in report.warnings}
         assert forbidden_kind not in {item.kind for item in report.declarations}
@@ -785,18 +878,18 @@ def test_isbn_families_validate_lexical_position_prefix_checksum_and_urn(
 ) -> None:
     original = b"9780306406157"
     package = EPUB3_PACKAGE.replace(original, raw, 1)
-    report = EpubPackageExtractor().extract(
-        request(epub_bytes(package=package))
-    )
+    report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     identifier = next(
         item
         for item in report.observations
         if item.field is EpubPackageField.IDENTIFIER
     )
     assert identifier.normalized_value == normalized
-    assert identifier.applicability is (EpubObservationApplicability.UNKNOWN
-            if valid
-            else EpubObservationApplicability.INAPPLICABLE)
+    assert identifier.applicability is (
+        EpubObservationApplicability.UNKNOWN
+        if valid
+        else EpubObservationApplicability.INAPPLICABLE
+    )
     inferred = {
         item.normalized_value
         for item in report.observations
@@ -804,7 +897,9 @@ def test_isbn_families_validate_lexical_position_prefix_checksum_and_urn(
         and item.citation.selector == "inferred-identifier-type"
     }
     assert inferred == (set() if scheme is None else {scheme})
-    assert ("invalid_identifier" in {item.code for item in report.warnings}) == (not valid)
+    assert ("invalid_identifier" in {item.code for item in report.warnings}) == (
+        not valid
+    )
 
     invalid_declared = EPUB2_PACKAGE.replace(
         b">0-306-40615-2</dc:identifier>",
@@ -819,13 +914,15 @@ def test_isbn_families_validate_lexical_position_prefix_checksum_and_urn(
         if item.field is EpubPackageField.IDENTIFIER
     )
     assert declared_report.outcome == EpubInspectionOutcome.SUCCESS
-    assert declared_identifier.applicability is EpubObservationApplicability.INAPPLICABLE
+    assert (
+        declared_identifier.applicability is EpubObservationApplicability.INAPPLICABLE
+    )
     assert "invalid_identifier" in {item.code for item in declared_report.warnings}
     assert "ISBN" in {
-            item.normalized_value
-            for item in declared_report.observations
-            if item.field is EpubPackageField.IDENTIFIER_SCHEME
-        }
+        item.normalized_value
+        for item in declared_report.observations
+        if item.field is EpubPackageField.IDENTIFIER_SCHEME
+    }
 
 
 def test_explicit_non_isbn_scheme_does_not_infer_an_isbn() -> None:
@@ -833,29 +930,32 @@ def test_explicit_non_isbn_scheme_does_not_infer_an_isbn() -> None:
         b'opf:scheme="ISBN">0-306-40615-2',
         b'opf:scheme="LCCN">9780306406157',
     )
-    report = EpubPackageExtractor().extract(request(epub_bytes(version=2, package=package)))
+    report = EpubPackageExtractor().extract(
+        request(epub_bytes(version=2, package=package))
+    )
     identifier = next(
-        item for item in report.observations
+        item
+        for item in report.observations
         if item.field is EpubPackageField.IDENTIFIER
     )
     assert identifier.normalized_value == "9780306406157"
     assert identifier.applicability is EpubObservationApplicability.UNKNOWN
     assert "ISBN-13" not in {
-            item.normalized_value
-            for item in report.observations
-            if item.field is EpubPackageField.IDENTIFIER_SCHEME
-        }
+        item.normalized_value
+        for item in report.observations
+        if item.field is EpubPackageField.IDENTIFIER_SCHEME
+    }
 
 
 @pytest.mark.parametrize(
     ("scheme", "raw", "normalized"),
     (
-        (b'isbn', b'9780306406157', "9780306406157"),
-        (b'DoI', b'doi:10.1234/synthetic.1', "10.1234/synthetic.1"),
-        (b'aSiN', b'asin:b012345678', "B012345678"),
+        (b"isbn", b"9780306406157", "9780306406157"),
+        (b"DoI", b"doi:10.1234/synthetic.1", "10.1234/synthetic.1"),
+        (b"aSiN", b"asin:b012345678", "B012345678"),
         (
-            b'UuId',
-            b'12345678-1234-4abc-8123-123456789abc',
+            b"UuId",
+            b"12345678-1234-4abc-8123-123456789abc",
             "urn:uuid:12345678-1234-4abc-8123-123456789abc",
         ),
     ),
@@ -873,31 +973,31 @@ def test_declared_identifier_schemes_are_casefolded_and_normalized(
         request(epub_bytes(version=2, package=package))
     )
     identifier = next(
-        item for item in report.observations
+        item
+        for item in report.observations
         if item.field is EpubPackageField.IDENTIFIER
     )
     assert identifier.normalized_value == normalized
     assert scheme.decode() in {
-            item.normalized_value
-            for item in report.observations
-            if item.field is EpubPackageField.IDENTIFIER_SCHEME
-        }
+        item.normalized_value
+        for item in report.observations
+        if item.field is EpubPackageField.IDENTIFIER_SCHEME
+    }
 
 
 def test_repeated_legacy_cover_declarations_preserve_agreement_and_conflict() -> None:
     cover_meta = b'<meta name="cover" content="cover"/>'
-    agreeing_package = EPUB2_PACKAGE.replace(
-        cover_meta, cover_meta + cover_meta
-    )
+    agreeing_package = EPUB2_PACKAGE.replace(cover_meta, cover_meta + cover_meta)
     agreeing = EpubPackageExtractor().extract(
         request(epub_bytes(version=2, package=agreeing_package))
     )
     assert agreeing.outcome == EpubInspectionOutcome.SUCCESS
-    assert "contradictory_cover_declaration" not in {item.code for item in agreeing.warnings}
-    assert sum(
-            item.field is EpubPackageField.COVER
-            for item in agreeing.observations
-        ) == 1
+    assert "contradictory_cover_declaration" not in {
+        item.code for item in agreeing.warnings
+    }
+    assert (
+        sum(item.field is EpubPackageField.COVER for item in agreeing.observations) == 1
+    )
     agreeing_cover = next(
         item
         for item in agreeing.declarations
@@ -910,23 +1010,24 @@ def test_repeated_legacy_cover_declarations_preserve_agreement_and_conflict() ->
         cover_meta + b'<meta name="cover" content="cover2"/>',
     ).replace(
         b"</manifest>",
-        b'<item id="cover2" href="cover2.jpg" media-type="image/jpeg"/>'
-        b"</manifest>",
+        b'<item id="cover2" href="cover2.jpg" media-type="image/jpeg"/></manifest>',
     )
     conflicting = EpubPackageExtractor().extract(
         request(
             epub_bytes(
                 version=2,
                 package=conflicting_package,
-                extra_entries=(
-                    ("EPUB/cover2.jpg", b"opaque", zipfile.ZIP_STORED),
-                ),
+                extra_entries=(("EPUB/cover2.jpg", b"opaque", zipfile.ZIP_STORED),),
             )
         )
     )
     assert conflicting.outcome == EpubInspectionOutcome.SUCCESS
-    assert "contradictory_cover_declaration" in {item.code for item in conflicting.warnings}
-    assert EpubPackageField.COVER not in {item.field for item in conflicting.observations}
+    assert "contradictory_cover_declaration" in {
+        item.code for item in conflicting.warnings
+    }
+    assert EpubPackageField.COVER not in {
+        item.field for item in conflicting.observations
+    }
 
     current_conflict_package = EPUB3_PACKAGE.replace(
         b"</manifest>",
@@ -938,15 +1039,17 @@ def test_repeated_legacy_cover_declarations_preserve_agreement_and_conflict() ->
         request(
             epub_bytes(
                 package=current_conflict_package,
-                extra_entries=(
-                    ("EPUB/cover2.jpg", b"opaque", zipfile.ZIP_STORED),
-                ),
+                extra_entries=(("EPUB/cover2.jpg", b"opaque", zipfile.ZIP_STORED),),
             )
         )
     )
     assert current_conflict.outcome == EpubInspectionOutcome.SUCCESS
-    assert "contradictory_cover_declaration" in {item.code for item in current_conflict.warnings}
-    assert EpubPackageField.COVER not in {item.field for item in current_conflict.observations}
+    assert "contradictory_cover_declaration" in {
+        item.code for item in current_conflict.warnings
+    }
+    assert EpubPackageField.COVER not in {
+        item.field for item in current_conflict.observations
+    }
 
 
 def test_hostile_path_reference_matrix_is_typed_and_never_resolved_externally() -> None:
@@ -961,9 +1064,10 @@ def test_hostile_path_reference_matrix_is_typed_and_never_resolved_externally() 
     }
     for reference, expected in references.items():
         package = EPUB3_PACKAGE.replace(b"chapter.xhtml", reference.encode(), 1)
-        assert EpubPackageExtractor().extract(
-                request(epub_bytes(package=package))
-            ).outcome == expected
+        assert (
+            EpubPackageExtractor().extract(request(epub_bytes(package=package))).outcome
+            == expected
+        )
 
     encrypted_zip = bytearray(epub_bytes())
     central = encrypted_zip.find(b"PK\x01\x02")
@@ -973,7 +1077,10 @@ def test_hostile_path_reference_matrix_is_typed_and_never_resolved_externally() 
         central + 8,
         struct.unpack_from("<H", encrypted_zip, central + 8)[0] | 1,
     )
-    assert EpubPackageExtractor().extract(request(bytes(encrypted_zip))).outcome == EpubInspectionOutcome.ENCRYPTED
+    assert (
+        EpubPackageExtractor().extract(request(bytes(encrypted_zip))).outcome
+        == EpubInspectionOutcome.ENCRYPTED
+    )
 
 
 @pytest.mark.parametrize(
@@ -990,16 +1097,18 @@ def test_entity_and_xinclude_matrix_is_rejected_without_external_access(
     declaration: bytes,
 ) -> None:
     package = declaration + EPUB3_PACKAGE
-    assert EpubPackageExtractor().extract(
-            request(epub_bytes(package=package))
-        ).outcome == EpubInspectionOutcome.MALFORMED
+    assert (
+        EpubPackageExtractor().extract(request(epub_bytes(package=package))).outcome
+        == EpubInspectionOutcome.MALFORMED
+    )
     xinclude = EPUB3_PACKAGE.replace(
         b"</metadata>",
         b'<xi:include xmlns:xi="http://www.w3.org/2001/XInclude" href="file:///private/value"/></metadata>',
     )
-    assert EpubPackageExtractor().extract(
-            request(epub_bytes(package=xinclude))
-        ).outcome == EpubInspectionOutcome.MALFORMED
+    assert (
+        EpubPackageExtractor().extract(request(epub_bytes(package=xinclude))).outcome
+        == EpubInspectionOutcome.MALFORMED
+    )
 
 
 def test_package_child_order_and_refinement_targets_are_closed() -> None:
@@ -1027,16 +1136,15 @@ def test_package_child_order_and_refinement_targets_are_closed() -> None:
         b'<meta refines="#chapter" property="role">aut</meta></metadata>',
     )
     for package in (reordered, unknown_child):
-        assert EpubPackageExtractor().extract(
-                request(epub_bytes(package=package))
-            ).outcome == EpubInspectionOutcome.MALFORMED
+        assert (
+            EpubPackageExtractor().extract(request(epub_bytes(package=package))).outcome
+            == EpubInspectionOutcome.MALFORMED
+        )
     for package, warning in (
         (missing_target, "unresolved_metadata_refinement"),
         (wrong_target, "inapplicable_metadata_refinement"),
     ):
-        report = EpubPackageExtractor().extract(
-            request(epub_bytes(package=package))
-        )
+        report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
         assert report.outcome == EpubInspectionOutcome.SUCCESS
         assert warning in {item.code for item in report.warnings}
     trailing_cases = (
@@ -1067,16 +1175,20 @@ def test_package_child_order_and_refinement_targets_are_closed() -> None:
         package = EPUB3_PACKAGE.replace(
             b"</package>", trailing_children + b"</package>"
         )
-        assert EpubPackageExtractor().extract(
-                request(epub_bytes(package=package))
-            ).outcome == outcome
+        assert (
+            EpubPackageExtractor().extract(request(epub_bytes(package=package))).outcome
+            == outcome
+        )
     container_links = CONTAINER_ONE.replace(
         b"</container>",
         b'<links><link href="https://example.invalid/metadata" rel="record"/></links></container>',
     )
-    assert EpubPackageExtractor().extract(
-            request(epub_bytes(container=container_links))
-        ).outcome == EpubInspectionOutcome.SUCCESS
+    assert (
+        EpubPackageExtractor()
+        .extract(request(epub_bytes(container=container_links)))
+        .outcome
+        == EpubInspectionOutcome.SUCCESS
+    )
 
 
 @pytest.mark.parametrize(
@@ -1110,15 +1222,9 @@ def test_unsafe_metadata_is_one_way_projected_with_a_cited_warning(
 def test_untrusted_xml_namespaces_are_one_way_projected_in_citations(
     namespace: str,
 ) -> None:
-    foreign = (
-        f'<x:quiet xmlns:x="{namespace}" id="bad id"/>'.encode("utf-8")
-    )
-    package = EPUB3_PACKAGE.replace(
-        b"</metadata>", foreign + b"</metadata>"
-    )
-    report = EpubPackageExtractor().extract(
-        request(epub_bytes(package=package))
-    )
+    foreign = f'<x:quiet xmlns:x="{namespace}" id="bad id"/>'.encode("utf-8")
+    package = EPUB3_PACKAGE.replace(b"</metadata>", foreign + b"</metadata>")
+    report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     warning = next(
         item
         for item in report.warnings
@@ -1131,12 +1237,8 @@ def test_untrusted_xml_namespaces_are_one_way_projected_in_citations(
         b'<syntheticPrivateTokenSentinel xmlns="" id="bad id"/>',
         b'<syntheticPrivateTokenSentinel id="bad id"/>',
     ):
-        package = EPUB3_PACKAGE.replace(
-            b"</metadata>", foreign + b"</metadata>"
-        )
-        report = EpubPackageExtractor().extract(
-            request(epub_bytes(package=package))
-        )
+        package = EPUB3_PACKAGE.replace(b"</metadata>", foreign + b"</metadata>")
+        report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
         warning = next(
             item
             for item in report.warnings
@@ -1150,55 +1252,53 @@ def test_metadata_value_projection_preserves_exact_limit_and_hashes_above() -> N
     maximum = EpubPackageLimits.MAX_RAW_VALUE_CHARACTERS
     for length in (maximum - 1, maximum, maximum + 1):
         value = "x" * length
-        package = EPUB3_PACKAGE.replace(
-            b"A Synthetic Book", value.encode("utf-8")
-        )
-        report = EpubPackageExtractor().extract(
-            request(epub_bytes(package=package))
-        )
+        package = EPUB3_PACKAGE.replace(b"A Synthetic Book", value.encode("utf-8"))
+        report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
         title = next(
-            item
-            for item in report.observations
-            if item.field is EpubPackageField.TITLE
+            item for item in report.observations if item.field is EpubPackageField.TITLE
         )
         assert report.outcome == EpubInspectionOutcome.SUCCESS
         if length <= maximum:
             assert title.raw_value == value
-            assert "oversized_metadata_redacted" not in {item.code for item in report.warnings}
+            assert "oversized_metadata_redacted" not in {
+                item.code for item in report.warnings
+            }
         else:
             assert title.raw_value != value
             assert title.raw_value.startswith("oversized-source-text-sha256:")
-            assert "oversized_metadata_redacted" in {item.code for item in report.warnings}
+            assert "oversized_metadata_redacted" in {
+                item.code for item in report.warnings
+            }
 
 
 def test_warning_occurrences_are_aggregated_within_report_bound() -> None:
     invalid_nodes = b"".join(
-        f'<meta id="bad id {ordinal}"/>'.encode("ascii")
-        for ordinal in range(40)
+        f'<meta id="bad id {ordinal}"/>'.encode("ascii") for ordinal in range(40)
     )
-    package = EPUB3_PACKAGE.replace(
-        b"</metadata>", invalid_nodes + b"</metadata>"
-    )
+    package = EPUB3_PACKAGE.replace(b"</metadata>", invalid_nodes + b"</metadata>")
     report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert len(report.warnings) <= EpubPackageLimits.MAX_WARNINGS
     assert "warning_occurrences_aggregated" in {item.code for item in report.warnings}
-    assert next(
-            item
-            for item in report.warnings
-            if item.code == "invalid_package_id"
-        ).citation is None
+    assert (
+        next(
+            item for item in report.warnings if item.code == "invalid_package_id"
+        ).citation
+        is None
+    )
 
 
-def test_normalization_preserves_roles_ambiguity_and_unknown_identifier_applicability() -> None:
-    additions = b'''\n    <dc:identifier>urn:synthetic:alternate</dc:identifier>
+def test_normalization_preserves_roles_ambiguity_and_unknown_identifier_applicability() -> (
+    None
+):
+    additions = b"""\n    <dc:identifier>urn:synthetic:alternate</dc:identifier>
     <dc:title>Alternate Synthetic Title</dc:title>
     <dc:contributor id="editor">E. Example</dc:contributor>
     <dc:date xmlns:opf="http://www.idpf.org/2007/opf" opf:event="publication">2025-01-01</dc:date>
     <dc:date xmlns:opf="http://www.idpf.org/2007/opf" opf:event="publication">2026-01-01</dc:date>
     <meta refines="#editor" property="role" scheme="marc:relators">edt</meta>
     <meta property="schema:bookEdition">First synthetic edition</meta>
-    <meta property="schema:bookEdition">Second synthetic edition</meta>'''
+    <meta property="schema:bookEdition">Second synthetic edition</meta>"""
     package = EPUB3_PACKAGE.replace(b"</metadata>", additions + b"\n  </metadata>")
     report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     fields = {observation.field for observation in report.observations}
@@ -1206,33 +1306,30 @@ def test_normalization_preserves_roles_ambiguity_and_unknown_identifier_applicab
     identifier_applicability = {
         observation.applicability
         for observation in report.observations
-        if observation.field in {EpubPackageField.IDENTIFIER, EpubPackageField.PACKAGE_IDENTIFIER}
+        if observation.field
+        in {EpubPackageField.IDENTIFIER, EpubPackageField.PACKAGE_IDENTIFIER}
     }
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert EpubPackageField.CONTRIBUTOR_ROLE in fields
     assert EpubObservationApplicability.UNKNOWN in identifier_applicability
     assert {
-            "ambiguous_title",
-            "ambiguous_identifier",
-            "ambiguous_edition",
-            "contradictory_date",
-            "contradictory_series",
-            "identifier_applicability_unknown",
-        }.issubset(warning_codes)
+        "ambiguous_title",
+        "ambiguous_identifier",
+        "ambiguous_edition",
+        "contradictory_date",
+        "contradictory_series",
+        "identifier_applicability_unknown",
+    }.issubset(warning_codes)
 
 
 def test_signed_offset_publication_datetimes_are_bounded_and_event_typed() -> None:
-    additions = b'''
+    additions = b"""
     <dc:date xmlns:opf="http://www.idpf.org/2007/opf" opf:event="publication">2026-01-13T00:00:00+00:00</dc:date>
     <dc:date>2026-01-13T12:34:56.789-14:00</dc:date>
     <dc:date xmlns:opf="http://www.idpf.org/2007/opf" opf:event="publication">2026-01-13T23:59:59+14:00</dc:date>
-    <dc:date xmlns:opf="http://www.idpf.org/2007/opf" opf:event="publication">2026-01-13T00:00:00Z</dc:date>'''
-    package = EPUB3_PACKAGE.replace(
-        b"</metadata>", additions + b"\n  </metadata>"
-    )
-    report = EpubPackageExtractor().extract(
-        request(epub_bytes(package=package))
-    )
+    <dc:date xmlns:opf="http://www.idpf.org/2007/opf" opf:event="publication">2026-01-13T00:00:00Z</dc:date>"""
+    package = EPUB3_PACKAGE.replace(b"</metadata>", additions + b"\n  </metadata>")
+    report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     dates = [
         observation
         for observation in report.observations
@@ -1241,21 +1338,21 @@ def test_signed_offset_publication_datetimes_are_bounded_and_event_typed() -> No
 
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert [observation.raw_value for observation in dates] == [
-            "2026-01-13T00:00:00+00:00",
-            "2026-01-13T12:34:56.789-14:00",
-            "2026-01-13T23:59:59+14:00",
-            "2026-01-13T00:00:00Z",
-        ]
+        "2026-01-13T00:00:00+00:00",
+        "2026-01-13T12:34:56.789-14:00",
+        "2026-01-13T23:59:59+14:00",
+        "2026-01-13T00:00:00Z",
+    ]
     assert all(
-            observation.normalized_value == observation.raw_value
-            and observation.applicability is EpubObservationApplicability.WORK
-            for observation in dates
-        )
+        observation.normalized_value == observation.raw_value
+        and observation.applicability is EpubObservationApplicability.WORK
+        for observation in dates
+    )
     assert [
-            observation.normalized_value
-            for observation in report.observations
-            if observation.field is EpubPackageField.DATE_EVENT
-        ] == ["publication", "publication", "publication"]
+        observation.normalized_value
+        for observation in report.observations
+        if observation.field is EpubPackageField.DATE_EVENT
+    ] == ["publication", "publication", "publication"]
 
 
 @pytest.mark.parametrize(
@@ -1267,9 +1364,17 @@ def test_signed_offset_publication_datetimes_are_bounded_and_event_typed() -> No
         ("publication", "2026-01-13T00:00:00+15:00", EpubPackageField.PUBLICATION_DATE),
         ("publication", "2026-02-30T00:00:00+01:00", EpubPackageField.PUBLICATION_DATE),
         ("creation", "2026-01-13T00:00:00+01:00", EpubPackageField.CREATION_DATE),
-        ("modification", "2026-01-13T00:00:00+01:00", EpubPackageField.MODIFICATION_DATE),
+        (
+            "modification",
+            "2026-01-13T00:00:00+01:00",
+            EpubPackageField.MODIFICATION_DATE,
+        ),
         ("copyright", "2026-01-13T00:00:00+01:00", EpubPackageField.COPYRIGHT_DATE),
-        ("future-event", "2026-01-13T00:00:00+01:00", EpubPackageField.PUBLICATION_DATE),
+        (
+            "future-event",
+            "2026-01-13T00:00:00+01:00",
+            EpubPackageField.PUBLICATION_DATE,
+        ),
     ),
     # The tier runner reduces a case identity through `[^A-Za-z0-9_]` -> `_`,
     # so the derived ids for the `+14:01` and `-14:01` offsets would collide on
@@ -1296,12 +1401,8 @@ def test_signed_offset_dates_reject_invalid_offsets_and_nonpublication_events(
         '<dc:date xmlns:opf="http://www.idpf.org/2007/opf" '
         f'opf:event="{event}">{value}</dc:date>'
     ).encode()
-    package = EPUB3_PACKAGE.replace(
-        b"</metadata>", addition + b"</metadata>"
-    )
-    report = EpubPackageExtractor().extract(
-        request(epub_bytes(package=package))
-    )
+    package = EPUB3_PACKAGE.replace(b"</metadata>", addition + b"</metadata>")
+    report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     observation = next(
         item
         for item in report.observations
@@ -1312,14 +1413,14 @@ def test_signed_offset_dates_reject_invalid_offsets_and_nonpublication_events(
     assert observation.applicability is EpubObservationApplicability.INAPPLICABLE
     assert "invalid_date" in {warning.code for warning in report.warnings}
     assert event in {
-            item.normalized_value
-            for item in report.observations
-            if item.field is EpubPackageField.DATE_EVENT
-        }
+        item.normalized_value
+        for item in report.observations
+        if item.field is EpubPackageField.DATE_EVENT
+    }
 
 
 def test_identifier_region_format_and_prefix_normalization_are_allowlisted() -> None:
-    additions = b'''
+    additions = b"""
     <dc:identifier>urn:uuid:12345678-1234-4abc-8123-123456789abc</dc:identifier>
     <dc:identifier>10.1234/synthetic.1</dc:identifier>
     <dc:identifier>ASIN:B012345678</dc:identifier>
@@ -1328,7 +1429,7 @@ def test_identifier_region_format_and_prefix_normalization_are_allowlisted() -> 
     <dc:coverage>GB</dc:coverage>
     <meta property="schema:bookEdition">Second edition</meta>
     <meta property="schema:bookFormat">EBook</meta>
-    <meta property="schema:contentLocation">Europe</meta>'''
+    <meta property="schema:contentLocation">Europe</meta>"""
     package = EPUB3_PACKAGE.replace(b"</metadata>", additions + b"</metadata>")
     report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     fields = {item.field for item in report.observations}
@@ -1338,7 +1439,11 @@ def test_identifier_region_format_and_prefix_normalization_are_allowlisted() -> 
         if item.field is EpubPackageField.IDENTIFIER_SCHEME
     }
     assert report.outcome == EpubInspectionOutcome.SUCCESS
-    assert {EpubPackageField.EDITION, EpubPackageField.FORMAT, EpubPackageField.REGION}.issubset(fields)
+    assert {
+        EpubPackageField.EDITION,
+        EpubPackageField.FORMAT,
+        EpubPackageField.REGION,
+    }.issubset(fields)
     assert {"ISBN-13", "UUID", "DOI", "ASIN"}.issubset(schemes)
     assert "invalid_identifier" in {item.code for item in report.warnings}
     assert "identifier_applicability_unknown" in {item.code for item in report.warnings}
@@ -1356,7 +1461,9 @@ def test_identifier_region_format_and_prefix_normalization_are_allowlisted() -> 
     for value in (bare, remapped):
         result = EpubPackageExtractor().extract(request(epub_bytes(package=value)))
         assert result.outcome == EpubInspectionOutcome.SUCCESS
-        assert EpubPackageField.EDITION not in {item.field for item in result.observations}
+        assert EpubPackageField.EDITION not in {
+            item.field for item in result.observations
+        }
         assert "unsupported_vendor_metadata" in {item.code for item in result.warnings}
     implicit = EPUB3_PACKAGE.replace(
         b' prefix="schema: http://schema.org/"', b""
@@ -1368,14 +1475,19 @@ def test_identifier_region_format_and_prefix_normalization_are_allowlisted() -> 
         request(epub_bytes(package=implicit))
     )
     assert implicit_report.outcome == EpubInspectionOutcome.SUCCESS
-    assert EpubPackageField.EDITION in {item.field for item in implicit_report.observations}
+    assert EpubPackageField.EDITION in {
+        item.field for item in implicit_report.observations
+    }
 
     invalid_prefix = EPUB3_PACKAGE.replace(
         b"schema: http://schema.org/", b"schema: not-an-iri"
     )
-    assert EpubPackageExtractor().extract(
-            request(epub_bytes(package=invalid_prefix))
-        ).outcome == EpubInspectionOutcome.MALFORMED
+    assert (
+        EpubPackageExtractor()
+        .extract(request(epub_bytes(package=invalid_prefix)))
+        .outcome
+        == EpubInspectionOutcome.MALFORMED
+    )
 
 
 def test_repeated_calibre_values_preserve_occurrences_and_conflicts() -> None:
@@ -1414,11 +1526,13 @@ def test_repeated_calibre_values_preserve_occurrences_and_conflicts() -> None:
     ]
     assert unpaired_report.outcome == EpubInspectionOutcome.SUCCESS
     assert len(positions) == 1
-    assert "incomplete_calibre_series" in {item.code for item in unpaired_report.warnings}
+    assert "incomplete_calibre_series" in {
+        item.code for item in unpaired_report.warnings
+    }
 
 
 def test_standard_metadata_refinement_and_cover_precedence_matrix() -> None:
-    additions = b'''
+    additions = b"""
     <dc:title id="subtitle">Synthetic Subtitle</dc:title>
     <dc:publisher>Example Publisher</dc:publisher>
     <dc:subject>Example Subject</dc:subject>
@@ -1429,25 +1543,23 @@ def test_standard_metadata_refinement_and_cover_precedence_matrix() -> None:
     <dc:type>Text</dc:type>
     <meta refines="#subtitle" property="title-type">subtitle</meta>
     <meta refines="#subtitle" property="display-seq">2</meta>
-    <meta name="cover" content="cover"/>'''
+    <meta name="cover" content="cover"/>"""
     package = EPUB3_PACKAGE.replace(b"</metadata>", additions + b"</metadata>")
     report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     fields = {item.field for item in report.observations}
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert {
-            EpubPackageField.SUBTITLE,
-            EpubPackageField.PUBLISHER,
-            EpubPackageField.SUBJECT,
-            EpubPackageField.DESCRIPTION,
-            EpubPackageField.RIGHTS,
-            EpubPackageField.SOURCE,
-            EpubPackageField.RELATION,
-            EpubPackageField.TYPE,
-        }.issubset(fields)
+        EpubPackageField.SUBTITLE,
+        EpubPackageField.PUBLISHER,
+        EpubPackageField.SUBJECT,
+        EpubPackageField.DESCRIPTION,
+        EpubPackageField.RIGHTS,
+        EpubPackageField.SOURCE,
+        EpubPackageField.RELATION,
+        EpubPackageField.TYPE,
+    }.issubset(fields)
     subtitle = [
-        item
-        for item in report.observations
-        if item.raw_value == "Synthetic Subtitle"
+        item for item in report.observations if item.raw_value == "Synthetic Subtitle"
     ]
     assert len(subtitle) == 1
     assert subtitle[0].field is EpubPackageField.SUBTITLE
@@ -1455,17 +1567,17 @@ def test_standard_metadata_refinement_and_cover_precedence_matrix() -> None:
     assert "title-type-subtitle@" in (subtitle[0].citation.selector or "")
     assert "display-seq@" in (subtitle[0].citation.selector or "")
     base_title = next(
-        item
-        for item in report.observations
-        if item.raw_value == "A Synthetic Book"
+        item for item in report.observations if item.raw_value == "A Synthetic Book"
     )
     assert base_title.declared_display_sequence is None
-    assert "contradictory_cover_declaration" not in {item.code for item in report.warnings}
+    assert "contradictory_cover_declaration" not in {
+        item.code for item in report.warnings
+    }
     assert all(
-            item.same_file_lineage is not None
-            for item in report.observations
-            if item.field in {EpubPackageField.COVER, EpubPackageField.SUBTITLE}
-        )
+        item.same_file_lineage is not None
+        for item in report.observations
+        if item.field in {EpubPackageField.COVER, EpubPackageField.SUBTITLE}
+    )
 
     conflict = package.replace(
         b"</manifest>",
@@ -1480,7 +1592,9 @@ def test_standard_metadata_refinement_and_cover_precedence_matrix() -> None:
         )
     )
     assert conflict_report.outcome == EpubInspectionOutcome.SUCCESS
-    assert "contradictory_cover_declaration" in {item.code for item in conflict_report.warnings}
+    assert "contradictory_cover_declaration" in {
+        item.code for item in conflict_report.warnings
+    }
 
     creator_display = EPUB3_PACKAGE.replace(
         b"<dc:creator>", b'<dc:creator id="creator">'
@@ -1492,12 +1606,14 @@ def test_standard_metadata_refinement_and_cover_precedence_matrix() -> None:
         request(epub_bytes(package=creator_display))
     )
     assert creator_report.outcome == EpubInspectionOutcome.SUCCESS
-    assert "inapplicable_metadata_refinement" in {item.code for item in creator_report.warnings}
+    assert "inapplicable_metadata_refinement" in {
+        item.code for item in creator_report.warnings
+    }
     assert all(
-            item.declared_display_sequence is None
-            for item in creator_report.observations
-            if item.field is EpubPackageField.CREATOR
-        )
+        item.declared_display_sequence is None
+        for item in creator_report.observations
+        if item.field is EpubPackageField.CREATOR
+    )
 
 
 @pytest.mark.parametrize(
@@ -1520,16 +1636,16 @@ def test_standard_metadata_refinement_and_cover_precedence_matrix() -> None:
             False,
         ),
         (
-            b'<dc:language>en-GB</dc:language>',
-            b'<dc:language>not a language!</dc:language>',
+            b"<dc:language>en-GB</dc:language>",
+            b"<dc:language>not a language!</dc:language>",
             EpubPackageField.LANGUAGE,
             "invalid_language",
             "not a language!",
             True,
         ),
         (
-            b'<dc:language>en-GB</dc:language>',
-            b'<dc:language>123</dc:language>',
+            b"<dc:language>en-GB</dc:language>",
+            b"<dc:language>123</dc:language>",
             EpubPackageField.LANGUAGE,
             "invalid_language",
             "123",
@@ -1553,7 +1669,7 @@ def test_title_type_and_optional_metadata_datatypes_are_local_refinements(
     invalid_raw: str,
     retained: bool,
 ) -> None:
-    titles = b'''
+    titles = b"""
     <dc:title id="main-title">Main</dc:title>
     <dc:title id="subtitle-title">Subtitle</dc:title>
     <dc:title id="short-title">Short</dc:title>
@@ -1566,7 +1682,7 @@ def test_title_type_and_optional_metadata_datatypes_are_local_refinements(
     <meta refines="#collection-title" property="title-type">collection</meta>
     <meta refines="#edition-title" property="title-type">edition</meta>
     <meta refines="#expanded-title" property="title-type">expanded</meta>
-    <meta refines="#main-title" property="display-seq">1000000</meta>'''
+    <meta refines="#main-title" property="display-seq">1000000</meta>"""
     package = EPUB3_PACKAGE.replace(b"</metadata>", titles + b"</metadata>")
     report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     by_value = {
@@ -1602,7 +1718,7 @@ def test_title_type_and_optional_metadata_datatypes_are_local_refinements(
             item.applicability is EpubObservationApplicability.INAPPLICABLE
             and item.normalized_value is None
             for item in values
-            )
+        )
 
     for display_value, expected in (
         ("0", 0),
@@ -1612,8 +1728,7 @@ def test_title_type_and_optional_metadata_datatypes_are_local_refinements(
         ("4294967295", None),
     ):
         refinement = (
-            f'<meta refines="#title" property="display-seq">'
-            f"{display_value}</meta>"
+            f'<meta refines="#title" property="display-seq">{display_value}</meta>'
         ).encode()
         display_package = EPUB3_PACKAGE.replace(
             b"</metadata>", refinement + b"</metadata>"
@@ -1628,8 +1743,10 @@ def test_title_type_and_optional_metadata_datatypes_are_local_refinements(
         )
         assert display_report.outcome == EpubInspectionOutcome.SUCCESS
         assert title.declared_display_sequence == expected
-        assert ("invalid_metadata_refinement"
-            in {item.code for item in display_report.warnings}) == (expected is None)
+        assert (
+            "invalid_metadata_refinement"
+            in {item.code for item in display_report.warnings}
+        ) == (expected is None)
 
 
 @pytest.mark.parametrize(
@@ -1641,27 +1758,27 @@ def test_invalid_language_warns_and_omits_only_the_optional_qualifier(
 ) -> None:
     package = EPUB3_PACKAGE.replace(
         b'<dc:title id="title">',
-        (
-            f'<dc:title id="title" xml:lang="{invalid_language}">'
-        ).encode(),
+        (f'<dc:title id="title" xml:lang="{invalid_language}">').encode(),
     )
-    report = EpubPackageExtractor().extract(
-        request(epub_bytes(package=package))
-    )
+    report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert "invalid_language" in {item.code for item in report.warnings}
     title = next(
-        item
-        for item in report.observations
-        if item.field is EpubPackageField.TITLE
+        item for item in report.observations if item.field is EpubPackageField.TITLE
     )
     assert title.language is None
 
 
 def test_multiple_renditions_entities_and_cancellation_are_typed() -> None:
-    multiple = EpubPackageExtractor().extract(request(epub_bytes(container=CONTAINER_MULTIPLE)))
+    multiple = EpubPackageExtractor().extract(
+        request(epub_bytes(container=CONTAINER_MULTIPLE))
+    )
     entity = EpubPackageExtractor().extract(
-        request(epub_bytes(package=b'<!DOCTYPE package [<!ENTITY x "value">]>' + EPUB3_PACKAGE))
+        request(
+            epub_bytes(
+                package=b'<!DOCTYPE package [<!ENTITY x "value">]>' + EPUB3_PACKAGE
+            )
+        )
     )
     cancelled = EpubPackageExtractor().extract(request(epub_bytes(), cancelled=True))
     assert multiple.outcome == EpubInspectionOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS
@@ -1701,31 +1818,49 @@ def test_unsupported_expat_is_rejected_before_the_source_is_opened() -> None:
 
 
 def test_required_and_opaque_encryption_are_distinct() -> None:
-    opaque = b'''<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#"><CipherData><CipherReference URI="EPUB/cover.jpg"/></CipherData></EncryptedData></encryption>'''
+    opaque = b"""<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#"><CipherData><CipherReference URI="EPUB/cover.jpg"/></CipherData></EncryptedData></encryption>"""
     required = opaque.replace(b"EPUB/cover.jpg", b"EPUB/package.opf")
-    opaque_report = EpubPackageExtractor().extract(request(epub_bytes(encryption=opaque)))
-    required_report = EpubPackageExtractor().extract(request(epub_bytes(encryption=required)))
-    assert opaque_report.outcome == EpubInspectionOutcome.SUCCESS
-    assert "opaque_resource_encrypted" in tuple(item.code for item in opaque_report.warnings)
-    assert sum(item.kind is EpubPackageDeclarationKind.ENCRYPTION for item in opaque_report.declarations) == 1
-    assert required_report.outcome == EpubInspectionOutcome.ENCRYPTED
-    assert EpubPackageExtractor().extract(
-            request(epub_bytes(package=b"not XML", encryption=required))
-        ).outcome == EpubInspectionOutcome.ENCRYPTED
-
-    encrypted_key = b'''<EncryptedKey xmlns="http://www.w3.org/2001/04/xmlenc#"><CipherData><CipherValue>repository-authored-synthetic-key</CipherValue></CipherData></EncryptedKey>'''
-    opaque_with_key = opaque.replace(b"<EncryptedData", encrypted_key + b"<EncryptedData")
-    required_with_key = opaque_with_key.replace(
-        b"EPUB/cover.jpg", b"EPUB/package.opf"
+    opaque_report = EpubPackageExtractor().extract(
+        request(epub_bytes(encryption=opaque))
     )
+    required_report = EpubPackageExtractor().extract(
+        request(epub_bytes(encryption=required))
+    )
+    assert opaque_report.outcome == EpubInspectionOutcome.SUCCESS
+    assert "opaque_resource_encrypted" in tuple(
+        item.code for item in opaque_report.warnings
+    )
+    assert (
+        sum(
+            item.kind is EpubPackageDeclarationKind.ENCRYPTION
+            for item in opaque_report.declarations
+        )
+        == 1
+    )
+    assert required_report.outcome == EpubInspectionOutcome.ENCRYPTED
+    assert (
+        EpubPackageExtractor()
+        .extract(request(epub_bytes(package=b"not XML", encryption=required)))
+        .outcome
+        == EpubInspectionOutcome.ENCRYPTED
+    )
+
+    encrypted_key = b"""<EncryptedKey xmlns="http://www.w3.org/2001/04/xmlenc#"><CipherData><CipherValue>repository-authored-synthetic-key</CipherValue></CipherData></EncryptedKey>"""
+    opaque_with_key = opaque.replace(
+        b"<EncryptedData", encrypted_key + b"<EncryptedData"
+    )
+    required_with_key = opaque_with_key.replace(b"EPUB/cover.jpg", b"EPUB/package.opf")
     keyed_report = EpubPackageExtractor().extract(
         request(epub_bytes(encryption=opaque_with_key))
     )
     assert keyed_report.outcome == EpubInspectionOutcome.SUCCESS
     assert "opaque_resource_encrypted" in {item.code for item in keyed_report.warnings}
-    assert EpubPackageExtractor().extract(
-            request(epub_bytes(encryption=required_with_key))
-        ).outcome == EpubInspectionOutcome.ENCRYPTED
+    assert (
+        EpubPackageExtractor()
+        .extract(request(epub_bytes(encryption=required_with_key)))
+        .outcome
+        == EpubInspectionOutcome.ENCRYPTED
+    )
 
     encoded_required = required.replace(b"package.opf", b"%70ackage.opf")
     wrong_namespace = opaque.replace(
@@ -1733,22 +1868,40 @@ def test_required_and_opaque_encryption_are_distinct() -> None:
         b'xmlns="urn:wrong"',
     )
     empty = b'<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"/>'
-    assert EpubPackageExtractor().extract(request(epub_bytes(encryption=encoded_required))).outcome == EpubInspectionOutcome.ENCRYPTED
-    assert EpubPackageExtractor().extract(request(epub_bytes(encryption=wrong_namespace))).outcome == EpubInspectionOutcome.MALFORMED
-    assert EpubPackageExtractor().extract(request(epub_bytes(encryption=empty))).outcome == EpubInspectionOutcome.MALFORMED
+    assert (
+        EpubPackageExtractor()
+        .extract(request(epub_bytes(encryption=encoded_required)))
+        .outcome
+        == EpubInspectionOutcome.ENCRYPTED
+    )
+    assert (
+        EpubPackageExtractor()
+        .extract(request(epub_bytes(encryption=wrong_namespace)))
+        .outcome
+        == EpubInspectionOutcome.MALFORMED
+    )
+    assert (
+        EpubPackageExtractor().extract(request(epub_bytes(encryption=empty))).outcome
+        == EpubInspectionOutcome.MALFORMED
+    )
 
     invalid_documents = (
-        b'''<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#"/></encryption>''',
-        opaque.replace(b"<CipherData>", b"<CipherData><CipherReference URI=\"EPUB/cover.jpg\"/>", 1),
+        b"""<encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><EncryptedData xmlns="http://www.w3.org/2001/04/xmlenc#"/></encryption>""",
+        opaque.replace(
+            b"<CipherData>", b'<CipherData><CipherReference URI="EPUB/cover.jpg"/>', 1
+        ),
         opaque.replace(b"EPUB/cover.jpg", b"EPUB/missing.jpg"),
         opaque.replace(b"<CipherData>", b"<Unexpected>", 1).replace(
             b"</CipherData>", b"</Unexpected>", 1
         ),
     )
     for document in invalid_documents:
-        assert EpubPackageExtractor().extract(
-                request(epub_bytes(encryption=document))
-            ).outcome == EpubInspectionOutcome.MALFORMED
+        assert (
+            EpubPackageExtractor()
+            .extract(request(epub_bytes(encryption=document)))
+            .outcome
+            == EpubInspectionOutcome.MALFORMED
+        )
 
 
 @pytest.mark.parametrize(
@@ -1763,13 +1916,13 @@ def test_per_field_declaration_and_public_report_bounds_are_resource_limits(
     outcome: EpubInspectionOutcome,
 ) -> None:
     subjects = b"".join(
-        f"<dc:subject>subject-{index}</dc:subject>".encode()
-        for index in range(count)
+        f"<dc:subject>subject-{index}</dc:subject>".encode() for index in range(count)
     )
     package = EPUB3_PACKAGE.replace(b"</metadata>", subjects + b"</metadata>")
-    assert EpubPackageExtractor().extract(
-            request(epub_bytes(package=package))
-        ).outcome == outcome
+    assert (
+        EpubPackageExtractor().extract(request(epub_bytes(package=package))).outcome
+        == outcome
+    )
 
     remote_items = b"".join(
         (
@@ -1837,11 +1990,11 @@ def test_raw_zip_preflight_rejects_nul_aliases_crc_and_compression_before_xml() 
         for value in (nul, unsupported, crc, aliases)
     )
     assert results == (
-            EpubInspectionOutcome.MALFORMED,
-            EpubInspectionOutcome.UNSUPPORTED_COMPRESSION,
-            EpubInspectionOutcome.INTEGRITY_FAILURE,
-            EpubInspectionOutcome.MALFORMED,
-        )
+        EpubInspectionOutcome.MALFORMED,
+        EpubInspectionOutcome.UNSUPPORTED_COMPRESSION,
+        EpubInspectionOutcome.INTEGRITY_FAILURE,
+        EpubInspectionOutcome.MALFORMED,
+    )
 
 
 @pytest.mark.parametrize(
@@ -1876,7 +2029,10 @@ def test_common_inert_zip_flags_and_directory_entries_are_tolerated(
         return bytes(mutated)
 
     directory = epub_bytes(extra_entries=(("EPUB/", b"", method),))
-    assert EpubPackageExtractor().extract(request(directory)).outcome == EpubInspectionOutcome.SUCCESS
+    assert (
+        EpubPackageExtractor().extract(request(directory)).outcome
+        == EpubInspectionOutcome.SUCCESS
+    )
 
     compatible = add_flags(
         epub_bytes(extra_entries=(("EPUB/", b"", zipfile.ZIP_DEFLATED),)),
@@ -1900,7 +2056,10 @@ def test_common_inert_zip_flags_and_directory_entries_are_tolerated(
             )
         ),
     ):
-        assert EpubPackageExtractor().extract(request(value)).outcome == EpubInspectionOutcome.MALFORMED
+        assert (
+            EpubPackageExtractor().extract(request(value)).outcome
+            == EpubInspectionOutcome.MALFORMED
+        )
 
 
 @pytest.mark.parametrize(
@@ -1918,9 +2077,12 @@ def test_common_noncanonical_packaging_preserves_trustworthy_evidence(
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert "noncanonical_mimetype" in {item.code for item in report.warnings}
 
-    assert EpubPackageExtractor().extract(
-            request(epub_bytes(mimetype_value=b"application/not-epub"))
-        ).outcome == EpubInspectionOutcome.UNSUPPORTED_FORMAT
+    assert (
+        EpubPackageExtractor()
+        .extract(request(epub_bytes(mimetype_value=b"application/not-epub")))
+        .outcome
+        == EpubInspectionOutcome.UNSUPPORTED_FORMAT
+    )
 
     long_description = "Synthetic description " + "x" * 6_600
     package = EPUB3_PACKAGE.replace(
@@ -1930,17 +2092,19 @@ def test_common_noncanonical_packaging_preserves_trustworthy_evidence(
     report = EpubPackageExtractor().extract(request(epub_bytes(package=package)))
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert long_description in {
-            item.raw_value
-            for item in report.observations
-            if item.field is EpubPackageField.DESCRIPTION
-        }
+        item.raw_value
+        for item in report.observations
+        if item.field is EpubPackageField.DESCRIPTION
+    }
 
     legacy_version = EPUB2_PACKAGE.replace(b'version="2.0"', b'version="1.0"')
     legacy_report = EpubPackageExtractor().extract(
         request(epub_bytes(package=legacy_version))
     )
     assert legacy_report.outcome == EpubInspectionOutcome.SUCCESS
-    assert "noncanonical_package_version" in {item.code for item in legacy_report.warnings}
+    assert "noncanonical_package_version" in {
+        item.code for item in legacy_report.warnings
+    }
 
     optional_defects = (
         (
@@ -1969,10 +2133,15 @@ def test_common_noncanonical_packaging_preserves_trustworthy_evidence(
         assert compatible.outcome == EpubInspectionOutcome.SUCCESS
         assert warning in {item.code for item in compatible.warnings}
 
-    assert EpubPackageExtractor().extract(request(epub_bytes()[:-22])).outcome == EpubInspectionOutcome.UNSUPPORTED_FORMAT
+    assert (
+        EpubPackageExtractor().extract(request(epub_bytes()[:-22])).outcome
+        == EpubInspectionOutcome.UNSUPPORTED_FORMAT
+    )
 
 
-def test_configured_archive_xml_and_compression_bounds_fail_without_partial_success() -> None:
+def test_configured_archive_xml_and_compression_bounds_fail_without_partial_success() -> (
+    None
+):
     ordinary = epub_bytes()
     entry_limited = EpubPackageExtractor().extract(
         request_with_limits(ordinary, EpubPackageLimits(archive_entries=2))
@@ -1984,7 +2153,9 @@ def test_configured_archive_xml_and_compression_bounds_fail_without_partial_succ
         extra_entries=(("EPUB/opaque.bin", b"0" * 100_000, zipfile.ZIP_DEFLATED),)
     )
     ratio_limited = EpubPackageExtractor().extract(
-        request_with_limits(ratio_bomb, EpubPackageLimits(compression_ratio_per_member=2))
+        request_with_limits(
+            ratio_bomb, EpubPackageLimits(compression_ratio_per_member=2)
+        )
     )
     for report in (entry_limited, node_limited, ratio_limited):
         assert report.outcome == EpubInspectionOutcome.RESOURCE_LIMIT
@@ -1994,7 +2165,9 @@ def test_configured_archive_xml_and_compression_bounds_fail_without_partial_succ
         extra_entries=(("EPUB/large-opaque.bin", b"x" * 1_000, zipfile.ZIP_STORED),)
     )
     aggregate_report = EpubPackageExtractor().extract(
-        request_with_limits(aggregate, EpubPackageLimits(expanded_bytes_per_archive=2_000))
+        request_with_limits(
+            aggregate, EpubPackageLimits(expanded_bytes_per_archive=2_000)
+        )
     )
     assert aggregate_report.outcome == EpubInspectionOutcome.RESOURCE_LIMIT
 
@@ -2021,7 +2194,9 @@ def test_live_monotonic_deadline_source_io_and_allocator_failures_are_typed() ->
     unavailable = EpubPackageRequest(
         base.target,
         base.file,
-        EpubPackageSource(len(value), lambda _offset, _size: (_ for _ in ()).throw(OSError("EIO"))),
+        EpubPackageSource(
+            len(value), lambda _offset, _size: (_ for _ in ()).throw(OSError("EIO"))
+        ),
         base.expected_source,
         base.capability,
         base.limits,
@@ -2030,7 +2205,10 @@ def test_live_monotonic_deadline_source_io_and_allocator_failures_are_typed() ->
         base.cancellation,
     )
     assert EpubPackageExtractor().extract(late).outcome == EpubInspectionOutcome.TIMEOUT
-    assert EpubPackageExtractor().extract(unavailable).outcome == EpubInspectionOutcome.UNAVAILABLE_SOURCE
+    assert (
+        EpubPackageExtractor().extract(unavailable).outcome
+        == EpubInspectionOutcome.UNAVAILABLE_SOURCE
+    )
     with patch(
         "mechanical_librarian.adapters.evidence_extractors.epub_package.expat.ParserCreate",
         side_effect=MemoryError,

@@ -141,8 +141,11 @@ class _DiscoveryRequestLedger:
         execute: Callable[[], _Result],
     ) -> tuple[_Result, bool]:
         key = self._key(
-            kind=kind, matched_family=matched_family, title=title,
-            authors=authors, projection=projection,
+            kind=kind,
+            matched_family=matched_family,
+            title=title,
+            authors=authors,
+            projection=projection,
         )
         if self._unresolved.get(key, 0) == 0:
             self._register(key)
@@ -182,7 +185,9 @@ class _DiscoveryRequestLedger:
         """Close reserved detail work that a terminal sibling prevents sending."""
         details = tuple(sorted(key for key in self._unresolved if key[2] == "detail"))
         self._pending.difference_update(details)
-        self.undispatched_incomplete += sum(self._unresolved.pop(key) for key in details)
+        self.undispatched_incomplete += sum(
+            self._unresolved.pop(key) for key in details
+        )
 
     def accounting(self) -> ProviderRequestAccounting:
         """Return closed aggregate-safe request accounting, never request data."""
@@ -235,9 +240,7 @@ def transient_transport_failure(error: BaseException) -> str | None:
     """Classify only transport failures whose types prove transientness."""
 
     causes = _bounded_cause_chain(error)
-    if causes is None or any(
-        isinstance(cause, ssl.SSLError) for cause in causes
-    ):
+    if causes is None or any(isinstance(cause, ssl.SSLError) for cause in causes):
         return None
     if type(error) is httpx.ConnectTimeout:
         return "transport_connect_timeout"
@@ -273,9 +276,9 @@ def bounded_retry_after(value: str | None, *, now: float) -> float | None:
         seconds: float = int(normalized)
         return float(seconds) if seconds <= 60 else None
     try:
-        parsed = datetime.strptime(
-            normalized, "%a, %d %b %Y %H:%M:%S GMT"
-        ).replace(tzinfo=timezone.utc)
+        parsed = datetime.strptime(normalized, "%a, %d %b %Y %H:%M:%S GMT").replace(
+            tzinfo=timezone.utc
+        )
         if format_datetime(parsed, usegmt=True) != normalized:
             return None
         seconds = parsed.timestamp() - now
@@ -315,9 +318,7 @@ def _bounded_cause_chain(
 def _is_safe_cause(cause: BaseException) -> bool:
     if type(cause) is socket.gaierror:
         return (
-            cause.errno == socket.EAI_AGAIN
-            if socket.EAI_AGAIN is not None
-            else False
+            cause.errno == socket.EAI_AGAIN if socket.EAI_AGAIN is not None else False
         )
     if isinstance(
         cause,

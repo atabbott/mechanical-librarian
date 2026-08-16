@@ -145,7 +145,9 @@ def _validate_bundle(source_root: Path, root: Path) -> None:
                 for path in root.rglob("*")
                 if path.is_file() and not path.is_symlink()
             }
-            if observed != expected or any(path.is_symlink() for path in root.rglob("*")):
+            if observed != expected or any(
+                path.is_symlink() for path in root.rglob("*")
+            ):
                 raise FrontendBuildError("frontend_bundle_invalid")
     except Exception as error:
         raise FrontendBuildError("frontend_bundle_invalid") from error

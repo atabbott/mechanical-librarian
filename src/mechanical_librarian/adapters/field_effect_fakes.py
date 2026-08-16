@@ -36,10 +36,15 @@ class FakeTargetService:
         self.fail_next = False
         self.fail_read_next = False
         self.unavailable_scope_next: Literal["connection", "destination"] | None = None
-        self.unavailable_reason_next: Literal[
-            "connection_unavailable", "insufficient_permission",
-            "field_unavailable", "unexpected_effect_behavior",
-        ] | None = None
+        self.unavailable_reason_next: (
+            Literal[
+                "connection_unavailable",
+                "insufficient_permission",
+                "field_unavailable",
+                "unexpected_effect_behavior",
+            ]
+            | None
+        ) = None
         self.fail_reads_for: set[str] = set()
         self.fail_read_after_apply_for: set[str] = set()
         self.ambiguous_next: str | None = None
@@ -57,7 +62,10 @@ class FakeTargetService:
         with self._lock:
             if self.unavailable_scope_next is not None:
                 scope, self.unavailable_scope_next = self.unavailable_scope_next, None
-                reason, self.unavailable_reason_next = self.unavailable_reason_next, None
+                reason, self.unavailable_reason_next = (
+                    self.unavailable_reason_next,
+                    None,
+                )
                 raise TargetServiceUnavailable(scope, reason)
             if self.fail_read_next or plan.plan_id in self.fail_reads_for:
                 self.fail_read_next = False
@@ -79,7 +87,10 @@ class FakeTargetService:
                 callback, self.before_apply = self.before_apply, None
                 callback(plan)
             observed = self.read(plan)
-            if observed.value != plan.pre_value or observed.version != plan.target_version:
+            if (
+                observed.value != plan.pre_value
+                or observed.version != plan.target_version
+            ):
                 return TargetEffectResult("conflict")
             if self.ambiguous_next is not None:
                 behavior, self.ambiguous_next = self.ambiguous_next, None
@@ -90,7 +101,9 @@ class FakeTargetService:
                 result = TargetEffectResult(
                     "ambiguous",
                     self.suspension_scope_next,
-                    "unexpected_effect_behavior" if self.suspension_scope_next else None,
+                    "unexpected_effect_behavior"
+                    if self.suspension_scope_next
+                    else None,
                 )
                 self.suspension_scope_next = None
                 if behavior != "pre":
@@ -123,6 +136,7 @@ class FakeTargetService:
 
 class FakeBackupReadiness:
     ready_value = True
+
     def ready(self, plan: FieldEffectPlan) -> bool:
         return self.ready_value
 
@@ -131,9 +145,12 @@ class FakeCapabilityObserver:
     def __init__(self, digest: str) -> None:
         self.digest = digest
         self.category: Literal[
-            "allowed", "insufficient_permission", "connection_unavailable",
+            "allowed",
+            "insufficient_permission",
+            "connection_unavailable",
             "field_unavailable",
         ] = "allowed"
+
     def observe(self, plan: FieldEffectPlan) -> CapabilityObservation:
         return CapabilityObservation(self.category, self.digest)
 
@@ -143,10 +160,17 @@ class FakeAuthorityCurrentness:
         self.revoked: set[str] = set()
         self.automatic_values: dict[str, object] = {}
         self.bindings: dict[str, AuthoritySnapshot] = {}
-    def bind(self, decision: HumanDecision | AutomaticDecision, *, connection: str,
-             library: str, work_id: str, target_version: str,
-             source: Literal["persisted_review_case", "fake_service"] = "fake_service",
-             ) -> None:
+
+    def bind(
+        self,
+        decision: HumanDecision | AutomaticDecision,
+        *,
+        connection: str,
+        library: str,
+        work_id: str,
+        target_version: str,
+        source: Literal["persisted_review_case", "fake_service"] = "fake_service",
+    ) -> None:
         if type(decision) is HumanDecision and decision.outcome == "accept":
             value: object = decision.selected_value
         elif type(decision) is AutomaticDecision and decision.outcome == "candidate":
@@ -154,12 +178,20 @@ class FakeAuthorityCurrentness:
         else:
             raise ValueError("decision has no effect value")
         self.bindings[decision.decision_id] = AuthoritySnapshot(
-            connection, library, work_id, decision.destination,
-            decision.review_case_id, decision.target_fingerprint,
-            target_version, value, source,
+            connection,
+            library,
+            work_id,
+            decision.destination,
+            decision.review_case_id,
+            decision.target_fingerprint,
+            target_version,
+            value,
+            source,
         )
+
     def resolve(self, decision: HumanDecision | AutomaticDecision) -> AuthoritySnapshot:
         return self.bindings[decision.decision_id]
+
     def current(self, authority: EffectAuthority) -> bool:
         return authority.decision_id not in self.revoked
 
@@ -169,23 +201,40 @@ class FakeConsentCurrentness:
         self.revoked: set[str] = set()
         self.allowed: dict[tuple[str, str, str, str], EffectConsent] = {}
         self._envelope_identity = envelope_identity or (lambda _: "a" * 64)
+
     def allow(self, *, connection: str, library: str, destination: str) -> None:
         consent = EffectConsent.create(
-            connection=connection, library=library, destination=destination,
-            envelope_identity=self._envelope_identity(library), granted_at=1,
+            connection=connection,
+            library=library,
+            destination=destination,
+            envelope_identity=self._envelope_identity(library),
+            granted_at=1,
         )
         self.allowed[(connection, library, destination, "apply_field")] = consent
-    def resolve(self, *, connection: str, library: str,
-                destination: str) -> EffectConsent:
+
+    def resolve(
+        self, *, connection: str, library: str, destination: str
+    ) -> EffectConsent:
         return self.allowed[(connection, library, destination, "apply_field")]
+
     def current(self, consent: EffectConsent) -> bool:
-        return (consent.consent_id not in self.revoked
-                and self.allowed.get((consent.connection, consent.library,
-                                      consent.destination, consent.action)) == consent)
+        return (
+            consent.consent_id not in self.revoked
+            and self.allowed.get(
+                (
+                    consent.connection,
+                    consent.library,
+                    consent.destination,
+                    consent.action,
+                )
+            )
+            == consent
+        )
 
 
 class FakeDependencyCurrentness:
     current_value = True
+
     def current(self, digests: tuple[str, ...]) -> bool:
         return self.current_value
 

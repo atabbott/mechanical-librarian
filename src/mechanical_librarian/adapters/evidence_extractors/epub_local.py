@@ -37,14 +37,19 @@ from mechanical_librarian.domain.identifiers import Fingerprint
 from mechanical_librarian.domain.metadata_report import normalize_title
 
 _PACKAGE_FIELDS = {
-    EpubPackageField.TITLE: EpubInspectionField.TITLE, EpubPackageField.SUBTITLE: EpubInspectionField.SUBTITLE,
-    EpubPackageField.CREATOR: EpubInspectionField.CREATOR, EpubPackageField.CONTRIBUTOR: EpubInspectionField.CONTRIBUTOR,
-    EpubPackageField.COLLECTION: EpubInspectionField.SERIES, EpubPackageField.COLLECTION_POSITION: EpubInspectionField.SERIES_SEQUENCE,
-    EpubPackageField.PUBLICATION_DATE: EpubInspectionField.PUBLICATION_DATE, EpubPackageField.PUBLISHER: EpubInspectionField.PUBLISHER,
+    EpubPackageField.TITLE: EpubInspectionField.TITLE,
+    EpubPackageField.SUBTITLE: EpubInspectionField.SUBTITLE,
+    EpubPackageField.CREATOR: EpubInspectionField.CREATOR,
+    EpubPackageField.CONTRIBUTOR: EpubInspectionField.CONTRIBUTOR,
+    EpubPackageField.COLLECTION: EpubInspectionField.SERIES,
+    EpubPackageField.COLLECTION_POSITION: EpubInspectionField.SERIES_SEQUENCE,
+    EpubPackageField.PUBLICATION_DATE: EpubInspectionField.PUBLICATION_DATE,
+    EpubPackageField.PUBLISHER: EpubInspectionField.PUBLISHER,
     EpubPackageField.COPYRIGHT_DATE: EpubInspectionField.DATE_EVENT,
     EpubPackageField.CREATION_DATE: EpubInspectionField.DATE_EVENT,
     EpubPackageField.MODIFICATION_DATE: EpubInspectionField.DATE_EVENT,
-    EpubPackageField.DESCRIPTION: EpubInspectionField.DESCRIPTION, EpubPackageField.LANGUAGE: EpubInspectionField.LANGUAGE,
+    EpubPackageField.DESCRIPTION: EpubInspectionField.DESCRIPTION,
+    EpubPackageField.LANGUAGE: EpubInspectionField.LANGUAGE,
     EpubPackageField.SUBJECT: EpubInspectionField.SUBJECT,
 }
 _ROLE_MAP = {
@@ -73,7 +78,9 @@ _CONTEXTUAL_ROLE_MAP = {
     "converter": "conversion",
     "scanner": "scanner",
 }
-_MARKER = re.compile(r"(?:copyright|©|all rights reserved|\bcolophon\b|\bcredits\b)", re.I)
+_MARKER = re.compile(
+    r"(?:copyright|©|all rights reserved|\bcolophon\b|\bcredits\b)", re.I
+)
 _BYLINE = re.compile(r"^(?:by|author\s*[:\-]?|written by)\s+(.+)$", re.I)
 _SENTINEL = re.compile(r"(?:unsafe|oversized)-source-text-sha256:[0-9a-f]{64}")
 _ISBN_LABEL = re.compile(r"^(?:urn:isbn:|isbn(?:-1[03])?\s*:?)", re.I)
@@ -86,7 +93,9 @@ def _bounded(value: str) -> tuple[str, str | None]:
         return value, "oversized"
     if len(value) <= 280:
         return value, None
-    return "oversized-source-text-sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest(), "oversized"
+    return "oversized-source-text-sha256:" + hashlib.sha256(
+        value.encode("utf-8")
+    ).hexdigest(), "oversized"
 
 
 def _project_role(value: str | None) -> str | None:
@@ -107,11 +116,17 @@ def _project_role(value: str | None) -> str | None:
     if re.fullmatch(r"[a-z][a-z0-9 ._-]{0,63}", key):
         return "other"
     if len(value) > 64:
-        return "oversized-source-text-sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+        return (
+            "oversized-source-text-sha256:"
+            + hashlib.sha256(value.encode("utf-8")).hexdigest()
+        )
     try:
         return validate_role_projection(value)
     except EvidenceValueError:
-        return "unsafe-source-text-sha256:" + hashlib.sha256(value.encode("utf-8")).hexdigest()
+        return (
+            "unsafe-source-text-sha256:"
+            + hashlib.sha256(value.encode("utf-8")).hexdigest()
+        )
 
 
 def _package_date_precision(value: str | None) -> DatePrecision | None:
@@ -136,14 +151,26 @@ def _package_date_precision(value: str | None) -> DatePrecision | None:
     return None
 
 
-def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubInspectionFact, ...]:
+def package_facts(
+    report: EpubPackageReport, source: Fingerprint
+) -> tuple[EpubInspectionFact, ...]:
     facts: list[EpubInspectionFact] = []
-    values: dict[EpubPackageField, list[tuple[int, list[str]]]] = {EpubPackageField.CREATOR: [], EpubPackageField.CONTRIBUTOR: []}
+    values: dict[EpubPackageField, list[tuple[int, list[str]]]] = {
+        EpubPackageField.CREATOR: [],
+        EpubPackageField.CONTRIBUTOR: [],
+    }
     for observation in report.observations:
         if observation.field in values:
             values[observation.field].append((observation.citation.source_ordinal, []))
-        if observation.field in {EpubPackageField.CREATOR_ROLE, EpubPackageField.CONTRIBUTOR_ROLE}:
-            target = EpubPackageField.CREATOR if observation.field is EpubPackageField.CREATOR_ROLE else EpubPackageField.CONTRIBUTOR
+        if observation.field in {
+            EpubPackageField.CREATOR_ROLE,
+            EpubPackageField.CONTRIBUTOR_ROLE,
+        }:
+            target = (
+                EpubPackageField.CREATOR
+                if observation.field is EpubPackageField.CREATOR_ROLE
+                else EpubPackageField.CONTRIBUTOR
+            )
             if values[target]:
                 ordinal, declared_roles = values[target][-1]
                 role = _project_role(observation.normalized_value)
@@ -172,8 +199,7 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
         if observation.field is EpubPackageField.PACKAGE_IDENTIFIER
     }
     if any(
-        warning.code == "inferred_package_identifier"
-        for warning in report.warnings
+        warning.code == "inferred_package_identifier" for warning in report.warnings
     ):
         package_identifier_ordinals.clear()
     for observation in report.observations:
@@ -184,20 +210,34 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
         canonical = observation.normalized_value if forced_state is None else None
         if observation.field is EpubPackageField.IDENTIFIER:
             field = EpubInspectionField.ISBN
-            valid = canonical is not None and len(canonical) in {10, 13} and opening._isbn_valid(canonical)
+            valid = (
+                canonical is not None
+                and len(canonical) in {10, 13}
+                and opening._isbn_valid(canonical)
+            )
             scheme = identifier_schemes.get(observation.citation.source_ordinal)
             scheme_key = None if scheme is None else scheme.casefold()
-            explicit_isbn = _ISBN_LABEL.match(observation.raw_value) is not None or scheme_key in {"isbn", "isbn-10", "isbn-13"}
-            if scheme_key is not None and scheme_key not in {"isbn", "isbn-10", "isbn-13"}:
+            explicit_isbn = _ISBN_LABEL.match(
+                observation.raw_value
+            ) is not None or scheme_key in {"isbn", "isbn-10", "isbn-13"}
+            if scheme_key is not None and scheme_key not in {
+                "isbn",
+                "isbn-10",
+                "isbn-13",
+            }:
                 continue
             # A ``None`` scheme key is a legitimate lookup miss here.
             declared_length = cast(
                 "dict[str | None, int]", {"isbn-10": 10, "isbn-13": 13}
             ).get(scheme_key)
-            normalized_isbn = "" if canonical is None else "".join(
-                character
-                for character in canonical.upper()
-                if character.isdigit() or character == "X"
+            normalized_isbn = (
+                ""
+                if canonical is None
+                else "".join(
+                    character
+                    for character in canonical.upper()
+                    if character.isdigit() or character == "X"
+                )
             )
             if (
                 declared_length is not None
@@ -209,10 +249,7 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
                 continue
             if not valid:
                 canonical = None
-            primary = (
-                observation.citation.source_ordinal
-                in package_identifier_ordinals
-            )
+            primary = observation.citation.source_ordinal in package_identifier_ordinals
             facts.append(
                 EpubInspectionFact(
                     field,
@@ -230,9 +267,20 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
             )
             continue
         assert field is not None
-        if canonical is not None and field in {EpubInspectionField.TITLE, EpubInspectionField.SUBTITLE}:
+        if canonical is not None and field in {
+            EpubInspectionField.TITLE,
+            EpubInspectionField.SUBTITLE,
+        }:
             canonical = normalize_title(observed)
-        state = forced_state or ("untyped" if field is EpubInspectionField.SUBJECT else "malformed" if canonical is None else "inapplicable" if observation.applicability.value == "inapplicable" else "valid")
+        state = forced_state or (
+            "untyped"
+            if field is EpubInspectionField.SUBJECT
+            else "malformed"
+            if canonical is None
+            else "inapplicable"
+            if observation.applicability.value == "inapplicable"
+            else "valid"
+        )
         declared_roles = roles.get(observation.citation.source_ordinal, ())  # type: ignore[assignment]  # reason: this rebinds the earlier per-observation role list to the frozen role tuple built above; both are only iterated from here on.
         bibliographic_roles = tuple(
             role
@@ -246,9 +294,7 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
             role for role in declared_roles if _SENTINEL.fullmatch(role)
         )
         role = "+".join(bibliographic_roles) or (
-            sentinel_roles[0]
-            if sentinel_roles and not contextual_roles
-            else None
+            sentinel_roles[0] if sentinel_roles and not contextual_roles else None
         )
         role_parts = set(bibliographic_roles)
         non_author_bibliographic_roles = set(_ROLE_MAP.values()) - {"author"}
@@ -289,10 +335,14 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
             if date_event is not None
             else None
         )
-        if date_event in {
-            DateEvent.WORK_FIRST_PUBLICATION,
-            DateEvent.CONVERSION,
-        } and date_precision is not None:
+        if (
+            date_event
+            in {
+                DateEvent.WORK_FIRST_PUBLICATION,
+                DateEvent.CONVERSION,
+            }
+            and date_precision is not None
+        ):
             canonical = canonical or observed
             state = forced_state or "valid"
         if date_event is not None and state == "valid":
@@ -311,7 +361,23 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
             canonical = None
             date_precision = None
         if not contextual_only:
-            facts.append(EpubInspectionFact(field, source, observed, canonical, observed, "not_applicable", "not_applicable", "not_applicable", "package_metadata", state=state, role=role, date_event=date_event, date_precision=date_precision))
+            facts.append(
+                EpubInspectionFact(
+                    field,
+                    source,
+                    observed,
+                    canonical,
+                    observed,
+                    "not_applicable",
+                    "not_applicable",
+                    "not_applicable",
+                    "package_metadata",
+                    state=state,
+                    role=role,
+                    date_event=date_event,
+                    date_precision=date_precision,
+                )
+            )
         for contextual_role in contextual_roles:
             facts.append(
                 EpubInspectionFact(
@@ -348,20 +414,50 @@ def package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubI
     return tuple(facts)
 
 
-def rear_facts(request: EpubPackageRequest, report: EpubPackageReport, opening_report: EpubOpeningReport, archive: zipfile.ZipFile) -> tuple[EpubInspectionFact, ...]:
+def rear_facts(
+    request: EpubPackageRequest,
+    report: EpubPackageReport,
+    opening_report: EpubOpeningReport,
+    archive: zipfile.ZipFile,
+) -> tuple[EpubInspectionFact, ...]:
     if not report.succeeded or report.source_fingerprint is None:
         return ()
-    manifests = {d.resource_identity: d for d in report.declarations if d.kind is EpubPackageDeclarationKind.MANIFEST_ITEM and d.resource_identity}
+    manifests = {
+        d.resource_identity: d
+        for d in report.declarations
+        if d.kind is EpubPackageDeclarationKind.MANIFEST_ITEM and d.resource_identity
+    }
     # Select the tail from the linear spine first. Non-linear declarations do
     # not displace a linear tail position; every selected linear slot still
     # consumes its fixed position before later eligibility checks.
-    spine = [d for d in report.declarations if d.kind is EpubPackageDeclarationKind.SPINE_SLOT and d.linear]
-    encrypted = {d.resource_identity for d in report.declarations if d.kind is EpubPackageDeclarationKind.ENCRYPTION and d.resource_identity}
+    spine = [
+        d
+        for d in report.declarations
+        if d.kind is EpubPackageDeclarationKind.SPINE_SLOT and d.linear
+    ]
+    encrypted = {
+        d.resource_identity
+        for d in report.declarations
+        if d.kind is EpubPackageDeclarationKind.ENCRYPTION and d.resource_identity
+    }
     opened = {r.resource_identity for r in opening_report.resources if r.opened}
     rear_capacity = min(4, max(0, 9 - opening_report.usage.opened_resources))
     seen: set[str] = set()
-    limits = EpubOpeningLimits(package=request.limits, selected_documents=4, expanded_bytes_per_resource=1_048_576, expanded_bytes_per_selection=4_194_304, text_characters_per_selection=262_144, nodes_per_resource=50_000, nodes_per_selection=50_000, facts=16)
-    names = {epub_resource_identity(info.filename): info.filename for info in archive.infolist() if not info.is_dir()}
+    limits = EpubOpeningLimits(
+        package=request.limits,
+        selected_documents=4,
+        expanded_bytes_per_resource=1_048_576,
+        expanded_bytes_per_selection=4_194_304,
+        text_characters_per_selection=262_144,
+        nodes_per_resource=50_000,
+        nodes_per_selection=50_000,
+        facts=16,
+    )
+    names = {
+        epub_resource_identity(info.filename): info.filename
+        for info in archive.infolist()
+        if not info.is_dir()
+    }
     facts: list[EpubInspectionFact] = []
     expanded = text = nodes = opens = 0
     for tail_slot, spine_item in enumerate(reversed(spine[-8:]), 1):
@@ -378,31 +474,50 @@ def rear_facts(request: EpubPackageRequest, report: EpubPackageReport, opening_r
         if identity in opened:
             continue
         declaration = manifests.get(identity)
-        if declaration is None or identity in encrypted or declaration.media_type not in {"application/xhtml+xml", "text/html"} or identity not in names:
+        if (
+            declaration is None
+            or identity in encrypted
+            or declaration.media_type not in {"application/xhtml+xml", "text/html"}
+            or identity not in names
+        ):
             continue
         if opens >= rear_capacity:
             break
         opens += 1
         try:
-            data = opening._read_member(archive, names[identity], limits.expanded_bytes_per_resource, request)
+            data = opening._read_member(
+                archive, names[identity], limits.expanded_bytes_per_resource, request
+            )
             expanded += len(data)
             if expanded > limits.expanded_bytes_per_selection:
-                raise opening._AggregateRejected(report.outcome.RESOURCE_LIMIT, tuple(facts))
+                raise opening._AggregateRejected(
+                    report.outcome.RESOURCE_LIMIT, tuple(facts)
+                )
             projection = opening._parse(data, declaration.media_type, limits, request)
             text += projection.work_text_characters
             nodes += projection.work_nodes
-            if text > limits.text_characters_per_selection or nodes > limits.nodes_per_selection:
-                raise opening._AggregateRejected(report.outcome.RESOURCE_LIMIT, tuple(facts))
+            if (
+                text > limits.text_characters_per_selection
+                or nodes > limits.nodes_per_selection
+            ):
+                raise opening._AggregateRejected(
+                    report.outcome.RESOURCE_LIMIT, tuple(facts)
+                )
         except opening._AggregateRejected:
             raise
         except opening._ResourceRejected:
-            raise opening._AggregateRejected(report.outcome.RESOURCE_LIMIT, tuple(facts)) from None
-        except (opening._MalformedMarkup, opening._UnsafeConstruct, opening._UnsupportedEncoding, ValueError):
+            raise opening._AggregateRejected(
+                report.outcome.RESOURCE_LIMIT, tuple(facts)
+            ) from None
+        except (
+            opening._MalformedMarkup,
+            opening._UnsafeConstruct,
+            opening._UnsupportedEncoding,
+            ValueError,
+        ):
             raise opening._AggregateRejected(report.outcome.MALFORMED) from None
         promotion_exclusions = opening._promotion_excluded_ordinals(projection)
-        by_ordinal = {
-            element.ordinal: element for element in projection.elements
-        }
+        by_ordinal = {element.ordinal: element for element in projection.elements}
         parents = {
             ancestor
             for element in projection.elements
@@ -428,7 +543,13 @@ def rear_facts(request: EpubPackageRequest, report: EpubPackageReport, opening_r
         )
         if marker is None:
             continue
-        provenance = EpubRearProvenance(identity, spine_item.spine_position or tail_slot, tail_slot, marker.group(0).lower(), marker.group(0))
+        provenance = EpubRearProvenance(
+            identity,
+            spine_item.spine_position or tail_slot,
+            tail_slot,
+            marker.group(0).lower(),
+            marker.group(0),
+        )
         resource_isbns = 0
         eligible_ordinals: set[int] = set()
         for candidate in projection.elements:
@@ -453,9 +574,7 @@ def rear_facts(request: EpubPackageRequest, report: EpubPackageReport, opening_r
             projection.elements,
             eligible_ordinals,
         )
-        bibliographic_owners: list[
-            tuple[int, EpubInspectionField, str]
-        ] = []
+        bibliographic_owners: list[tuple[int, EpubInspectionField, str]] = []
         for element in projection.elements:
             if element.ordinal in promotion_exclusions:
                 continue
@@ -478,8 +597,7 @@ def rear_facts(request: EpubPackageRequest, report: EpubPackageReport, opening_r
             )
             admitted_cue = (
                 bool(
-                    element.semantics
-                    & {"title", "fulltitle", "contributor", "creator"}
+                    element.semantics & {"title", "fulltitle", "contributor", "creator"}
                 )
                 or byline is not None
                 or bool(bibliographic_indicia)
@@ -489,22 +607,39 @@ def rear_facts(request: EpubPackageRequest, report: EpubPackageReport, opening_r
             admitted_cue = admitted_cue or bool(credits) or bool(dates)
             if is_ancestor and not admitted_cue:
                 continue
-            if (
-                element.semantics & {"title", "fulltitle"}
-                and not bibliographic_label
-            ):
+            if element.semantics & {"title", "fulltitle"} and not bibliographic_label:
                 field, canonical = (
                     EpubInspectionField.TITLE,
                     normalize_title(value),
                 )
-            elif element.semantics & {"contributor"} and not any(credit[0] is opening.OpeningField.CONTRIBUTOR for credit in credits):
+            elif element.semantics & {"contributor"} and not any(
+                credit[0] is opening.OpeningField.CONTRIBUTOR for credit in credits
+            ):
                 field, canonical = EpubInspectionField.CONTRIBUTOR, value
             elif byline is not None and len(byline.group(1)) <= 280:
-                field, canonical, role = EpubInspectionField.CREATOR, byline.group(1), "author"
+                field, canonical, role = (
+                    EpubInspectionField.CREATOR,
+                    byline.group(1),
+                    "author",
+                )
             elif element.semantics & {"creator"}:
                 field, canonical, role = EpubInspectionField.CREATOR, value, "author"
             if field is not None:
-                facts.append(EpubInspectionFact(field, report.source_fingerprint, value, canonical, value, "not_applicable", "not_applicable", "not_applicable", "opening_matter", rear_provenance=provenance, role=role))
+                facts.append(
+                    EpubInspectionFact(
+                        field,
+                        report.source_fingerprint,
+                        value,
+                        canonical,
+                        value,
+                        "not_applicable",
+                        "not_applicable",
+                        "not_applicable",
+                        "opening_matter",
+                        rear_provenance=provenance,
+                        role=role,
+                    )
+                )
             for indicia in bibliographic_indicia:
                 labelled = indicia.context_span is not None
                 if labelled:
@@ -547,8 +682,7 @@ def rear_facts(request: EpubPackageRequest, report: EpubPackageReport, opening_r
                 if indicia.context_span is not None:
                     context_start, context_end = indicia.context_span
                     supporting_context = projection.text[
-                        element.start + context_start:
-                        element.start + context_end
+                        element.start + context_start : element.start + context_end
                     ]
                 try:
                     supporting_context = validate_projection_text(
@@ -595,9 +729,7 @@ def rear_facts(request: EpubPackageRequest, report: EpubPackageReport, opening_r
                 )
             for lexical, event, precision in dates:
                 try:
-                    canonical, inferred_precision = normalize_date_value(
-                        lexical
-                    )
+                    canonical, inferred_precision = normalize_date_value(lexical)
                 except ValueError:
                     continue
                 if inferred_precision is not precision:
@@ -630,8 +762,23 @@ def rear_facts(request: EpubPackageRequest, report: EpubPackageReport, opening_r
                     continue
                 isbn = opening._normal(match.group(0), opening.OpeningField.IDENTIFIER)
                 if len(isbn) in {10, 13} and opening._isbn_valid(isbn):
-                    facts.append(EpubInspectionFact(EpubInspectionField.ISBN, report.source_fingerprint, match.group(0), isbn, value, f"valid_isbn_{len(isbn)}", "unknown", "unlabelled", "opening_matter", rear_provenance=provenance))
+                    facts.append(
+                        EpubInspectionFact(
+                            EpubInspectionField.ISBN,
+                            report.source_fingerprint,
+                            match.group(0),
+                            isbn,
+                            value,
+                            f"valid_isbn_{len(isbn)}",
+                            "unknown",
+                            "unlabelled",
+                            "opening_matter",
+                            rear_provenance=provenance,
+                        )
+                    )
                     resource_isbns += 1
             if len(facts) > 16:
-                raise opening._AggregateRejected(report.outcome.RESOURCE_LIMIT, tuple(facts[:16]))
+                raise opening._AggregateRejected(
+                    report.outcome.RESOURCE_LIMIT, tuple(facts[:16])
+                )
     return tuple(facts)

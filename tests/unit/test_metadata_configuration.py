@@ -40,20 +40,64 @@ def _source(root: Path) -> dict[str, object]:
         "schema_version": "config-v6",
         "provider_recovery_generation": 1,
         "connections": [
-            {"name": "secondary", "adapter": "audiobookshelf", "endpoint": "https://secondary.invalid", "secret_file": str(root / "secondary.secret")},
-            {"name": "primary", "adapter": "audiobookshelf", "endpoint": "https://primary.invalid", "secret_file": str(root / "primary.secret")},
+            {
+                "name": "secondary",
+                "adapter": "audiobookshelf",
+                "endpoint": "https://secondary.invalid",
+                "secret_file": str(root / "secondary.secret"),
+            },
+            {
+                "name": "primary",
+                "adapter": "audiobookshelf",
+                "endpoint": "https://primary.invalid",
+                "secret_file": str(root / "primary.secret"),
+            },
         ],
         "libraries": [
-            {"name": "books", "connection": "primary", "library_id": "library-a", "mount": "books", "provider_connections": ["second", "first"]},
-            {"name": "other", "connection": "secondary", "library_id": "library-b", "mount": "other", "provider_connections": ["first"]},
+            {
+                "name": "books",
+                "connection": "primary",
+                "library_id": "library-a",
+                "mount": "books",
+                "provider_connections": ["second", "first"],
+            },
+            {
+                "name": "other",
+                "connection": "secondary",
+                "library_id": "library-b",
+                "mount": "other",
+                "provider_connections": ["first"],
+            },
         ],
         "mounts": [
-            {"name": "other", "container_path": "/media/other", "service_path": "/other", "read_only": True},
-            {"name": "books", "container_path": "/media/books", "service_path": "/books", "read_only": True},
+            {
+                "name": "other",
+                "container_path": "/media/other",
+                "service_path": "/other",
+                "read_only": True,
+            },
+            {
+                "name": "books",
+                "container_path": "/media/books",
+                "service_path": "/books",
+                "read_only": True,
+            },
         ],
         "providers": [
-            {"name": "second", "adapter": "hardcover", "enabled": False, "cover_enabled": False, "secret_file": None},
-            {"name": "first", "adapter": "hardcover", "enabled": False, "cover_enabled": False, "secret_file": None},
+            {
+                "name": "second",
+                "adapter": "hardcover",
+                "enabled": False,
+                "cover_enabled": False,
+                "secret_file": None,
+            },
+            {
+                "name": "first",
+                "adapter": "hardcover",
+                "enabled": False,
+                "cover_enabled": False,
+                "secret_file": None,
+            },
         ],
     }
 
@@ -82,9 +126,9 @@ def test_review_tls_paths_are_explicit_absolute_and_paired() -> None:
 
 @pytest.mark.parametrize("field", ("tls_certificate_file", "tls_private_key_file"))
 def test_review_tls_paths_are_absolute_in_generated_schema(field: str) -> None:
-    properties = json.loads(configuration_schema_json())["$defs"][
-        "ReviewInput"
-    ]["properties"]
+    properties = json.loads(configuration_schema_json())["$defs"]["ReviewInput"][
+        "properties"
+    ]
     absolute = next(
         choice
         for choice in properties[field]["anyOf"]
@@ -108,7 +152,9 @@ def test_review_tls_paths_are_absolute_in_generated_schema(field: str) -> None:
         "relative_private_key",
     ),
 )
-def test_unpaired_or_relative_review_tls_paths_are_rejected(fields: dict[str, object]) -> None:
+def test_unpaired_or_relative_review_tls_paths_are_rejected(
+    fields: dict[str, object],
+) -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         invalid = _source(root)
@@ -144,7 +190,10 @@ def test_sparse_read_only_policy_override_is_closed() -> None:
         path = root / "config.json"
         path.write_text(json.dumps(source), encoding="utf-8")
         configuration = load_configuration_file(path)
-        assert "full_date" == configuration.libraries[0].policy_override["options"]["date_precision"]
+        assert (
+            "full_date"
+            == configuration.libraries[0].policy_override["options"]["date_precision"]
+        )
         source["libraries"][0]["policy_override"]["options"] = {"removed": "value"}
         path.write_text(json.dumps(source), encoding="utf-8")
         with pytest.raises(ConfigurationError):
@@ -240,17 +289,19 @@ def test_multiple_referenced_cover_providers_share_the_bounded_gallery() -> None
         for provider in source["providers"]:
             provider["enabled"] = True
             provider["cover_enabled"] = True
-            provider["secret_file"] = str(
-                root / f"{provider['name']}.secret"
-            )
+            provider["secret_file"] = str(root / f"{provider['name']}.secret")
         path = root / "config.json"
         path.write_text(json.dumps(source), encoding="utf-8")
         configuration = load_configuration_file(path)
-    assert (True, True) == tuple(value.cover_enabled for value in configuration.providers)
+    assert (True, True) == tuple(
+        value.cover_enabled for value in configuration.providers
+    )
 
 
 def test_generated_schema_is_current() -> None:
-    expected = (Path(__file__).parents[2] / "docs" / "reference" / "config-v6.schema.json").read_text(encoding="utf-8")
+    expected = (
+        Path(__file__).parents[2] / "docs" / "reference" / "config-v6.schema.json"
+    ).read_text(encoding="utf-8")
     assert configuration_schema_json() == expected
 
 
@@ -274,8 +325,7 @@ def test_generated_schema_enforces_provider_variants() -> None:
         "EnabledHardcoverProviderInput",
         "EnabledOpenLibraryProviderInput",
     } == {
-        value["$ref"].rsplit("/", 1)[-1]
-        for value in schema["ProviderInput"]["anyOf"]
+        value["$ref"].rsplit("/", 1)[-1] for value in schema["ProviderInput"]["anyOf"]
     }
 
 
@@ -343,7 +393,9 @@ def test_generated_schema_enforces_provider_variants() -> None:
         "open_library_disabled",
     ),
 )
-def test_generated_schema_admits_every_declared_provider_variant(provider: dict[str, object]) -> None:
+def test_generated_schema_admits_every_declared_provider_variant(
+    provider: dict[str, object],
+) -> None:
     source = _source(_SYNTHETIC_ROOT)
     source["providers"] = [provider]
     ConfigurationInput.model_validate(source)
@@ -395,7 +447,9 @@ def test_generated_schema_admits_every_declared_provider_variant(provider: dict[
         "hardcover_disabled_with_cover",
     ),
 )
-def test_generated_schema_refuses_undeclared_provider_variants(changes: dict[str, object]) -> None:
+def test_generated_schema_refuses_undeclared_provider_variants(
+    changes: dict[str, object],
+) -> None:
     source = _source(_SYNTHETIC_ROOT)
     source["providers"][0].update(changes)
     with pytest.raises(ValidationError):
@@ -433,7 +487,9 @@ def test_provider_adapters_have_closed_adapter_specific_fields() -> None:
         path = root / "valid.json"
         path.write_text(json.dumps(valid), encoding="utf-8")
         configuration = load_configuration_file(path)
-        assert tuple((value.name, value.adapter) for value in configuration.providers) == (
+        assert tuple(
+            (value.name, value.adapter) for value in configuration.providers
+        ) == (
             ("first", "hardcover"),
             ("second", "google_books"),
             ("third", "open_library"),
@@ -466,7 +522,9 @@ def test_provider_adapters_have_closed_adapter_specific_fields() -> None:
         "unknown_adapter",
     ),
 )
-def test_adapter_specific_provider_fields_are_refused_elsewhere(adapter: str, secret: str | None, contact: str | None) -> None:
+def test_adapter_specific_provider_fields_are_refused_elsewhere(
+    adapter: str, secret: str | None, contact: str | None
+) -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         source = _source(root)
@@ -558,7 +616,9 @@ def test_target_authorization_is_confined_to_current_item_get() -> None:
         secret.write_text("token-value", encoding="ascii")
         secret.chmod(0o600)
         requests: list[httpx.Request] = []
-        transport = httpx.MockTransport(lambda request: requests.append(request) or httpx.Response(200))  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
+        transport = httpx.MockTransport(
+            lambda request: requests.append(request) or httpx.Response(200)
+        )  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
         client = target_client("https://library.invalid", str(secret), 5)
         # Replace only the transport for this structural authorization test.
         client._transport = transport
@@ -582,8 +642,10 @@ def test_hardcover_raw_token_is_confined_to_the_exact_graphql_post() -> None:
             str(secret),
             5,
             transport=httpx.MockTransport(
-                lambda request: requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
-                or httpx.Response(200)
+                lambda request: (
+                    requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
+                    or httpx.Response(200)
+                )
             ),
         )
         assert token not in repr(client)

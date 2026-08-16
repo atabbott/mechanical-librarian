@@ -103,13 +103,11 @@ class CaseDetailView:
     def from_data(cls, value: dict[str, object]) -> "CaseDetailView":
         return cls(
             tuple(
-                str(item)
-                for item in cast("list[object]", value["comparison_notices"])
+                str(item) for item in cast("list[object]", value["comparison_notices"])
             ),
             bool(value["current"]),
             tuple(
-                dict(item)
-                for item in cast("list[dict[str, object]]", value["fields"])
+                dict(item) for item in cast("list[dict[str, object]]", value["fields"])
             ),
             str(value["review_case_id"]),
             str(value["schema_version"]),
@@ -230,7 +228,9 @@ class PolicyOperations:
     def validate(self, profile: MetadataPolicyProfile) -> MetadataPolicyProfile:
         return self._gate(lambda: self._notebook.validate(profile))
 
-    def create(self, name: object, options: object, destinations: object) -> MetadataPolicyProfile:
+    def create(
+        self, name: object, options: object, destinations: object
+    ) -> MetadataPolicyProfile:
         return self._gate(lambda: self._notebook.create(name, options, destinations))
 
     def read(self, policy_id: object) -> MetadataPolicyProfile:
@@ -291,9 +291,7 @@ class AutomaticSafetyOperations:
 
     def pause(self, paused: object, changed_at: object) -> None:
         self._gate(
-            lambda: self._controls.pause(
-                cast(bool, paused), cast(int, changed_at)
-            )
+            lambda: self._controls.pause(cast(bool, paused), cast(int, changed_at))
         )
 
     def recover(self, changed_at: object, category: object = None) -> None:
@@ -303,7 +301,9 @@ class AutomaticSafetyOperations:
             )
         )
 
-    def suspend(self, reason: object, changed_at: object, category: object = None) -> None:
+    def suspend(
+        self, reason: object, changed_at: object, category: object = None
+    ) -> None:
         self._gate(
             lambda: self._controls.suspend(
                 cast(str, reason), cast(int, changed_at), cast("str | None", category)
@@ -328,7 +328,9 @@ class ReviewApplication:
         graceful_shutdown_seconds: int,
         close_state_owner: bool,
         preparation: ReviewPreparationSupervisor | None,
-        field_application: GuardedFieldApplication | ContinuousGuardedApplication | None,
+        field_application: GuardedFieldApplication
+        | ContinuousGuardedApplication
+        | None,
         operations: OperationalStatus | None,
         gate: RLock,
         cover_considerations: CoverConsiderationService | None = None,
@@ -498,7 +500,9 @@ class ReviewApplication:
 
         return self.serialized(read)
 
-    def evidence(self, review_case_id: str, limit: int, cursor: str | None) -> dict[str, object]:
+    def evidence(
+        self, review_case_id: str, limit: int, cursor: str | None
+    ) -> dict[str, object]:
         return self.serialized(
             lambda: self._cases.evidence(review_case_id, limit=limit, cursor=cursor)
         )
@@ -602,7 +606,6 @@ class ReviewApplication:
             retry=retry,
         )
 
-
     @property
     def policy(self) -> PolicyOperations:
         return self._policy
@@ -632,13 +635,15 @@ class ReviewApplication:
         page_size: int = 25,
     ) -> dict[str, object]:
         application = self._continuous_application()
-        return self.serialized(lambda: application.activity(
-            search=search,
-            event_type=event_type,
-            range_days=range_days,
-            page=page,
-            page_size=page_size,
-        ))
+        return self.serialized(
+            lambda: application.activity(
+                search=search,
+                event_type=event_type,
+                range_days=range_days,
+                page=page,
+                page_size=page_size,
+            )
+        )
 
     def enable_activity(
         self, grants: tuple[tuple[str, tuple[str, ...]], ...]
@@ -709,34 +714,39 @@ class ReviewApplication:
                 "total": 0 if progress is None else progress.total,
                 "ready": 0 if progress is None else progress.ready,
                 "blocked": 0 if progress is None else progress.blocked,
-                "rescan_requested": False if progress is None else progress.rescan_requested,
+                "rescan_requested": False
+                if progress is None
+                else progress.rescan_requested,
             }
             for (connection, library, library_id), progress in zip(
                 self._preparation.libraries, progress_values, strict=True
             )
         )
         connections = tuple(
-            {"connection": condition.connection, "code": condition.code,
-             "state": condition.state, "affected": condition.affected,
-             "updated_at": condition.updated_at}
+            {
+                "connection": condition.connection,
+                "code": condition.code,
+                "state": condition.state,
+                "affected": condition.affected,
+                "updated_at": condition.updated_at,
+            }
             for condition in conditions
         )
         return PreparationView(
             libraries,
             paused,
-            any(item["state"] in {"queued", "discovering", "processing"} for item in libraries),
+            any(
+                item["state"] in {"queued", "discovering", "processing"}
+                for item in libraries
+            ),
             any(item["state"] == "completed_with_failures" for item in libraries),
             connections,
         )
 
-    def request_review_scan(
-        self, connection: str, library: str
-    ) -> dict[str, object]:
+    def request_review_scan(self, connection: str, library: str) -> dict[str, object]:
         return self._preparation_request("request", connection, library)
 
-    def retry_review_scan(
-        self, connection: str, library: str
-    ) -> dict[str, object]:
+    def retry_review_scan(self, connection: str, library: str) -> dict[str, object]:
         return self._preparation_request("retry", connection, library)
 
     def pause_review_preparation(self) -> PreparationView:
@@ -762,7 +772,8 @@ class ReviewApplication:
         selected = getattr(self._preparation, action)
         progress = self.serialized(lambda: selected(connection, library))
         library_id = next(
-            item[2] for item in self._preparation.libraries
+            item[2]
+            for item in self._preparation.libraries
             if item[:2] == (connection, library)
         )
         return {
@@ -782,9 +793,9 @@ class ReviewApplication:
         if self._preparation is None:
             raise ReviewApplicationError("unavailable")
         self.serialized(
-            lambda: cast(
-                ReviewPreparationSupervisor, self._preparation
-            ).set_paused(paused)
+            lambda: cast(ReviewPreparationSupervisor, self._preparation).set_paused(
+                paused
+            )
         )
         return self.preparation()
 
@@ -824,7 +835,11 @@ def prepare_cover_consideration(
                 for field in cast("list[dict[str, object]]", detail["fields"])
                 if field["destination"] == "cover"
             )
-            report_document, proposal_id, has_human_decision = report.to_json(), str(cover["proposal_id"]), cover["human_decision"] is not None
+            report_document, proposal_id, has_human_decision = (
+                report.to_json(),
+                str(cover["proposal_id"]),
+                cover["human_decision"] is not None,
+            )
         else:
             staged = snapshot()
             if staged is None:
@@ -841,11 +856,16 @@ def prepare_cover_consideration(
         request = (
             None
             if existing is not None
-            else cover_considerations.prepare_observation(review_case_id, report_document)
+            else cover_considerations.prepare_observation(
+                review_case_id, report_document
+            )
         )
         return (
-            existing, report_document, proposal_id,
-            cover_considerations.latest_id(review_case_id), request,
+            existing,
+            report_document,
+            proposal_id,
+            cover_considerations.latest_id(review_case_id),
+            request,
         )
 
     try:
@@ -867,12 +887,18 @@ def prepare_cover_consideration(
                     for field in cast("list[dict[str, object]]", detail["fields"])
                     if field["destination"] == "cover"
                 )
-                current_report_document, current_proposal_id, has_human_decision = current_report.to_json(), str(cover["proposal_id"]), cover["human_decision"] is not None
+                current_report_document, current_proposal_id, has_human_decision = (
+                    current_report.to_json(),
+                    str(cover["proposal_id"]),
+                    cover["human_decision"] is not None,
+                )
             else:
                 staged = snapshot()
                 if staged is None:
                     raise ReviewApplicationError("stale")
-                current_report_document, current_proposal_id, has_human_decision = staged
+                current_report_document, current_proposal_id, has_human_decision = (
+                    staged
+                )
             if (
                 current_report_document != report_document
                 or current_proposal_id != proposal_id
@@ -890,8 +916,11 @@ def prepare_cover_consideration(
             if cover_considerations.latest_id(review_case_id) != previous_id:
                 raise ReviewApplicationError("stale")
             return cover_considerations.ensure(
-                review_case_id, report_document, {"proposal_id": proposal_id},
-                retry=retry, reviewer_evidence=evidence,
+                review_case_id,
+                report_document,
+                {"proposal_id": proposal_id},
+                retry=retry,
+                reviewer_evidence=evidence,
             )
 
         return (serialized if finalize is None else finalize)(persist)
@@ -914,7 +943,9 @@ def compose_review_application(
     close_state_owner: bool = False,
     preparation: ReviewPreparationSupervisor | None = None,
     policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
-    field_application: GuardedFieldApplication | ContinuousGuardedApplication | None = None,
+    field_application: GuardedFieldApplication
+    | ContinuousGuardedApplication
+    | None = None,
     operational_timings: TimingRepository | None = None,
     operational_support: SupportExporter | None = None,
     operational_timer: StageTimer | None = None,
@@ -941,9 +972,7 @@ def compose_review_application(
             support=operational_support,
         )
     )
-    overrides = {
-        name: value for name, value in policy_libraries if value is not None
-    }
+    overrides = {name: value for name, value in policy_libraries if value is not None}
     application = ReviewApplication(
         state_owner=state_owner,
         sessions=OwnerSessionService(

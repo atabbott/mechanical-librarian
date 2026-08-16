@@ -27,7 +27,9 @@ def _connection() -> sqlite3.Connection:
 
 
 def _values(connection: sqlite3.Connection) -> list[str]:
-    return [row[0] for row in connection.execute("SELECT value FROM facts ORDER BY value")]
+    return [
+        row[0] for row in connection.execute("SELECT value FROM facts ORDER BY value")
+    ]
 
 
 def test_outermost_scope_commits_a_real_transaction() -> None:

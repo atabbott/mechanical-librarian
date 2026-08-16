@@ -42,7 +42,9 @@ class _Repository:
     def __init__(self) -> None:
         self.ready = [("plan-a1", "alpha"), ("plan-a2", "alpha"), ("plan-b1", "beta")]
         self.operations = {
-            plan_id: SimpleNamespace(plan=SimpleNamespace(connection="primary", library=library))
+            plan_id: SimpleNamespace(
+                plan=SimpleNamespace(connection="primary", library=library)
+            )
             for plan_id, library in self.ready
         }
 
@@ -58,8 +60,10 @@ class _Repository:
     def next_field_effect_plan_id(self, last_library):
         if not self.ready:
             return None
-        index = next((i for i, (_, library) in enumerate(self.ready)
-                      if library != last_library), 0)
+        index = next(
+            (i for i, (_, library) in enumerate(self.ready) if library != last_library),
+            0,
+        )
         return self.ready.pop(index)
 
     def get_field_effect(self, plan_id):
@@ -97,7 +101,9 @@ class _RecoveryRepository(_Repository):
         self.plans = [f"plan-{index}" for index in range(205)]
         self.actions = [f"action-{index}" for index in range(205)]
         self.operations = {
-            plan_id: SimpleNamespace(plan=SimpleNamespace(connection="primary", library="alpha"))
+            plan_id: SimpleNamespace(
+                plan=SimpleNamespace(connection="primary", library="alpha")
+            )
             for plan_id in self.plans + self.actions
         }
 
@@ -144,8 +150,11 @@ class _PagedRepository:
     def pending_field_effect_decision_documents(self, limit, after=None):
         values = self.decisions
         if after is not None:
-            values = [value for value in values
-                      if (value.occurred_at, value.decision_id) > after]
+            values = [
+                value
+                for value in values
+                if (value.occurred_at, value.decision_id) > after
+            ]
         return tuple(value.to_json() for value in values[:limit])
 
     def pending_field_effect_decision_counts(self):
@@ -153,10 +162,15 @@ class _PagedRepository:
         for value in self.decisions:
             library = "beta" if value.occurred_at == 101 else "alpha"
             counts[library] = counts.get(library, 0) + 1
-        return tuple({
-            "connection": "primary", "library": library,
-            "origin": "human", "count": count,
-        } for library, count in sorted(counts.items()))
+        return tuple(
+            {
+                "connection": "primary",
+                "library": library,
+                "origin": "human",
+                "count": count,
+            }
+            for library, count in sorted(counts.items())
+        )
 
     def current_field_effect_consent(self, connection, library, destination):
         if library == "alpha":
@@ -168,8 +182,13 @@ class _PagedRepository:
 
     def field_effect_activity_page(self, **_query):
         return {
-            "events": [], "report_documents": {}, "current_waiting": None,
-            "page": 1, "page_count": 1, "page_size": 25, "total": 0,
+            "events": [],
+            "report_documents": {},
+            "current_waiting": None,
+            "page": 1,
+            "page_count": 1,
+            "page_size": 25,
+            "total": 0,
         }
 
     def field_effect_activity_summary(self):
@@ -179,7 +198,13 @@ class _PagedRepository:
         raise AssertionError("consent must not be granted before capability proof")
 
     def suspend_field_effect_capability(
-        self, *, scope, connection, destination, reason, changed_at,
+        self,
+        *,
+        scope,
+        connection,
+        destination,
+        reason,
+        changed_at,
     ):
         key = (scope, connection, "" if scope == "connection" else destination)
         current = self.suspensions.get(key)
@@ -188,7 +213,13 @@ class _PagedRepository:
         self.suspensions[key] = (reason, changed_at)
 
     def clear_field_effect_capability_suspension(
-        self, *, scope, connection, destination, reason, observed_at,
+        self,
+        *,
+        scope,
+        connection,
+        destination,
+        reason,
+        observed_at,
     ):
         key = (scope, connection, destination)
         current = self.suspensions.get(key)
@@ -218,12 +249,23 @@ class _HoldRepository(_Repository):
         return self.token if self.hold is not None else None
 
     def request_field_effect_manual_return(
-        self, review_case_id, destination, token, scan_id, requested_at, changed_at,
+        self,
+        review_case_id,
+        destination,
+        token,
+        scan_id,
+        requested_at,
+        changed_at,
     ):
         if self.hold is None or token != self.token:
             return False
         self.pending = (
-            review_case_id, destination, *self.hold, token, scan_id, requested_at,
+            review_case_id,
+            destination,
+            *self.hold,
+            token,
+            scan_id,
+            requested_at,
             changed_at,
         )
         return True
@@ -231,7 +273,9 @@ class _HoldRepository(_Repository):
     def pending_field_effect_manual_returns(self, limit, after=None):
         return () if self.pending is None else (self.pending,)
 
-    def clear_field_effect_manual_hold(self, review_case_id, destination, changed_at, token=None):
+    def clear_field_effect_manual_hold(
+        self, review_case_id, destination, changed_at, token=None
+    ):
         if token != self.token:
             return None
         context = self.hold
@@ -244,12 +288,17 @@ class _Authority:
     def resolve(self, decision):
         library = "beta" if decision.occurred_at == 101 else "alpha"
         return SimpleNamespace(
-            connection="primary", library=library, work_id="work",
-            destination="title", pre_value="Before",
+            connection="primary",
+            library=library,
+            work_id="work",
+            destination="title",
+            pre_value="Before",
             decision_value={"kind": "text", "value": "After"},
             target_fingerprint=decision.target_fingerprint,
-            target_version="v1", dependency_digests=(decision.target_fingerprint,),
-            review_case_id=decision.review_case_id, source="persisted_review_case",
+            target_version="v1",
+            dependency_digests=(decision.target_fingerprint,),
+            review_case_id=decision.review_case_id,
+            source="persisted_review_case",
         )
 
 
@@ -296,13 +345,22 @@ def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> N
         "selected_value": selected,
         "target_fingerprint": "c" * 64,
     }
-    request_digest = hashlib.sha256(json.dumps(
-        request, ensure_ascii=True, separators=(",", ":"), sort_keys=True
-    ).encode()).hexdigest()
-    decision_id = "human_decision_" + hashlib.sha256(json.dumps(
-        {"occurred_at": 101, "request_digest": request_digest},
-        ensure_ascii=True, separators=(",", ":"), sort_keys=True,
-    ).encode()).hexdigest()
+    request_digest = hashlib.sha256(
+        json.dumps(
+            request, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+        ).encode()
+    ).hexdigest()
+    decision_id = (
+        "human_decision_"
+        + hashlib.sha256(
+            json.dumps(
+                {"occurred_at": 101, "request_digest": request_digest},
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode()
+        ).hexdigest()
+    )
     decision = HumanDecision(
         decision_id,
         request["review_case_id"],
@@ -331,7 +389,10 @@ def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> N
     repository = Repository([decision])
     service = ContinuousGuardedApplication(
         repository,
-        cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "beta"): _Planner()}),
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "beta"): _Planner()},
+        ),
         {("primary", "beta"): _AllowedCapability()},
         DriftedAuthority(),
         (("primary", "beta"),),
@@ -345,12 +406,14 @@ def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> N
 
 def _prior_f20_decision() -> AutomaticDecision:
     def digest(value: object) -> str:
-        return hashlib.sha256(json.dumps(
-            value,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")).hexdigest()
+        return hashlib.sha256(
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
 
     current = AutomaticDecision.create(
         review_case_id="review_case_" + "1" * 64,
@@ -390,12 +453,14 @@ def test_schedule_and_activity_accept_a_prior_persisted_f20_decision() -> None:
 
     class Repository(_PagedRepository):
         def pending_field_effect_decision_counts(self):
-            return ({
-                "connection": "primary",
-                "library": "alpha",
-                "origin": "automatic",
-                "count": 1,
-            },)
+            return (
+                {
+                    "connection": "primary",
+                    "library": "alpha",
+                    "origin": "automatic",
+                    "count": 1,
+                },
+            )
 
         def field_effect_activity_data(self, _limit):
             return {
@@ -410,7 +475,10 @@ def test_schedule_and_activity_accept_a_prior_persisted_f20_decision() -> None:
     repository = Repository([decision])
     service = ContinuousGuardedApplication(
         repository,
-        cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
         {("primary", "alpha"): _AllowedCapability()},
         _Authority(),
         (("primary", "alpha"),),
@@ -428,14 +496,22 @@ def test_return_to_automatic_releases_only_after_current_scan_completes() -> Non
     repository = _HoldRepository()
     scans = []
     progress = SimpleNamespace(
-        scan_id="review_scan", state="processing", rescan_requested=False,
+        scan_id="review_scan",
+        state="processing",
+        rescan_requested=False,
         updated_at=10,
     )
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-        {("primary", "alpha"): _AllowedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 1,
-        lambda *context: (scans.append(context) or progress),  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - the recorded call is the point and `append` returning `None` is what lets `progress` be the result.
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *context: scans.append(context) or progress,  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - the recorded call is the point and `append` returning `None` is what lets `progress` be the result.
         scan_progress=lambda *_: progress,
     )
     service.return_to_automatic("review_case", "title")
@@ -452,22 +528,40 @@ def test_return_to_automatic_releases_only_after_current_scan_completes() -> Non
 def test_return_to_automatic_recovers_the_persisted_request_after_restart() -> None:
     repository = _HoldRepository()
     progress = SimpleNamespace(
-        scan_id="review_scan", state="processing", rescan_requested=False,
+        scan_id="review_scan",
+        state="processing",
+        rescan_requested=False,
         updated_at=10,
     )
     configured = (("primary", "alpha"),)
     first = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {configured[0]: _Planner()}),
-        {configured[0]: _AllowedCapability()}, _Authority(), configured,
-        lambda: 1, lambda *_: progress, scan_progress=lambda *_: progress,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {configured[0]: _Planner()},
+        ),
+        {configured[0]: _AllowedCapability()},
+        _Authority(),
+        configured,
+        lambda: 1,
+        lambda *_: progress,
+        scan_progress=lambda *_: progress,
     )
     first.return_to_automatic("review_case", "title")
     progress.state = "completed"
     progress.updated_at = 11
     restarted = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {configured[0]: _Planner()}),
-        {configured[0]: _AllowedCapability()}, _Authority(), configured,
-        lambda: 2, lambda *_: progress, scan_progress=lambda *_: progress,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {configured[0]: _Planner()},
+        ),
+        {configured[0]: _AllowedCapability()},
+        _Authority(),
+        configured,
+        lambda: 2,
+        lambda *_: progress,
+        scan_progress=lambda *_: progress,
     )
 
     restarted.schedule()
@@ -480,8 +574,14 @@ def test_pending_return_paging_reaches_completed_request_after_first_hundred() -
     repository.pending = None
     rows = tuple(
         (
-            f"review_case_{index:03d}", "title", "primary", "alpha",
-            f"hold-{index:03d}", "review_scan", 10, index,
+            f"review_case_{index:03d}",
+            "title",
+            "primary",
+            "alpha",
+            f"hold-{index:03d}",
+            "review_scan",
+            10,
+            index,
         )
         for index in range(101)
     )
@@ -490,25 +590,32 @@ def test_pending_return_paging_reaches_completed_request_after_first_hundred() -
     def pending(limit, after=None):
         selected = rows
         if after is not None:
-            selected = tuple(
-                row for row in rows
-                if (row[7], row[0], row[1]) > after
-            )
+            selected = tuple(row for row in rows if (row[7], row[0], row[1]) > after)
         return selected[:limit]
 
     repository.pending_field_effect_manual_returns = pending  # type: ignore[method-assign]  # reason: deliberate per-instance stub of the double's method for this case.
     repository.clear_field_effect_manual_hold = (  # type: ignore[method-assign]  # reason: deliberate per-instance stub of the double's method for this case.
-        lambda review_case_id, destination, changed_at, token=None:
-        cleared.append(review_case_id) or ("primary", "alpha")  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - the recorded call is the point and `append` returning `None` is what lets the context tuple be the result.
+        lambda review_case_id, destination, changed_at, token=None: (
+            cleared.append(review_case_id) or ("primary", "alpha")
+        )  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - the recorded call is the point and `append` returning `None` is what lets the context tuple be the result.
     )
     progress = SimpleNamespace(
-        scan_id="review_scan", state="processing", rescan_requested=False,
+        scan_id="review_scan",
+        state="processing",
+        rescan_requested=False,
         updated_at=10,
     )
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-        {("primary", "alpha"): _AllowedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 200, lambda *_: progress,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 200,
+        lambda *_: progress,
         scan_progress=lambda *_: progress,
     )
 
@@ -523,14 +630,26 @@ def test_pending_return_paging_reaches_completed_request_after_first_hundred() -
 def test_pending_return_for_removed_library_does_not_block_scheduler() -> None:
     repository = _HoldRepository()
     repository.pending = (
-        "review_case", "title", "primary", "removed", "first-hold",
-        "review_scan", 10, 10,
+        "review_case",
+        "title",
+        "primary",
+        "removed",
+        "first-hold",
+        "review_scan",
+        10,
+        10,
     )
     reads = []
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-        {("primary", "alpha"): _AllowedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 20,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 20,
         lambda *_: SimpleNamespace(),
         scan_progress=lambda *context: reads.append(context),
     )
@@ -544,13 +663,22 @@ def test_pending_return_for_removed_library_does_not_block_scheduler() -> None:
 def test_failed_or_superseded_scan_never_releases_manual_hold() -> None:
     repository = _HoldRepository()
     progress = SimpleNamespace(
-        scan_id="review_scan", state="completed_with_failures",
-        rescan_requested=False, updated_at=10,
+        scan_id="review_scan",
+        state="completed_with_failures",
+        rescan_requested=False,
+        updated_at=10,
     )
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-        {("primary", "alpha"): _AllowedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 1, lambda *_: progress,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: progress,
         scan_progress=lambda *_: progress,
     )
     service.return_to_automatic("review_case", "title")
@@ -566,13 +694,22 @@ def test_failed_or_superseded_scan_never_releases_manual_hold() -> None:
 def test_later_manual_hold_cannot_be_released_by_older_scan() -> None:
     repository = _HoldRepository()
     progress = SimpleNamespace(
-        scan_id="review_scan", state="processing", rescan_requested=False,
+        scan_id="review_scan",
+        state="processing",
+        rescan_requested=False,
         updated_at=10,
     )
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-        {("primary", "alpha"): _AllowedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 1, lambda *_: progress,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: progress,
         scan_progress=lambda *_: progress,
     )
     service.return_to_automatic("review_case", "title")
@@ -590,16 +727,25 @@ def test_scan_callback_failures_are_bounded_and_leave_the_hold_active() -> None:
         raise RuntimeError("private failure")
 
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-        {("primary", "alpha"): _AllowedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 1, failed_request,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        failed_request,
     )
     with pytest.raises(GuardedApplicationError, match="scan"):
         service.return_to_automatic("review_case", "title")
     assert repository.hold is not None
 
     progress = SimpleNamespace(
-        scan_id="review_scan", state="processing", rescan_requested=False,
+        scan_id="review_scan",
+        state="processing",
+        rescan_requested=False,
         updated_at=10,
     )
     failing = [True]
@@ -610,9 +756,16 @@ def test_scan_callback_failures_are_bounded_and_leave_the_hold_active() -> None:
         return progress
 
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-        {("primary", "alpha"): _AllowedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 1, lambda *_: progress,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: progress,
         scan_progress=read_progress,
     )
     service.return_to_automatic("review_case", "title")
@@ -630,9 +783,16 @@ def test_enable_refuses_read_only_capability_before_granting_consent() -> None:
     decision = _decisions(1)[0]
     repository = _PagedRepository([decision])
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-        {("primary", "alpha"): _DeniedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 1, lambda *_: None,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _DeniedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
     )
     with pytest.raises(GuardedApplicationError, match="capability"):
         service.enable((("alpha", ("title",)),))
@@ -650,13 +810,21 @@ def test_enable_grants_only_field_locally_eligible_destinations() -> None:
         def grant_field_effect_consent_matrix(self, *arguments):
             self.grants = arguments
 
-        def field_effect_activity_data(self, _): return {"cleanup": {"pending": 0, "exhausted": 0}, "suspensions": []}
+        def field_effect_activity_data(self, _):
+            return {"cleanup": {"pending": 0, "exhausted": 0}, "suspensions": []}
 
     repository = Repository()
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-        {("primary", "alpha"): _MixedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 1, lambda *_: None,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _MixedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
     )
     eligible = tuple(sorted(set(SUPPORTED_DESTINATIONS) - {"subtitle"}))
     service.enable((("alpha", eligible),))
@@ -677,9 +845,16 @@ def test_enable_rejects_a_stale_visible_destination_subset() -> None:
 
     repository = Repository()
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-        {("primary", "alpha"): _MixedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 1, lambda *_: None,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _MixedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
     )
 
     with pytest.raises(GuardedApplicationError, match="capability"):
@@ -697,18 +872,30 @@ def test_activity_exposes_incremental_consent_for_a_partially_enabled_library() 
 
         def field_effect_activity_data(self, _):
             return {
-                "consented_destinations": [{
-                    "connection": "primary", "library": "alpha",
-                    "destination": "title",
-                }],
-                "events": [], "paused": False, "suspensions": [],
+                "consented_destinations": [
+                    {
+                        "connection": "primary",
+                        "library": "alpha",
+                        "destination": "title",
+                    }
+                ],
+                "events": [],
+                "paused": False,
+                "suspensions": [],
             }
 
     repository = Repository([decision])
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-        {("primary", "alpha"): _MixedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 1, lambda *_: None,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _MixedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
     )
 
     activity = service.activity()
@@ -728,37 +915,44 @@ def test_activity_exposes_incremental_consent_for_a_partially_enabled_library() 
 
 def test_activity_only_projection_uses_only_persisted_capability_state() -> None:
     repository = _PagedRepository([_decisions(1)[0]])
-    repository.suspensions[(
-        "destination", "primary", "subtitle"
-    )] = ("field_unavailable", 1)
+    repository.suspensions[("destination", "primary", "subtitle")] = (
+        "field_unavailable",
+        1,
+    )
     service = ContinuousGuardedApplication(
-        repository, {},
-        {}, _Authority(),
-        (("primary", "alpha"),), lambda: 1, lambda *_: None,
+        repository,
+        {},
+        {},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
         activity_only=True,
     )
 
     readiness = service._capability_readiness(("alpha",), force=True)
 
     destinations = {
-        value["destination"]: value["state"]
-        for value in readiness[0]["destinations"]
+        value["destination"]: value["state"] for value in readiness[0]["destinations"]
     }
     assert "not_ready" == readiness[0]["state"]
     assert "field_unavailable" == destinations["subtitle"]
     assert "not_ready" == destinations["title"]
     assert {
-        ("destination", "primary", "subtitle"):
-            ("field_unavailable", 1)
+        ("destination", "primary", "subtitle"): ("field_unavailable", 1)
     } == repository.suspensions
 
 
 def test_activity_only_projection_rejects_capability_observers() -> None:
     with pytest.raises(GuardedApplicationError):
         ContinuousGuardedApplication(
-            _PagedRepository([]), {},
-            {("primary", "alpha"): _MixedCapability()}, _Authority(),
-            (("primary", "alpha"),), lambda: 1, lambda *_: None,
+            _PagedRepository([]),
+            {},
+            {("primary", "alpha"): _MixedCapability()},
+            _Authority(),
+            (("primary", "alpha"),),
+            lambda: 1,
+            lambda *_: None,
             activity_only=True,
         )
 
@@ -767,16 +961,25 @@ def test_activity_accepts_activated_recovery_states_and_rejects_unknown_state() 
     class Repository(_PagedRepository):
         def field_effect_activity_data(self, _limit):
             return {
-                "consented_destinations": [], "consented_libraries": [],
-                "counts": {}, "events": [], "paused": False,
+                "consented_destinations": [],
+                "consented_libraries": [],
+                "counts": {},
+                "events": [],
+                "paused": False,
                 "suspensions": [],
             }
 
     def service(snapshot):
         return ContinuousGuardedApplication(
-            Repository([]), {}, {}, _Authority(),
-            (("primary", "alpha"),), lambda: 1, lambda *_: None,
-            activity_only=True, provider_recovery_snapshot=lambda: snapshot,
+            Repository([]),
+            {},
+            {},
+            _Authority(),
+            (("primary", "alpha"),),
+            lambda: 1,
+            lambda *_: None,
+            activity_only=True,
+            provider_recovery_snapshot=lambda: snapshot,
         )
 
     snapshot = (
@@ -785,7 +988,9 @@ def test_activity_accepts_activated_recovery_states_and_rejects_unknown_state() 
     )
     assert list(snapshot) == service(snapshot).activity()["provider_recovery"]
     with pytest.raises(GuardedApplicationError, match="activity"):
-        service(({"state": "unknown", "affected_count": 1, "next_eligible_at": None},)).activity()
+        service(
+            ({"state": "unknown", "affected_count": 1, "next_eligible_at": None},)
+        ).activity()
 
 
 def test_activity_strips_valid_cleanup_and_rejects_malformed_cleanup() -> None:
@@ -810,16 +1015,27 @@ def test_activity_strips_valid_cleanup_and_rejects_malformed_cleanup() -> None:
         def field_effect_activity_page(self, **_query):
             data = self.field_effect_activity_data(50)
             return {
-                "events": data.get("events", []), "report_documents": data.get("report_documents", {}),
-                "current_waiting": None, "page": 1, "page_count": 1,
-                "page_size": 25, "total": 2,
+                "events": data.get("events", []),
+                "report_documents": data.get("report_documents", {}),
+                "current_waiting": None,
+                "page": 1,
+                "page_count": 1,
+                "page_size": 25,
+                "total": 2,
             }
 
     def service(cleanup):
         return ContinuousGuardedApplication(
-            Repository(cleanup), cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-            {("primary", "alpha"): _AllowedCapability()}, _Authority(),
-            (("primary", "alpha"),), lambda: 1, lambda *_: None,
+            Repository(cleanup),
+            cast(
+                "dict[tuple[str, str], GuardedFieldApplication]",
+                {("primary", "alpha"): _Planner()},
+            ),
+            {("primary", "alpha"): _AllowedCapability()},
+            _Authority(),
+            (("primary", "alpha"),),
+            lambda: 1,
+            lambda *_: None,
         )
 
     assert "cleanup" not in service({"pending": 0, "exhausted": 0}).activity()
@@ -833,36 +1049,58 @@ def test_activity_parses_each_distinct_private_report_once() -> None:
     class Repository(_PagedRepository):
         def field_effect_activity_data(self, limit):
             event = {
-                "connection": "primary", "destination": "title",
-                "failure": None, "library": "alpha", "occurred_at": 1,
-                "origin": "human", "report_id": "report-1",
-                "state": "verified", "work_id": "work",
+                "connection": "primary",
+                "destination": "title",
+                "failure": None,
+                "library": "alpha",
+                "occurred_at": 1,
+                "origin": "human",
+                "report_id": "report-1",
+                "state": "verified",
+                "work_id": "work",
             }
             return {
-                "consented_destinations": [], "consented_libraries": [],
-                "counts": {}, "events": [dict(event), dict(event)],
-                "paused": False, "report_documents": {"report-1": "{}"},
+                "consented_destinations": [],
+                "consented_libraries": [],
+                "counts": {},
+                "events": [dict(event), dict(event)],
+                "paused": False,
+                "report_documents": {"report-1": "{}"},
                 "suspensions": [],
             }
 
         def field_effect_activity_page(self, **_query):
             data = self.field_effect_activity_data(50)
             return {
-                "events": data["events"], "report_documents": data["report_documents"],
-                "current_waiting": None, "page": 1, "page_count": 1,
-                "page_size": 25, "total": 2,
+                "events": data["events"],
+                "report_documents": data["report_documents"],
+                "current_waiting": None,
+                "page": 1,
+                "page_count": 1,
+                "page_size": 25,
+                "total": 2,
             }
 
     service = ContinuousGuardedApplication(
-        Repository([decision]), cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-        {("primary", "alpha"): _AllowedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 1, lambda *_: None,
+        Repository([decision]),
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
     )
     report = SimpleNamespace(
         report_id="report-1",
         target=SimpleNamespace(
-            connection="primary", library="alpha", item="work",
-            current_title="Readable work", fields=(),
+            connection="primary",
+            library="alpha",
+            item="work",
+            current_title="Readable work",
+            fields=(),
         ),
     )
 
@@ -873,7 +1111,10 @@ def test_activity_parses_each_distinct_private_report_once() -> None:
         activity = service.activity()
 
     parse.assert_called_once_with("{}")
-    assert [event["work_label"] for event in activity["events"]] == ["Readable work", "Readable work"]
+    assert [event["work_label"] for event in activity["events"]] == [
+        "Readable work",
+        "Readable work",
+    ]
     assert "report_documents" not in activity
     assert all("report_id" not in event for event in activity["events"])
 
@@ -895,14 +1136,21 @@ def test_activity_refuses_every_stored_report_the_parser_cannot_read() -> None:
         class Repository(_PagedRepository):
             def field_effect_activity_data(self, limit):
                 event = {
-                    "connection": "primary", "destination": "title",
-                    "failure": None, "library": "alpha", "occurred_at": 1,
-                    "origin": "human", "report_id": "report-1",
-                    "state": "verified", "work_id": "work",
+                    "connection": "primary",
+                    "destination": "title",
+                    "failure": None,
+                    "library": "alpha",
+                    "occurred_at": 1,
+                    "origin": "human",
+                    "report_id": "report-1",
+                    "state": "verified",
+                    "work_id": "work",
                 }
                 return {
-                    "consented_destinations": [], "consented_libraries": [],
-                    "counts": {}, "events": [dict(event)],
+                    "consented_destinations": [],
+                    "consented_libraries": [],
+                    "counts": {},
+                    "events": [dict(event)],
                     "paused": False,
                     "report_documents": {"report-1": report_document},
                     "suspensions": [],
@@ -913,8 +1161,11 @@ def test_activity_refuses_every_stored_report_the_parser_cannot_read() -> None:
                 return {
                     "events": data["events"],
                     "report_documents": data["report_documents"],
-                    "current_waiting": None, "page": 1, "page_count": 1,
-                    "page_size": 25, "total": 1,
+                    "current_waiting": None,
+                    "page": 1,
+                    "page_count": 1,
+                    "page_size": 25,
+                    "total": 1,
                 }
 
         return Repository
@@ -927,9 +1178,15 @@ def test_activity_refuses_every_stored_report_the_parser_cannot_read() -> None:
     def application(report_document: str) -> ContinuousGuardedApplication:
         return ContinuousGuardedApplication(
             repository_for(report_document)([decision]),
-            cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-            {("primary", "alpha"): _AllowedCapability()}, _Authority(),
-            (("primary", "alpha"),), lambda: 1, lambda *_: None,
+            cast(
+                "dict[tuple[str, str], GuardedFieldApplication]",
+                {("primary", "alpha"): _Planner()},
+            ),
+            {("primary", "alpha"): _AllowedCapability()},
+            _Authority(),
+            (("primary", "alpha"),),
+            lambda: 1,
+            lambda *_: None,
         )
 
     for report_document in ('{"a": "\ud800"}', "{}"):
@@ -948,21 +1205,35 @@ def test_successful_probe_preserves_unexpected_behavior_suspension() -> None:
     decision = _decisions(1)[0]
     repository = _PagedRepository([decision])
     repository.suspend_field_effect_capability(
-        scope="destination", connection="primary", destination="title",
-        reason="unexpected_effect_behavior", changed_at=1,
+        scope="destination",
+        connection="primary",
+        destination="title",
+        reason="unexpected_effect_behavior",
+        changed_at=1,
     )
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-        {("primary", "alpha"): _AllowedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 2, lambda *_: None,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 2,
+        lambda *_: None,
     )
 
     service._capability_readiness(("alpha",), force=True)
 
-    assert repository.suspensions[("destination", "primary", "title")][0] == "unexpected_effect_behavior"
+    assert (
+        repository.suspensions[("destination", "primary", "title")][0]
+        == "unexpected_effect_behavior"
+    )
     readiness = service._capability_readiness(("alpha",), force=True)[0]
     title = next(
-        destination for destination in readiness["destinations"]
+        destination
+        for destination in readiness["destinations"]
         if destination["destination"] == "title"
     )
     assert title["state"] == "unexpected_effect_behavior"
@@ -982,26 +1253,39 @@ def test_readiness_is_exactly_field_bounded_and_connection_fail_closed(
     decision = _decisions(1)[0]
     repository = _PagedRepository([decision])
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
-        {("primary", "alpha"): capability}, _Authority(),
-        (("primary", "alpha"),), lambda: 1, lambda *_: None,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): capability},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
     )
     readiness = service._capability_readiness(("alpha",), force=True)[0]
     assert readiness["state"] == state
     assert len(readiness["destinations"]) == 14
-    assert {value["destination"] for value in readiness["destinations"]} == set(SUPPORTED_DESTINATIONS)
+    assert {value["destination"] for value in readiness["destinations"]} == set(
+        SUPPORTED_DESTINATIONS
+    )
 
 
 def test_blocked_oldest_page_does_not_starve_later_eligible_work() -> None:
     decisions = _decisions(101)
 
     repository = _PagedRepository(decisions)
-    planners = {("primary", "alpha"): _Planner(),
-                ("primary", "beta"): _Planner()}
+    planners = {("primary", "alpha"): _Planner(), ("primary", "beta"): _Planner()}
     capabilities = {key: _AllowedCapability() for key in planners}
     service = ContinuousGuardedApplication(
-        repository, planners, capabilities, _Authority(), tuple(planners),
-        lambda: 1, lambda *_: None,
+        repository,
+        planners,
+        capabilities,
+        _Authority(),
+        tuple(planners),
+        lambda: 1,
+        lambda *_: None,
     )
     assert service.schedule(100) == 0
     assert service.schedule(100) == 1
@@ -1010,8 +1294,9 @@ def test_blocked_oldest_page_does_not_starve_later_eligible_work() -> None:
 
 def _decisions(count: int):
     def digest(value) -> str:
-        document = json.dumps(value, ensure_ascii=True, separators=(",", ":"),
-                              sort_keys=True)
+        document = json.dumps(
+            value, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+        )
         return hashlib.sha256(document.encode()).hexdigest()
 
     def make_decision(index: int) -> HumanDecision:
@@ -1020,19 +1305,34 @@ def _decisions(count: int):
         selected = {"kind": "text", "value": "After"}
         idempotency_digest = hashlib.sha256(f"key-{index}".encode()).hexdigest()
         request = {
-            "actor": "owner", "destination": "title",
-            "idempotency_digest": idempotency_digest, "outcome": "accept",
-            "proposal_id": proposal_id, "review_case_id": review_case_id,
-            "selected_value": selected, "target_fingerprint": "b" * 64,
+            "actor": "owner",
+            "destination": "title",
+            "idempotency_digest": idempotency_digest,
+            "outcome": "accept",
+            "proposal_id": proposal_id,
+            "review_case_id": review_case_id,
+            "selected_value": selected,
+            "target_fingerprint": "b" * 64,
         }
         request_digest = digest(request)
-        decision_id = "human_decision_" + digest({
-            "occurred_at": index, "request_digest": request_digest,
-        })
+        decision_id = "human_decision_" + digest(
+            {
+                "occurred_at": index,
+                "request_digest": request_digest,
+            }
+        )
         return HumanDecision(
-            decision_id, review_case_id, proposal_id, "b" * 64, "title",
-            "owner", "accept", selected, idempotency_digest,
-            request_digest, index,
+            decision_id,
+            review_case_id,
+            proposal_id,
+            "b" * 64,
+            "title",
+            "owner",
+            "accept",
+            selected,
+            idempotency_digest,
+            request_digest,
+            index,
         )
 
     return [make_decision(index) for index in range(1, count + 1)]
@@ -1042,9 +1342,19 @@ def test_restart_recovery_drains_more_than_one_bounded_page() -> None:
     repository = _RecoveryRepository()
     application = _RecoveryApplication(repository)
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): application}),
-        cast("dict[tuple[str, str], CapabilityObserver]", {("primary", "alpha"): object()}), object(),
-        (("primary", "alpha"),), lambda: 1, lambda *_: None,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): application},
+        ),
+        cast(
+            "dict[tuple[str, str], CapabilityObserver]",
+            {("primary", "alpha"): object()},
+        ),
+        object(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
     )
     recovered, actions, cleanups = service.start()
     service.begin_drain()
@@ -1055,17 +1365,29 @@ def test_restart_recovery_drains_more_than_one_bounded_page() -> None:
 def test_fair_selection_and_instance_wide_mutation_slot() -> None:
     repository = _Repository()
     shared = {
-        "active": 0, "maximum": 0, "guard": threading.Lock(),
-        "release": threading.Event(), "started": threading.Event(),
-        "repository": repository, "drained": threading.Event(),
+        "active": 0,
+        "maximum": 0,
+        "guard": threading.Lock(),
+        "release": threading.Event(),
+        "started": threading.Event(),
+        "repository": repository,
+        "drained": threading.Event(),
     }
     applications = {
         ("primary", "alpha"): _Application(shared),
         ("primary", "beta"): _Application(shared),
     }
     service = ContinuousGuardedApplication(
-        repository, applications, cast("dict[tuple[str, str], CapabilityObserver]", {key: object() for key in applications}),
-        object(), tuple(applications), lambda: 1, lambda *_: None,
+        repository,
+        applications,
+        cast(
+            "dict[tuple[str, str], CapabilityObserver]",
+            {key: object() for key in applications},
+        ),
+        object(),
+        tuple(applications),
+        lambda: 1,
+        lambda *_: None,
     )
     shared["release"].set()
     assert service.run_cycle()
@@ -1089,15 +1411,26 @@ def test_fair_selection_and_instance_wide_mutation_slot() -> None:
 def test_shutdown_waits_for_a_claimed_operation_within_configured_grace() -> None:
     repository = _Repository()
     shared = {
-        "active": 0, "maximum": 0, "guard": threading.Lock(),
-        "release": threading.Event(), "started": threading.Event(),
-        "repository": repository, "drained": threading.Event(),
+        "active": 0,
+        "maximum": 0,
+        "guard": threading.Lock(),
+        "release": threading.Event(),
+        "started": threading.Event(),
+        "repository": repository,
+        "drained": threading.Event(),
     }
     application = _Application(shared)
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): application}),
-        {("primary", "alpha"): _AllowedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 1, lambda *_: None,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): application},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
         graceful_shutdown_seconds=1,
     )
     service.start()
@@ -1111,15 +1444,27 @@ def test_shutdown_waits_for_a_claimed_operation_within_configured_grace() -> Non
 def test_shutdown_timeout_retains_live_claimed_worker() -> None:
     repository = _Repository()
     shared = {
-        "active": 0, "maximum": 0, "guard": threading.Lock(),
-        "release": threading.Event(), "started": threading.Event(),
-        "repository": repository, "drained": threading.Event(), "wait": 5,
+        "active": 0,
+        "maximum": 0,
+        "guard": threading.Lock(),
+        "release": threading.Event(),
+        "started": threading.Event(),
+        "repository": repository,
+        "drained": threading.Event(),
+        "wait": 5,
     }
     application = _Application(shared)
     service = ContinuousGuardedApplication(
-        repository, cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): application}),
-        {("primary", "alpha"): _AllowedCapability()}, _Authority(),
-        (("primary", "alpha"),), lambda: 1, lambda *_: None,
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): application},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
         graceful_shutdown_seconds=1,
     )
     service.start()

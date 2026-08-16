@@ -61,9 +61,7 @@ _RULE_TABLE = {
         "exact_destination_order": list(_COMBINATION_DESTINATIONS),
         "fully_witnessed_combination_requirement": "at_least_one",
         "selected_supported_destination": _COMBINATION_SELECTED_DESTINATION,
-        "unsupported_witness_destinations": list(
-            _COMBINATION_WITNESS_DESTINATIONS
-        ),
+        "unsupported_witness_destinations": list(_COMBINATION_WITNESS_DESTINATIONS),
         "unanimous_full_policy_action_required": True,
     },
     "edition_fields": {
@@ -191,16 +189,22 @@ class ShadowDecision:
         }
         # The mapping below restates the dataclass fields key by key, so it is
         # exactly a _DecisionFields; the cast lets mypy check the ** unpack.
-        return cls(_decision_identity(data), **cast("_DecisionFields", {
-            "action_id": action.action_id,
-            "proposal_id": action.proposal_id,
-            "destination": action.destination,
-            "recommendation": action.recommendation,
-            "candidate_id": action.candidate_id,
-            "citation_ids": action.citation_ids,
-            "combination_ids": action.combination_ids,
-            "reason_code": reason_code,
-        }))
+        return cls(
+            _decision_identity(data),
+            **cast(
+                "_DecisionFields",
+                {
+                    "action_id": action.action_id,
+                    "proposal_id": action.proposal_id,
+                    "destination": action.destination,
+                    "recommendation": action.recommendation,
+                    "candidate_id": action.candidate_id,
+                    "citation_ids": action.citation_ids,
+                    "combination_ids": action.combination_ids,
+                    "reason_code": reason_code,
+                },
+            ),
+        )
 
     def __post_init__(self) -> None:
         data = self._identity_data()
@@ -215,14 +219,20 @@ class ShadowDecision:
                 self.recommendation == "recommend_candidate"
                 and (
                     type(self.candidate_id) is not str
-                    or re.fullmatch(r"alternative_[0-9a-f]{64}", self.candidate_id) is None
+                    or re.fullmatch(r"alternative_[0-9a-f]{64}", self.candidate_id)
+                    is None
                 )
             )
-            or (self.recommendation != "recommend_candidate" and self.candidate_id is not None)
+            or (
+                self.recommendation != "recommend_candidate"
+                and self.candidate_id is not None
+            )
             or self.citation_ids != tuple(sorted(set(self.citation_ids)))
             or self.combination_ids != tuple(sorted(set(self.combination_ids)))
             or any(type(value) is not str or not value for value in self.citation_ids)
-            or any(type(value) is not str or not value for value in self.combination_ids)
+            or any(
+                type(value) is not str or not value for value in self.combination_ids
+            )
             or self.reason_code not in _REASON_CODES
             or self.decision_id != _decision_identity(data)
         ):
@@ -264,7 +274,10 @@ class ShadowDecisionSet:
         catalogue: PolicyActionCatalogue,
         decisions: tuple[ShadowDecision, ...],
     ) -> ShadowDecisionSet:
-        if type(packet) is not ShadowReviewPacket or type(catalogue) is not PolicyActionCatalogue:
+        if (
+            type(packet) is not ShadowReviewPacket
+            or type(catalogue) is not PolicyActionCatalogue
+        ):
             raise ShadowDecisionError("shadow decision source is invalid")
         core: dict[str, object] = {
             "catalogue_sha256": _sha256(catalogue.to_json()),
@@ -279,10 +292,14 @@ class ShadowDecisionSet:
         }
         # Dropping "decisions" from "core" leaves exactly the str-valued
         # _DecisionSetFields; the cast lets mypy check the ** unpack.
-        return cls(_set_identity(core), decisions=decisions, **cast(
-            "_DecisionSetFields",
-            {key: value for key, value in core.items() if key != "decisions"},
-        ))
+        return cls(
+            _set_identity(core),
+            decisions=decisions,
+            **cast(
+                "_DecisionSetFields",
+                {key: value for key, value in core.items() if key != "decisions"},
+            ),
+        )
 
     def __post_init__(self) -> None:
         core = self._identity_data()
@@ -298,7 +315,8 @@ class ShadowDecisionSet:
             or type(self.decisions) is not tuple
             or not self.decisions
             or any(type(value) is not ShadowDecision for value in self.decisions)
-            or len({value.proposal_id for value in self.decisions}) != len(self.decisions)
+            or len({value.proposal_id for value in self.decisions})
+            != len(self.decisions)
             or self.decision_set_id != _set_identity(core)
         ):
             raise ShadowDecisionError("shadow decision set is invalid")
@@ -328,7 +346,10 @@ class ShadowDecisionSet:
         serialized: str,
         packet: ShadowReviewPacket | None = None,
     ) -> ShadowDecisionSet:
-        if type(serialized) is not str or len(serialized.encode("utf-8")) > MAX_DECISION_SET_BYTES:
+        if (
+            type(serialized) is not str
+            or len(serialized.encode("utf-8")) > MAX_DECISION_SET_BYTES
+        ):
             raise ShadowDecisionError("shadow decision document is invalid")
         try:
             data = json.loads(serialized)
@@ -481,8 +502,7 @@ def _candidate_is_eligible(
                 for citation in packet.citations
                 if citation["citation_id"] in action.citation_ids
                 and type(citation["fact"]) is dict
-                and citation["fact"].get("date_event")
-                == "manifestation_publication"
+                and citation["fact"].get("date_event") == "manifestation_publication"
                 and "provider" not in citation["fact"]
             ]
             if (
@@ -517,9 +537,7 @@ def _eligible_actions(
         )
         preservation = []
         if keep is not None:
-            for candidate in cast(
-                "list[dict[str, object]]", proposal["candidates"]
-            ):
+            for candidate in cast("list[dict[str, object]]", proposal["candidates"]):
                 candidate_action = catalogue.action_for(
                     proposal["proposal_id"],
                     "recommend_candidate",
@@ -553,7 +571,9 @@ def _eligible_actions(
     return tuple(actions)
 
 
-def _base_reason(proposal: dict[str, object], eligible: tuple[PolicyAction, ...]) -> str:
+def _base_reason(
+    proposal: dict[str, object], eligible: tuple[PolicyAction, ...]
+) -> str:
     # Packet entry validated both summary shapes and the candidate list.
     summary = cast("_ProposalSummary", proposal["decision_summary"])
     source_evidence_report_only = (
@@ -572,9 +592,9 @@ def _base_reason(proposal: dict[str, object], eligible: tuple[PolicyAction, ...]
             != 1
             or (
                 not source_evidence_report_only
-                and cast("_CandidateSummary", value["decision_summary"])[
-                    "support"
-                ]["independent_provider_correlations"]
+                and cast("_CandidateSummary", value["decision_summary"])["support"][
+                    "independent_provider_correlations"
+                ]
                 < 1
             )
             for value in candidates
@@ -608,18 +628,14 @@ def _combination_selections(
     qualifying: list[dict[str, PolicyAction]] = []
     for combination in packet.bibliographic_combinations:
         combination_id = combination["combination_id"]
-        selections = cast(
-            "list[dict[str, object]]", combination["selections"]
-        )
+        selections = cast("list[dict[str, object]]", combination["selections"])
         if (
             tuple(value["destination"] for value in selections)
             != _COMBINATION_DESTINATIONS
         ):
             continue
         selected_title: PolicyAction | None = None
-        for selection in cast(
-            "list[dict[str, object]]", combination["selections"]
-        ):
+        for selection in cast("list[dict[str, object]]", combination["selections"]):
             destination = cast("str", selection["destination"])
             proposals = proposals_by_destination.get(destination, [])
             if len(proposals) != 1:
@@ -663,8 +679,7 @@ def _combination_selections(
         return None
     selected_title = next(iter(qualifying[0].values()))
     if any(
-        next(iter(selection.values())) != selected_title
-        for selection in qualifying[1:]
+        next(iter(selection.values())) != selected_title for selection in qualifying[1:]
     ):
         return None
     return qualifying[0], set(_COMBINATION_DESTINATIONS)
@@ -700,9 +715,7 @@ def decide_shadow_packet(packet: ShadowReviewPacket) -> ShadowDecisionSet:
         constrained_destinations = {
             cast("str", selection["destination"])
             for combination in packet.bibliographic_combinations
-            for selection in cast(
-                "list[dict[str, object]]", combination["selections"]
-            )
+            for selection in cast("list[dict[str, object]]", combination["selections"])
         }
     decisions: list[ShadowDecision] = []
     for proposal in packet.proposals:

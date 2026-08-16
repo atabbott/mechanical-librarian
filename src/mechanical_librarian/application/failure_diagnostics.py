@@ -22,9 +22,7 @@ def provider_attempt_diagnostics(
 ) -> tuple[FailureDiagnostic, ...]:
     """Discard attempt payload details and return deterministic bounded aggregates."""
 
-    counts: Counter[
-        tuple[FailureCategory, FailureStage, bool | None]
-    ] = Counter()
+    counts: Counter[tuple[FailureCategory, FailureStage, bool | None]] = Counter()
     if type(attempts) is tuple:
         bounded_attempts: tuple[object, ...] = attempts
     else:
@@ -160,9 +158,7 @@ def provider_attempt_diagnostics(
         and not any(category is required[0] for category, _, _ in counts)
     ):
         counts[required] = 1
-    if status == "incomplete" and (
-        invalid_incomplete_causes or not incomplete_causes
-    ):
+    if status == "incomplete" and (invalid_incomplete_causes or not incomplete_causes):
         counts[(FailureCategory.UNKNOWN, FailureStage.RESPONSE, None)] = 1
     return tuple(
         FailureDiagnostic(
@@ -193,14 +189,24 @@ def merge_provider_diagnostics(
         if not diagnostics_are_canonical(group):
             raise ValueError("provider diagnostics are invalid")
         for value in group:
-            if value.component is not FailureComponent.PROVIDER or value.current is not None:
+            if (
+                value.component is not FailureComponent.PROVIDER
+                or value.current is not None
+            ):
                 raise ValueError("provider diagnostics are invalid")
             key = (value.category, value.stage, value.retryable)
             counts[key] = min(counts[key] + value.count, MAX_DIAGNOSTIC_COUNT)
     return tuple(
-        FailureDiagnostic(category, FailureComponent.PROVIDER, stage, retryable=retryable, count=count)
+        FailureDiagnostic(
+            category, FailureComponent.PROVIDER, stage, retryable=retryable, count=count
+        )
         for (category, stage, retryable), count in sorted(
-            counts.items(), key=lambda item: (item[0][0].value, item[0][1].value, -1 if item[0][2] is None else int(item[0][2]))
+            counts.items(),
+            key=lambda item: (
+                item[0][0].value,
+                item[0][1].value,
+                -1 if item[0][2] is None else int(item[0][2]),
+            ),
         )
     )
 

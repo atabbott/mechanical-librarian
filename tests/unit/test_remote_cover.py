@@ -97,16 +97,27 @@ def test_rejects_non_https_and_private_address() -> None:
 
 def test_accepts_public_https_443_only() -> None:
     with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]):
-        assert ("example.com", "8.8.8.8", "/a.jpg") == _pinned_address("https://example.com/a.jpg")
+        assert ("example.com", "8.8.8.8", "/a.jpg") == _pinned_address(
+            "https://example.com/a.jpg"
+        )
     with pytest.raises(RemoteCoverError):
         _pinned_address("https://example.com:444/a.jpg")
 
 
 def test_rejects_mixed_and_reserved_dns_answers_and_url_smuggling() -> None:
-    with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443)), (2, 1, 6, "", ("192.168.1.1", 443))]):
+    with patch(
+        "socket.getaddrinfo",
+        return_value=[
+            (2, 1, 6, "", ("8.8.8.8", 443)),
+            (2, 1, 6, "", ("192.168.1.1", 443)),
+        ],
+    ):
         with pytest.raises(RemoteCoverError):
             _pinned_address("https://example.com/a.jpg")
-    for value in ("https://user@example.com/a.jpg", "https://example.com/a.jpg#fragment"):
+    for value in (
+        "https://user@example.com/a.jpg",
+        "https://example.com/a.jpg#fragment",
+    ):
         with pytest.raises(RemoteCoverError):
             _pinned_address(value)
 
@@ -173,7 +184,9 @@ def test_fetch_can_use_one_validated_identified_user_agent(
             "https://example.com/cover.png",
             user_agent="Mechanical-Librarian (operator@example.invalid)",
         )
-    assert "User-Agent: Mechanical-Librarian (operator@example.invalid)\r\n" in bytes(secured.sent).decode("ascii")
+    assert "User-Agent: Mechanical-Librarian (operator@example.invalid)\r\n" in bytes(
+        secured.sent
+    ).decode("ascii")
     with pytest.raises(RemoteCoverError):
         fetch_remote_cover(
             "https://example.com/cover.png",
@@ -182,22 +195,35 @@ def test_fetch_can_use_one_validated_identified_user_agent(
 
 
 def test_rejects_content_encoding_and_redirect_limit() -> None:
-    encoded = _FakeSocket(b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Encoding: gzip\r\nContent-Length: 1\r\n\r\n", b"x")
+    encoded = _FakeSocket(
+        b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Encoding: gzip\r\nContent-Length: 1\r\n\r\n",
+        b"x",
+    )
     redirects = [
-        _FakeSocket(b"HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\n\r\n")
+        _FakeSocket(
+            b"HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\n\r\n"
+        )
         for _ in range(4)
     ]
-    with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]), patch("ssl.create_default_context", return_value=_FakeContext()):
-        with patch("socket.create_connection", return_value=encoded), pytest.raises(RemoteCoverError):
+    with (
+        patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]),
+        patch("ssl.create_default_context", return_value=_FakeContext()),
+    ):
+        with (
+            patch("socket.create_connection", return_value=encoded),
+            pytest.raises(RemoteCoverError),
+        ):
             fetch_remote_cover("https://example.com/cover.png")
-        with patch("socket.create_connection", side_effect=redirects), pytest.raises(RemoteCoverError):
+        with (
+            patch("socket.create_connection", side_effect=redirects),
+            pytest.raises(RemoteCoverError),
+        ):
             fetch_remote_cover("https://example.com/cover.png")
 
 
 def test_redirects_can_be_rejected_after_one_pinned_request() -> None:
     redirect = _FakeSocket(
-        b"HTTP/1.1 302 Found\r\nLocation: /again\r\n"
-        b"Content-Length: 0\r\n\r\n"
+        b"HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\n\r\n"
     )
     with (
         patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]),
@@ -215,12 +241,21 @@ def test_redirects_can_be_rejected_after_one_pinned_request() -> None:
 def test_elapsed_aggregate_deadline_permits_no_dns_or_request() -> None:
     with patch("socket.getaddrinfo") as lookup:
         with pytest.raises(RemoteCoverTimeout):
-            fetch_remote_cover("https://example.com/cover.png", deadline=time.monotonic() - 1)
+            fetch_remote_cover(
+                "https://example.com/cover.png", deadline=time.monotonic() - 1
+            )
     lookup.assert_not_called()
 
 
-def test_production_path_connects_to_one_validated_address_without_reresolving() -> None:
-    with patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]) as lookup, patch("socket.create_connection", side_effect=OSError):
+def test_production_path_connects_to_one_validated_address_without_reresolving() -> (
+    None
+):
+    with (
+        patch(
+            "socket.getaddrinfo", return_value=[(2, 1, 6, "", ("8.8.8.8", 443))]
+        ) as lookup,
+        patch("socket.create_connection", side_effect=OSError),
+    ):
         with pytest.raises(RemoteCoverError):
             fetch_remote_cover("https://example.com/cover.png")
     lookup.assert_called_once_with("example.com", 443, type=socket.SOCK_STREAM)
@@ -229,12 +264,27 @@ def test_production_path_connects_to_one_validated_address_without_reresolving()
 @pytest.mark.parametrize(
     ("headers", "body"),
     (
-        (b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 4\r\n\r\n", b"html"),
+        (
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 4\r\n\r\n",
+            b"html",
+        ),
         (b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\n\r\n", b"missing"),
-        (b"HTTP/1.1 200 OK\r\nContent-Type: image/png; charset=binary\r\nContent-Length: 6\r\n\r\n", b"params"),
-        (b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Encoding: gzip\r\nContent-Length: 4\r\n\r\n", b"gzip"),
-        (b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Encoding:\r\nContent-Length: 5\r\n\r\n", b"empty"),
-        (b"HTTP/1.1 404 Not Found\r\nContent-Type: image/png\r\nContent-Length: 5\r\n\r\n", b"error"),
+        (
+            b"HTTP/1.1 200 OK\r\nContent-Type: image/png; charset=binary\r\nContent-Length: 6\r\n\r\n",
+            b"params",
+        ),
+        (
+            b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Encoding: gzip\r\nContent-Length: 4\r\n\r\n",
+            b"gzip",
+        ),
+        (
+            b"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Encoding:\r\nContent-Length: 5\r\n\r\n",
+            b"empty",
+        ),
+        (
+            b"HTTP/1.1 404 Not Found\r\nContent-Type: image/png\r\nContent-Length: 5\r\n\r\n",
+            b"error",
+        ),
     ),
     ids=(
         "html_content_type",
@@ -307,7 +357,9 @@ def test_pinned_fetch_times_out_when_a_peer_stalls_mid_body() -> None:
             patch("ssl.create_default_context", return_value=_FakeContext()),
             pytest.raises(RemoteCoverTimeout),
         ):
-            fetch_remote_cover("https://example.com/cover.png", deadline=time.monotonic() + 0.1)
+            fetch_remote_cover(
+                "https://example.com/cover.png", deadline=time.monotonic() + 0.1
+            )
     finally:
         peer.close()
 
@@ -320,7 +372,9 @@ def test_close_delimited_body_obeys_cap_and_deadline() -> None:
     with pytest.raises(RemoteCoverError):
         remote_cover._response_body(oversized, {}, time.monotonic() + 1)
     with pytest.raises(RemoteCoverTimeout):
-        remote_cover._response_body(_FakeSocket(b"", b"cover"), {}, time.monotonic() - 1)
+        remote_cover._response_body(
+            _FakeSocket(b"", b"cover"), {}, time.monotonic() - 1
+        )
 
 
 def test_native_socket_timeout_is_timeout_disposition() -> None:

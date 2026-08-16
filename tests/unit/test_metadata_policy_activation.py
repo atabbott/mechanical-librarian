@@ -58,6 +58,7 @@ class _CaseWithTargetFields:
     def from_json(self, serialized: str) -> object:
         case = ReviewCase.from_json(serialized)
         fields = self._fields
+
         class _Case:
             def __getattr__(self, name: str) -> object:
                 return getattr(case, name)
@@ -65,6 +66,7 @@ class _CaseWithTargetFields:
             @property
             def target(self) -> dict[str, object]:
                 return {**case.target, "fields": fields}
+
         return _Case()
 
 
@@ -75,9 +77,9 @@ def _draft() -> MetadataPolicyProfile:
         "Reviewed policy",
         options,
         {
-            field: "ignore" if field == "tags" else (
-                "unsupported" if field == "explicit" else "ask"
-            )
+            field: "ignore"
+            if field == "tags"
+            else ("unsupported" if field == "explicit" else "ask")
             for field in OPTION_CATALOGUE
         },
     )
@@ -112,7 +114,12 @@ def _current_case_with_completed_work(path: Path):
         discovery,
         1,
         "a" * 64,
-        (replace(_entry(report.target.item, report.file.identity), library=report.target.library),),
+        (
+            replace(
+                _entry(report.target.item, report.file.identity),
+                library=report.target.library,
+            ),
+        ),
         12,
     )
     action = repository.claim_review_pipeline_action(13)
@@ -156,7 +163,9 @@ def _human_decision(repository, case_id: str, idempotency_key: str) -> HumanDeci
     )
 
 
-def test_qualified_automatic_intent_is_persistable_and_unqualified_intent_is_rejected(state_path: Path) -> None:
+def test_qualified_automatic_intent_is_persistable_and_unqualified_intent_is_rejected(
+    state_path: Path,
+) -> None:
     repository = open_repository(state_path)
     destinations = {
         category: "unsupported" if category == "explicit" else "ask"
@@ -166,18 +175,22 @@ def test_qualified_automatic_intent_is_persistable_and_unqualified_intent_is_rej
     profile = MetadataPolicyProfile.create(
         "Preview automatic intent", dict(DEFAULT_OPTIONS), destinations
     )
-    assert profile.policy_id == repository.create_metadata_policy_draft(profile.canonical_json)
+    assert profile.policy_id == repository.create_metadata_policy_draft(
+        profile.canonical_json
+    )
     unqualified_options = dict(DEFAULT_OPTIONS)
     unqualified_options["publisher_preference"] = "imprint"
     unqualified = MetadataPolicyProfile.create(
-        "Unqualified automatic intent", unqualified_options,
+        "Unqualified automatic intent",
+        unqualified_options,
         {**destinations, "publisher_preference": "automatic"},
     )
     with pytest.raises(MetadataReportError, match="automatic intent is unqualified"):
         repository.create_metadata_policy_draft(unqualified.canonical_json)
 
     rich_automatic = MetadataPolicyProfile.create(
-        "Rich automatic intent", dict(DEFAULT_OPTIONS),
+        "Rich automatic intent",
+        dict(DEFAULT_OPTIONS),
         {**destinations, "genres": "automatic"},
     )
     notebook = PolicyNotebook(repository, (), {})
@@ -194,14 +207,22 @@ def test_qualified_automatic_intent_is_persistable_and_unqualified_intent_is_rej
     assert transition is not None
     assert "completed" == transition.state
     assert "preview" == repository.shadow_posture()
-    assert "automatic" == dict(cast(ResolvedMetadataPolicy, repository.current_resolved_metadata_policy("ebooks")).destinations)[
-        "title_layout"
-    ]
+    assert (
+        "automatic"
+        == dict(
+            cast(
+                ResolvedMetadataPolicy,
+                repository.current_resolved_metadata_policy("ebooks"),
+            ).destinations
+        )["title_layout"]
+    )
     assert "title_layout" in QUALIFIED_AUTOMATIC
     repository.close()
 
 
-def test_automatic_posture_accepts_only_exact_qualified_resolutions(state_path: Path) -> None:
+def test_automatic_posture_accepts_only_exact_qualified_resolutions(
+    state_path: Path,
+) -> None:
     repository = open_repository(state_path)
     destinations = {
         category: "unsupported" if category == "explicit" else "ask"
@@ -290,9 +311,7 @@ def test_confirm_automatic_keeps_the_read_back_refusal_distinct() -> None:
         def shadow_posture(self) -> str:
             raise RuntimeError("posture read failed")
 
-    notebook = PolicyNotebook(
-        cast("PolicyImpactRepository", ReadBackFails()), (), {}
-    )
+    notebook = PolicyNotebook(cast("PolicyImpactRepository", ReadBackFails()), (), {})
     with pytest.raises(MetadataPolicyApplicationError) as raised:
         notebook.confirm_automatic(2)
     assert str(raised.value) == "shadow posture is unavailable"
@@ -306,9 +325,7 @@ def test_confirm_automatic_keeps_the_read_back_refusal_distinct() -> None:
             return "automatic"
 
     # The activation lane keeps its own identity unchanged.
-    notebook = PolicyNotebook(
-        cast("PolicyImpactRepository", ActivationFails()), (), {}
-    )
+    notebook = PolicyNotebook(cast("PolicyImpactRepository", ActivationFails()), (), {})
     with pytest.raises(MetadataPolicyApplicationError) as raised:
         notebook.confirm_automatic(2)
     assert str(raised.value) == "automatic posture is unavailable"
@@ -329,7 +346,8 @@ def test_policy_contention_is_read_from_the_condition_not_the_message(
     """
     repository = open_repository(state_path)
     profile = MetadataPolicyProfile.create(
-        "Contention profile", dict(DEFAULT_OPTIONS),
+        "Contention profile",
+        dict(DEFAULT_OPTIONS),
         {
             category: "unsupported" if category == "explicit" else "ask"
             for category in OPTION_CATALOGUE
@@ -340,9 +358,12 @@ def test_policy_contention_is_read_from_the_condition_not_the_message(
     builtin = MetadataPolicyProfile.builtin().policy_id
 
     def activation(failure: BaseException) -> str:
-        with patch.object(
-            type(repository), "activate_metadata_policy", side_effect=failure
-        ), pytest.raises(MetadataPolicyApplicationError) as raised:
+        with (
+            patch.object(
+                type(repository), "activate_metadata_policy", side_effect=failure
+            ),
+            pytest.raises(MetadataPolicyApplicationError) as raised,
+        ):
             notebook.activate(profile.policy_id, builtin, 2)
         return str(raised.value)
 
@@ -363,10 +384,14 @@ def test_policy_contention_is_read_from_the_condition_not_the_message(
     )
 
     def retry(failure: BaseException) -> str:
-        with patch.object(
-            type(repository), "retry_metadata_policy_transition",
-            side_effect=failure,
-        ), pytest.raises(MetadataPolicyApplicationError) as raised:
+        with (
+            patch.object(
+                type(repository),
+                "retry_metadata_policy_transition",
+                side_effect=failure,
+            ),
+            pytest.raises(MetadataPolicyApplicationError) as raised,
+        ):
             notebook.retry("policy_transition_" + "a" * 64, 3)
         return str(raised.value)
 
@@ -385,7 +410,9 @@ def test_policy_contention_is_read_from_the_condition_not_the_message(
     repository.close()
 
 
-def test_library_override_cannot_turn_an_unqualified_option_automatic(state_path: Path) -> None:
+def test_library_override_cannot_turn_an_unqualified_option_automatic(
+    state_path: Path,
+) -> None:
     repository = open_repository(state_path)
     destinations = {
         category: "unsupported" if category == "explicit" else "ask"
@@ -399,17 +426,27 @@ def test_library_override_cannot_turn_an_unqualified_option_automatic(state_path
     notebook = PolicyNotebook(
         repository,
         ("ebooks",),
-        {"ebooks": {"options": {"publisher_preference": "imprint"}, "destinations": {}}},
+        {
+            "ebooks": {
+                "options": {"publisher_preference": "imprint"},
+                "destinations": {},
+            }
+        },
     )
     with pytest.raises(MetadataPolicyApplicationError, match="automatic unqualified"):
-        notebook.activate(profile.policy_id, MetadataPolicyProfile.builtin().policy_id, 2)
+        notebook.activate(
+            profile.policy_id, MetadataPolicyProfile.builtin().policy_id, 2
+        )
     repository.close()
 
 
-def test_initial_resolution_binding_rejects_an_unqualified_automatic_override(state_path: Path) -> None:
+def test_initial_resolution_binding_rejects_an_unqualified_automatic_override(
+    state_path: Path,
+) -> None:
     repository = open_repository(state_path)
     resolved = resolve_policy(
-        MetadataPolicyProfile.builtin(), "ebooks",
+        MetadataPolicyProfile.builtin(),
+        "ebooks",
         {"options": {"publisher_preference": "imprint"}, "destinations": {}},
     )
     with pytest.raises(MetadataReportError, match="unqualified"):
@@ -420,7 +457,9 @@ def test_initial_resolution_binding_rejects_an_unqualified_automatic_override(st
     repository.close()
 
 
-def test_initial_resolution_binding_joins_an_existing_transaction(state_path: Path) -> None:
+def test_initial_resolution_binding_joins_an_existing_transaction(
+    state_path: Path,
+) -> None:
     repository = open_repository(state_path)
     resolved = resolve_policy(MetadataPolicyProfile.builtin(), "ebooks")
     repository._connection.execute("BEGIN IMMEDIATE")
@@ -442,7 +481,9 @@ def test_initial_resolution_binding_joins_an_existing_transaction(state_path: Pa
     repository.close()
 
 
-def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(state_path: Path) -> None:
+def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(
+    state_path: Path,
+) -> None:
     repository, report, old, old_case_id = _current_case_with_completed_work(state_path)
     draft = _draft()
     repository.create_metadata_policy_draft(draft.canonical_json)
@@ -456,7 +497,12 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(st
         30,
     )
     assert transition is not None
-    assert (transition.state, transition.completed, transition.total, transition.failed) == ("processing", 0, 1, 0)
+    assert (
+        transition.state,
+        transition.completed,
+        transition.total,
+        transition.failed,
+    ) == ("processing", 0, 1, 0)
     assert transition == repository.activate_metadata_policy(
         draft.policy_id,
         builtin.policy_id,
@@ -474,7 +520,13 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(st
         repository.activate_metadata_policy(
             follow_up.policy_id,
             draft.policy_id,
-            ((report.target.library, follow_up_resolved.resolved_id, follow_up_resolved.canonical_json),),
+            (
+                (
+                    report.target.library,
+                    follow_up_resolved.resolved_id,
+                    follow_up_resolved.canonical_json,
+                ),
+            ),
             30,
         )
     assert repository.current_unapplied_count(report.target.library) == 1
@@ -490,9 +542,7 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(st
 
     new_report = MetadataReport.create(
         target=replace(report.target, item="item-new"),
-        file=replace(
-            report.file, identity="d" * 64, content_digest="e" * 64
-        ),
+        file=replace(report.file, identity="d" * 64, content_digest="e" * 64),
         local_claims=report.local_claims,
         local_reasons=report.local_reasons,
         providers=report.providers,
@@ -520,7 +570,13 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(st
         reopened.activate_metadata_policy(
             follow_up.policy_id,
             draft.policy_id,
-            ((report.target.library, follow_up_resolved.resolved_id, follow_up_resolved.canonical_json),),
+            (
+                (
+                    report.target.library,
+                    follow_up_resolved.resolved_id,
+                    follow_up_resolved.canonical_json,
+                ),
+            ),
             30,
         )
     action = reopened.claim_review_pipeline_action(31)
@@ -536,7 +592,10 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(st
         for result in successor.results
         if result.destination is TargetDestination.TAGS
     )
-    assert (tags.outcome, tags.reasons) == (ProposalOutcome.INELIGIBLE, ("policy_ignored",))
+    assert (tags.outcome, tags.reasons) == (
+        ProposalOutcome.INELIGIBLE,
+        ("policy_ignored",),
+    )
     reopened.publish_proposal(successor)
     reopened.advance_review_pipeline_action(action, successor.proposal_set_id, 32)
     action = reopened.claim_review_pipeline_action(33)
@@ -548,7 +607,12 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(st
     reopened.advance_review_pipeline_action(action, None, 36)
     completed = reopened.metadata_policy_transition()
     assert completed is not None
-    assert (completed.state, completed.completed, completed.total, completed.failed) == ("completed", 1, 1, 0)
+    assert (
+        completed.state,
+        completed.completed,
+        completed.total,
+        completed.failed,
+    ) == ("completed", 1, 1, 0)
     assert admitted.get("review_case_id") != old_case_id
     successor_case_id = admitted.get("review_case_id")
     assert type(successor_case_id) is str
@@ -559,18 +623,29 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(st
     )
     packet = reopened.preview_shadow_packet(successor_case_id)
     assert packet.review_case_id == successor_case_id
-    acknowledged = reopened.acknowledge_metadata_policy_transition(completed.transition_id, 37)
+    acknowledged = reopened.acknowledge_metadata_policy_transition(
+        completed.transition_id, 37
+    )
     assert acknowledged.acknowledged
-    assert reopened.activate_metadata_policy(
-        draft.policy_id,
-        draft.policy_id,
-        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-        38,
-    ) is None
+    assert (
+        reopened.activate_metadata_policy(
+            draft.policy_id,
+            draft.policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            38,
+        )
+        is None
+    )
     next_transition = reopened.activate_metadata_policy(
         follow_up.policy_id,
         draft.policy_id,
-        ((report.target.library, follow_up_resolved.resolved_id, follow_up_resolved.canonical_json),),
+        (
+            (
+                report.target.library,
+                follow_up_resolved.resolved_id,
+                follow_up_resolved.canonical_json,
+            ),
+        ),
         39,
     )
     assert next_transition is not None
@@ -595,7 +670,11 @@ def test_missing_pipeline_work_is_typed_durable_and_retryable(state_path: Path) 
         40,
     )
     assert transition is not None
-    assert (transition.state, transition.failed, transition.total) == ("completed_with_failures", 1, 1)
+    assert (transition.state, transition.failed, transition.total) == (
+        "completed_with_failures",
+        1,
+        1,
+    )
     assert repository._connection.execute(
         "SELECT state,failure_code FROM metadata_policy_transition_items"
     ).fetchone() == ("failed", "pipeline_unavailable")
@@ -610,7 +689,13 @@ def test_missing_pipeline_work_is_typed_durable_and_retryable(state_path: Path) 
         repository.activate_metadata_policy(
             blocked.policy_id,
             draft.policy_id,
-            ((report.target.library, blocked_resolution.resolved_id, blocked_resolution.canonical_json),),
+            (
+                (
+                    report.target.library,
+                    blocked_resolution.resolved_id,
+                    blocked_resolution.canonical_json,
+                ),
+            ),
             41,
         )
     repository.request_review_scan(
@@ -622,7 +707,12 @@ def test_missing_pipeline_work_is_typed_durable_and_retryable(state_path: Path) 
         discovery,
         1,
         "b" * 64,
-        (replace(_entry(report.target.item, report.file.identity), library=report.target.library),),
+        (
+            replace(
+                _entry(report.target.item, report.file.identity),
+                library=report.target.library,
+            ),
+        ),
         43,
     )
     extraction = repository.claim_review_pipeline_action(44)
@@ -643,28 +733,44 @@ def test_missing_pipeline_work_is_typed_durable_and_retryable(state_path: Path) 
         report, current_policy.resolved_id, dict(current_policy.destinations)
     )
     repository.publish_proposal(successor)
-    repository.advance_review_pipeline_action(proposal_action, successor.proposal_set_id, 50)
+    repository.advance_review_pipeline_action(
+        proposal_action, successor.proposal_set_id, 50
+    )
     admission = repository.claim_review_pipeline_action(51)
     assert admission is not None
     admitted = json.loads(repository.admit_review_case(successor))
-    repository.advance_review_pipeline_action(admission, admitted.get("review_case_id"), 52)
+    repository.advance_review_pipeline_action(
+        admission, admitted.get("review_case_id"), 52
+    )
     projection = repository.claim_review_pipeline_action(53)
     assert projection is not None
     repository.advance_review_pipeline_action(projection, None, 54)
     completed = repository.metadata_policy_transition()
     assert completed is not None
-    assert (completed.state, completed.completed, completed.total) == ("completed", 1, 1)
+    assert (completed.state, completed.completed, completed.total) == (
+        "completed",
+        1,
+        1,
+    )
     with pytest.raises(MetadataReportError):
         repository.activate_metadata_policy(
             MetadataPolicyProfile.builtin().policy_id,
             MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, "resolved_policy_" + "0" * 64, resolved.canonical_json),),
+            (
+                (
+                    report.target.library,
+                    "resolved_policy_" + "0" * 64,
+                    resolved.canonical_json,
+                ),
+            ),
             41,
         )
     repository.close()
 
 
-def test_failed_provider_work_restarts_and_retries_at_safe_proposal_stage(state_path: Path) -> None:
+def test_failed_provider_work_restarts_and_retries_at_safe_proposal_stage(
+    state_path: Path,
+) -> None:
     repository, report, _, _ = _current_case_with_completed_work(state_path)
     repository._connection.execute(
         "UPDATE review_preparation_work SET stage='provider',state='queued',report_id=?,updated_at=24",
@@ -702,7 +808,9 @@ def test_failed_provider_work_restarts_and_retries_at_safe_proposal_stage(state_
     reopened.close()
 
 
-def test_failed_extraction_work_restarts_at_extraction_with_fixed_cohort(state_path: Path) -> None:
+def test_failed_extraction_work_restarts_at_extraction_with_fixed_cohort(
+    state_path: Path,
+) -> None:
     repository, report, _, _ = _current_case_with_completed_work(state_path)
     repository._connection.execute(
         "UPDATE review_preparation_work SET stage='extraction',state='queued',"
@@ -729,7 +837,11 @@ def test_failed_extraction_work_restarts_at_extraction_with_fixed_cohort(state_p
     repository.fail_review_pipeline_action(extraction, "failed", False, 27)
     failed = repository.metadata_policy_transition()
     assert failed is not None
-    assert ("completed_with_failures", 1, 1) == (failed.state, failed.failed, failed.total)
+    assert ("completed_with_failures", 1, 1) == (
+        failed.state,
+        failed.failed,
+        failed.total,
+    )
     fixed_item = repository._connection.execute(
         "SELECT report_id,work_id,state FROM metadata_policy_transition_items"
     ).fetchone()
@@ -739,11 +851,24 @@ def test_failed_extraction_work_restarts_at_extraction_with_fixed_cohort(state_p
     reopened = open_repository(state_path, create=False)
     retried = reopened.retry_metadata_policy_transition(transition.transition_id, 28)
     assert ("processing", 0, 1) == (retried.state, retried.failed, retried.total)
-    assert ("extraction", "queued", 0, 0, None, None, None, None) == reopened._connection.execute(
+    assert (
+        "extraction",
+        "queued",
+        0,
+        0,
+        None,
+        None,
+        None,
+        None,
+    ) == reopened._connection.execute(
         "SELECT stage,state,attempt,recovery_attempt,report_id,proposal_set_id,"
         "review_case_id,failure_code FROM review_preparation_work"
     ).fetchone()
-    assert (report.report_id, extraction.action_id, "pending") == reopened._connection.execute(
+    assert (
+        report.report_id,
+        extraction.action_id,
+        "pending",
+    ) == reopened._connection.execute(
         "SELECT report_id,work_id,state FROM metadata_policy_transition_items"
     ).fetchone()
     action = reopened.claim_review_pipeline_action(29)
@@ -789,7 +914,11 @@ def test_activation_restarts_preexisting_terminal_early_work(
         25,
     )
     assert transition is not None
-    assert ("processing", 0, 1) == (transition.state, transition.failed, transition.total)
+    assert ("processing", 0, 1) == (
+        transition.state,
+        transition.failed,
+        transition.total,
+    )
     action = repository.claim_review_pipeline_action(26)
     assert action is not None
     assert expected_stage == action.stage
@@ -824,11 +953,7 @@ def test_atomic_extraction_callback_updates_fixed_transition_failure(
     assert transition is not None
     extraction = repository.claim_review_pipeline_action(26)
     assert extraction is not None
-    published = (
-        _report("Changed title", "c", "d")
-        if outcome == "stale"
-        else report
-    )
+    published = _report("Changed title", "c", "d") if outcome == "stale" else report
     repository.publish(
         published,
         lambda: True,
@@ -837,18 +962,19 @@ def test_atomic_extraction_callback_updates_fixed_transition_failure(
             extraction,
             exact.report_id,
             27,
-            provider_failure_code=(
-                "provider" if outcome == "provider" else None
-            ),
+            provider_failure_code=("provider" if outcome == "provider" else None),
         ),
     )
     current = repository.metadata_policy_transition()
     assert current is not None
     if outcome == "stale":
         assert ("completed_with_failures", 1) == (current.state, current.failed)
-        assert "stale" == repository._connection.execute(
-            "SELECT failure_code FROM metadata_policy_transition_items"
-        ).fetchone()[0]
+        assert (
+            "stale"
+            == repository._connection.execute(
+                "SELECT failure_code FROM metadata_policy_transition_items"
+            ).fetchone()[0]
+        )
     else:
         assert ("processing", 0) == (current.state, current.failed)
         proposal = repository.claim_review_pipeline_action(28)
@@ -857,7 +983,9 @@ def test_atomic_extraction_callback_updates_fixed_transition_failure(
     repository.close()
 
 
-def test_new_library_preview_can_establish_next_generation_resolution(state_path: Path) -> None:
+def test_new_library_preview_can_establish_next_generation_resolution(
+    state_path: Path,
+) -> None:
     repository = open_repository(state_path)
     first = _draft()
     repository.create_metadata_policy_draft(first.canonical_json)
@@ -884,9 +1012,7 @@ def test_new_library_preview_can_establish_next_generation_resolution(state_path
         libraries=(SimpleNamespace(name="second", policy_override=None),)
     )
     with pytest.raises(MetadataReportError):
-        composition._current_resolved_policy(
-            configuration, repository, "second"
-        )
+        composition._current_resolved_policy(configuration, repository, "second")
     activation = notebook.activate(second.policy_id, first.policy_id, 11)
     assert activation.transition is not None
     assert 3 == activation.transition.generation
@@ -896,7 +1022,9 @@ def test_new_library_preview_can_establish_next_generation_resolution(state_path
     repository.close()
 
 
-def test_generation_one_configured_override_binds_and_replays_through_admission(state_path: Path) -> None:
+def test_generation_one_configured_override_binds_and_replays_through_admission(
+    state_path: Path,
+) -> None:
     repository = open_repository(state_path)
     report = _report()
     repository.publish(report, lambda: True)
@@ -927,10 +1055,11 @@ def test_generation_one_configured_override_binds_and_replays_through_admission(
         for result in proposal.results
         if result.destination is TargetDestination.TAGS
     )
-    assert (ProposalOutcome.INELIGIBLE, ("policy_ignored",)) == (tags.outcome, tags.reasons)
-    persisted = repository.current_resolved_metadata_policy(
-        report.target.library
+    assert (ProposalOutcome.INELIGIBLE, ("policy_ignored",)) == (
+        tags.outcome,
+        tags.reasons,
     )
+    persisted = repository.current_resolved_metadata_policy(report.target.library)
     assert resolved == persisted
     changed_configuration = SimpleNamespace(
         libraries=(
@@ -947,7 +1076,9 @@ def test_generation_one_configured_override_binds_and_replays_through_admission(
     repository.close()
 
 
-def test_activation_and_human_decision_commit_orderings_are_atomic(state_directory: Path) -> None:
+def test_activation_and_human_decision_commit_orderings_are_atomic(
+    state_directory: Path,
+) -> None:
     decision_first_path = state_directory / "decision-first.sqlite"
     decision_writer, report, _, case_id = _current_case_with_completed_work(
         decision_first_path
@@ -1025,13 +1156,15 @@ def test_activation_and_human_decision_commit_orderings_are_atomic(state_directo
     activator.close()
 
 
-def test_field_effect_authority_requires_exact_published_checkpoint(state_path: Path) -> None:
+def test_field_effect_authority_requires_exact_published_checkpoint(
+    state_path: Path,
+) -> None:
     repository, _, _, case_id = _current_case_with_completed_work(state_path)
-    decision = _human_decision(
-        repository, case_id, "checkpoint-authority-0001"
-    )
+    decision = _human_decision(repository, case_id, "checkpoint-authority-0001")
     repository.record_human_decision(decision)
-    assert repository.field_effect_authority_source(decision)["review_case_id"] == case_id
+    assert (
+        repository.field_effect_authority_source(decision)["review_case_id"] == case_id
+    )
     repository._connection.execute(
         "UPDATE current_review_packages SET checkpoint=checkpoint+2 "
         "WHERE review_case_id=?",
@@ -1067,14 +1200,19 @@ def test_field_effect_authority_rejects_a_non_list_fields_projection(
 ) -> None:
     """Reject a malformed projection before iterating it, not while."""
     repository, _, _, case_id = _current_case_with_completed_work(state_path)
-    decision = _human_decision(
-        repository, case_id, "fields-projection-0001"
-    )
+    decision = _human_decision(repository, case_id, "fields-projection-0001")
     repository.record_human_decision(decision)
-    assert repository.field_effect_authority_source(decision)["review_case_id"] == case_id
-    with patch.object(
-        field_effect_activity, "ReviewCase", _CaseWithTargetFields(fields),
-    ), pytest.raises(FieldEffectError, match="authority_binding"):
+    assert (
+        repository.field_effect_authority_source(decision)["review_case_id"] == case_id
+    )
+    with (
+        patch.object(
+            field_effect_activity,
+            "ReviewCase",
+            _CaseWithTargetFields(fields),
+        ),
+        pytest.raises(FieldEffectError, match="authority_binding"),
+    ):
         repository.field_effect_authority_source(decision)
     repository.close()
 
@@ -1100,7 +1238,10 @@ def test_invisible_stale_case_is_not_in_activation_cohort(state_path: Path) -> N
     )
     assert transition is not None
     assert ("completed", 0, 0, 0) == (
-        transition.state, transition.completed, transition.total, transition.failed,
+        transition.state,
+        transition.completed,
+        transition.total,
+        transition.failed,
     )
     assert (0,) == repository._connection.execute(
         "SELECT COUNT(*) FROM metadata_policy_transition_items"
@@ -1108,7 +1249,9 @@ def test_invisible_stale_case_is_not_in_activation_cohort(state_path: Path) -> N
     repository.close()
 
 
-def test_changed_inflight_extraction_is_new_work_not_old_cohort_completion(state_path: Path) -> None:
+def test_changed_inflight_extraction_is_new_work_not_old_cohort_completion(
+    state_path: Path,
+) -> None:
     repository, report, _, _ = _current_case_with_completed_work(state_path)
     repository.request_review_scan(
         report.target.connection, report.target.library, "lib-2", _PRODUCER, 24
@@ -1148,7 +1291,10 @@ def test_changed_inflight_extraction_is_new_work_not_old_cohort_completion(state
     stale = repository.metadata_policy_transition()
     assert stale is not None
     assert (stale.state, stale.completed, stale.total, stale.failed) == (
-        "completed_with_failures", 0, 1, 1,
+        "completed_with_failures",
+        0,
+        1,
+        1,
     )
     assert repository._connection.execute(
         "SELECT report_id,state,failure_code FROM metadata_policy_transition_items"

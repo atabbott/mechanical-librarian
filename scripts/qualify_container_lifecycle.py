@@ -72,8 +72,11 @@ def _snapshot(source_sha: str, destination: Path) -> None:
 
 def _git_blob(source_sha: str, path: str) -> bytes:
     completed = subprocess.run(
-        ["git", "show", f"{source_sha}:{path}"], cwd=ROOT, check=False,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        ["git", "show", f"{source_sha}:{path}"],
+        cwd=ROOT,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     if completed.returncode != 0 or len(completed.stdout) > 1_048_576:
         raise QualificationError("source_snapshot_failed")
@@ -82,16 +85,37 @@ def _git_blob(source_sha: str, path: str) -> bytes:
 
 def _owned(kind: str, name: str, run_id: str) -> bool:
     command = {
-        "container": ["docker", "inspect", name, "--format",
-                      '{{ index .Config.Labels "' + OWNERSHIP_LABEL + '" }}'],
-        "volume": ["docker", "volume", "inspect", name, "--format",
-                   '{{ index .Labels "' + OWNERSHIP_LABEL + '" }}'],
-        "image": ["docker", "image", "inspect", name, "--format",
-                  '{{ index .Config.Labels "' + OWNERSHIP_LABEL + '" }}'],
+        "container": [
+            "docker",
+            "inspect",
+            name,
+            "--format",
+            '{{ index .Config.Labels "' + OWNERSHIP_LABEL + '" }}',
+        ],
+        "volume": [
+            "docker",
+            "volume",
+            "inspect",
+            name,
+            "--format",
+            '{{ index .Labels "' + OWNERSHIP_LABEL + '" }}',
+        ],
+        "image": [
+            "docker",
+            "image",
+            "inspect",
+            name,
+            "--format",
+            '{{ index .Config.Labels "' + OWNERSHIP_LABEL + '" }}',
+        ],
     }[kind]
     result = subprocess.run(
-        command, cwd=ROOT, check=False, stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL, text=True,
+        command,
+        cwd=ROOT,
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
     )
     return result.returncode == 0 and result.stdout.strip() == run_id
 
@@ -105,7 +129,10 @@ def _remove_owned(kind: str, name: str, run_id: str) -> None:
         "image": ["docker", "image", "rm", name],
     }[kind]
     subprocess.run(
-        command, cwd=ROOT, check=False, stdout=subprocess.DEVNULL,
+        command,
+        cwd=ROOT,
+        check=False,
+        stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
 
@@ -181,13 +208,11 @@ def _workspace(port: int) -> bool:
 
 def _clean_stop(container: str) -> int:
     started = time.monotonic()
-    _run([
-        "docker", "stop", "--time", str(GRACEFUL_SHUTDOWN_SECONDS), container
-    ])
+    _run(["docker", "stop", "--time", str(GRACEFUL_SHUTDOWN_SECONDS), container])
     shutdown_ms = int((time.monotonic() - started) * 1000)
-    state = json.loads(_run([
-        "docker", "inspect", container, "--format", "{{json .State}}"
-    ]))
+    state = json.loads(
+        _run(["docker", "inspect", container, "--format", "{{json .State}}"])
+    )
     if (
         shutdown_ms > GRACEFUL_SHUTDOWN_SECONDS * 1_000
         or state.get("Running") is not False
@@ -204,25 +229,31 @@ def _configuration() -> dict[str, object]:
     return {
         "schema_version": "config-v6",
         "provider_recovery_generation": 1,
-        "connections": [{
-            "name": "primary",
-            "adapter": "audiobookshelf",
-            "endpoint": "https://127.0.0.1:9",
-            "secret_file": "/data/target.secret",
-        }],
-        "libraries": [{
-            "name": "books",
-            "connection": "primary",
-            "library_id": "01234567-89ab-4def-8123-456789abcdef",
-            "mount": "books",
-            "provider_connections": [],
-        }],
-        "mounts": [{
-            "name": "books",
-            "container_path": "/media/books",
-            "service_path": "/library/books",
-            "read_only": True,
-        }],
+        "connections": [
+            {
+                "name": "primary",
+                "adapter": "audiobookshelf",
+                "endpoint": "https://127.0.0.1:9",
+                "secret_file": "/data/target.secret",
+            }
+        ],
+        "libraries": [
+            {
+                "name": "books",
+                "connection": "primary",
+                "library_id": "01234567-89ab-4def-8123-456789abcdef",
+                "mount": "books",
+                "provider_connections": [],
+            }
+        ],
+        "mounts": [
+            {
+                "name": "books",
+                "container_path": "/media/books",
+                "service_path": "/library/books",
+                "read_only": True,
+            }
+        ],
         "providers": [],
         "review": {
             "canonical_origin": "https://review.test",
@@ -264,52 +295,112 @@ def main() -> None:
         ) as temporary:
             snapshot = Path(temporary)
             _snapshot(source_sha, snapshot)
-            _run([
-                "docker", "build", "--pull=false",
-                "--label", f"org.opencontainers.image.revision={source_sha}",
-                "--label", f"{OWNERSHIP_LABEL}={run_id}",
-                "-t", image, str(snapshot),
-            ], capture=False)
+            _run(
+                [
+                    "docker",
+                    "build",
+                    "--pull=false",
+                    "--label",
+                    f"org.opencontainers.image.revision={source_sha}",
+                    "--label",
+                    f"{OWNERSHIP_LABEL}={run_id}",
+                    "-t",
+                    image,
+                    str(snapshot),
+                ],
+                capture=False,
+            )
         if not _owned("image", image, run_id):
             raise QualificationError("image_ownership_failed")
         image_id = _run(["docker", "image", "inspect", image, "--format", "{{.Id}}"])
-        _run([
-            "docker", "run", "--rm", "--user", "65532:65532", "--read-only",
-            "--network", "none", "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges:true",
-            "--entrypoint", "/opt/mechanical-librarian/bin/python", image,
-            "-I", "-c",
-            "import importlib.util; raise SystemExit(0 if "
-            "importlib.util.find_spec('mechanical_librarian_workbench') is None else 1)",
-        ])
-        _run([
-            "docker", "run", "--rm", "--user", "65532:65532", "--read-only",
-            "--network", "none", "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges:true",
-            "--entrypoint", "/opt/mechanical-librarian/bin/python", image,
-            "-I", "-c",
-            "from mechanical_librarian.interfaces.web.react_assets import "
-            "ReactAssetBundle,ReactAssetLoader; value=ReactAssetLoader().load(); "
-            "raise SystemExit(0 if isinstance(value,ReactAssetBundle) and "
-            "value.entry == 'index.html' and any(a.kind == 'script' for a in value.assets) "
-            "and any(a.kind == 'style' for a in value.assets) else 1)",
-        ])
-        _run([
-            "docker", "run", "--rm", "--user", "65532:65532", "--read-only",
-            "--network", "none", "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges:true",
-            "--entrypoint", "/bin/sh", image, "-eu", "-c",
-            "test -z \"$(command -v node || true)\"; "
-            "test -z \"$(command -v npm || true)\"; "
-            "test -z \"$(find /opt/mechanical-librarian -type d "
-            "\\( -name node_modules -o -name frontend -o -name generated -o -name .vite \\) "
-            "-print -quit)\"; "
-            "test -z \"$(find /opt/mechanical-librarian -type f "
-            "\\( -name '*.map' -o -name package.json -o -name package-lock.json \\) "
-            "-print -quit)\"",
-        ])
-        _run(["docker", "volume", "create", "--label",
-              f"{OWNERSHIP_LABEL}={run_id}", volume])
+        _run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--user",
+                "65532:65532",
+                "--read-only",
+                "--network",
+                "none",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges:true",
+                "--entrypoint",
+                "/opt/mechanical-librarian/bin/python",
+                image,
+                "-I",
+                "-c",
+                "import importlib.util; raise SystemExit(0 if "
+                "importlib.util.find_spec('mechanical_librarian_workbench') is None else 1)",
+            ]
+        )
+        _run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--user",
+                "65532:65532",
+                "--read-only",
+                "--network",
+                "none",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges:true",
+                "--entrypoint",
+                "/opt/mechanical-librarian/bin/python",
+                image,
+                "-I",
+                "-c",
+                "from mechanical_librarian.interfaces.web.react_assets import "
+                "ReactAssetBundle,ReactAssetLoader; value=ReactAssetLoader().load(); "
+                "raise SystemExit(0 if isinstance(value,ReactAssetBundle) and "
+                "value.entry == 'index.html' and any(a.kind == 'script' for a in value.assets) "
+                "and any(a.kind == 'style' for a in value.assets) else 1)",
+            ]
+        )
+        _run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--user",
+                "65532:65532",
+                "--read-only",
+                "--network",
+                "none",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges:true",
+                "--entrypoint",
+                "/bin/sh",
+                image,
+                "-eu",
+                "-c",
+                'test -z "$(command -v node || true)"; '
+                'test -z "$(command -v npm || true)"; '
+                'test -z "$(find /opt/mechanical-librarian -type d '
+                "\\( -name node_modules -o -name frontend -o -name generated -o -name .vite \\) "
+                '-print -quit)"; '
+                'test -z "$(find /opt/mechanical-librarian -type f '
+                "\\( -name '*.map' -o -name package.json -o -name package-lock.json \\) "
+                '-print -quit)"',
+            ]
+        )
+        _run(
+            [
+                "docker",
+                "volume",
+                "create",
+                "--label",
+                f"{OWNERSHIP_LABEL}={run_id}",
+                volume,
+            ]
+        )
         if not _owned("volume", volume, run_id):
             raise QualificationError("volume_ownership_failed")
         with tempfile.TemporaryDirectory() as temporary:
@@ -321,57 +412,116 @@ def main() -> None:
             (seed / "owner.argon2").write_text(
                 PasswordHasher().hash("synthetic qualification owner"), encoding="utf-8"
             )
-            (seed / "target.secret").write_text("synthetic-target-token", encoding="ascii")
+            (seed / "target.secret").write_text(
+                "synthetic-target-token", encoding="ascii"
+            )
             (seed / "guarded-checkpoint-probe.py").write_bytes(
                 _git_blob(source_sha, "scripts/guarded_checkpoint_probe.py")
             )
-            _run([
-                "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-                "-keyout", str(seed / "tls.key"), "-out", str(seed / "tls.crt"),
-                "-days", "1", "-subj", "/CN=review.test",
-            ])
-            _run([
-                "docker", "run", "--rm", "--name", seed_container,
-                "--label", f"{OWNERSHIP_LABEL}={run_id}", "--user", "0:0",
-                "--mount", f"type=volume,src={volume},dst=/data",
-                "--mount", f"type=bind,src={seed},dst=/seed,readonly",
-                "--entrypoint", "/bin/sh", image, "-c",
-                "cp /seed/config.json /seed/owner.argon2 /seed/target.secret "
-                "/seed/guarded-checkpoint-probe.py "
-                "/seed/tls.crt /seed/tls.key /data/ && "
-                "chown -R 65532:65532 /data && chmod 700 /data && chmod 600 /data/*",
-            ])
+            _run(
+                [
+                    "openssl",
+                    "req",
+                    "-x509",
+                    "-newkey",
+                    "rsa:2048",
+                    "-nodes",
+                    "-keyout",
+                    str(seed / "tls.key"),
+                    "-out",
+                    str(seed / "tls.crt"),
+                    "-days",
+                    "1",
+                    "-subj",
+                    "/CN=review.test",
+                ]
+            )
+            _run(
+                [
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--name",
+                    seed_container,
+                    "--label",
+                    f"{OWNERSHIP_LABEL}={run_id}",
+                    "--user",
+                    "0:0",
+                    "--mount",
+                    f"type=volume,src={volume},dst=/data",
+                    "--mount",
+                    f"type=bind,src={seed},dst=/seed,readonly",
+                    "--entrypoint",
+                    "/bin/sh",
+                    image,
+                    "-c",
+                    "cp /seed/config.json /seed/owner.argon2 /seed/target.secret "
+                    "/seed/guarded-checkpoint-probe.py "
+                    "/seed/tls.crt /seed/tls.key /data/ && "
+                    "chown -R 65532:65532 /data && chmod 700 /data && chmod 600 /data/*",
+                ]
+            )
 
         probe_command = [
-            "docker", "run", "--rm", "--name", probe_container,
-            "--label", f"{OWNERSHIP_LABEL}={run_id}",
-            "--user", "65532:65532", "--read-only", "--network", "none",
-            "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true",
-            "--mount", f"type=volume,src={volume},dst=/data",
-            "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=65532,gid=65532",
-            "--entrypoint", "/opt/mechanical-librarian/bin/python", image,
-            "-I", "/data/guarded-checkpoint-probe.py",
+            "docker",
+            "run",
+            "--rm",
+            "--name",
+            probe_container,
+            "--label",
+            f"{OWNERSHIP_LABEL}={run_id}",
+            "--user",
+            "65532:65532",
+            "--read-only",
+            "--network",
+            "none",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--mount",
+            f"type=volume,src={volume},dst=/data",
+            "--tmpfs",
+            "/tmp:rw,noexec,nosuid,nodev,size=16m,mode=0700,uid=65532,gid=65532",
+            "--entrypoint",
+            "/opt/mechanical-librarian/bin/python",
+            image,
+            "-I",
+            "/data/guarded-checkpoint-probe.py",
         ]
         _run([*probe_command, "prepare"])
         checkpoint_evidence = json.loads(_run([*probe_command, "recover"]))
         if checkpoint_evidence.get("status") != "passed":
             raise QualificationError("guarded_checkpoint_restart_failed")
 
-        container_id = _run([
-            "docker", "create", "--name", container, "--label",
-            f"{OWNERSHIP_LABEL}={run_id}", "--user", "65532:65532",
-            "--read-only", "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges:true",
-            "--mount", f"type=volume,src={volume},dst=/data",
-            "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=65532,gid=65532",
-            "-p", "127.0.0.1::8443", image,
-        ])
+        container_id = _run(
+            [
+                "docker",
+                "create",
+                "--name",
+                container,
+                "--label",
+                f"{OWNERSHIP_LABEL}={run_id}",
+                "--user",
+                "65532:65532",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges:true",
+                "--mount",
+                f"type=volume,src={volume},dst=/data",
+                "--tmpfs",
+                "/tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=65532,gid=65532",
+                "-p",
+                "127.0.0.1::8443",
+                image,
+            ]
+        )
         if not _owned("container", container, run_id):
             raise QualificationError("container_ownership_failed")
         _run(["docker", "start", container])
-        port = int(_run([
-            "docker", "port", container, "8443/tcp"
-        ]).rsplit(":", 1)[1])
+        port = int(_run(["docker", "port", container, "8443/tcp"]).rsplit(":", 1)[1])
         if not _health(port, "/health/live", time.monotonic() + 20):
             raise QualificationError("container_liveness_failed")
         if not _health(port, "/health/ready", time.monotonic() + 20):
@@ -394,13 +544,15 @@ def main() -> None:
             _run(["docker", "cp", f"{container}:/data/application.sqlite3", str(first)])
             first_hash = _sha256(first)
             _run(["docker", "start", container])
-            port = int(_run([
-                "docker", "port", container, "8443/tcp"
-            ]).rsplit(":", 1)[1])
+            port = int(
+                _run(["docker", "port", container, "8443/tcp"]).rsplit(":", 1)[1]
+            )
             if not _health(port, "/health/ready", time.monotonic() + 20):
                 raise QualificationError("container_restart_failed")
             shutdown_ms = max(shutdown_ms, _clean_stop(container))
-            _run(["docker", "cp", f"{container}:/data/application.sqlite3", str(second)])
+            _run(
+                ["docker", "cp", f"{container}:/data/application.sqlite3", str(second)]
+            )
             second_hash = _sha256(second)
         if first_hash != second_hash:
             raise QualificationError("container_restart_state_changed")
@@ -410,29 +562,35 @@ def main() -> None:
             or _sha256(Path(__file__)) != script_digest
         ):
             raise QualificationError("source_changed_during_qualification")
-        print(json.dumps({
-            "application_sha256": first_hash,
-            "container_id": container_id,
-            "exact_current_restart": True,
-            "graceful_shutdown_ms": shutdown_ms,
-            "graceful_shutdown_seconds": GRACEFUL_SHUTDOWN_SECONDS,
-            "graceful_terminal_state": True,
-            "guarded_checkpoint_restart": True,
-            "frontend_build_tools_excluded": True,
-            "image_id": image_id,
-            "liveness": True,
-            "non_root": True,
-            "read_only_root": True,
-            "readiness": True,
-            "react_assets_validated": True,
-            "react_workspace_activated": True,
-            "schema": "container-lifecycle-evidence-v3",
-            "snapshot_build": True,
-            "workbench_excluded": True,
-            "single_data_volume": True,
-            "source_sha": source_sha,
-            "status": "passed",
-        }, sort_keys=True, separators=(",", ":")))
+        print(
+            json.dumps(
+                {
+                    "application_sha256": first_hash,
+                    "container_id": container_id,
+                    "exact_current_restart": True,
+                    "graceful_shutdown_ms": shutdown_ms,
+                    "graceful_shutdown_seconds": GRACEFUL_SHUTDOWN_SECONDS,
+                    "graceful_terminal_state": True,
+                    "guarded_checkpoint_restart": True,
+                    "frontend_build_tools_excluded": True,
+                    "image_id": image_id,
+                    "liveness": True,
+                    "non_root": True,
+                    "read_only_root": True,
+                    "readiness": True,
+                    "react_assets_validated": True,
+                    "react_workspace_activated": True,
+                    "schema": "container-lifecycle-evidence-v3",
+                    "snapshot_build": True,
+                    "workbench_excluded": True,
+                    "single_data_volume": True,
+                    "source_sha": source_sha,
+                    "status": "passed",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
     finally:
         _remove_owned("container", probe_container, run_id)
         _remove_owned("container", seed_container, run_id)

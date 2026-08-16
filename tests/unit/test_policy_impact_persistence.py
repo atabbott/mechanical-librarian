@@ -26,10 +26,14 @@ from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
 def _case_report(index: int) -> MetadataReport:
     source = _bibliographic_report(
         current_title="Current title",
-        providers=(_source("catalogue", f"edition-{index}", titles=("Corrected title",)),),
+        providers=(
+            _source("catalogue", f"edition-{index}", titles=("Corrected title",)),
+        ),
     )
     return MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", f"item-{index:02d}", source.target.fields),
+        target=TargetFacts(
+            "primary", "ebooks", f"item-{index:02d}", source.target.fields
+        ),
         file=FileFacts(index, f"{index:064x}", f"{index + 100:064x}"),
         local_claims=source.local_claims,
         local_reasons=source.local_reasons,
@@ -50,18 +54,18 @@ def test_prior_persisted_policy_schema_is_rejected_without_mutation() -> None:
         document["schema_version"] = "metadata-policy-profile-v1"
         document["options"].pop("subtitle")
         document["options"].pop("series")
-        document["options"].update({
-            "asin": "canonical_asin",
-            "description_fill": "fill_when_empty",
-            "genres": "catalogue",
-            "isbn_form": "isbn13",
-            "tags": "catalogue",
-        })
+        document["options"].update(
+            {
+                "asin": "canonical_asin",
+                "description_fill": "fill_when_empty",
+                "genres": "catalogue",
+                "isbn_form": "isbn13",
+                "tags": "catalogue",
+            }
+        )
         document["destinations"].pop("subtitle")
         document["destinations"].pop("series")
-        repository._connection.execute(
-            "DROP TRIGGER metadata_policy_drafts_no_update"
-        )
+        repository._connection.execute("DROP TRIGGER metadata_policy_drafts_no_update")
         repository._connection.execute(
             "UPDATE metadata_policy_drafts SET document=? WHERE policy_id=?",
             (json.dumps(document, sort_keys=True, separators=(",", ":")), row[0]),
@@ -127,12 +131,8 @@ def test_limit_and_malformed_rows_fail_closed() -> None:
         with pytest.raises(sqlite3.IntegrityError):
             repository._connection.execute("UPDATE proposal_sets SET document='{}'")
         assert 1 == repository.current_policy_impact_pairs("ebooks", 20)[0]
-        repository._connection.execute(
-            "DROP TRIGGER proposal_sets_no_update"
-        )
-        repository._connection.execute(
-            "UPDATE proposal_sets SET document='{}'"
-        )
+        repository._connection.execute("DROP TRIGGER proposal_sets_no_update")
+        repository._connection.execute("UPDATE proposal_sets SET document='{}'")
         repository._connection.execute(
             "CREATE TRIGGER proposal_sets_no_update BEFORE UPDATE ON "
             "proposal_sets BEGIN SELECT RAISE(ABORT,'immutable proposal set'); END"

@@ -67,7 +67,9 @@ class _Inspector:
 
 class _GoogleProvider:
     def __init__(
-        self, name: str, status: ProviderStatus,
+        self,
+        name: str,
+        status: ProviderStatus,
         calls: list[ProviderStatus],
     ) -> None:
         self.name = name
@@ -88,9 +90,11 @@ class _GoogleProvider:
                 lane,
                 self.status,
                 (
-                    (ProviderCandidate(
-                        f"gb-{call_number}", f"gb-work-{call_number}", ()
-                    ),)
+                    (
+                        ProviderCandidate(
+                            f"gb-{call_number}", f"gb-work-{call_number}", ()
+                        ),
+                    )
                     if self.status is ProviderStatus.CANDIDATES
                     else ()
                 ),
@@ -107,22 +111,42 @@ def test_generation_rollback_rejects_before_cutover_delivery() -> None:
         recovery_path = root / "recovery.sqlite"
         recovery = SQLiteProviderRecoveryStore.open(recovery_path)
         recovery.observe_failure(
-            connection="google", adapter="google_books", scope="ebooks",
-            generation=2, failure="authentication", now=1,
+            connection="google",
+            adapter="google_books",
+            scope="ebooks",
+            generation=2,
+            failure="authentication",
+            now=1,
         )
         repository = open_repository(database)
         proposal_id = "proposal_set_" + "1" * 64
         report_id = "metadata_report_" + "2" * 64
         case_id = "review_case_" + "3" * 64
         outbox_id = _provider_recovery_outbox_id(
-            "primary", "ebooks", "item-1", proposal_id, report_id,
-            case_id, 1, "admitted",
+            "primary",
+            "ebooks",
+            "item-1",
+            proposal_id,
+            report_id,
+            case_id,
+            1,
+            "admitted",
         )
         repository._connection.execute("PRAGMA foreign_keys=OFF")
         repository._connection.execute(
             "INSERT INTO provider_recovery_outbox(outbox_id,connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at,delivered_at) VALUES(?,?,?,?,?,?,?,?,?,?,NULL)",
-            (outbox_id, "primary", "ebooks", "item-1", proposal_id,
-             report_id, case_id, 1, "admitted", 1),
+            (
+                outbox_id,
+                "primary",
+                "ebooks",
+                "item-1",
+                proposal_id,
+                report_id,
+                case_id,
+                1,
+                "admitted",
+                1,
+            ),
         )
         repository._connection.execute("PRAGMA foreign_keys=ON")
         repository._connection.commit()
@@ -130,25 +154,45 @@ def test_generation_rollback_rejects_before_cutover_delivery() -> None:
         metadata_before = database.read_bytes()
         recovery_before = recovery_path.read_bytes()
         configuration = ApplicationConfiguration(
-            (TargetConnectionConfiguration("primary", "https://example.invalid", "/run/target-token"),),
-            (LibraryConfiguration("ebooks", "primary", "library-1", "ebook", "books", ("google",)),),
+            (
+                TargetConnectionConfiguration(
+                    "primary", "https://example.invalid", "/run/target-token"
+                ),
+            ),
+            (
+                LibraryConfiguration(
+                    "ebooks", "primary", "library-1", "ebook", "books", ("google",)
+                ),
+            ),
             (MediaMountConfiguration("books", "/container", "/service", True),),
-            (ProviderConnectionConfiguration("google", True, False, None, "google_books"),),
+            (
+                ProviderConnectionConfiguration(
+                    "google", True, False, None, "google_books"
+                ),
+            ),
             provider_recovery_generation=1,
-            review=ReviewWebConfiguration("https://review.example.invalid", "/run/owner-password"),
+            review=ReviewWebConfiguration(
+                "https://review.example.invalid", "/run/owner-password"
+            ),
         )
         composition.CoverArtifactStore(root / "artifacts", create=True)
         with pytest.raises(Exception, match="generation is stale"):
             composition.create_review_pipeline(
-                configuration, database, root / "catalogue.sqlite",
-                root / "artifacts", provider_recovery=recovery,
+                configuration,
+                database,
+                root / "catalogue.sqlite",
+                root / "artifacts",
+                provider_recovery=recovery,
             )
         assert metadata_before == database.read_bytes()
         assert recovery_before == recovery_path.read_bytes()
         check = sqlite3.connect(database)
-        assert 1 == check.execute(
-            "SELECT count(*) FROM provider_recovery_outbox WHERE delivered_at IS NULL"
-        ).fetchone()[0]
+        assert (
+            1
+            == check.execute(
+                "SELECT count(*) FROM provider_recovery_outbox WHERE delivered_at IS NULL"
+            ).fetchone()[0]
+        )
         check.close()
         recovery.close()
 
@@ -174,18 +218,62 @@ def test_restart_delivers_generation_cutover_once_after_dormant_health(
             (scan_id, "primary", "ebooks", "library-1", "2" * 64, "3" * 64),
         )
         item, file_identity = "item-1", f"{10:064x}"
-        snapshot = TargetSnapshot("ebook", "Current title", (TargetFile(file_identity, "book.epub", "epub"),))
+        snapshot = TargetSnapshot(
+            "ebook", "Current title", (TargetFile(file_identity, "book.epub", "epub"),)
+        )
         _TargetReader.snapshots = {item: snapshot}
-        isbn = LocalClaim.create(kind=ClaimKind.ISBN, observed="9780306406157", canonical="9780306406157", excerpt="9780306406157", applicability="ebook", checksum="valid_isbn_13", applicability_basis="ebook")
+        isbn = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="9780306406157",
+            applicability="ebook",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+        )
         plan = metadata_discovery_plan(snapshot, (isbn,))
         source = MetadataReport.create(
             target=TargetFacts("primary", "ebooks", item, snapshot.fields),
             file=FileFacts(0, file_identity, f"{20:064x}"),
-            local_claims=(isbn,), local_reasons=("opening_matter_isbn",),
+            local_claims=(isbn,),
+            local_reasons=("opening_matter_isbn",),
             providers=(
-                provider_observation("google", tuple(ProviderLaneResult(lane, failed_lane_status) for lane in plan.lanes), authority="google_books"),
-                _provider("hardcover", "hc", (_claim("hardcover", "hc", ClaimKind.TITLE, "Recovered title", scope=ClaimScope.WORK),), authority="hardcover"),
-                _provider("open-library", "ol", (_claim("open-library", "ol", ClaimKind.TITLE, "Recovered title", scope=ClaimScope.WORK),), authority="open_library"),
+                provider_observation(
+                    "google",
+                    tuple(
+                        ProviderLaneResult(lane, failed_lane_status)
+                        for lane in plan.lanes
+                    ),
+                    authority="google_books",
+                ),
+                _provider(
+                    "hardcover",
+                    "hc",
+                    (
+                        _claim(
+                            "hardcover",
+                            "hc",
+                            ClaimKind.TITLE,
+                            "Recovered title",
+                            scope=ClaimScope.WORK,
+                        ),
+                    ),
+                    authority="hardcover",
+                ),
+                _provider(
+                    "open-library",
+                    "ol",
+                    (
+                        _claim(
+                            "open-library",
+                            "ol",
+                            ClaimKind.TITLE,
+                            "Recovered title",
+                            scope=ClaimScope.WORK,
+                        ),
+                    ),
+                    authority="open_library",
+                ),
             ),
         )
         repository.publish(source, lambda: True)
@@ -200,12 +288,32 @@ def test_restart_delivers_generation_cutover_once_after_dormant_health(
         work_id = "review_work_" + f"{4:064x}"
         repository._connection.execute(
             "INSERT INTO review_preparation_work(work_id,scan_id,ordinal,connection_name,library_name,library_id,item_id,file_identity,source_revision,source_fingerprint,producer_fingerprint,catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,retry_not_before,report_id,proposal_set_id,review_case_id,failure_code,failure_root,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'complete','complete',0,0,0,?,?,?,NULL,NULL,2)",
-            (work_id, scan_id, 0, "primary", "ebooks", "library-1", item, file_identity, 1, "4" * 64, "2" * 64, 1, "3" * 64, source.report_id, predecessor[0], predecessor[2]),
+            (
+                work_id,
+                scan_id,
+                0,
+                "primary",
+                "ebooks",
+                "library-1",
+                item,
+                file_identity,
+                1,
+                "4" * 64,
+                "2" * 64,
+                1,
+                "3" * 64,
+                source.report_id,
+                predecessor[0],
+                predecessor[2],
+            ),
         )
         # This models a process death after the ordinary F22 cutover has
         # committed its package/outbox transaction but before delivery.
         outbox_id = _provider_recovery_outbox_id(
-            "primary", "ebooks", item, *predecessor,
+            "primary",
+            "ebooks",
+            item,
+            *predecessor,
         )
         repository._connection.execute(
             "INSERT INTO provider_recovery_outbox(outbox_id,connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at,delivered_at) VALUES(?,?,?,?,?,?,?,?,?,?,NULL)",
@@ -215,17 +323,52 @@ def test_restart_delivers_generation_cutover_once_after_dormant_health(
         repository.close()
 
         generation_one = ApplicationConfiguration(
-            (TargetConnectionConfiguration("primary", "https://example.invalid", "/run/target-token"),),
-            (LibraryConfiguration("ebooks", "primary", "library-1", "ebook", "books", ("google", "hardcover", "open-library")),),
+            (
+                TargetConnectionConfiguration(
+                    "primary", "https://example.invalid", "/run/target-token"
+                ),
+            ),
+            (
+                LibraryConfiguration(
+                    "ebooks",
+                    "primary",
+                    "library-1",
+                    "ebook",
+                    "books",
+                    ("google", "hardcover", "open-library"),
+                ),
+            ),
             (MediaMountConfiguration("books", "/container", "/service", True),),
-            (ProviderConnectionConfiguration("google", True, False, None, "google_books"), ProviderConnectionConfiguration("hardcover", True, False, "/run/hardcover-token", "hardcover"), ProviderConnectionConfiguration("open-library", True, False, None, "open_library", "owner@example.invalid")),
-            provider_recovery_generation=1, review=ReviewWebConfiguration("https://review.example.invalid", "/run/owner-password"),
+            (
+                ProviderConnectionConfiguration(
+                    "google", True, False, None, "google_books"
+                ),
+                ProviderConnectionConfiguration(
+                    "hardcover", True, False, "/run/hardcover-token", "hardcover"
+                ),
+                ProviderConnectionConfiguration(
+                    "open-library",
+                    True,
+                    False,
+                    None,
+                    "open_library",
+                    "owner@example.invalid",
+                ),
+            ),
+            provider_recovery_generation=1,
+            review=ReviewWebConfiguration(
+                "https://review.example.invalid", "/run/owner-password"
+            ),
         )
         recovery.observe_failure(
-            connection="google", adapter="google_books", scope="ebooks",
-            generation=1, failure=failed_lane_status.value, now=0,
+            connection="google",
+            adapter="google_books",
+            scope="ebooks",
+            generation=1,
+            failure=failed_lane_status.value,
+            now=0,
         )
-        dormant_health, = recovery.snapshot()
+        (dormant_health,) = recovery.snapshot()
         assert "dormant" == dormant_health.state
         assert 1 == dormant_health.generation
         assert recovery.claim_one(generation=1, now=9, token="before") is None
@@ -237,19 +380,49 @@ def test_restart_delivers_generation_cutover_once_after_dormant_health(
             patch.object(composition, "AudiobookshelfItemReader", _TargetReader),
             patch.object(composition, "_IsolatedEpubInspector", _Inspector),
             patch.object(composition, "google_books_client", return_value=object()),
-            patch.object(composition, "GoogleBooksMetadataProvider", side_effect=lambda name, *_args, **_kwargs: _GoogleProvider(name, ProviderStatus.CANDIDATES, calls)),
-            patch.object(composition, "HardcoverMetadataProvider", side_effect=AssertionError("hardcover recovery reran")),
-            patch.object(composition, "OpenLibraryMetadataProvider", side_effect=AssertionError("open-library recovery reran")),
+            patch.object(
+                composition,
+                "GoogleBooksMetadataProvider",
+                side_effect=lambda name, *_args, **_kwargs: _GoogleProvider(
+                    name, ProviderStatus.CANDIDATES, calls
+                ),
+            ),
+            patch.object(
+                composition,
+                "HardcoverMetadataProvider",
+                side_effect=AssertionError("hardcover recovery reran"),
+            ),
+            patch.object(
+                composition,
+                "OpenLibraryMetadataProvider",
+                side_effect=AssertionError("open-library recovery reran"),
+            ),
         ):
-            supervisor = composition.create_review_pipeline(generation_two, database, root / "catalogue.sqlite", root / "artifacts", provider_recovery=recovery)
+            supervisor = composition.create_review_pipeline(
+                generation_two,
+                database,
+                root / "catalogue.sqlite",
+                root / "artifacts",
+                provider_recovery=recovery,
+            )
             supervisor.recover_provider_once()
             check = open_repository(database)
-            assert predecessor != check.current_review_package("primary", "ebooks", item)
-            assert 0 == check._connection.execute("SELECT count(*) FROM provider_recovery_outbox WHERE delivered_at IS NULL").fetchone()[0]
-            assert 2 == check._connection.execute(
-                "SELECT count(*) FROM provider_recovery_outbox "
-                "WHERE delivered_at IS NOT NULL"
-            ).fetchone()[0]
+            assert predecessor != check.current_review_package(
+                "primary", "ebooks", item
+            )
+            assert (
+                0
+                == check._connection.execute(
+                    "SELECT count(*) FROM provider_recovery_outbox WHERE delivered_at IS NULL"
+                ).fetchone()[0]
+            )
+            assert (
+                2
+                == check._connection.execute(
+                    "SELECT count(*) FROM provider_recovery_outbox "
+                    "WHERE delivered_at IS NOT NULL"
+                ).fetchone()[0]
+            )
             check.close()
             assert [ProviderStatus.CANDIDATES] == calls
             assert "recovered" == recovery.snapshot()[0].state
@@ -257,7 +430,12 @@ def test_restart_delivers_generation_cutover_once_after_dormant_health(
         empty = SQLiteProviderRecoveryStore.open(root / "empty-recovery.sqlite")
         assert () == empty.snapshot()
         assert empty.claim_one(generation=2, now=clock[0], token="empty") is None
-        assert 0 == empty._connection.execute("SELECT count(*) FROM provider_recovery_members").fetchone()[0]
+        assert (
+            0
+            == empty._connection.execute(
+                "SELECT count(*) FROM provider_recovery_members"
+            ).fetchone()[0]
+        )
         empty.close()
 
 
@@ -285,14 +463,18 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
             item = f"item-{index + 1}"
             file_identity = f"{index + 10:064x}"
             snapshot = TargetSnapshot(
-                "ebook", f"Current title {index + 1}",
+                "ebook",
+                f"Current title {index + 1}",
                 (TargetFile(file_identity, f"book-{index + 1}.epub", "epub"),),
             )
             snapshots[item] = snapshot
             isbn = LocalClaim.create(
-                kind=ClaimKind.ISBN, observed="9780306406157",
-                canonical="9780306406157", excerpt="9780306406157",
-                applicability="ebook", checksum="valid_isbn_13",
+                kind=ClaimKind.ISBN,
+                observed="9780306406157",
+                canonical="9780306406157",
+                excerpt="9780306406157",
+                applicability="ebook",
+                checksum="valid_isbn_13",
                 applicability_basis="ebook",
             )
             plan = metadata_discovery_plan(snapshot, (isbn,))
@@ -306,29 +488,44 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
             )
             title = f"Recovered title {index + 1}"
             hardcover = _provider(
-                "hardcover", f"hc-{index}",
-                (_claim(
-                    "hardcover", f"hc-{index}", ClaimKind.TITLE, title,
-                    scope=ClaimScope.WORK,
-                ),),
+                "hardcover",
+                f"hc-{index}",
+                (
+                    _claim(
+                        "hardcover",
+                        f"hc-{index}",
+                        ClaimKind.TITLE,
+                        title,
+                        scope=ClaimScope.WORK,
+                    ),
+                ),
                 authority="hardcover",
             )
             open_library = _provider(
-                "open-library", f"ol-{index}",
-                (_claim(
-                    "open-library", f"ol-{index}", ClaimKind.TITLE, title,
-                    scope=ClaimScope.WORK,
-                ),),
+                "open-library",
+                f"ol-{index}",
+                (
+                    _claim(
+                        "open-library",
+                        f"ol-{index}",
+                        ClaimKind.TITLE,
+                        title,
+                        scope=ClaimScope.WORK,
+                    ),
+                ),
                 authority="open_library",
             )
             report = MetadataReport.create(
                 target=TargetFacts("primary", "ebooks", item, snapshot.fields),
                 file=FileFacts(0, file_identity, f"{index + 20:064x}"),
-                local_claims=(isbn,), local_reasons=("opening_matter_isbn",),
-                providers=tuple(sorted(
-                    (google, hardcover, open_library),
-                    key=lambda value: value.provider,
-                )),
+                local_claims=(isbn,),
+                local_reasons=("opening_matter_isbn",),
+                providers=tuple(
+                    sorted(
+                        (google, hardcover, open_library),
+                        key=lambda value: value.provider,
+                    )
+                ),
             )
             repository.publish(report, lambda: True)
             proposal = evaluate_report(report)
@@ -336,9 +533,7 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
             admission = json.loads(repository.admit_review_case(proposal))
             assert "admitted" == admission["status"]
             repository.persist_shadow_outcome(admission["review_case_id"], 2)
-            package = repository.current_review_package(
-                "primary", "ebooks", item
-            )
+            package = repository.current_review_package("primary", "ebooks", item)
             assert package is not None
             assert package is not None
             predecessor_packages[item] = package
@@ -353,9 +548,22 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'complete','complete',0,0,0,"
                 "?,?,?,NULL,NULL,2)",
                 (
-                    work_id, scan_id, index, "primary", "ebooks", "library-1",
-                    item, file_identity, 1, "4" * 64, "2" * 64, 1,
-                    "3" * 64, report.report_id, package[0], package[2],
+                    work_id,
+                    scan_id,
+                    index,
+                    "primary",
+                    "ebooks",
+                    "library-1",
+                    item,
+                    file_identity,
+                    1,
+                    "4" * 64,
+                    "2" * 64,
+                    1,
+                    "3" * 64,
+                    report.report_id,
+                    package[0],
+                    package[2],
                 ),
             )
             reports.append(report)
@@ -363,16 +571,22 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
         repository.close()
 
         configuration = ApplicationConfiguration(
-            (TargetConnectionConfiguration(
-                "primary", "https://example.invalid", "/run/target-token"
-            ),),
-            (LibraryConfiguration(
-                "ebooks", "primary", "library-1", "ebook", "books",
-                ("google", "hardcover", "open-library"),
-            ),),
-            (MediaMountConfiguration(
-                "books", "/container", "/service", True
-            ),),
+            (
+                TargetConnectionConfiguration(
+                    "primary", "https://example.invalid", "/run/target-token"
+                ),
+            ),
+            (
+                LibraryConfiguration(
+                    "ebooks",
+                    "primary",
+                    "library-1",
+                    "ebook",
+                    "books",
+                    ("google", "hardcover", "open-library"),
+                ),
+            ),
+            (MediaMountConfiguration("books", "/container", "/service", True),),
             (
                 ProviderConnectionConfiguration(
                     "google", True, False, None, "google_books"
@@ -381,7 +595,11 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
                     "hardcover", True, False, "/run/hardcover-token", "hardcover"
                 ),
                 ProviderConnectionConfiguration(
-                    "open-library", True, False, None, "open_library",
+                    "open-library",
+                    True,
+                    False,
+                    None,
+                    "open_library",
                     "owner@example.invalid",
                 ),
             ),
@@ -391,25 +609,34 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
             ),
         )
         recovery.observe_failure(
-            connection="google", adapter="google_books", scope="ebooks",
-            generation=1, failure="transient", now=0,
+            connection="google",
+            adapter="google_books",
+            scope="ebooks",
+            generation=1,
+            failure="transient",
+            now=0,
         )
-        jobs = tuple(sorted(
-            (
-                job
-                for report in reports
-                for job in composition._provider_recovery_jobs(
-                    report,
-                    package=predecessor_packages[report.target.item],
-                    configuration=configuration,
-                    scope="ebooks",
-                )
-            ),
-            key=lambda job: (
-                job.connection, job.adapter, job.scope, job.generation,
-                job.member_id,
-            ),
-        ))
+        jobs = tuple(
+            sorted(
+                (
+                    job
+                    for report in reports
+                    for job in composition._provider_recovery_jobs(
+                        report,
+                        package=predecessor_packages[report.target.item],
+                        configuration=configuration,
+                        scope="ebooks",
+                    )
+                ),
+                key=lambda job: (
+                    job.connection,
+                    job.adapter,
+                    job.scope,
+                    job.generation,
+                    job.member_id,
+                ),
+            )
+        )
         assert 3 == recovery.enqueue_jobs(jobs)
 
         calls: list[ProviderStatus] = []
@@ -421,6 +648,7 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
         ]
         clock = [7_200]
         _TargetReader.snapshots = snapshots
+
         def google_provider(name, *_args, **_kwargs):
             return _GoogleProvider(name, outcomes.pop(0), calls)
 
@@ -430,21 +658,27 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
             patch.object(composition, "_IsolatedEpubInspector", _Inspector),
             patch.object(composition, "google_books_client", return_value=object()),
             patch.object(
-                composition, "GoogleBooksMetadataProvider",
+                composition,
+                "GoogleBooksMetadataProvider",
                 side_effect=google_provider,
             ),
             patch.object(
-                composition, "HardcoverMetadataProvider",
+                composition,
+                "HardcoverMetadataProvider",
                 side_effect=AssertionError("hardcover recovery reran"),
             ),
             patch.object(
-                composition, "OpenLibraryMetadataProvider",
+                composition,
+                "OpenLibraryMetadataProvider",
                 side_effect=AssertionError("open-library recovery reran"),
             ),
         ):
             supervisor = composition.create_review_pipeline(
-                configuration, database, root / "catalogue.sqlite",
-                root / "artifacts", provider_recovery=recovery,
+                configuration,
+                database,
+                root / "catalogue.sqlite",
+                root / "artifacts",
+                provider_recovery=recovery,
             )
             supervisor.recover_provider_once()
             check = open_repository(database)
@@ -452,9 +686,12 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
                 item: check.current_review_package("primary", "ebooks", item)
                 for item in snapshots
             }
-            assert 3 == check._connection.execute(
-                "SELECT count(*) FROM metadata_reports"
-            ).fetchone()[0]
+            assert (
+                3
+                == check._connection.execute(
+                    "SELECT count(*) FROM metadata_reports"
+                ).fetchone()[0]
+            )
             check.close()
             assert [ProviderStatus.RATE_LIMITED] == calls
             assert "waiting" == recovery.snapshot()[0].state
@@ -467,15 +704,12 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
                     supervisor.recover_provider_once()
             crash_check = open_repository(database)
             crash_packages = {
-                item: crash_check.current_review_package(
-                    "primary", "ebooks", item
-                )
+                item: crash_check.current_review_package("primary", "ebooks", item)
                 for item in snapshots
             }
             crash_check.close()
             assert 1 == sum(
-                crash_packages[item] != predecessor_packages[item]
-                for item in snapshots
+                crash_packages[item] != predecessor_packages[item] for item in snapshots
             )
             assert [ProviderStatus.RATE_LIMITED, ProviderStatus.CANDIDATES] == calls
             assert "checking" == recovery.snapshot()[0].state
@@ -495,11 +729,14 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
                 assert predecessor_packages[item] != package
                 assert predecessor_packages[item][1] != package[1]
                 assert package[4] in {"admitted", "superseded"}
-            assert 3 == check._connection.execute(
-                "SELECT count(*) FROM review_preparation_work "
-                "WHERE stage='complete' AND state='complete' "
-                "AND recovery_source_report_id IS NOT NULL"
-            ).fetchone()[0]
+            assert (
+                3
+                == check._connection.execute(
+                    "SELECT count(*) FROM review_preparation_work "
+                    "WHERE stage='complete' AND state='complete' "
+                    "AND recovery_source_report_id IS NOT NULL"
+                ).fetchone()[0]
+            )
             check.close()
             assert 4 == len(calls)
             assert 3 == calls.count(ProviderStatus.CANDIDATES)

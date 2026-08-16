@@ -184,8 +184,7 @@ def test_stall_diagnostic_exposes_only_a_safe_test_identifier() -> None:
     }
     session.pytest_runtest_logstart("node::safe", None)
     assert (
-        session.stalled_test(time.monotonic() + _STALL_DIAGNOSTIC_SECONDS)
-        == identifier
+        session.stalled_test(time.monotonic() + _STALL_DIAGNOSTIC_SECONDS) == identifier
     )
     session.pytest_runtest_logfinish("node::safe", None)
     assert session.stalled_test(time.monotonic() + _STALL_DIAGNOSTIC_SECONDS) is None
@@ -197,8 +196,7 @@ def test_stall_diagnostic_exposes_only_a_safe_test_identifier() -> None:
 def test_source_tiers_are_disjoint_and_own_every_public_test_file() -> None:
     root = Path(__file__).resolve().parents[2]
     identifiers = {
-        name: set(collect_cohort(root, name))
-        for name in ("fast", "browser", "slow")
+        name: set(collect_cohort(root, name)) for name in ("fast", "browser", "slow")
     }
     assert identifiers["fast"]
     assert identifiers["browser"]
@@ -213,9 +211,7 @@ def test_source_tiers_are_disjoint_and_own_every_public_test_file() -> None:
         for relative, pattern in COHORTS[cohort].discoveries
         for path in (root / relative).glob(pattern)
     }
-    expected_files = {
-        path.resolve() for path in (root / "tests").rglob("test_*.py")
-    }
+    expected_files = {path.resolve() for path in (root / "tests").rglob("test_*.py")}
     assert owned_files == expected_files
     # The engine is handed exactly those files, never a directory it would
     # then sweep on its own collection rules.
@@ -489,9 +485,7 @@ def test_native_case_identities_are_dotted_and_stall_safe() -> None:
     )
     with tempfile.TemporaryDirectory() as directory:
         targets = _module(Path(directory), body)
-        with patch(
-            "scripts.run_test_tier.cohort_targets", return_value=targets
-        ):
+        with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
             identifiers = collect_cohort(Path.cwd(), "fast")
     assert len(identifiers) == 4
     for identifier in identifiers:
@@ -501,8 +495,7 @@ def test_native_case_identities_are_dotted_and_stall_safe() -> None:
     leaves = {identifier.rsplit(".", 2)[-2:][0] for identifier in identifiers}
     assert "test_parameterized" in leaves
     assert any(
-        identifier.endswith("test_parameterized.beta_two")
-        for identifier in identifiers
+        identifier.endswith("test_parameterized.beta_two") for identifier in identifiers
     )
 
 
@@ -519,9 +512,7 @@ def test_colliding_case_identities_fail_closed() -> None:
     )
     with tempfile.TemporaryDirectory() as directory:
         targets = _module(Path(directory), body)
-        with patch(
-            "scripts.run_test_tier.cohort_targets", return_value=targets
-        ):
+        with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
             with pytest.raises(RuntimeError) as collision:
                 collect_cohort(Path.cwd(), "fast")
     assert str(collision.value) == "test_cohort_identity_collision"
@@ -556,9 +547,7 @@ def test_installed_plugins_cannot_change_a_cohort() -> None:
                 for argument in _PYTEST_ARGUMENTS
                 if argument != "--disable-plugin-autoload"
             )
-            with patch(
-                "scripts.run_test_tier._PYTEST_ARGUMENTS", permissive
-            ):
+            with patch("scripts.run_test_tier._PYTEST_ARGUMENTS", permissive):
                 _, hijacked = _cohort_summary(targets)
     assert hijacked["tests_run"] == 1
 

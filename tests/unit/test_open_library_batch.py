@@ -112,8 +112,7 @@ def test_preview_rejects_all_eligible_and_six_explicit_before_manifest(
         tuple(_entry(ordinal) for ordinal in range(1, 7)),
     )
     requested = tuple(
-        ("primary", "books", "library", f"item-{ordinal}")
-        for ordinal in range(1, 7)
+        ("primary", "books", "library", f"item-{ordinal}") for ordinal in range(1, 7)
     )
     selected = () if all_eligible else requested
     with (
@@ -150,8 +149,7 @@ def test_disabled_open_library_preserves_larger_foreground_batches() -> None:
         tuple(_entry(ordinal) for ordinal in range(1, 7)),
     )
     requested = tuple(
-        ("primary", "books", "library", f"item-{ordinal}")
-        for ordinal in range(1, 7)
+        ("primary", "books", "library", f"item-{ordinal}") for ordinal in range(1, 7)
     )
     with (
         tempfile.TemporaryDirectory() as directory,

@@ -54,21 +54,20 @@ def test_distribution_excludes_fixture_registry_generators_and_materialized_file
 
 
 def test_sdist_carries_the_frontend_sources_and_no_built_or_vendored_trees(
-    distribution: tuple[list[str], list[str]]
+    distribution: tuple[list[str], list[str]],
 ) -> None:
     _, sdist_names = distribution
     assert any(name.endswith("/frontend/package.json") for name in sdist_names)
     assert any(name.endswith("/scripts/build_frontend.py") for name in sdist_names)
     assert any(
-        name.endswith("/docs/reference/review-openapi-v1.json")
-        for name in sdist_names
+        name.endswith("/docs/reference/review-openapi-v1.json") for name in sdist_names
     )
     assert not any("frontend/src/generated" in name for name in sdist_names)
     assert not any("frontend/node_modules" in name for name in sdist_names)
 
 
 def test_wheel_carries_the_built_react_assets_and_neither_carries_source_maps(
-    distribution: tuple[list[str], list[str]]
+    distribution: tuple[list[str], list[str]],
 ) -> None:
     wheel_names, sdist_names = distribution
     assert any("interfaces/web/react_assets/assets/" in name for name in wheel_names)

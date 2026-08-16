@@ -96,7 +96,9 @@ class CatalogueEntry:
 
 
 class CatalogueReader(Protocol):
-    def read_library(self, connection: str, library: LibraryConfiguration, remaining: int) -> tuple[CatalogueEntry, ...]: ...
+    def read_library(
+        self, connection: str, library: LibraryConfiguration, remaining: int
+    ) -> tuple[CatalogueEntry, ...]: ...
 
 
 class CatalogueRepository(Protocol):
@@ -105,34 +107,61 @@ class CatalogueRepository(Protocol):
     def abort_refresh(self) -> None: ...
     def inspect(self, fingerprint: str) -> tuple[CatalogueEntry, ...]: ...
     def snapshot(self, fingerprint: str) -> CatalogueSnapshot: ...
-    def current_entry(self, generation: int, fingerprint: str, key: tuple[str, str, str, str]) -> CatalogueEntry | None: ...
-    def latest_entry(self, fingerprint: str, key: tuple[str, str, str, str]) -> CatalogueEntry | None: ...
+    def current_entry(
+        self, generation: int, fingerprint: str, key: tuple[str, str, str, str]
+    ) -> CatalogueEntry | None: ...
+    def latest_entry(
+        self, fingerprint: str, key: tuple[str, str, str, str]
+    ) -> CatalogueEntry | None: ...
     def close(self) -> None: ...
 
 
 def catalogue_fingerprint(configuration: ApplicationConfiguration) -> Fingerprint:
     """Hash the deliberately small, secret-free catalogue configuration projection."""
     referenced_connections = {item.connection for item in configuration.libraries}
-    referenced_mounts = {item.mount for item in configuration.libraries if item.mount is not None}
+    referenced_mounts = {
+        item.mount for item in configuration.libraries if item.mount is not None
+    }
     connections = {
-        value.name: {"name": value.name, "adapter": value.adapter, "endpoint": value.endpoint.rstrip("/")}
-        for value in configuration.connections if value.name in referenced_connections
+        value.name: {
+            "name": value.name,
+            "adapter": value.adapter,
+            "endpoint": value.endpoint.rstrip("/"),
+        }
+        for value in configuration.connections
+        if value.name in referenced_connections
     }
     mounts = {
-        value.name: {"name": value.name, "service_path": value.service_path, "container_path": value.container_path, "read_only": value.read_only}
-        for value in configuration.mounts if value.name in referenced_mounts
+        value.name: {
+            "name": value.name,
+            "service_path": value.service_path,
+            "container_path": value.container_path,
+            "read_only": value.read_only,
+        }
+        for value in configuration.mounts
+        if value.name in referenced_mounts
     }
     value = {
         "schema": "config-v5",
         "connections": [connections[name] for name in sorted(connections)],
         "libraries": [
-            {"name": item.name, "connection": item.connection, "library_id": item.library_id, "mount": item.mount}
+            {
+                "name": item.name,
+                "connection": item.connection,
+                "library_id": item.library_id,
+                "mount": item.mount,
+            }
             for item in configuration.libraries
         ],
         "mounts": [mounts[name] for name in sorted(mounts)],
-        "limits": {"target_response_bytes": configuration.limits.target_response_bytes, "timeout_seconds": configuration.limits.timeout_seconds},
+        "limits": {
+            "target_response_bytes": configuration.limits.target_response_bytes,
+            "timeout_seconds": configuration.limits.timeout_seconds,
+        },
     }
-    return Fingerprint.from_canonical_value(value, schema=SchemaVersion("catalogue-config-v1"))
+    return Fingerprint.from_canonical_value(
+        value, schema=SchemaVersion("catalogue-config-v1")
+    )
 
 
 def _release_refresh(repository: CatalogueRepository, failure: BaseException) -> None:
@@ -150,7 +179,9 @@ def _release_refresh(repository: CatalogueRepository, failure: BaseException) ->
 class RefreshCurrentCatalogue:
     """One deep refresh interface hiding bounded enumeration and publication."""
 
-    def __init__(self, reader: CatalogueReader, repository: CatalogueRepository) -> None:
+    def __init__(
+        self, reader: CatalogueReader, repository: CatalogueRepository
+    ) -> None:
         self._reader = reader
         self._repository = repository
 
@@ -160,7 +191,11 @@ class RefreshCurrentCatalogue:
         self._repository.acquire_refresh()
         try:
             for library in configuration.libraries:
-                entries.extend(self._reader.read_library(library.connection, library, 10_000 - len(entries)))
+                entries.extend(
+                    self._reader.read_library(
+                        library.connection, library, 10_000 - len(entries)
+                    )
+                )
             return self._repository.publish(fingerprint, tuple(entries))
         except Exception as error:
             # Cleanup only. The refresh lock is held across the reader and the
@@ -204,13 +239,9 @@ class RefreshCurrentCatalogue:
             discovered: list[CatalogueEntry] = []
             maximum = 10_000 - len(retained)
             discovered.extend(
-                self._reader.read_library(
-                    library.connection, library, maximum
-                )
+                self._reader.read_library(library.connection, library, maximum)
             )
-            return self._repository.publish(
-                fingerprint, retained + tuple(discovered)
-            )
+            return self._repository.publish(fingerprint, retained + tuple(discovered))
         except Exception as error:
             # Same held refresh lock and the same cleanup-only contract as
             # ``refresh``: release it on every failure, note a release that
@@ -218,12 +249,24 @@ class RefreshCurrentCatalogue:
             _release_refresh(self._repository, error)
             raise
 
-    def inspect(self, configuration: ApplicationConfiguration, *, exact: tuple[str, str, str, str] | None = None, facet: str | None = None, limit: int = 500) -> tuple[CatalogueEntry, ...]:
+    def inspect(
+        self,
+        configuration: ApplicationConfiguration,
+        *,
+        exact: tuple[str, str, str, str] | None = None,
+        facet: str | None = None,
+        limit: int = 500,
+    ) -> tuple[CatalogueEntry, ...]:
         if type(limit) is not int or not 1 <= limit <= 500:
             raise CatalogueError("catalogue limit exceeded")
         entries = self._repository.inspect(catalogue_fingerprint(configuration).digest)
         if exact is not None:
-            entries = tuple(item for item in entries if (item.connection, item.library, item.library_id, item.item_id) == exact)
+            entries = tuple(
+                item
+                for item in entries
+                if (item.connection, item.library, item.library_id, item.item_id)
+                == exact
+            )
             if len(entries) != 1:
                 raise CatalogueError("catalogue item is unavailable")
         if facet == "eligible":
@@ -234,7 +277,26 @@ class RefreshCurrentCatalogue:
             entries = tuple(item for item in entries if item.has_ebook)
         elif facet == "audio":
             entries = tuple(item for item in entries if item.has_audio)
-        return tuple(sorted(entries, key=lambda item: (item.connection, item.library, item.library_id, item.item_id)))[:limit]
+        return tuple(
+            sorted(
+                entries,
+                key=lambda item: (
+                    item.connection,
+                    item.library,
+                    item.library_id,
+                    item.item_id,
+                ),
+            )
+        )[:limit]
 
 
-__all__ = ["CatalogueBusyError", "CatalogueEntry", "CatalogueError", "CatalogueReader", "CatalogueRepository", "CatalogueStaleError", "RefreshCurrentCatalogue", "catalogue_fingerprint"]
+__all__ = [
+    "CatalogueBusyError",
+    "CatalogueEntry",
+    "CatalogueError",
+    "CatalogueReader",
+    "CatalogueRepository",
+    "CatalogueStaleError",
+    "RefreshCurrentCatalogue",
+    "catalogue_fingerprint",
+]

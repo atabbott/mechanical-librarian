@@ -119,9 +119,7 @@ class ReactAssetLoader:
                 expected = self._expected_build_identity
                 if expected is None and self._packaged:
                     expected = _installed_build_identity()
-                self._result = load_react_asset_bundle(
-                    self._root, expected
-                )
+                self._result = load_react_asset_bundle(self._root, expected)
             except (OSError, ReactAssetError, RecursionError, UnicodeError, ValueError):
                 self._result = ReactAssetRecovery()
         return self._result
@@ -139,9 +137,11 @@ def load_react_asset_bundle(
         value = json.loads(text)
     except (UnicodeError, json.JSONDecodeError) as error:
         raise ReactAssetError("manifest_invalid") from error
-    if text != json.dumps(
-        value, indent=2, separators=(",", ": "), ensure_ascii=False
-    ) + "\n":
+    if (
+        text
+        != json.dumps(value, indent=2, separators=(",", ": "), ensure_ascii=False)
+        + "\n"
+    ):
         raise ReactAssetError("manifest_invalid")
     if (
         type(value) is not dict

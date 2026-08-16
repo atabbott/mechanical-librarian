@@ -127,7 +127,6 @@ def run_epub_inspector_child(
     )
 
 
-
 def _run_epub_opening_protocol(
     descriptor: int,
     expected_source: Fingerprint,
@@ -153,7 +152,9 @@ def _run_epub_opening_protocol(
                 "schema": expected_source.schema.value,
             },
             "limits": limits.to_data(),
-            "logical_identity": expected_source.digest if logical_identity is None else logical_identity,
+            "logical_identity": expected_source.digest
+            if logical_identity is None
+            else logical_identity,
             "capability": "opening",
         },
         separators=(",", ":"),
@@ -166,14 +167,33 @@ def _run_epub_opening_protocol(
     selector = selectors.DefaultSelector()
     try:
         process = subprocess.Popen(
-            [sys.executable, "-I", "-B", "-m", "mechanical_librarian.bootstrap.epub_child", str(descriptor), str(control_read), str(os.getpid())],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            close_fds=True, pass_fds=(descriptor, control_read), env=_minimal_environment(),
-            cwd="/", start_new_session=True, shell=False,
+            [
+                sys.executable,
+                "-I",
+                "-B",
+                "-m",
+                "mechanical_librarian.bootstrap.epub_child",
+                str(descriptor),
+                str(control_read),
+                str(os.getpid()),
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            close_fds=True,
+            pass_fds=(descriptor, control_read),
+            env=_minimal_environment(),
+            cwd="/",
+            start_new_session=True,
+            shell=False,
         )
         os.close(control_read)
         control_read = -1
-        assert process.stdin is not None and process.stdout is not None and process.stderr is not None
+        assert (
+            process.stdin is not None
+            and process.stdout is not None
+            and process.stderr is not None
+        )
         process.stdin.write(context)
         process.stdin.close()
         os.set_blocking(process.stdout.fileno(), False)
@@ -197,7 +217,9 @@ def _run_epub_opening_protocol(
                 stream = cast("IO[bytes]", key.fileobj)
                 buffer, maximum = key.data
                 try:
-                    value = os.read(stream.fileno(), min(16_384, maximum + 1 - len(buffer)))
+                    value = os.read(
+                        stream.fileno(), min(16_384, maximum + 1 - len(buffer))
+                    )
                 except BlockingIOError:
                     continue
                 if not value:
@@ -213,10 +235,15 @@ def _run_epub_opening_protocol(
         if overflow:
             return failure(EpubInspectionOutcome.CHILD_FAILURE)
         return_code = process.wait(timeout=_TERMINATION_GRACE_SECONDS)
-        for stream, maximum, buffer in ((process.stdout, _STDOUT_LIMIT, stdout), (process.stderr, _STDERR_LIMIT, stderr)):
+        for stream, maximum, buffer in (
+            (process.stdout, _STDOUT_LIMIT, stdout),
+            (process.stderr, _STDERR_LIMIT, stderr),
+        ):
             while True:
                 try:
-                    value = os.read(stream.fileno(), min(16_384, maximum + 1 - len(buffer)))
+                    value = os.read(
+                        stream.fileno(), min(16_384, maximum + 1 - len(buffer))
+                    )
                 except BlockingIOError:
                     break
                 if not value:
@@ -227,7 +254,12 @@ def _run_epub_opening_protocol(
         if return_code == 71:
             return failure(EpubInspectionOutcome.RESOURCE_LIMIT)
         payload = bytes(stdout)
-        if return_code != 0 or stderr or not payload.endswith(b"\n") or payload.count(b"\n") != 1:
+        if (
+            return_code != 0
+            or stderr
+            or not payload.endswith(b"\n")
+            or payload.count(b"\n") != 1
+        ):
             return failure(EpubInspectionOutcome.CHILD_FAILURE)
         try:
             report = EpubInspection.from_json(payload[:-1].decode("utf-8", "strict"))

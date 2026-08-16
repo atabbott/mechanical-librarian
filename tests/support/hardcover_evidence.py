@@ -58,12 +58,17 @@ def hardcover_envelope(
 ) -> dict[str, object]:
     editions = [
         {
-            "id": row["id"], "book_id": row["book_id"],
-            "isbn_10": row.get("isbn_10"), "isbn_13": row.get("isbn_13"),
-            "asin": row.get("asin"), "title": row.get("title"),
-            "subtitle": row.get("subtitle"), "release_date": row.get("release_date"),
+            "id": row["id"],
+            "book_id": row["book_id"],
+            "isbn_10": row.get("isbn_10"),
+            "isbn_13": row.get("isbn_13"),
+            "asin": row.get("asin"),
+            "title": row.get("title"),
+            "subtitle": row.get("subtitle"),
+            "release_date": row.get("release_date"),
             "image": row.get("image"),
-            "publisher": row.get("publisher"), "language": row.get("language"),
+            "publisher": row.get("publisher"),
+            "language": row.get("language"),
             "contributions": row.get("contributions", []),
         }
         for row in rows

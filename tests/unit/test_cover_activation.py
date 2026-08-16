@@ -129,9 +129,7 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
             clock=lambda: consideration_now[0],
             policy=policy,
         )
-        repository.bind_current_cover_replay(
-            consideration_service.replay_reference
-        )
+        repository.bind_current_cover_replay(consideration_service.replay_reference)
         consideration = consideration_service.ensure(
             review_case_id, report.to_json(), proposal
         )
@@ -166,15 +164,10 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
                 decision,
                 cover_consideration_id=str(consideration["consideration_id"]),
             )
-        assert (
-            repository._connection.execute(
-                "SELECT count(*) FROM human_decisions"
-            ).fetchone()
-            == (0,)
-        )
-        repository._connection.execute(
-            "DROP TRIGGER synthetic_cover_outcome_failure"
-        )
+        assert repository._connection.execute(
+            "SELECT count(*) FROM human_decisions"
+        ).fetchone() == (0,)
+        repository._connection.execute("DROP TRIGGER synthetic_cover_outcome_failure")
         repository.record_human_decision(
             decision,
             cover_consideration_id=str(consideration["consideration_id"]),
@@ -199,9 +192,7 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         repository.bind_current_cover_replay(changed_profile.replay_reference)
         with pytest.raises(FieldEffectError, match="authority_binding"):
             authority.resolve(decision)
-        repository.bind_current_cover_replay(
-            consideration_service.replay_reference
-        )
+        repository.bind_current_cover_replay(consideration_service.replay_reference)
         snapshot = authority.resolve(decision)
         dependencies = PersistedEffectDependencies(repository)
         consent = FakeConsentCurrentness(
@@ -253,13 +244,11 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         )
         assert "stale" == stale.state
         assert repository.current_cover_consideration_document(review_case_id) is None
-        stale_detail = InspectCurrentReviewCase(
-            repository, consideration_service
-        ).run(review_case_id)
+        stale_detail = InspectCurrentReviewCase(repository, consideration_service).run(
+            review_case_id
+        )
         stale_cover = next(
-            field
-            for field in stale_detail["fields"]
-            if field["destination"] == "cover"
+            field for field in stale_detail["fields"] if field["destination"] == "cover"
         )
         assert stale_cover["human_decision"] is None
         assert stale_cover["cover_consideration"] is None
@@ -312,14 +301,13 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         ) == Counter(event["kind"] for event in events)
         occurred_at = [cast(int, event["occurred_at"]) for event in events]
         assert sorted(occurred_at, reverse=True) == occurred_at
-        history = InspectCurrentReviewCase(
-            repository, consideration_service
-        ).history(review_case_id)
+        history = InspectCurrentReviewCase(repository, consideration_service).history(
+            review_case_id
+        )
         selected_history = next(
             item
             for item in history["items"]
-            if item["kind"] == "selected"
-            and not item["consideration"]["current"]
+            if item["kind"] == "selected" and not item["consideration"]["current"]
         )
         assert not selected_history["consideration"]["current"]
         assert selected_value == selected_history["decision"]["selected_value"]
@@ -335,11 +323,8 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
             "target_fingerprint",
         } == set(selected_history["decision"])
         assert (
-            successor["candidates"]
-            == selected_history["consideration"]["candidates"]
+            successor["candidates"] == selected_history["consideration"]["candidates"]
         )
         assert successor["policy"] == selected_history["consideration"]["policy"]
-        assert repository.field_effect_dependencies_current(
-            snapshot.dependency_digests
-        )
+        assert repository.field_effect_dependencies_current(snapshot.dependency_digests)
         repository.close()

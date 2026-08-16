@@ -32,13 +32,15 @@ from .cover_packet_semantics import bind_cover_packet, canonical_packet_json
 
 SCHEMA_VERSION = "cover-policy-report-v1"
 POLICY_SCHEMA_VERSION = "cover-policy-v1"
-_IDENTITY_OUTCOMES = frozenset({
-    "conflict",
-    "plausible_match",
-    "unknown",
-    "verified_manifestation_match",
-    "verified_work_match",
-})
+_IDENTITY_OUTCOMES = frozenset(
+    {
+        "conflict",
+        "plausible_match",
+        "unknown",
+        "verified_manifestation_match",
+        "verified_work_match",
+    }
+)
 _REFERENCE = re.compile(r"[a-z][a-z0-9_]{0,63}_[0-9a-f]{64}")
 
 
@@ -74,7 +76,9 @@ class CoverPolicy:
 
     @property
     def reference(self) -> str:
-        return "cover_policy_" + hashlib.sha256(self.document.encode("utf-8")).hexdigest()
+        return (
+            "cover_policy_" + hashlib.sha256(self.document.encode("utf-8")).hexdigest()
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,41 +174,28 @@ def adjudicate_cover_policy(
     # ``_observation_rows`` applies the same admission to "observations".
     by_reference = {
         value["candidate_reference"]: value
-        for value in cast(
-            "list[dict[str, object]]", observations["observations"]
-        )
+        for value in cast("list[dict[str, object]]", observations["observations"])
     }
     ambiguous = False
     acceptable: list[str] = []
     for reference in eligible:
         value = by_reference[reference]
         excluded = False
-        if (
-            policy.avoid_promotional_text
-            and value["promotional_text"] == "present"
-        ):
+        if policy.avoid_promotional_text and value["promotional_text"] == "present":
             reasons.add("promotional_text_excluded")
             excluded = True
-        if (
-            policy.avoid_tie_in_branding
-            and value["tie_in_branding"] == "present"
-        ):
+        if policy.avoid_tie_in_branding and value["tie_in_branding"] == "present":
             reasons.add("tie_in_branding_excluded")
             excluded = True
         if excluded:
             continue
         if (
-            policy.avoid_promotional_text
-            and value["promotional_text"] == "unknown"
-        ) or (
-            policy.avoid_tie_in_branding
-            and value["tie_in_branding"] == "unknown"
-        ):
+            policy.avoid_promotional_text and value["promotional_text"] == "unknown"
+        ) or (policy.avoid_tie_in_branding and value["tie_in_branding"] == "unknown"):
             ambiguous = True
         acceptable.append(reference)
     if policy.prefer_minimal_composition and any(
-        by_reference[reference]["composition"] == "unknown"
-        for reference in acceptable
+        by_reference[reference]["composition"] == "unknown" for reference in acceptable
     ):
         ambiguous = True
     if ambiguous:
@@ -306,7 +297,10 @@ def _identity_rows(
                 cast("str", packet_reference),
                 expected[row["candidate_reference"]],
             )
-            or any(_REFERENCE.fullmatch(str(item)) is None for item in row["evidence_references"])
+            or any(
+                _REFERENCE.fullmatch(str(item)) is None
+                for item in row["evidence_references"]
+            )
             or any(type(item) is not str for item in row["reasons"])
         ):
             raise ValueError("cover identity report is invalid")
@@ -332,25 +326,30 @@ def _observation_rows(
         if schema_version == LEGACY_SCHEMA_VERSION
         else hashlib.sha256(INSTRUCTION.encode("utf-8")).hexdigest()
     )
-    expected_schema = hashlib.sha256(_output_schema(references).encode("utf-8")).hexdigest()
+    expected_schema = hashlib.sha256(
+        _output_schema(references).encode("utf-8")
+    ).hexdigest()
     if type(profile_payload) is not bytes:
         raise ValueError("cover observation profile is invalid")
     expected_observer = _observer_reference(
         profile_payload, expected_instruction, expected_schema
     )
     valid_shape = (
-        (
-            schema_version == LEGACY_SCHEMA_VERSION
-            and set(value) == {
-                "cover_packet_reference", "instruction_sha256", "observations",
-                "observer_reference", "output_schema_sha256", "schema_version",
-                "taxonomy_reference",
-            }
-        )
-        or (
-            schema_version == OBSERVATION_SCHEMA_VERSION
-            and set(value)
-            == {
+        schema_version == LEGACY_SCHEMA_VERSION
+        and set(value)
+        == {
+            "cover_packet_reference",
+            "instruction_sha256",
+            "observations",
+            "observer_reference",
+            "output_schema_sha256",
+            "schema_version",
+            "taxonomy_reference",
+        }
+    ) or (
+        schema_version == OBSERVATION_SCHEMA_VERSION
+        and set(value)
+        == {
             "attempt_evidence",
             "cover_packet_reference",
             "instruction_sha256",
@@ -359,13 +358,13 @@ def _observation_rows(
             "output_schema_sha256",
             "schema_version",
             "taxonomy_reference",
-            }
-            and _attempt_evidence(value["attempt_evidence"])
-        )
+        }
+        and _attempt_evidence(value["attempt_evidence"])
     )
     if (
         not valid_shape
-        or value["schema_version"] not in {LEGACY_SCHEMA_VERSION, OBSERVATION_SCHEMA_VERSION}
+        or value["schema_version"]
+        not in {LEGACY_SCHEMA_VERSION, OBSERVATION_SCHEMA_VERSION}
         or value["cover_packet_reference"] != packet_reference
         or value["taxonomy_reference"] != TAXONOMY_REFERENCE
         or value["observer_reference"] != expected_observer
@@ -420,13 +419,17 @@ def _attempt_evidence(value: object) -> bool:
         if index == 0 and len(value) == 2:
             if (
                 set(attempt)
-                != {"diagnostic_bytes", "diagnostic_sha256", "dispatched", "failure_code"}
+                != {
+                    "diagnostic_bytes",
+                    "diagnostic_sha256",
+                    "dispatched",
+                    "failure_code",
+                }
                 or attempt["failure_code"] != "local_cli_abort"
                 or type(attempt["diagnostic_bytes"]) is not int
                 or not 1 <= attempt["diagnostic_bytes"] <= 2_147_483_647
                 or type(attempt["diagnostic_sha256"]) is not str
-                or re.fullmatch(r"[0-9a-f]{64}", attempt["diagnostic_sha256"])
-                is None
+                or re.fullmatch(r"[0-9a-f]{64}", attempt["diagnostic_sha256"]) is None
             ):
                 return False
         elif set(attempt) != {"dispatched"}:
@@ -451,7 +454,9 @@ def _report(
         "acceptable_candidate_references": list(acceptable),
         "cover_packet_reference": packet_reference,
         "identity_classifier_reference": classifier_reference,
-        "identity_report_sha256": hashlib.sha256(identity_document.encode("utf-8")).hexdigest(),
+        "identity_report_sha256": hashlib.sha256(
+            identity_document.encode("utf-8")
+        ).hexdigest(),
         "observation_report_sha256": (
             hashlib.sha256(observation_document.encode("utf-8")).hexdigest()
             if observation_document is not None
@@ -475,7 +480,10 @@ def _required_reference(value: object) -> str:
 
 def _load_object(document: str, label: str) -> dict[str, object]:
     try:
-        if type(document) is not str or not 2 <= len(document.encode("utf-8")) <= 1_048_576:
+        if (
+            type(document) is not str
+            or not 2 <= len(document.encode("utf-8")) <= 1_048_576
+        ):
             raise ValueError
         value = json.loads(
             document,
@@ -485,7 +493,13 @@ def _load_object(document: str, label: str) -> dict[str, object]:
         if type(value) is not dict or canonical_packet_json(value) != document:
             raise ValueError
         return value
-    except (json.JSONDecodeError, RecursionError, TypeError, UnicodeError, ValueError) as error:
+    except (
+        json.JSONDecodeError,
+        RecursionError,
+        TypeError,
+        UnicodeError,
+        ValueError,
+    ) as error:
         raise ValueError(f"{label} document is invalid") from error
 
 

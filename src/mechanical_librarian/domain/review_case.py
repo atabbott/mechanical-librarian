@@ -82,18 +82,14 @@ class _FrozenJsonList(list[object]):
 
 def _freeze_json(value: object) -> object:
     if type(value) is dict:
-        return _FrozenJsonDict(
-            {key: _freeze_json(item) for key, item in value.items()}
-        )
+        return _FrozenJsonDict({key: _freeze_json(item) for key, item in value.items()})
     if type(value) is list:
         return _FrozenJsonList([_freeze_json(item) for item in value])
     return value
 
 
 def _freeze_json_object(value: dict[str, object]) -> dict[str, object]:
-    return _FrozenJsonDict(
-        {key: _freeze_json(item) for key, item in value.items()}
-    )
+    return _FrozenJsonDict({key: _freeze_json(item) for key, item in value.items()})
 
 
 def _thaw_json(value: object) -> object:
@@ -111,6 +107,7 @@ def _thaw_json_object(value: dict[str, object]) -> dict[str, object]:
 @dataclass(frozen=True, slots=True)
 class ReviewAdmissionResult:
     """Closed canonical outcome of one review-admission attempt."""
+
     status: str
     review_case_id: str | None
     schema_version: str = REVIEW_ADMISSION_SCHEMA
@@ -161,6 +158,7 @@ class ReviewAdmissionResult:
 @dataclass(frozen=True, slots=True)
 class ReviewAdmissionFailure:
     """Closed redacted failure result for untrusted admission failures."""
+
     code: str
     schema_version: str = "review-admission-failure-v1"
 
@@ -178,6 +176,7 @@ class ReviewAdmissionFailure:
 @dataclass(frozen=True, slots=True)
 class ReviewTransition:
     """Immutable attributed lineage checkpoint transition."""
+
     connection: str
     library: str
     item: str
@@ -194,10 +193,20 @@ class ReviewTransition:
         if (
             type(self.checkpoint) is not int
             or self.checkpoint < 1
-            or self.actor not in {"review-admission-v1", "review-preparation-v1", "policy-activation-v1"}
+            or self.actor
+            not in {
+                "review-admission-v1",
+                "review-preparation-v1",
+                "policy-activation-v1",
+            }
             or self.kind not in _TRANSITION_KIND
-            or self.reason not in {
-                "actionable", "nonactionable", "absent", "ineligible", "policy_changed"
+            or self.reason
+            not in {
+                "actionable",
+                "nonactionable",
+                "absent",
+                "ineligible",
+                "policy_changed",
             }
             or type(self.proposal_set_id) is not str
             or _PROPOSAL_SET_ID.fullmatch(self.proposal_set_id) is None
@@ -209,10 +218,7 @@ class ReviewTransition:
             )
             or any(
                 value is not None
-                and (
-                    type(value) is not str
-                    or _CASE_ID.fullmatch(value) is None
-                )
+                and (type(value) is not str or _CASE_ID.fullmatch(value) is None)
                 for value in (
                     self.from_review_case_id,
                     self.to_review_case_id,
@@ -230,22 +236,15 @@ class ReviewTransition:
             raise ReviewCaseValueError("review transition is invalid")
         if self.kind == "retired" and (
             self.to_review_case_id is not None
-            or (
-                self.actor == "review-admission-v1"
-                and self.reason != "nonactionable"
-            )
+            or (self.actor == "review-admission-v1" and self.reason != "nonactionable")
             or (
                 self.actor == "review-preparation-v1"
-                and (
-                    self.reason != "ineligible"
-                    or self.from_review_case_id is None
-                )
+                and (self.reason != "ineligible" or self.from_review_case_id is None)
             )
             or (
                 self.actor == "policy-activation-v1"
                 and (
-                    self.reason != "policy_changed"
-                    or self.from_review_case_id is None
+                    self.reason != "policy_changed" or self.from_review_case_id is None
                 )
             )
         ):
@@ -263,19 +262,31 @@ class ReviewTransition:
         ):
             raise ReviewCaseValueError("review transition is invalid")
         if self.actor == "review-admission-v1" and (
-            (self.kind in {"admitted", "no_case"})
-            != (self.from_review_case_id is None)
+            (self.kind in {"admitted", "no_case"}) != (self.from_review_case_id is None)
         ):
             raise ReviewCaseValueError("review transition is invalid")
 
     @property
     def transition_id(self) -> str:
-        return "review_transition_" + hashlib.sha256(
-            _canonical(self.to_data()).encode("utf-8")
-        ).hexdigest()
+        return (
+            "review_transition_"
+            + hashlib.sha256(_canonical(self.to_data()).encode("utf-8")).hexdigest()
+        )
 
     def to_data(self) -> dict[str, object]:
-        return {"actor": self.actor, "checkpoint": self.checkpoint, "connection": self.connection, "from_review_case_id": self.from_review_case_id, "item": self.item, "kind": self.kind, "library": self.library, "proposal_set_id": self.proposal_set_id, "reason": self.reason, "report_id": self.report_id, "to_review_case_id": self.to_review_case_id}
+        return {
+            "actor": self.actor,
+            "checkpoint": self.checkpoint,
+            "connection": self.connection,
+            "from_review_case_id": self.from_review_case_id,
+            "item": self.item,
+            "kind": self.kind,
+            "library": self.library,
+            "proposal_set_id": self.proposal_set_id,
+            "reason": self.reason,
+            "report_id": self.report_id,
+            "to_review_case_id": self.to_review_case_id,
+        }
 
     def to_json(self) -> str:
         return _canonical(self.to_data())
@@ -310,9 +321,7 @@ class ReviewCase:
             target = TargetFacts.from_data(_thaw_json_object(self._target))
         except Exception as error:
             raise ReviewCaseValueError("review case proposal is invalid") from error
-        target_fields = {
-            value.destination: value for value in target.fields
-        }
+        target_fields = {value.destination: value for value in target.fields}
         if (
             proposal.proposal_set_id != self.proposal_set_id
             or proposal.report_id != self.report_id
@@ -323,9 +332,9 @@ class ReviewCase:
             or any(
                 selection.target_field_fingerprint
                 != hashlib.sha256(
-                    _canonical(
-                        target_fields[selection.destination].to_data()
-                    ).encode("utf-8")
+                    _canonical(target_fields[selection.destination].to_data()).encode(
+                        "utf-8"
+                    )
                 ).hexdigest()
                 for combination in proposal.bibliographic_combinations
                 for selection in combination.selections
@@ -358,21 +367,64 @@ class ReviewCase:
             raise ReviewCaseValueError("review case binding is invalid")
         results = tuple(value.to_data() for value in proposal_set.results)
         # `ProposalSet.to_data` always emits "relationships" as a JSON object.
-        relationships = cast("dict[str, object]", proposal_set.to_data()["relationships"])
-        data = cls._data(proposal_set.proposal_set_id, report.report_id, report.target.to_data(), report.target.fingerprint, report.file.identity, results, relationships, proposal_set.to_json())
-        identity = "review_case_" + hashlib.sha256(
-            _canonical(data).encode("utf-8")
-        ).hexdigest()
-        return cls(identity, proposal_set.proposal_set_id, report.report_id, report.target.to_data(), report.target.fingerprint, report.file.identity, results, relationships, proposal_set.to_json())
+        relationships = cast(
+            "dict[str, object]", proposal_set.to_data()["relationships"]
+        )
+        data = cls._data(
+            proposal_set.proposal_set_id,
+            report.report_id,
+            report.target.to_data(),
+            report.target.fingerprint,
+            report.file.identity,
+            results,
+            relationships,
+            proposal_set.to_json(),
+        )
+        identity = (
+            "review_case_"
+            + hashlib.sha256(_canonical(data).encode("utf-8")).hexdigest()
+        )
+        return cls(
+            identity,
+            proposal_set.proposal_set_id,
+            report.report_id,
+            report.target.to_data(),
+            report.target.fingerprint,
+            report.file.identity,
+            results,
+            relationships,
+            proposal_set.to_json(),
+        )
 
     @staticmethod
-    def _data(proposal_set_id: str, report_id: str, target: dict[str, object], target_fingerprint: str, file_identity: str, results: tuple[dict[str, object], ...], relationships: dict[str, object], proposal_document: str) -> dict[str, object]:
-        return {"disposition": "undecided", "proposal_set_id": proposal_set_id, "report_id": report_id, "target": _thaw_json_object(target),
-                "target_fingerprint": target_fingerprint, "file_identity": file_identity,
-                "results": [_thaw_json_object(value) for value in results], "relationships": _thaw_json_object(relationships), "proposal_document": proposal_document, "schema_version": REVIEW_CASE_SCHEMA}
+    def _data(
+        proposal_set_id: str,
+        report_id: str,
+        target: dict[str, object],
+        target_fingerprint: str,
+        file_identity: str,
+        results: tuple[dict[str, object], ...],
+        relationships: dict[str, object],
+        proposal_document: str,
+    ) -> dict[str, object]:
+        return {
+            "disposition": "undecided",
+            "proposal_set_id": proposal_set_id,
+            "report_id": report_id,
+            "target": _thaw_json_object(target),
+            "target_fingerprint": target_fingerprint,
+            "file_identity": file_identity,
+            "results": [_thaw_json_object(value) for value in results],
+            "relationships": _thaw_json_object(relationships),
+            "proposal_document": proposal_document,
+            "schema_version": REVIEW_CASE_SCHEMA,
+        }
 
     def _expected_id(self) -> str:
-        return "review_case_" + hashlib.sha256(_canonical(self.to_data()).encode("utf-8")).hexdigest()
+        return (
+            "review_case_"
+            + hashlib.sha256(_canonical(self.to_data()).encode("utf-8")).hexdigest()
+        )
 
     @property
     def target(self) -> dict[str, object]:
@@ -421,8 +473,7 @@ class ReviewCase:
             bibliographic_destinations
             if any(
                 result["destination"] in bibliographic_destinations
-                and result["reasons"]
-                == ["no_safe_bibliographic_combination"]
+                and result["reasons"] == ["no_safe_bibliographic_combination"]
                 for result in self._results
             )
             else set()
@@ -430,9 +481,9 @@ class ReviewCase:
         return tuple(
             {
                 "destination": result["destination"],
-                "manual_required": result["destination"]
-                in manual_destinations,
-                "proposal_id": "review_proposal_" + hashlib.sha256(
+                "manual_required": result["destination"] in manual_destinations,
+                "proposal_id": "review_proposal_"
+                + hashlib.sha256(
                     _canonical(
                         {
                             "destination": result["destination"],
@@ -447,7 +498,16 @@ class ReviewCase:
         )
 
     def to_data(self) -> dict[str, object]:
-        return self._data(self.proposal_set_id, self.report_id, self._target, self.target_fingerprint, self.file_identity, self._results, self._relationships, self.proposal_document)
+        return self._data(
+            self.proposal_set_id,
+            self.report_id,
+            self._target,
+            self.target_fingerprint,
+            self.file_identity,
+            self._results,
+            self._relationships,
+            self.proposal_document,
+        )
 
     def to_json(self) -> str:
         return _canonical(self.to_data())
@@ -455,10 +515,25 @@ class ReviewCase:
     @classmethod
     def from_json(cls, serialized: str) -> Self:
         try:
-            if type(serialized) is not str or not serialized or len(serialized.encode("utf-8")) > MAX_REVIEW_CASE_BYTES:
+            if (
+                type(serialized) is not str
+                or not serialized
+                or len(serialized.encode("utf-8")) > MAX_REVIEW_CASE_BYTES
+            ):
                 raise ValueError
             raw = json.loads(serialized, object_pairs_hook=_unique_object)
-            if type(raw) is not dict or set(raw) != {"disposition","proposal_set_id","report_id","target","target_fingerprint","file_identity","results","relationships","proposal_document","schema_version"}:
+            if type(raw) is not dict or set(raw) != {
+                "disposition",
+                "proposal_set_id",
+                "report_id",
+                "target",
+                "target_fingerprint",
+                "file_identity",
+                "results",
+                "relationships",
+                "proposal_document",
+                "schema_version",
+            }:
                 raise ValueError
             value = cls.create_from_data(raw)
         except (TypeError, ValueError, json.JSONDecodeError) as error:
@@ -469,7 +544,13 @@ class ReviewCase:
 
     @classmethod
     def create_from_data(cls, raw: dict[str, object]) -> Self:
-        if raw.get("schema_version") != REVIEW_CASE_SCHEMA or raw.get("disposition") != "undecided" or type(raw.get("results")) is not list or type(raw.get("target")) is not dict or type(raw.get("relationships")) is not dict:
+        if (
+            raw.get("schema_version") != REVIEW_CASE_SCHEMA
+            or raw.get("disposition") != "undecided"
+            or type(raw.get("results")) is not list
+            or type(raw.get("target")) is not dict
+            or type(raw.get("relationships")) is not dict
+        ):
             raise ReviewCaseValueError("review case is invalid")
         try:
             target = TargetFacts.from_data(raw["target"])
@@ -479,11 +560,36 @@ class ReviewCase:
         results = tuple(cast("list[object]", raw["results"]))
         if any(type(value) is not dict for value in results):
             raise ReviewCaseValueError("review case is invalid")
-        if target.to_data() != raw["target"] or target.fingerprint != raw["target_fingerprint"]:
+        if (
+            target.to_data() != raw["target"]
+            or target.fingerprint != raw["target_fingerprint"]
+        ):
             raise ReviewCaseValueError("review case target is invalid")
-        data = cls._data(raw["proposal_set_id"], raw["report_id"], raw["target"], raw["target_fingerprint"], raw["file_identity"], results, raw["relationships"], raw["proposal_document"])  # type: ignore[arg-type]
-        identity = "review_case_" + hashlib.sha256(_canonical(data).encode("utf-8")).hexdigest()
-        return cls(identity, raw["proposal_set_id"], raw["report_id"], raw["target"], raw["target_fingerprint"], raw["file_identity"], results, raw["relationships"], raw["proposal_document"])  # type: ignore[arg-type]
+        data = cls._data(
+            raw["proposal_set_id"],
+            raw["report_id"],
+            raw["target"],
+            raw["target_fingerprint"],
+            raw["file_identity"],
+            results,
+            raw["relationships"],
+            raw["proposal_document"],
+        )  # type: ignore[arg-type]
+        identity = (
+            "review_case_"
+            + hashlib.sha256(_canonical(data).encode("utf-8")).hexdigest()
+        )
+        return cls(
+            identity,
+            raw["proposal_set_id"],
+            raw["report_id"],
+            raw["target"],
+            raw["target_fingerprint"],
+            raw["file_identity"],
+            results,
+            raw["relationships"],
+            raw["proposal_document"],
+        )  # type: ignore[arg-type]
 
 
 def is_actionable(proposal_set: ProposalSet) -> bool:
@@ -511,4 +617,15 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
-__all__ = ["MAX_REVIEW_CASE_BYTES", "REVIEW_ADMISSION_SCHEMA", "REVIEW_CASE_SCHEMA", "ReviewAdmissionFailure", "ReviewAdmissionIncompatibleError", "ReviewAdmissionResult", "ReviewAdmissionStaleError", "ReviewCase", "ReviewCaseValueError", "is_actionable"]
+__all__ = [
+    "MAX_REVIEW_CASE_BYTES",
+    "REVIEW_ADMISSION_SCHEMA",
+    "REVIEW_CASE_SCHEMA",
+    "ReviewAdmissionFailure",
+    "ReviewAdmissionIncompatibleError",
+    "ReviewAdmissionResult",
+    "ReviewAdmissionStaleError",
+    "ReviewCase",
+    "ReviewCaseValueError",
+    "is_actionable",
+]

@@ -79,9 +79,22 @@ def _certificate(root: Path) -> tuple[Path, Path]:
     key = root / "browser-test.key"
     subprocess.run(
         [
-            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-            "-keyout", str(key), "-out", str(certificate), "-days", "1",
-            "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(key),
+            "-out",
+            str(certificate),
+            "-days",
+            "1",
+            "-subj",
+            "/CN=127.0.0.1",
+            "-addext",
+            "subjectAltName=IP:127.0.0.1",
         ],
         check=True,
         capture_output=True,
@@ -94,7 +107,10 @@ def _report():
         current_title="Mistborn <img src=x onerror=alert(1)>",
         providers=(
             _bibliographic_source(
-                "catalogue", "edition-1", titles=(), series="Mistborn",
+                "catalogue",
+                "edition-1",
+                titles=(),
+                series="Mistborn",
             ),
         ),
     )
@@ -102,8 +118,14 @@ def _report():
 
 @contextmanager
 def _server(
-    *, database: Path, hash_path: Path, certificate: Path, key: Path, port: int,
-    cover: bool = False, automatic_fixture: bool = False,
+    *,
+    database: Path,
+    hash_path: Path,
+    certificate: Path,
+    key: Path,
+    port: int,
+    cover: bool = False,
+    automatic_fixture: bool = False,
 ):
     repository = open_repository(database, create=True, cross_thread=True)
     cover_considerations = None
@@ -138,14 +160,20 @@ def _server(
             local_reasons=base.local_reasons,
             providers=(
                 _bibliographic_source(
-                    "catalogue", "edition-1", titles=("Synthetic title revised",),
+                    "catalogue",
+                    "edition-1",
+                    titles=("Synthetic title revised",),
                     series="Mistborn",
                 ),
-            ) if automatic_fixture else base.providers,
+            )
+            if automatic_fixture
+            else base.providers,
             cover_sources=base.cover_sources,
         )
         artifacts = CoverArtifactStore(database.parent / "cover-artifacts")
-        for index, (source, payload) in enumerate(zip(sources, payloads, strict=True), 1):
+        for index, (source, payload) in enumerate(
+            zip(sources, payloads, strict=True), 1
+        ):
             assert source.artifact is not None
             artifacts.stage(source.artifact, f"original-{index}".encode(), payload)
         cover_considerations = CoverConsiderationService(
@@ -177,9 +205,7 @@ def _server(
         clock=lambda: 1_000,
         close_repository=True,
         field_application=_BrowserActivityApplication(),
-        react_asset_loader=ReactAssetLoader(
-            Path(os.environ["ML_REACT_ASSET_DIR"])
-        ),
+        react_asset_loader=ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
         cover_considerations=cover_considerations,
     )
     server = uvicorn.Server(
@@ -253,29 +279,36 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.on(
                 "console",
-                lambda message: errors.append(message.text)
-                if message.type == "error"
-                else None,
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
             )
-            with _server(
-                database=root / "review.sqlite3",
-                hash_path=hash_path,
-                certificate=certificate,
-                key=key,
-                port=_unused_port(),
-            ) as (origin, case_id), _closing_context(context):
+            with (
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=_unused_port(),
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
                 _login(page, origin)
                 try:
-                    page.get_by_role("heading", name="Every work, with exceptions first").wait_for(
-                        timeout=8_000
-                    )
+                    page.get_by_role(
+                        "heading", name="Every work, with exceptions first"
+                    ).wait_for(timeout=8_000)
                 except PlaywrightTimeoutError:
                     document = page.request.get(page.url)
-                    pytest.fail(f"url={page.url!r}; errors={errors!r}; "
-                    f"status={document.status}; html={document.text()[:1200]!r}; "
-                    f"dom={page.content()[:1200]!r}")
+                    pytest.fail(
+                        f"url={page.url!r}; errors={errors!r}; "
+                        f"status={document.status}; html={document.text()[:1200]!r}; "
+                        f"dom={page.content()[:1200]!r}"
+                    )
                 page.set_viewport_size({"width": 1440, "height": 900})
-                assert page.evaluate("() => document.documentElement.scrollWidth") <= 1440
+                assert (
+                    page.evaluate("() => document.documentElement.scrollWidth") <= 1440
+                )
                 page.set_viewport_size({"width": 390, "height": 844})
                 documents = 0
 
@@ -295,16 +328,25 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.get_by_role("button", name="Curation").click()
                 page.wait_for_url("**/policy?section=curation")
                 expect(page.locator("#policy-curation")).to_be_focused()
-                policy_chapters = page.get_by_role(
-                    "navigation", name="Policy chapters"
+                policy_chapters = page.get_by_role("navigation", name="Policy chapters")
+                assert policy_chapters.locator("button b").all_inner_texts() == [
+                    "0",
+                    "0",
+                    "0",
+                    "0",
+                ]
+                assert (
+                    policy_chapters.evaluate(
+                        "node => getComputedStyle(node).gridTemplateColumns.split(' ').length"
+                    )
+                    == 2
                 )
-                assert policy_chapters.locator("button b").all_inner_texts() == ["0", "0", "0", "0"]
-                assert policy_chapters.evaluate(
-                    "node => getComputedStyle(node).gridTemplateColumns.split(' ').length"
-                ) == 2
-                assert policy_chapters.get_by_role(
-                    "button", name="Curation"
-                ).get_attribute("aria-describedby") == "policy-curation-changes"
+                assert (
+                    policy_chapters.get_by_role(
+                        "button", name="Curation"
+                    ).get_attribute("aria-describedby")
+                    == "policy-curation-changes"
+                )
                 page.get_by_text(
                     "Choose how metadata is stored and when you want to review it.",
                     exact=True,
@@ -316,11 +358,13 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                     exact=True,
                 )
                 assert unsupported_description.count() == 1
-                assert page.evaluate("() => document.documentElement.scrollWidth") <= 390, (page.evaluate(
+                assert (
+                    page.evaluate("() => document.documentElement.scrollWidth") <= 390
+                ), page.evaluate(
                     """() => [...document.querySelectorAll('*')]
                         .filter(node => node.scrollWidth > node.clientWidth)
                         .map(node => [node.tagName, node.className, node.textContent?.slice(0, 40), node.clientWidth, node.scrollWidth, getComputedStyle(node).gridTemplateColumns])"""
-                ))
+                )
                 genres = page.get_by_role("region", name="Genres")
                 representation = genres.get_by_role(
                     "combobox", name="Genres representation"
@@ -331,9 +375,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.keyboard.press("Escape")
                 expect(representation).to_be_focused()
                 representation.click()
-                menu_box = page.get_by_role(
-                    "listbox", name="Genres representation"
-                )
+                menu_box = page.get_by_role("listbox", name="Genres representation")
                 expect(menu_box).to_have_css("scale", "none")
                 menu_box = menu_box.bounding_box()  # type: ignore[assignment]  # reason: the name is deliberately rebound from the Locator to its measured bounding box, which the next lines assert on.
                 assert menu_box is not None
@@ -348,16 +390,27 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                     ".cm-dropdown-trigger, .cm-policy-finish-actions button"
                 ).all():
                     assert control.bounding_box()["height"] >= 44
-                assert page.locator(".cm-policy-field").first.evaluate(
-                    "node => getComputedStyle(node).gridTemplateColumns.split(' ').length"
-                ) == 1
-                assert page.locator(".cm-policy-finish").evaluate(
-                    "node => getComputedStyle(node).position"
-                ) == "static"
+                assert (
+                    page.locator(".cm-policy-field").first.evaluate(
+                        "node => getComputedStyle(node).gridTemplateColumns.split(' ').length"
+                    )
+                    == 1
+                )
+                assert (
+                    page.locator(".cm-policy-finish").evaluate(
+                        "node => getComputedStyle(node).position"
+                    )
+                    == "static"
+                )
                 page.emulate_media(reduced_motion="reduce")
                 assert page.locator(".cm-dropdown-menu").count() == 0
                 genres.get_by_role("button", name="Ignore").click()
-                assert policy_chapters.locator("button b").all_inner_texts() == ["0", "0", "1", "0"]
+                assert policy_chapters.locator("button b").all_inner_texts() == [
+                    "0",
+                    "0",
+                    "1",
+                    "0",
+                ]
 
                 def assert_text_zoom_policy_layout(width: int) -> None:
                     page.set_viewport_size({"width": width, "height": 844})
@@ -365,32 +418,48 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                         """() => getComputedStyle(document.querySelector(
                             '.cm-policy-sidebar nav')).gridTemplateColumns.split(' ').length === 1"""
                     )
-                    assert page.evaluate("() => document.documentElement.scrollWidth") <= width
-                    assert page.evaluate(
-                        """() => [...document.querySelectorAll(
+                    assert (
+                        page.evaluate("() => document.documentElement.scrollWidth")
+                        <= width
+                    )
+                    assert (
+                        page.evaluate(
+                            """() => [...document.querySelectorAll(
                             `.masthead nav, .masthead nav a, .cm-policy-route,
                             .cm-policy-editor, .cm-policy-finish,
                             .cm-policy-finish-actions, .cm-policy-finish-actions button`)]
                             .filter(node => node.scrollWidth > node.clientWidth &&
                             getComputedStyle(node).overflowX === 'visible')
                             .map(node => [node.tagName, node.className, node.clientWidth, node.scrollWidth])"""
-                    ) == []
+                        )
+                        == []
+                    )
+
                 page.locator("html").evaluate(
                     "node => { node.style.fontSize = '200%'; }"
                 )
                 assert_text_zoom_policy_layout(390)
-                assert page.locator(".cm-policy-sidebar nav").evaluate(
-                    "node => getComputedStyle(node).gridTemplateColumns.split(' ').length"
-                ) == 1
-                assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
+                assert (
+                    page.locator(".cm-policy-sidebar nav").evaluate(
+                        "node => getComputedStyle(node).gridTemplateColumns.split(' ').length"
+                    )
+                    == 1
+                )
+                assert (
+                    page.evaluate("() => document.documentElement.scrollWidth") <= 390
+                )
                 assert page.get_by_role("link", name="Policy", exact=True).is_visible()
-                assert page.get_by_role("link", name="Activity", exact=True).is_visible()
-                assert not (page.evaluate(
-                    """() => [...document.querySelectorAll('*')].some(node =>
+                assert page.get_by_role(
+                    "link", name="Activity", exact=True
+                ).is_visible()
+                assert not (
+                    page.evaluate(
+                        """() => [...document.querySelectorAll('*')].some(node =>
                         node.scrollWidth > node.clientWidth &&
                         !node.classList.contains('brand-mark') &&
                         getComputedStyle(node).overflowX === 'visible')"""
-                ))
+                    )
+                )
                 assert_text_zoom_policy_layout(430)
                 page.get_by_role("button", name="Use dark mode").click()
                 page.get_by_role("button", name="Use light mode").wait_for()
@@ -399,23 +468,17 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.get_by_role("button", name="Use light mode").click()
                 page.get_by_role("button", name="Use dark mode").wait_for()
                 page.set_viewport_size({"width": 390, "height": 844})
-                page.locator("html").evaluate(
-                    "node => { node.style.fontSize = ''; }"
-                )
+                page.locator("html").evaluate("node => { node.style.fontSize = ''; }")
                 page.get_by_role("button", name="Validate and preview").click()
                 page.get_by_text(
                     "Impact preview is current. The active policy is unchanged."
                 ).wait_for()
-                review_activation = page.get_by_role(
-                    "button", name="Review activation"
-                )
+                review_activation = page.get_by_role("button", name="Review activation")
                 page.locator("html").evaluate(
                     "node => { node.style.fontSize = '200%'; }"
                 )
                 assert_text_zoom_policy_layout(430)
-                page.locator("html").evaluate(
-                    "node => { node.style.fontSize = ''; }"
-                )
+                page.locator("html").evaluate("node => { node.style.fontSize = ''; }")
                 review_activation.click()
                 page.get_by_text("Activate this reviewed draft?").wait_for()
                 assert page.get_by_role("dialog").count() == 0
@@ -423,9 +486,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                     "node => { node.style.fontSize = '200%'; }"
                 )
                 assert_text_zoom_policy_layout(430)
-                page.locator("html").evaluate(
-                    "node => { node.style.fontSize = ''; }"
-                )
+                page.locator("html").evaluate("node => { node.style.fontSize = ''; }")
                 page.get_by_role("button", name="Back to preview").click()
                 review_activation.wait_for()
                 dark_mode = page.get_by_role("button", name="Use dark mode")
@@ -433,11 +494,15 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.get_by_role("button", name="Use light mode").wait_for()
                 page.set_viewport_size({"width": 1440, "height": 900})
                 unsupported_description.wait_for()
-                assert page.get_by_role("navigation", name="Policy chapters").is_visible()
+                assert page.get_by_role(
+                    "navigation", name="Policy chapters"
+                ).is_visible()
                 review_activation.click()
                 page.get_by_role("button", name="Back to preview").click()
                 review_activation.wait_for()
-                assert page.evaluate("() => document.documentElement.scrollWidth") <= 1440
+                assert (
+                    page.evaluate("() => document.documentElement.scrollWidth") <= 1440
+                )
                 page.set_viewport_size({"width": 390, "height": 844})
                 light_mode = page.get_by_role("button", name="Use light mode")
                 light_mode.click()
@@ -477,12 +542,16 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 next_page.click()
                 page.wait_for_url("**/activity?*page=2*")
                 expect(next_page).to_be_focused()
-                page_number = page.get_by_role("spinbutton", name="Activity page number")
+                page_number = page.get_by_role(
+                    "spinbutton", name="Activity page number"
+                )
                 expect(page_number).to_have_value("2")
                 page_number.fill("99")
                 page_number.press("Enter")
                 page.wait_for_url("**/activity?*page=3*")
-                page_number = page.get_by_role("spinbutton", name="Activity page number")
+                page_number = page.get_by_role(
+                    "spinbutton", name="Activity page number"
+                )
                 assert page_number.input_value() == "3"
                 expect(page_number).to_be_focused()
                 page_number.fill("2")
@@ -494,10 +563,14 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.wait_for_url("**/activity?*page=2*")
                 previous_page.click()
                 page.wait_for_url("**/activity?*page=1*")
-                expect(page.get_by_role("spinbutton", name="Activity page number")).to_be_focused()
+                expect(
+                    page.get_by_role("spinbutton", name="Activity page number")
+                ).to_be_focused()
                 page.get_by_role("button", name="Last", exact=True).click()
                 page.wait_for_url("**/activity?*page=3*")
-                expect(page.get_by_role("spinbutton", name="Activity page number")).to_be_focused()
+                expect(
+                    page.get_by_role("spinbutton", name="Activity page number")
+                ).to_be_focused()
                 rows = page.get_by_role("combobox", name="Rows per activity page")
                 rows.click()
                 page.get_by_role("option", name="50 per page").click()
@@ -521,7 +594,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 expect(activity_search).to_be_focused()
                 page.set_viewport_size({"width": 390, "height": 844})
                 page.get_by_role("link", name="Library", exact=True).click()
-                page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
+                page.get_by_role(
+                    "heading", name="Every work, with exceptions first"
+                ).wait_for()
                 settled_activity_requests = activity_requests
                 page.wait_for_timeout(5_500)
                 assert activity_requests == settled_activity_requests
@@ -534,23 +609,49 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 )
                 assert page.locator("img,script:not([src])").count() == 0
                 assert "<img" in page.locator("body").inner_text()
-                assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
-                assert page.get_by_role("button", name="Choose current value:", exact=False).count() == 1
-                assert page.get_by_role("button", name="Choose proposed value", exact=False).count() == 0
+                assert (
+                    page.evaluate("() => document.documentElement.scrollWidth") <= 390
+                )
+                assert (
+                    page.get_by_role(
+                        "button", name="Choose current value:", exact=False
+                    ).count()
+                    == 1
+                )
+                assert (
+                    page.get_by_role(
+                        "button", name="Choose proposed value", exact=False
+                    ).count()
+                    == 0
+                )
                 page.get_by_role("button", name="Series", exact=True).click()
                 page.get_by_role("button", name="Use dark mode").click()
                 page.get_by_role("button", name="Use light mode").wait_for()
-                page.get_by_role("button", name="Choose current value:", exact=False).first.click()
+                page.get_by_role(
+                    "button", name="Choose current value:", exact=False
+                ).first.click()
                 page.get_by_text("Decision recorded.", exact=False).wait_for()
                 page.get_by_role("button", name="Series", exact=True).click()
-                page.get_by_text("Human decision: keep current by owner. Recorded value:", exact=False).wait_for()
-                assert page.get_by_role("button", name="Choose current value:", exact=False).count() == 0
+                page.get_by_text(
+                    "Human decision: keep current by owner. Recorded value:",
+                    exact=False,
+                ).wait_for()
+                assert (
+                    page.get_by_role(
+                        "button", name="Choose current value:", exact=False
+                    ).count()
+                    == 0
+                )
                 page.get_by_role("button", name="Evidence").click()
-                page.get_by_role("heading", name="Evidence and source ledger").wait_for()
+                page.get_by_role(
+                    "heading", name="Evidence and source ledger"
+                ).wait_for()
                 page.go_back()
                 page.get_by_role("heading", name="Current review case").wait_for()
                 page.go_forward()
-                page.get_by_role("heading", name="Evidence and source ledger").wait_for()
+                page.get_by_role(
+                    "heading", name="Evidence and source ledger"
+                ).wait_for()
                 assert documents == (initial_documents + 1)
                 assert errors == []
             browser.close()
@@ -576,30 +677,36 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.on(
                 "console",
-                lambda message: errors.append(message.text)
-                if message.type == "error"
-                else None,
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
             )
             page.on(
                 "response",
-                lambda response: responses.append((response.url, response.status))
-                if "/cover-considerations" in response.url
-                or response.url.endswith("/decisions")
-                else None,
+                lambda response: (
+                    responses.append((response.url, response.status))
+                    if "/cover-considerations" in response.url
+                    or response.url.endswith("/decisions")
+                    else None
+                ),
             )
-            with _server(
-                database=root / "review.sqlite3",
-                hash_path=hash_path,
-                certificate=certificate,
-                key=key,
-                port=_unused_port(),
-                cover=True,
-                automatic_fixture=True,
-            ) as (origin, case_id), _closing_context(context):
+            with (
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=_unused_port(),
+                    cover=True,
+                    automatic_fixture=True,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
                 _login(page, origin)
                 page.get_by_role(
                     "heading", name="Every work, with exceptions first"
                 ).wait_for()
+
                 # This is a closed presentation fixture, not a new automatic
                 # authority path: its projections retain the exact candidate
                 # values already supplied by the current case.  It protects
@@ -632,7 +739,9 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                                         "kind": "cover",
                                         "value": candidate["artifact_id"],
                                     }
-                                    for candidate in field["cover_consideration"]["candidates"]
+                                    for candidate in field["cover_consideration"][
+                                        "candidates"
+                                    ]
                                     if candidate["selectable"]
                                 )
                                 if field["destination"] == "cover"
@@ -645,8 +754,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                                     if outcome != "candidate"
                                     else "alternative_" + f"{index:064x}"
                                 ),
-                                "decision_id": "automatic_decision_"
-                                + f"{index:064x}",
+                                "decision_id": "automatic_decision_" + f"{index:064x}",
                                 "destination": field["destination"],
                                 "occurred_at": 1_000,
                                 "outcome": outcome,
@@ -666,9 +774,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                         )
                     route.fulfill(status=response.status, json=payload)
 
-                page.route(
-                    f"**/api/v1/review-cases/{case_id}", automatic_projection
-                )
+                page.route(f"**/api/v1/review-cases/{case_id}", automatic_projection)
                 page.goto(f"{origin}/review/{case_id}?field=title&subview=review")
                 title_current = page.get_by_role(
                     "button", name="Choose current value:", exact=False
@@ -681,9 +787,11 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     "node => node.classList.contains('is-selected')"
                 )
                 expect(title_current).to_have_attribute("aria-pressed", "false")
-                assert not (title_current.evaluate(
-                    "node => node.classList.contains('is-selected')"
-                ))
+                assert not (
+                    title_current.evaluate(
+                        "node => node.classList.contains('is-selected')"
+                    )
+                )
                 page.reload()
                 expect(title_candidate).to_have_attribute("aria-pressed", "true")
                 assert title_candidate.evaluate(
@@ -711,15 +819,15 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     "button", name="Choose current value:", exact=False
                 )
                 expect(ignored_current).to_have_attribute("aria-pressed", "false")
-                assert not (ignored_current.evaluate(
-                    "node => node.classList.contains('is-selected')"
-                ))
+                assert not (
+                    ignored_current.evaluate(
+                        "node => node.classList.contains('is-selected')"
+                    )
+                )
                 ignored_no_action = page.get_by_role(
                     "button", name="Take no action", exact=True
                 )
-                expect(ignored_no_action).to_have_attribute(
-                    "aria-pressed", "true"
-                )
+                expect(ignored_no_action).to_have_attribute("aria-pressed", "true")
                 assert ignored_no_action.evaluate(
                     "node => node.classList.contains('is-selected')"
                 )
@@ -735,33 +843,47 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     "node => node.classList.contains('is-selected')"
                 )
                 expect(current_cover).to_have_attribute("aria-pressed", "false")
-                assert not (current_cover.evaluate(
-                    "node => node.classList.contains('is-selected')"
-                ))
+                assert not (
+                    current_cover.evaluate(
+                        "node => node.classList.contains('is-selected')"
+                    )
+                )
                 expect(
                     page.get_by_role("button", name="Take no action", exact=True)
                 ).to_have_attribute("aria-pressed", "false")
                 page.reload()
-                expect(page.get_by_role("button", name="Choose this cover")).to_have_attribute("aria-pressed", "true")
+                expect(
+                    page.get_by_role("button", name="Choose this cover")
+                ).to_have_attribute("aria-pressed", "true")
                 assert page.get_by_role("button", name="Choose this cover").evaluate(
                     "node => node.classList.contains('is-selected')"
                 )
                 assert "Policy preferences" in page.locator("body").inner_text()
-                assert "No optional visual preferences enabled" in page.locator("body").inner_text()
-                with page.expect_response(
-                    lambda response: response.url.endswith("/decisions")
-                ) as decision_response, page.expect_response(
-                    lambda response: response.url.endswith("/history")
-                ) as history_response:
+                assert (
+                    "No optional visual preferences enabled"
+                    in page.locator("body").inner_text()
+                )
+                with (
+                    page.expect_response(
+                        lambda response: response.url.endswith("/decisions")
+                    ) as decision_response,
+                    page.expect_response(
+                        lambda response: response.url.endswith("/history")
+                    ) as history_response,
+                ):
                     page.get_by_role("button", name="Choose this cover").click()
                 response = decision_response.value
                 assert 200 == response.status, f"decision response: {response.text()}"
                 history_result = history_response.value
-                assert 200 == history_result.status, f"history response: {history_result.text()}"
+                assert 200 == history_result.status, (
+                    f"history response: {history_result.text()}"
+                )
                 page.get_by_text(
                     "Decision recorded from the authoritative case.", exact=True
                 ).wait_for()
-                page.get_by_text("Human decision: accept by owner", exact=False).wait_for()
+                page.get_by_text(
+                    "Human decision: accept by owner", exact=False
+                ).wait_for()
                 assert page.get_by_role("button", name="Choose this cover").count() == 0
                 history_button = page.get_by_role("button", name="History", exact=True)
                 history_button.focus()
@@ -780,7 +902,9 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                         "list", name="Historical cover candidates"
                     )
                 ).to_be_visible()
-                assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
+                assert (
+                    page.evaluate("() => document.documentElement.scrollWidth") <= 390
+                )
                 assert responses
                 assert all(status == 200 for _, status in responses), responses
                 assert errors == []
@@ -802,13 +926,17 @@ def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:
                 viewport={"width": 390, "height": 844},
             )
             page = context.new_page()
-            with _server(
-                database=root / "review.sqlite3",
-                hash_path=hash_path,
-                certificate=certificate,
-                key=key,
-                port=_unused_port(),
-            ) as (origin, case_id), _closing_context(context):
+            with (
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=_unused_port(),
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+
                 def delay_selected_detail(route) -> None:
                     if route.request.url.endswith(f"/api/v1/review-cases/{case_id}"):
                         time.sleep(0.3)
@@ -821,6 +949,8 @@ def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:
                 pending_detail = page.locator(".workspace-detail")
                 expect(pending_detail).to_be_focused()
                 assert pending_detail.bounding_box() is not None
-                page.get_by_role("button", name="Choose current value:", exact=False).wait_for()
+                page.get_by_role(
+                    "button", name="Choose current value:", exact=False
+                ).wait_for()
                 page.unroute("**/api/v1/review-cases/**", delay_selected_detail)
             browser.close()

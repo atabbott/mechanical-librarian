@@ -48,7 +48,9 @@ class FakeReportRepository:
         self.values: dict[str, str] = {}
         self.closed = False
 
-    def publish(self, report: MetadataReport, currentness, expected_current=None) -> str:
+    def publish(
+        self, report: MetadataReport, currentness, expected_current=None
+    ) -> str:
         currentness()
         self.values.setdefault(report.report_id, report.to_json())
         return self.values[report.report_id]
@@ -56,10 +58,14 @@ class FakeReportRepository:
     def get(self, report_id: str) -> str:
         return self.values[report_id]
 
-    def current(self, connection: str, library: str, item: str, file_identity: str) -> str:
+    def current(
+        self, connection: str, library: str, item: str, file_identity: str
+    ) -> str:
         raise CurrentnessError("persisted current report is unavailable")
 
-    def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None:
+    def current_optional(
+        self, connection: str, library: str, item: str, file_identity: str
+    ) -> str | None:
         return None
 
     def close(self) -> None:

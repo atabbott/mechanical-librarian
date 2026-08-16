@@ -59,7 +59,8 @@ def test_activity_carries_a_future_origin_and_every_cover_state() -> None:
     assert isinstance(activity, dict)
     assert "future_provider_origin" in {event["origin"] for event in activity["events"]}
     cover_states = {
-        event["state"] for event in activity["events"]
+        event["state"]
+        for event in activity["events"]
         if event["destination"] == "cover"
     }
     assert {"completed", "unavailable", "failed", "stale", "superseded"} == cover_states
@@ -76,17 +77,13 @@ def test_cover_consideration_reports_its_reviewer_status(
     payload = rich_payload(f"/api/v1/review-cases/{case_id}")
     assert isinstance(payload, dict)
     cover = next(
-        field for field in payload["fields"]
-        if field["destination"] == "cover"
+        field for field in payload["fields"] if field["destination"] == "cover"
     )
     consideration = cover["cover_consideration"]
     assert status == consideration["reviewer_status"]
     assert cover["editable"]
     assert cover["human_decision"] is None
-    assert any(
-        candidate["selectable"]
-        for candidate in consideration["candidates"]
-    )
+    assert any(candidate["selectable"] for candidate in consideration["candidates"])
 
 
 def test_real_app_gates_aliases_and_synthetic_cursors() -> None:
@@ -94,9 +91,7 @@ def test_real_app_gates_aliases_and_synthetic_cursors() -> None:
         root = Path(directory)
         os.chmod(root, 0o700)
         password_hash = root / "owner.hash"
-        password_hash.write_text(
-            PasswordHasher().hash(_PASSWORD), encoding="utf-8"
-        )
+        password_hash.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
         os.chmod(password_hash, 0o600)
 
         repository = open_repository(
@@ -118,15 +113,12 @@ def test_real_app_gates_aliases_and_synthetic_cursors() -> None:
             clock=lambda: 1_000,
             close_repository=True,
         )
-        app = RichFidelityApiMiddleware(
-            inner, review_case_id=installed_case_id
-        )
+        app = RichFidelityApiMiddleware(inner, review_case_id=installed_case_id)
 
         with TestClient(app, base_url=_ORIGIN) as client:
             for target in (
                 "/api/v1/review-cases/case-1",
-                "/api/v1/review-cases/case-2/evidence"
-                "?limit=50&cursor=evidence-page-2",
+                "/api/v1/review-cases/case-2/evidence?limit=50&cursor=evidence-page-2",
                 "/api/v1/library?lens=all&cursor=page-2",
             ):
                 assert client.get(target).status_code == 401
@@ -139,9 +131,7 @@ def test_real_app_gates_aliases_and_synthetic_cursors() -> None:
             assert login.status_code == 200
 
             linked_works = [
-                work
-                for work in LIBRARY_WORKS
-                if work["review_case_id"] is not None
+                work for work in LIBRARY_WORKS if work["review_case_id"] is not None
             ]
             for work in linked_works:
                 case_id = str(work["review_case_id"])
@@ -151,15 +141,12 @@ def test_real_app_gates_aliases_and_synthetic_cursors() -> None:
                 assert payload["review_case_id"] == case_id
                 assert payload["target"]["item"] == work["title"]
 
-            evidence = client.get(
-                "/api/v1/review-cases/case-2/evidence"
-            )
+            evidence = client.get("/api/v1/review-cases/case-2/evidence")
             assert evidence.status_code == 200
             assert evidence.json()["review_case_id"] == "case-2"
 
             evidence_page_2 = client.get(
-                "/api/v1/review-cases/case-2/evidence"
-                "?limit=50&cursor=evidence-page-2"
+                "/api/v1/review-cases/case-2/evidence?limit=50&cursor=evidence-page-2"
             )
             assert evidence_page_2.status_code == 200
             page_2_payload = evidence_page_2.json()
@@ -171,27 +158,24 @@ def test_real_app_gates_aliases_and_synthetic_cursors() -> None:
             )
             assert page_2_payload["next_cursor"] is None
 
-            history = client.get(
-                "/api/v1/review-cases/case-2/history"
-            )
+            history = client.get("/api/v1/review-cases/case-2/history")
             assert history.status_code == 200
             assert history.json()["review_case_id"] == "case-2"
             assert len(history.json()["items"]) == 4
 
-            library_page_2 = client.get(
-                "/api/v1/library?lens=all&cursor=page-2"
-            )
+            library_page_2 = client.get("/api/v1/library?lens=all&cursor=page-2")
             assert library_page_2.status_code == 200
             library_payload = library_page_2.json()
             assert len(library_payload["items"]) == 6
             assert library_payload["next_cursor"] == "page-3"
             assert library_payload["items"][-1]["title"] == LIBRARY_WORKS[11]["title"]
 
-            library_page_4 = client.get(
-                "/api/v1/library?lens=all&cursor=page-4"
-            )
+            library_page_4 = client.get("/api/v1/library?lens=all&cursor=page-4")
             assert library_page_4.status_code == 200
             final_library_payload = library_page_4.json()
             assert len(final_library_payload["items"]) == 2
             assert final_library_payload["next_cursor"] is None
-            assert final_library_payload["items"][-1]["title"] == LIBRARY_WORKS[-1]["title"]
+            assert (
+                final_library_payload["items"][-1]["title"]
+                == LIBRARY_WORKS[-1]["title"]
+            )

@@ -82,11 +82,19 @@ def _apply_limits() -> None:
         (resource.RLIMIT_CPU, _CPU_SECONDS),
     ):
         current_soft, current_hard = resource.getrlimit(limit)
-        hard = value if current_hard == resource.RLIM_INFINITY else min(value, current_hard)
+        hard = (
+            value
+            if current_hard == resource.RLIM_INFINITY
+            else min(value, current_hard)
+        )
         resource.setrlimit(limit, (min(value, hard), hard))
     try:
         current_soft, current_hard = resource.getrlimit(resource.RLIMIT_AS)
-        hard = _ADDRESS_SPACE if current_hard == resource.RLIM_INFINITY else min(_ADDRESS_SPACE, current_hard)
+        hard = (
+            _ADDRESS_SPACE
+            if current_hard == resource.RLIM_INFINITY
+            else min(_ADDRESS_SPACE, current_hard)
+        )
         resource.setrlimit(resource.RLIMIT_AS, (min(_ADDRESS_SPACE, hard), hard))
     except ValueError:
         # Darwin's framework build rejects RLIMIT_AS/DATA/RSS values below its
@@ -114,7 +122,13 @@ def _read_context() -> dict[str, object]:
     decoded = json.loads(value)
     if type(decoded) is not dict:
         raise ValueError("invalid child context")
-    expected = {"child_seconds", "expected_source", "limits", "logical_identity", "capability"}
+    expected = {
+        "child_seconds",
+        "expected_source",
+        "limits",
+        "logical_identity",
+        "capability",
+    }
     legacy = expected - {"capability"}
     if frozenset(decoded) == frozenset(legacy):
         decoded["capability"] = "opening"
@@ -187,7 +201,9 @@ def _install_parent_guard(
             os._exit(70)
         os.close(descriptor)
         return
-    watcher = threading.Thread(target=_parent_watch, args=(descriptor, done), daemon=True)
+    watcher = threading.Thread(
+        target=_parent_watch, args=(descriptor, done), daemon=True
+    )
     watcher.start()
 
 
@@ -214,7 +230,9 @@ def _write_cover(value: dict[str, object], data: bytes | None, descriptor: int) 
             offset += written
 
 
-def _selected_cover(package_request: EpubPackageRequest) -> tuple[dict[str, object], bytes | None]:
+def _selected_cover(
+    package_request: EpubPackageRequest,
+) -> tuple[dict[str, object], bytes | None]:
     try:
         rejected = EpubPackageExtractor().preflight(package_request)
         if rejected is not None:
@@ -224,13 +242,26 @@ def _selected_cover(package_request: EpubPackageRequest) -> tuple[dict[str, obje
             report = EpubPackageExtractor().extract(package_request, archive)
             if not report.succeeded:
                 return {"state": "invalid_declaration"}, None
-            values = [item.raw_value for item in report.observations if item.field is EpubPackageField.COVER]
+            values = [
+                item.raw_value
+                for item in report.observations
+                if item.field is EpubPackageField.COVER
+            ]
             if not values:
                 return {"state": "absent"}, None
             if len(values) != 1:
                 return {"state": "invalid_declaration"}, None
-            media = [item.media_type for item in report.declarations if item.kind is EpubPackageDeclarationKind.MANIFEST_ITEM and item.resource_identity == values[0]]
-            names = [name for name in archive.namelist() if epub_resource_identity(name) == values[0]]
+            media = [
+                item.media_type
+                for item in report.declarations
+                if item.kind is EpubPackageDeclarationKind.MANIFEST_ITEM
+                and item.resource_identity == values[0]
+            ]
+            names = [
+                name
+                for name in archive.namelist()
+                if epub_resource_identity(name) == values[0]
+            ]
             if len(media) != 1 or len(names) != 1:
                 return {"state": "invalid_declaration"}, None
             if media[0] not in {"image/jpeg", "image/png", "image/webp"}:
@@ -239,7 +270,12 @@ def _selected_cover(package_request: EpubPackageRequest) -> tuple[dict[str, obje
                 data = member.read(8 * 1024 * 1024 + 1)
             if len(data) > 8 * 1024 * 1024:
                 return {"state": "oversized"}, None
-            return {"state": "declared", "media_type": media[0], "length": len(data), "identity": values[0]}, data
+            return {
+                "state": "declared",
+                "media_type": media[0],
+                "length": len(data),
+                "identity": values[0],
+            }, data
     except (OSError, ValueError, zipfile.BadZipFile):
         return {"state": "invalid_declaration"}, None
 
@@ -261,15 +297,23 @@ def _inspect_bundle(
         rejected = EpubPackageExtractor().preflight(package_request)
         if rejected is not None:
             return (
-                EpubPackageReport(rejected, EpubPackageCapability.PACKAGE, package_request.limits),
+                EpubPackageReport(
+                    rejected, EpubPackageCapability.PACKAGE, package_request.limits
+                ),
                 EpubOpeningReport(rejected, limits),
                 (),
             )
-        with zipfile.ZipFile(_SourceIO(package_request), "r", allowZip64=True) as archive:
+        with zipfile.ZipFile(
+            _SourceIO(package_request), "r", allowZip64=True
+        ) as archive:
             package_report = EpubPackageExtractor().extract(package_request, archive)
-            opening_report = EpubOpeningExtractor().extract(request, limits, package_report, archive)
+            opening_report = EpubOpeningExtractor().extract(
+                request, limits, package_report, archive
+            )
             try:
-                rear_facts = _adapter_rear_facts(request, package_report, opening_report, archive)
+                rear_facts = _adapter_rear_facts(
+                    request, package_report, opening_report, archive
+                )
             # ``rejected`` is rebound by this handler, but mypy keeps the ``None``
             # narrowing left behind by the outer preflight result, so each use
             # restates the handler's own exception type through a no-op cast.
@@ -330,12 +374,15 @@ def _inspect_bundle(
         )
 
 
-def _package_facts(report: EpubPackageReport, source: Fingerprint) -> tuple[EpubInspectionFact, ...]:
+def _package_facts(
+    report: EpubPackageReport, source: Fingerprint
+) -> tuple[EpubInspectionFact, ...]:
     return _adapter_package_facts(report, source)
 
 
 def _inspection(
-    package_report: EpubPackageReport, opening_report: EpubOpeningReport,
+    package_report: EpubPackageReport,
+    opening_report: EpubOpeningReport,
     rear_facts: tuple[EpubInspectionFact, ...] = (),
 ) -> EpubInspection:
     opening = EpubInspection.from_opening_report(opening_report)
@@ -350,7 +397,11 @@ def _inspection(
     }:
         return EpubInspection(opening.outcome, source)
     facts = (*_package_facts(package_report, source), *opening.facts, *rear_facts)
-    outcome = EpubInspectionOutcome.SUCCESS if facts else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
+    outcome = (
+        EpubInspectionOutcome.SUCCESS
+        if facts
+        else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
+    )
     return EpubInspection(
         outcome,
         source,
@@ -413,10 +464,11 @@ def main(argv: list[str] | None = None) -> int:
         if (
             type(child_seconds) is not float
             or not 0 < child_seconds <= float(limits.wall_seconds)
-            or
-            type(logical_identity) is not str
+            or type(logical_identity) is not str
             or len(logical_identity) != 64
-            or any(character not in "0123456789abcdef" for character in logical_identity)
+            or any(
+                character not in "0123456789abcdef" for character in logical_identity
+            )
         ):
             raise ValueError("invalid child context")
         snapshot = _snapshot_source(
@@ -424,12 +476,15 @@ def main(argv: list[str] | None = None) -> int:
             package_limits.source_archive_bytes,
         )
         if hashlib.sha256(snapshot).hexdigest() != expected.digest:
-            _write_report(
-                EpubInspection(EpubInspectionOutcome.INTEGRITY_FAILURE, None)
-            )
+            _write_report(EpubInspection(EpubInspectionOutcome.INTEGRITY_FAILURE, None))
             return 0
         request = EpubPackageRequest(
-            TargetId(AdapterId("local-epub"), ConnectionId("local"), LibraryId("local"), ExternalItemId(logical_identity)),
+            TargetId(
+                AdapterId("local-epub"),
+                ConnectionId("local"),
+                LibraryId("local"),
+                ExternalItemId(logical_identity),
+            ),
             FileReference("local", f"{logical_identity}.epub"),
             EpubPackageSource(
                 len(snapshot),
@@ -443,9 +498,15 @@ def main(argv: list[str] | None = None) -> int:
             EpubPackageCancellation("epub-child", lambda: False),
         )
         package_request = EpubPackageRequest(
-            request.target, request.file, request.source, request.expected_source,
-            EpubPackageCapability.PACKAGE, request.limits, request.deadline,
-            request.monotonic_deadline, request.cancellation,
+            request.target,
+            request.file,
+            request.source,
+            request.expected_source,
+            EpubPackageCapability.PACKAGE,
+            request.limits,
+            request.deadline,
+            request.monotonic_deadline,
+            request.cancellation,
         )
         if capability == "cover":
             if len(arguments) != 4:

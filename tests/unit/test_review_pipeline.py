@@ -71,7 +71,9 @@ def application_path() -> Iterator[Path]:
         yield path
 
 
-def test_pause_state_is_durable_and_does_not_remove_committed_work(application_path: Path) -> None:
+def test_pause_state_is_durable_and_does_not_remove_committed_work(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     repository.set_review_pipeline_paused(True, 11)
@@ -91,9 +93,7 @@ def test_pause_atomically_rejects_new_scan_admission(application_path: Path) -> 
     repository = open_repository(application_path)
     repository.set_review_pipeline_paused(True, 10)
     with pytest.raises(ReviewPipelineError, match="paused"):
-        repository.request_review_scan(
-            "primary", "fiction", "lib-1", _PRODUCER, 11
-        )
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 11)
     count = repository._connection.execute(
         "SELECT COUNT(*) FROM review_preparation_scans"
     ).fetchone()
@@ -101,11 +101,11 @@ def test_pause_atomically_rejects_new_scan_admission(application_path: Path) -> 
     assert count == (0,)
 
 
-def test_scan_qualification_survives_restart_and_resets_for_new_cycle(application_path: Path) -> None:
+def test_scan_qualification_survives_restart_and_resets_for_new_cycle(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 1
-    )
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
     action = repository.claim_review_pipeline_action(2)
     assert action is not None
     assert repository.discovery_requires_qualification(action)
@@ -113,9 +113,7 @@ def test_scan_qualification_survives_restart_and_resets_for_new_cycle(applicatio
     repository.close()
 
     repository = open_repository(application_path)
-    repository.recover_review_pipeline(
-        (("primary", "fiction", "lib-1", _PRODUCER),)
-    )
+    repository.recover_review_pipeline((("primary", "fiction", "lib-1", _PRODUCER),))
     action = repository.claim_review_pipeline_action(4)
     assert action is not None
     assert not repository.discovery_requires_qualification(action)
@@ -123,23 +121,23 @@ def test_scan_qualification_survives_restart_and_resets_for_new_cycle(applicatio
     condition = repository.begin_target_connection_check("primary", 6)
     assert condition is not None
     assert repository.finish_target_connection_check(
-            "primary", condition.epoch, None, 7
-        )
+        "primary", condition.epoch, None, 7
+    )
     action = repository.claim_review_pipeline_action(8)
     assert action is not None
     assert not repository.discovery_requires_qualification(action)
     repository.complete_review_discovery(action, 1, "a" * 64, (), 9)
     assert repository.claim_review_pipeline_action(10) is None
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 11
-    )
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 11)
     action = repository.claim_review_pipeline_action(12)
     assert action is not None
     assert repository.discovery_requires_qualification(action)
     repository.close()
 
 
-def test_pipeline_preflight_is_once_per_cycle_and_recovery_retains_qualification(application_path: Path) -> None:
+def test_pipeline_preflight_is_once_per_cycle_and_recovery_retains_qualification(
+    application_path: Path,
+) -> None:
     checks: list[str] = []
     discoveries = 0
 
@@ -176,9 +174,15 @@ def test_pipeline_preflight_is_once_per_cycle_and_recovery_retains_qualification
     assert checks == ["primary", "primary"]
 
 
-def test_composed_currentness_preserves_target_connection_errors(application_path: Path) -> None:
+def test_composed_currentness_preserves_target_connection_errors(
+    application_path: Path,
+) -> None:
     configuration = ApplicationConfiguration(
-        (TargetConnectionConfiguration("primary", "https://example.invalid", "/token"),),
+        (
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/token"
+            ),
+        ),
         (LibraryConfiguration("ebooks", "primary", "library-id", "book", "media", ()),),
         (MediaMountConfiguration("media", "/media", "/library", True),),
         (),
@@ -211,9 +215,7 @@ def test_composed_currentness_preserves_target_connection_errors(application_pat
                 )
             )
             stack.enter_context(
-                patch.object(
-                    composition, "require_report_current", side_effect=current
-                )
+                patch.object(composition, "require_report_current", side_effect=current)
             )
             with pytest.raises(TargetConnectionError) as raised:
                 composition.create_proposal_set_loaded(
@@ -222,7 +224,10 @@ def test_composed_currentness_preserves_target_connection_errors(application_pat
             assert raised.value.code == code
             with pytest.raises(TargetConnectionError) as raised:
                 composition.admit_review_case_loaded(
-                    configuration, application_path, Path("ignored"), proposal.proposal_set_id
+                    configuration,
+                    application_path,
+                    Path("ignored"),
+                    proposal.proposal_set_id,
                 )
             assert raised.value.code == code
 
@@ -233,7 +238,9 @@ def test_composed_currentness_preserves_target_connection_errors(application_pat
             "target_client",
             side_effect=lambda *_args: httpx.Client(
                 transport=httpx.MockTransport(
-                    lambda _request: (_ for _ in ()).throw(httpx.ConnectError("offline"))
+                    lambda _request: (_ for _ in ()).throw(
+                        httpx.ConnectError("offline")
+                    )
                 )
             ),
         ),
@@ -246,7 +253,10 @@ def test_composed_currentness_preserves_target_connection_errors(application_pat
         assert raised.value.code == "unavailable"
         with pytest.raises(TargetConnectionError) as raised:
             composition.admit_review_case_loaded(
-                configuration, application_path, Path("ignored"), proposal.proposal_set_id
+                configuration,
+                application_path,
+                Path("ignored"),
+                proposal.proposal_set_id,
             )
         assert raised.value.code == "unavailable"
 
@@ -256,9 +266,7 @@ def test_composed_currentness_preserves_target_connection_errors(application_pat
             composition,
             "target_client",
             side_effect=lambda *_args: httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda _request: httpx.Response(404)
-                )
+                transport=httpx.MockTransport(lambda _request: httpx.Response(404))
             ),
         ),
         patch.object(composition, "require_report_current", side_effect=current),
@@ -269,7 +277,10 @@ def test_composed_currentness_preserves_target_connection_errors(application_pat
             )
         result = json.loads(
             composition.admit_review_case_loaded(
-                configuration, application_path, Path("ignored"), proposal.proposal_set_id
+                configuration,
+                application_path,
+                Path("ignored"),
+                proposal.proposal_set_id,
             )
         )
     assert result["status"] == "stale"
@@ -303,18 +314,38 @@ def test_late_target_connection_errors_rollback_and_defer_retained_stage() -> No
         def callback(*_args):
             callbacks[stage] += 1
             raise TargetConnectionError("tls")
+
         return callback
 
     for stage, identifiers in (
         ("proposal", {"report_id": "report-1"}),
         ("admission", {"report_id": "report-1", "proposal_set_id": "proposal-1"}),
-        ("projection", {"report_id": "report-1", "proposal_set_id": "proposal-1", "review_case_id": "case-1"}),
+        (
+            "projection",
+            {
+                "report_id": "report-1",
+                "proposal_set_id": "proposal-1",
+                "review_case_id": "case-1",
+            },
+        ),
     ):
         repository = Repository()
         action = PipelineAction(
-            "action-1", "scan-1", stage, 1, "primary", "ebooks", "library-id",
-            _PRODUCER, 1, "a" * 64, "item-1", "b" * 64, 0,
-            source_fingerprint="c" * 64, **identifiers,
+            "action-1",
+            "scan-1",
+            stage,
+            1,
+            "primary",
+            "ebooks",
+            "library-id",
+            _PRODUCER,
+            1,
+            "a" * 64,
+            "item-1",
+            "b" * 64,
+            0,
+            source_fingerprint="c" * 64,
+            **identifiers,
         )
         pipeline = ReviewPreparationPipeline(
             repository_factory=lambda: cast(ReviewPipelineRepository, repository),  # noqa: B023 - closure is created and consumed within this iteration
@@ -327,14 +358,18 @@ def test_late_target_connection_errors_rollback_and_defer_retained_stage() -> No
             project=failing("projection"),
             clock=lambda: 1,
         )
-        assert pipeline._run_claimed_action(repository, action, claim_next=False) is None
+        assert (
+            pipeline._run_claimed_action(repository, action, claim_next=False) is None
+        )
         assert repository.begun == 1
         assert repository.rolled_back == 1
         assert repository.deferred == [(action, "tls")]
     assert callbacks == {"proposal": 1, "admission": 1, "projection": 1}
 
 
-def test_connection_hold_guards_claims_and_stale_checkers_fail_closed(application_path: Path) -> None:
+def test_connection_hold_guards_claims_and_stale_checkers_fail_closed(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
     repository.request_review_scan("primary", "history", "lib-2", _PRODUCER, 2)
@@ -355,20 +390,20 @@ def test_connection_hold_guards_claims_and_stale_checkers_fail_closed(applicatio
     check = repository.begin_target_connection_check("primary", 9)
     assert check is not None
     assert not repository.finish_target_connection_check(
-            "primary", check.epoch - 1, None, 10
-        )
+        "primary", check.epoch - 1, None, 10
+    )
     repository.close()
 
     reopened = open_repository(application_path)
-    reopened.recover_review_pipeline(
-        (("primary", "fiction", "lib-1", _PRODUCER),)
-    )
+    reopened.recover_review_pipeline((("primary", "fiction", "lib-1", _PRODUCER),))
     condition = reopened.target_connection_conditions()[0]
     reopened.close()
     assert (condition.connection, condition.state) == ("primary", "paused")
 
 
-def test_restart_retires_removed_active_scope_before_any_orphan_claim(application_path: Path) -> None:
+def test_restart_retires_removed_active_scope_before_any_orphan_claim(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
     repository.request_review_scan("removed", "old-library", "lib-2", _PRODUCER, 2)
@@ -384,7 +419,9 @@ def test_restart_retires_removed_active_scope_before_any_orphan_claim(applicatio
     assert retired == ("completed_with_failures",)
 
 
-def test_unexpected_owner_probe_durably_returns_to_paused(application_path: Path) -> None:
+def test_unexpected_owner_probe_durably_returns_to_paused(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
     action = repository.claim_review_pipeline_action(2)
@@ -409,7 +446,9 @@ def test_unexpected_owner_probe_durably_returns_to_paused(application_path: Path
     assert (condition.code, condition.state) == ("unavailable", "paused")
 
 
-def test_owner_probe_releases_its_repository_before_network_and_refreshes_affected(application_path: Path) -> None:
+def test_owner_probe_releases_its_repository_before_network_and_refreshes_affected(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
     action = repository.claim_review_pipeline_action(2)
@@ -420,6 +459,7 @@ def test_owner_probe_releases_its_repository_before_network_and_refreshes_affect
     repository.close()
 
     opened: list[object] = []
+
     def factory():
         value = open_repository(application_path)
         opened.append(value)
@@ -439,8 +479,12 @@ def test_owner_probe_releases_its_repository_before_network_and_refreshes_affect
         libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
         discover=lambda *_: (_ for _ in ()).throw(AssertionError),
         extract=lambda *_: (_ for _ in ()).throw(AssertionError),
-        providers=lambda *_: (), propose=lambda *_: "", admit=lambda *_: ("", None),
-        project=lambda *_: True, check_connection=probe, clock=lambda: 5,
+        providers=lambda *_: (),
+        propose=lambda *_: "",
+        admit=lambda *_: ("", None),
+        project=lambda *_: True,
+        check_connection=probe,
+        clock=lambda: 5,
     )
     assert pipeline.check_connection("primary")
     assert pipeline.connection_conditions()[0].state == "recovered"
@@ -472,8 +516,12 @@ def test_unreadable_connection_conditions_reach_the_caller_as_pipeline_error() -
         libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
         discover=lambda *_: (_ for _ in ()).throw(AssertionError),
         extract=lambda *_: (_ for _ in ()).throw(AssertionError),
-        providers=lambda *_: (), propose=lambda *_: "", admit=lambda *_: ("", None),
-        project=lambda *_: True, check_connection=lambda _: None, clock=lambda: 6,
+        providers=lambda *_: (),
+        propose=lambda *_: "",
+        admit=lambda *_: ("", None),
+        project=lambda *_: True,
+        check_connection=lambda _: None,
+        clock=lambda: 6,
     )
 
     with pytest.raises(ReviewPipelineError) as raised:
@@ -540,9 +588,12 @@ def test_every_remaining_bare_call_site_converts_and_still_releases(
             libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
             discover=lambda *_: (_ for _ in ()).throw(AssertionError),
             extract=lambda *_: (_ for _ in ()).throw(AssertionError),
-            providers=lambda *_: (), propose=lambda *_: "",
-            admit=lambda *_: ("", None), project=lambda *_: True,
-            check_connection=lambda _: None, clock=lambda: 6,
+            providers=lambda *_: (),
+            propose=lambda *_: "",
+            admit=lambda *_: ("", None),
+            project=lambda *_: True,
+            check_connection=lambda _: None,
+            clock=lambda: 6,
         )
 
     closed.clear()
@@ -593,9 +644,20 @@ def test_cover_consideration_factory_fault_is_recorded_as_persistence() -> None:
         clock=lambda: 7,
     )
     action = PipelineAction(
-        "review_work_" + "a" * 64, "review_scan_" + "b" * 64, "projection", 1,
-        "primary", "fiction", "lib-1", _PRODUCER, 1, "c" * 64, "item-1",
-        "d" * 64, 1, review_case_id="review_case_" + "e" * 64,
+        "review_work_" + "a" * 64,
+        "review_scan_" + "b" * 64,
+        "projection",
+        1,
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        1,
+        "c" * 64,
+        "item-1",
+        "d" * 64,
+        1,
+        review_case_id="review_case_" + "e" * 64,
         source_fingerprint="f" * 64,
     )
 
@@ -607,7 +669,9 @@ def test_cover_consideration_factory_fault_is_recorded_as_persistence() -> None:
     assert raised.value.__cause__ is fault
 
 
-def test_checking_condition_allows_admission_replay_and_rejects_stale_finish_epoch(application_path: Path) -> None:
+def test_checking_condition_allows_admission_replay_and_rejects_stale_finish_epoch(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
     action = repository.claim_review_pipeline_action(2)
@@ -622,17 +686,23 @@ def test_checking_condition_allows_admission_replay_and_rejects_stale_finish_epo
     concurrent.request_review_scan("primary", "history", "lib-2", _PRODUCER, 5)
     concurrent.request_review_scan("primary", "history", "lib-2", _PRODUCER, 5)
     assert "checking" == concurrent.target_connection_conditions()[0].state
-    assert concurrent.finish_target_connection_check("primary", first.epoch, "unavailable", 6)
+    assert concurrent.finish_target_connection_check(
+        "primary", first.epoch, "unavailable", 6
+    )
     paused = concurrent.target_connection_conditions()[0]
     assert ("paused", 2) == (paused.state, paused.affected)
     second = concurrent.begin_target_connection_check("primary", 7)
     assert second is not None
-    assert not concurrent.finish_target_connection_check("primary", first.epoch, None, 8)
+    assert not concurrent.finish_target_connection_check(
+        "primary", first.epoch, None, 8
+    )
     assert ("checking", second.epoch) == (
         concurrent.target_connection_conditions()[0].state,
         concurrent.target_connection_conditions()[0].epoch,
     )
-    assert concurrent.finish_target_connection_check("primary", second.epoch, "unavailable", 9)
+    assert concurrent.finish_target_connection_check(
+        "primary", second.epoch, "unavailable", 9
+    )
     assert ("paused", 2) == (
         concurrent.target_connection_conditions()[0].state,
         concurrent.target_connection_conditions()[0].affected,
@@ -640,11 +710,11 @@ def test_checking_condition_allows_admission_replay_and_rejects_stale_finish_epo
     concurrent.close()
 
 
-def test_status_reads_all_latest_library_progress_and_pause_in_one_snapshot(application_path: Path) -> None:
+def test_status_reads_all_latest_library_progress_and_pause_in_one_snapshot(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
-    first = repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 10
-    )
+    first = repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     second = repository.request_review_scan(
         "primary", "history", "lib-2", _PRODUCER, 11
     )
@@ -662,11 +732,11 @@ def test_status_reads_all_latest_library_progress_and_pause_in_one_snapshot(appl
     repository.close()
 
 
-def test_actual_provider_credential_failure_projects_once_at_provider_scope(application_path: Path) -> None:
+def test_actual_provider_credential_failure_projects_once_at_provider_scope(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 10
-    )
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
     repository.complete_review_discovery(
@@ -688,7 +758,9 @@ def test_actual_provider_credential_failure_projects_once_at_provider_scope(appl
     )
     assert pipeline.run_next()
     repository = open_repository(application_path)
-    signals = cast("list[dict[str, object]]", repository.operational_snapshot()["signals"])
+    signals = cast(
+        "list[dict[str, object]]", repository.operational_snapshot()["signals"]
+    )
     repository.close()
     assert {
         "kind": "authentication_failure",
@@ -702,7 +774,9 @@ def test_actual_provider_credential_failure_projects_once_at_provider_scope(appl
     } in signals
 
 
-def test_observed_provider_authentication_remains_in_complete_report(application_path: Path) -> None:
+def test_observed_provider_authentication_remains_in_complete_report(
+    application_path: Path,
+) -> None:
     base = _report()
     report = MetadataReport.create(
         target=base.target,
@@ -710,24 +784,16 @@ def test_observed_provider_authentication_remains_in_complete_report(application
         local_claims=base.local_claims,
         local_reasons=base.local_reasons,
         providers=(
-            ProviderObservation(
-                "google-main", ProviderStatus.AUTHORIZATION
-            ),
-            ProviderObservation(
-                "hardcover-main", ProviderStatus.AUTHENTICATION
-            ),
+            ProviderObservation("google-main", ProviderStatus.AUTHORIZATION),
+            ProviderObservation("hardcover-main", ProviderStatus.AUTHENTICATION),
         ),
     )
     entry = _entry("item", report.file.identity)
     repository = open_repository(application_path)
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 10
-    )
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
-    repository.complete_review_discovery(
-        discovery, 1, "a" * 64, (entry,), 12
-    )
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 12)
     extraction = repository.claim_review_pipeline_action(13)
     assert extraction is not None
     repository.publish(
@@ -741,16 +807,22 @@ def test_observed_provider_authentication_remains_in_complete_report(application
         ),
     )
     work = repository._connection.execute(
-        "SELECT stage,state,failure_code,failure_root "
-        "FROM review_preparation_work"
+        "SELECT stage,state,failure_code,failure_root FROM review_preparation_work"
     ).fetchone()
     retained = MetadataReport.from_json(repository.get(report.report_id))
     repository.close()
     assert work == ("proposal", "queued", None, None)
-    assert tuple((provider.provider, provider.status) for provider in retained.providers) == (("google-main", ProviderStatus.AUTHORIZATION), ("hardcover-main", ProviderStatus.AUTHENTICATION))
+    assert tuple(
+        (provider.provider, provider.status) for provider in retained.providers
+    ) == (
+        ("google-main", ProviderStatus.AUTHORIZATION),
+        ("hardcover-main", ProviderStatus.AUTHENTICATION),
+    )
 
 
-def test_thousand_work_three_library_backlog_is_bounded_and_fair(application_path: Path) -> None:
+def test_thousand_work_three_library_backlog_is_bounded_and_fair(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     libraries = (("fiction", 334), ("history", 333), ("science", 333))
     for offset, (library, _count) in enumerate(libraries):
@@ -798,16 +870,18 @@ def test_oversized_fairness_cursor_fails_closed(application_path: Path) -> None:
     repository._connection.commit()
     repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
 
-    with pytest.raises(MetadataReportError, match="review preparation control is invalid"):
+    with pytest.raises(
+        MetadataReportError, match="review preparation control is invalid"
+    ):
         repository.claim_review_pipeline_action(10)
     repository.close()
 
 
-def test_claims_age_backlog_and_reserve_every_fourth_for_recent_work(application_path: Path) -> None:
+def test_claims_age_backlog_and_reserve_every_fourth_for_recent_work(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 10
-    )
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
     repository.complete_review_discovery(
@@ -846,13 +920,13 @@ def test_claims_age_backlog_and_reserve_every_fourth_for_recent_work(application
     assert (aged.item_id, recent.item_id) == ("old", "recent")
 
 
-def test_advance_atomically_claims_recoverable_next_action(application_path: Path) -> None:
+def test_advance_atomically_claims_recoverable_next_action(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     report = _report()
     repository.publish(report, lambda: True)
-    repository.request_review_scan(
-        "primary", "ebooks", "lib-1", _PRODUCER, 10
-    )
+    repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 10)
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
     repository.complete_review_discovery(
@@ -872,13 +946,15 @@ def test_advance_atomically_claims_recoverable_next_action(application_path: Pat
     repository.close()
 
     reopened = open_repository(application_path)
-    reopened.recover_review_pipeline(
-        (("primary", "ebooks", "lib-1", _PRODUCER),)
-    )
+    reopened.recover_review_pipeline((("primary", "ebooks", "lib-1", _PRODUCER),))
     recovered = reopened.claim_review_pipeline_action(15)
     reopened.close()
     assert recovered is not None
-    assert (recovered.action_id, recovered.stage, recovered.attempt) == (provider.action_id, "provider", 2)
+    assert (recovered.action_id, recovered.stage, recovered.attempt) == (
+        provider.action_id,
+        "provider",
+        2,
+    )
 
 
 def test_admission_target_not_found_is_typed_stale(application_path: Path) -> None:
@@ -913,11 +989,11 @@ def test_admission_target_not_found_is_typed_stale(application_path: Path) -> No
     assert cases == (0,)
 
 
-def test_request_discovery_claim_and_restart_are_persisted(application_path: Path) -> None:
+def test_request_discovery_claim_and_restart_are_persisted(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
-    first = repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 10
-    )
+    first = repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     duplicate = repository.request_review_scan(
         "primary", "fiction", "lib-1", _PRODUCER, 11
     )
@@ -960,21 +1036,17 @@ def test_request_discovery_claim_and_restart_are_persisted(application_path: Pat
             "books",
         ),
     )
-    repository.complete_review_discovery(
-        discovery, 1, "a" * 64, entries, 13
-    )
+    repository.complete_review_discovery(discovery, 1, "a" * 64, entries, 13)
     one = repository.claim_review_pipeline_action(14)
     two = repository.claim_review_pipeline_action(14)
     assert {
-            cast(PipelineAction, one).item_id,
-            cast(PipelineAction, two).item_id,
-        } == {"slow", "fast"}
+        cast(PipelineAction, one).item_id,
+        cast(PipelineAction, two).item_id,
+    } == {"slow", "fast"}
     repository.close()
 
     reopened = open_repository(application_path)
-    reopened.recover_review_pipeline(
-        (("primary", "fiction", "lib-1", _PRODUCER),)
-    )
+    reopened.recover_review_pipeline((("primary", "fiction", "lib-1", _PRODUCER),))
     recovered = {
         cast(PipelineAction, reopened.claim_review_pipeline_action(15)).item_id,
         cast(PipelineAction, reopened.claim_review_pipeline_action(15)).item_id,
@@ -987,11 +1059,11 @@ def test_request_discovery_claim_and_restart_are_persisted(application_path: Pat
     reopened.close()
 
 
-def test_repeated_queued_request_advances_its_freshness_anchor(application_path: Path) -> None:
+def test_repeated_queued_request_advances_its_freshness_anchor(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
-    first = repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 10
-    )
+    first = repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
 
     repeated = repository.request_review_scan(
         "primary", "fiction", "lib-1", _PRODUCER, 11
@@ -1001,19 +1073,18 @@ def test_repeated_queued_request_advances_its_freshness_anchor(application_path:
     assert repeated.state == "queued"
     assert repeated.updated_at == 11
     timing = repository._connection.execute(
-        "SELECT requested_at,updated_at FROM review_preparation_scans "
-        "WHERE scan_id=?",
+        "SELECT requested_at,updated_at FROM review_preparation_scans WHERE scan_id=?",
         (first.scan_id,),
     ).fetchone()
     repository.close()
     assert timing == (11, 11)
 
 
-def test_request_during_discovery_forces_a_successor_scan(application_path: Path) -> None:
+def test_request_during_discovery_forces_a_successor_scan(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 10
-    )
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
 
@@ -1024,9 +1095,7 @@ def test_request_during_discovery_forces_a_successor_scan(application_path: Path
     assert requested.state == "discovering"
     assert requested.rescan_requested
     assert requested.updated_at == 12
-    repository.complete_review_discovery(
-        discovery, 1, "a" * 64, (), 13
-    )
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (), 13)
     processing = repository.review_pipeline_progress("primary", "fiction")
     assert processing is not None
     assert processing.rescan_requested
@@ -1037,24 +1106,21 @@ def test_request_during_discovery_forces_a_successor_scan(application_path: Path
     repository.close()
 
 
-def test_failed_discovery_preserves_the_requested_successor(application_path: Path) -> None:
+def test_failed_discovery_preserves_the_requested_successor(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 10
-    )
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 12
-    )
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 12)
 
     with patch.object(
-        repository, "_has_pending_field_effect_manual_return",
+        repository,
+        "_has_pending_field_effect_manual_return",
         return_value=True,
     ):
-        repository.fail_review_pipeline_action(
-            discovery, "failed", False, 13
-        )
+        repository.fail_review_pipeline_action(discovery, "failed", False, 13)
 
     progress = repository.review_pipeline_progress("primary", "fiction")
     assert progress is not None
@@ -1066,11 +1132,11 @@ def test_failed_discovery_preserves_the_requested_successor(application_path: Pa
     repository.close()
 
 
-def test_failed_processing_preserves_the_requested_successor(application_path: Path) -> None:
+def test_failed_processing_preserves_the_requested_successor(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 10
-    )
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
     repository.complete_review_discovery(
@@ -1078,13 +1144,12 @@ def test_failed_processing_preserves_the_requested_successor(application_path: P
     )
     work = repository.claim_review_pipeline_action(13)
     assert work is not None
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 14
-    )
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 14)
     repository.fail_review_pipeline_action(work, "failed", False, 15)
 
     with patch.object(
-        repository, "_has_pending_field_effect_manual_return",
+        repository,
+        "_has_pending_field_effect_manual_return",
         return_value=True,
     ):
         assert repository.claim_review_pipeline_action(16) is None
@@ -1097,11 +1162,11 @@ def test_failed_processing_preserves_the_requested_successor(application_path: P
     repository.close()
 
 
-def test_complete_empty_discovery_reaches_a_bounded_summary(application_path: Path) -> None:
+def test_complete_empty_discovery_reaches_a_bounded_summary(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 10
-    )
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     action = repository.claim_review_pipeline_action(11)
     assert action is not None
     repository.complete_review_discovery(action, 1, "b" * 64, (), 12)
@@ -1118,9 +1183,7 @@ def test_complete_empty_discovery_reaches_a_bounded_summary(application_path: Pa
     unchanged = repository.review_pipeline_progress("primary", "fiction")
     assert unchanged is not None
     assert unchanged.state == "completed"
-    repository.request_review_scan(
-        "primary", "fiction", "lib-2", changed_producer, 15
-    )
+    repository.request_review_scan("primary", "fiction", "lib-2", changed_producer, 15)
     refreshed = repository.claim_review_pipeline_action(16)
     assert refreshed is not None
     assert refreshed.library_id == "lib-2"
@@ -1128,11 +1191,11 @@ def test_complete_empty_discovery_reaches_a_bounded_summary(application_path: Pa
     repository.close()
 
 
-def test_failed_rediscovery_cannot_claim_queued_children(application_path: Path) -> None:
+def test_failed_rediscovery_cannot_claim_queued_children(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 10
-    )
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
     repository.complete_review_discovery(
@@ -1145,9 +1208,7 @@ def test_failed_rediscovery_cannot_claim_queued_children(application_path: Path)
     rediscovery = repository.claim_review_pipeline_action(13)
     assert rediscovery is not None
     assert rediscovery.stage == "discovery"
-    repository.fail_review_pipeline_action(
-        rediscovery, "transient", True, 14
-    )
+    repository.fail_review_pipeline_action(rediscovery, "transient", True, 14)
 
     assert repository.claim_review_pipeline_action(15) is None
     progress = repository.review_pipeline_progress("primary", "fiction")
@@ -1161,11 +1222,11 @@ def test_failed_rediscovery_cannot_claim_queued_children(application_path: Path)
     assert child == ("queued",)
 
 
-def test_third_crashed_stage_is_terminal_instead_of_overflowing_claim(application_path: Path) -> None:
+def test_third_crashed_stage_is_terminal_instead_of_overflowing_claim(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 10
-    )
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
     repository.complete_review_discovery(
@@ -1178,17 +1239,21 @@ def test_third_crashed_stage_is_terminal_instead_of_overflowing_claim(applicatio
         (action.action_id,),
     )
     repository._connection.commit()
-    repository.recover_review_pipeline(
-        (("primary", "fiction", "lib-1", _PRODUCER),)
-    )
+    repository.recover_review_pipeline((("primary", "fiction", "lib-1", _PRODUCER),))
     assert repository.claim_review_pipeline_action(14) is None
     progress = repository.review_pipeline_progress("primary", "fiction")
     assert progress is not None
-    assert (progress.state, progress.checked, progress.blocked) == ("completed_with_failures", 1, 1)
+    assert (progress.state, progress.checked, progress.blocked) == (
+        "completed_with_failures",
+        1,
+        1,
+    )
     repository.close()
 
 
-def test_complete_scan_tombstones_only_confirmed_absence(application_path: Path) -> None:
+def test_complete_scan_tombstones_only_confirmed_absence(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     report = _report()
     repository.publish(report, lambda: True)
@@ -1204,16 +1269,12 @@ def test_complete_scan_tombstones_only_confirmed_absence(application_path: Path)
     )
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
-    repository.complete_review_discovery(
-        discovery, 1, "c" * 64, (), 12
-    )
+    repository.complete_review_discovery(discovery, 1, "c" * 64, (), 12)
     assert repository.claim_review_pipeline_action(13) is None
     confirmation = repository.claim_review_pipeline_action(14)
     assert confirmation is not None
     assert confirmation.stage == "discovery"
-    repository.complete_review_discovery(
-        confirmation, 2, "c" * 64, (), 15
-    )
+    repository.complete_review_discovery(confirmation, 2, "c" * 64, (), 15)
     assert repository.claim_review_pipeline_action(16) is None
     repository.close()
 
@@ -1230,7 +1291,9 @@ def test_complete_scan_tombstones_only_confirmed_absence(application_path: Path)
     assert transition == ("review-preparation-v1", "tombstoned", "absent")
 
     repository = open_repository(application_path)
-    assert repository._connection.execute("SELECT COUNT(*) FROM current_review_packages").fetchone() == (0,)
+    assert repository._connection.execute(
+        "SELECT COUNT(*) FROM current_review_packages"
+    ).fetchone() == (0,)
     assert repository.count_current_review_cases(None) == (0, 0)
     assert repository.read_review_attention(None, 10, 0).total == 0
     repository.close()
@@ -1245,7 +1308,9 @@ def test_complete_scan_tombstones_only_confirmed_absence(application_path: Path)
     assert pointer == (reappeared["review_case_id"], "admitted")
 
 
-def test_complete_scan_retires_present_item_that_became_ineligible(application_path: Path) -> None:
+def test_complete_scan_retires_present_item_that_became_ineligible(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     report = _report()
     repository.publish(report, lambda: True)
@@ -1267,15 +1332,11 @@ def test_complete_scan_retires_present_item_that_became_ineligible(application_p
         classification="singular-unmounted",
         mount=None,
     )
-    repository.complete_review_discovery(
-        discovery, 1, "c" * 64, (ineligible,), 12
-    )
+    repository.complete_review_discovery(discovery, 1, "c" * 64, (ineligible,), 12)
     assert repository.claim_review_pipeline_action(13) is None
     confirmation = repository.claim_review_pipeline_action(14)
     assert confirmation is not None
-    repository.complete_review_discovery(
-        confirmation, 2, "c" * 64, (ineligible,), 15
-    )
+    repository.complete_review_discovery(confirmation, 2, "c" * 64, (ineligible,), 15)
     assert repository.claim_review_pipeline_action(16) is None
     pointer = repository._connection.execute(
         "SELECT review_case_id,outcome FROM current_review_case_lineages"
@@ -1301,7 +1362,9 @@ def test_complete_scan_retires_present_item_that_became_ineligible(application_p
     assert reopened["review_case_id"] == admitted["review_case_id"]
 
 
-def test_confirmation_discovery_cancels_absence_after_reappearance(application_path: Path) -> None:
+def test_confirmation_discovery_cancels_absence_after_reappearance(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     report = _report()
     repository.publish(report, lambda: True)
@@ -1317,9 +1380,7 @@ def test_confirmation_discovery_cancels_absence_after_reappearance(application_p
     )
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
-    repository.complete_review_discovery(
-        discovery, 1, "c" * 64, (), 12
-    )
+    repository.complete_review_discovery(discovery, 1, "c" * 64, (), 12)
     assert repository.claim_review_pipeline_action(13) is None
     confirmation = repository.claim_review_pipeline_action(14)
     assert confirmation is not None
@@ -1327,9 +1388,7 @@ def test_confirmation_discovery_cancels_absence_after_reappearance(application_p
         _entry(report.target.item, report.file.identity),
         library=report.target.library,
     )
-    repository.complete_review_discovery(
-        confirmation, 2, "c" * 64, (reappeared,), 15
-    )
+    repository.complete_review_discovery(confirmation, 2, "c" * 64, (reappeared,), 15)
     pointer = repository._connection.execute(
         "SELECT review_case_id,outcome FROM current_review_case_lineages"
     ).fetchone()
@@ -1342,7 +1401,9 @@ def test_confirmation_discovery_cancels_absence_after_reappearance(application_p
     assert staged == (0,)
 
 
-def test_changed_retirement_candidate_is_discarded_without_third_scan(application_path: Path) -> None:
+def test_changed_retirement_candidate_is_discarded_without_third_scan(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     report = _report()
     repository.publish(report, lambda: True)
@@ -1367,9 +1428,7 @@ def test_changed_retirement_candidate_is_discarded_without_third_scan(applicatio
         library=report.target.library,
         classification="multiple-files",
     )
-    repository.complete_review_discovery(
-        confirmation, 2, "d" * 64, (ineligible,), 15
-    )
+    repository.complete_review_discovery(confirmation, 2, "d" * 64, (ineligible,), 15)
 
     assert repository.claim_review_pipeline_action(16) is None
     assert repository.claim_review_pipeline_action(17) is None
@@ -1384,7 +1443,9 @@ def test_changed_retirement_candidate_is_discarded_without_third_scan(applicatio
     assert staged == (0,)
 
 
-def test_later_rediscovery_confirms_new_absence_before_tombstone(application_path: Path) -> None:
+def test_later_rediscovery_confirms_new_absence_before_tombstone(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     report = _report()
     repository.publish(report, lambda: True)
@@ -1438,7 +1499,9 @@ def test_later_rediscovery_confirms_new_absence_before_tombstone(application_pat
     assert pointer == (None, "tombstoned")
 
 
-def test_failed_discovery_cannot_tombstone_current_lineage(application_path: Path) -> None:
+def test_failed_discovery_cannot_tombstone_current_lineage(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     report = _report()
     repository.publish(report, lambda: True)
@@ -1467,7 +1530,9 @@ def test_failed_discovery_cannot_tombstone_current_lineage(application_path: Pat
     assert pointer == (admitted["review_case_id"], "admitted")
 
 
-def test_later_work_failure_discards_staged_ineligible_retirement(application_path: Path) -> None:
+def test_later_work_failure_discards_staged_ineligible_retirement(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     report = _report()
     repository.publish(report, lambda: True)
@@ -1521,7 +1586,9 @@ def test_later_work_failure_discards_staged_ineligible_retirement(application_pa
     assert progress.state == "completed_with_failures"
 
 
-def test_manual_return_successor_discards_failed_scan_absence_candidates(application_path: Path) -> None:
+def test_manual_return_successor_discards_failed_scan_absence_candidates(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
     report = _report()
     repository.publish(report, lambda: True)
@@ -1529,8 +1596,11 @@ def test_manual_return_successor_discards_failed_scan_absence_candidates(applica
     repository.publish_proposal(proposal)
     admitted = json.loads(repository.admit_review_case(proposal))
     repository.request_review_scan(
-        report.target.connection, report.target.library,
-        "lib-1", _PRODUCER, 10,
+        report.target.connection,
+        report.target.library,
+        "lib-1",
+        _PRODUCER,
+        10,
     )
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
@@ -1555,13 +1625,17 @@ def test_manual_return_successor_discards_failed_scan_absence_candidates(applica
     work = repository.claim_review_pipeline_action(13)
     assert work is not None
     repository.request_review_scan(
-        report.target.connection, report.target.library,
-        "lib-1", _PRODUCER, 14,
+        report.target.connection,
+        report.target.library,
+        "lib-1",
+        _PRODUCER,
+        14,
     )
     repository.fail_review_pipeline_action(work, "failed", False, 15)
 
     with patch.object(
-        repository, "_has_pending_field_effect_manual_return",
+        repository,
+        "_has_pending_field_effect_manual_return",
         return_value=True,
     ):
         assert repository.claim_review_pipeline_action(16) is None
@@ -1582,25 +1656,29 @@ def test_manual_return_successor_discards_failed_scan_absence_candidates(applica
     assert progress.state == "queued"
 
 
-def test_one_work_progresses_through_every_persisted_stage(application_path: Path) -> None:
+def test_one_work_progresses_through_every_persisted_stage(
+    application_path: Path,
+) -> None:
     report = _report()
     proposal = evaluate_report(report)
-    entries = [CatalogueEntry(
-        "primary",
-        "ebooks",
-        "lib-1",
-        "item-1",
-        1,
-        "Synthetic work",
-        ("Example Author",),
-        True,
-        False,
-        "singular-supported",
-        report.file.identity,
-        "/item-1.epub",
-        "epub",
-        "books",
-    )]
+    entries = [
+        CatalogueEntry(
+            "primary",
+            "ebooks",
+            "lib-1",
+            "item-1",
+            1,
+            "Synthetic work",
+            ("Example Author",),
+            True,
+            False,
+            "singular-supported",
+            report.file.identity,
+            "/item-1.epub",
+            "epub",
+            "books",
+        )
+    ]
     extracted: list[str] = []
     prepared: list[str] = []
 
@@ -1625,7 +1703,9 @@ def test_one_work_progresses_through_every_persisted_stage(application_path: Pat
         providers=lambda *_: (ProviderStatus.DISABLED,),
         propose=publish_proposal,
         admit=admit,
-        project=lambda _, action: (action.review_case_id or "").startswith("review_case_"),
+        project=lambda _, action: (action.review_case_id or "").startswith(
+            "review_case_"
+        ),
         before_projection=lambda _, action: prepared.append(
             action.review_case_id or ""
         ),
@@ -1636,7 +1716,12 @@ def test_one_work_progresses_through_every_persisted_stage(application_path: Pat
     assert not pipeline.run_next(1)
     progress = pipeline.progress("primary", "ebooks")
     assert progress is not None
-    assert (progress.state, progress.checked, progress.total, progress.ready) == ("completed", 1, 1, 1)
+    assert (progress.state, progress.checked, progress.total, progress.ready) == (
+        "completed",
+        1,
+        1,
+        1,
+    )
     assert len(extracted) == 1
     assert len(prepared) == 1
     assert prepared[0].startswith("review_case_")
@@ -1646,9 +1731,7 @@ def test_one_work_progresses_through_every_persisted_stage(application_path: Pat
     assert not pipeline.run_next(1)
     assert len(extracted) == 1
 
-    entries[0] = replace(
-        entries[0], updated_at=2, source_fingerprint="9" * 64
-    )
+    entries[0] = replace(entries[0], updated_at=2, source_fingerprint="9" * 64)
     pipeline.request("primary", "ebooks")
     assert pipeline.run_next(1)
     assert pipeline.run_next(1)
@@ -1662,9 +1745,7 @@ def test_one_work_progresses_through_every_persisted_stage(application_path: Pat
     discovery = repository.claim_review_pipeline_action(40)
     assert discovery is not None
     assert discovery.producer_fingerprint == changed_producer
-    repository.complete_review_discovery(
-        discovery, 2, "e" * 64, tuple(entries), 41
-    )
+    repository.complete_review_discovery(discovery, 2, "e" * 64, tuple(entries), 41)
     restarted = repository.claim_review_pipeline_action(42)
     assert restarted is not None
     repository.close()
@@ -1673,7 +1754,9 @@ def test_one_work_progresses_through_every_persisted_stage(application_path: Pat
     assert restarted.report_id is None
 
 
-def test_terminal_provider_failure_continues_to_proposal(application_path: Path) -> None:
+def test_terminal_provider_failure_continues_to_proposal(
+    application_path: Path,
+) -> None:
     proposed: list[str] = []
     extracted: list[str] = []
     clock = [30]
@@ -1683,9 +1766,7 @@ def test_terminal_provider_failure_continues_to_proposal(application_path: Path)
     ]
     report = _report()
 
-    def publish_report(
-        repository, __: PipelineAction, ___: bool
-    ) -> tuple[str, bool]:
+    def publish_report(repository, __: PipelineAction, ___: bool) -> tuple[str, bool]:
         extracted.append(report.report_id)
         repository.publish(report, lambda: True)
         return report.report_id, False
@@ -1737,16 +1818,16 @@ def test_terminal_provider_failure_continues_to_proposal(application_path: Path)
     assert control == (0, 0)
 
 
-def test_terminal_unavailable_provider_report_continues_to_proposal(application_path: Path) -> None:
+def test_terminal_unavailable_provider_report_continues_to_proposal(
+    application_path: Path,
+) -> None:
     report = _report()
     clock = [30]
     extracted: list[str] = []
     provider_calls = 0
     proposed: list[str] = []
 
-    def publish_report(
-        repository, __: PipelineAction, ___: bool
-    ) -> tuple[str, bool]:
+    def publish_report(repository, __: PipelineAction, ___: bool) -> tuple[str, bool]:
         extracted.append(report.report_id)
         repository.publish(report, lambda: True)
         return report.report_id, False
@@ -1781,7 +1862,9 @@ def test_terminal_unavailable_provider_report_continues_to_proposal(application_
     assert (len(extracted), provider_calls) == (1, 1)
 
 
-def test_first_generation_and_refresh_publish_only_after_projection(application_path: Path) -> None:
+def test_first_generation_and_refresh_publish_only_after_projection(
+    application_path: Path,
+) -> None:
     reports = [
         _report(title="Published old", content_digest="a", file_identity="b"),
         _report(title="Staged successor", content_digest="c", file_identity="d"),
@@ -1808,8 +1891,10 @@ def test_first_generation_and_refresh_publish_only_after_projection(application_
             repository.publish(
                 report,
                 lambda: True,
-                after_publication=lambda bound, current: bound.complete_review_extraction_publication(
-                    action, current.report_id, now, 0, None, claim_next, None
+                after_publication=lambda bound, current: (
+                    bound.complete_review_extraction_publication(
+                        action, current.report_id, now, 0, None, claim_next, None
+                    )
                 ),
             )
             return report.report_id, True
@@ -1833,7 +1918,11 @@ def test_first_generation_and_refresh_publish_only_after_projection(application_
         return ReviewPreparationPipeline(
             repository_factory=lambda: open_repository(selected_database),
             libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
-            discover=lambda *_: (1, report.file.content_digest, (replace(_entry("item-1", report.file.identity), library="ebooks"),)),
+            discover=lambda *_: (
+                1,
+                report.file.content_digest,
+                (replace(_entry("item-1", report.file.identity), library="ebooks"),),
+            ),
             extract=extract,
             providers=lambda *_: (),
             propose=propose,
@@ -1857,7 +1946,9 @@ def test_first_generation_and_refresh_publish_only_after_projection(application_
             assert titles() == ()
     assert titles() == ("Published old",)
     repository = open_repository(application_path)
-    old_case = repository._connection.execute("SELECT review_case_id FROM current_review_packages").fetchone()[0]
+    old_case = repository._connection.execute(
+        "SELECT review_case_id FROM current_review_packages"
+    ).fetchone()[0]
     assert json.loads(repository.get_review_case(old_case))["current"]
     repository.close()
     assert not first.run_next(1)
@@ -1913,22 +2004,28 @@ def test_first_generation_and_refresh_publish_only_after_projection(application_
     reopened.close()
 
     reused_report = open_repository(application_path)
-    assert reused_report._connection.execute(
+    assert (
+        reused_report._connection.execute(
             "UPDATE review_preparation_work SET report_id=? WHERE state='failed'",
             (reports[1].report_id,),
-        ).rowcount == 1
+        ).rowcount
+        == 1
+    )
     reused_report_page = BrowseReviewLibrary(reused_report).library(
         lens="all", search="Staged successor", limit=1, cursor=None
     )
     assert reused_report_page["counts"]["all"] == 1
     assert reused_report_page["items"][0]["preparation"] is not None
     assert reused_report._connection.execute(
-            "SELECT report_id FROM current_review_packages"
-        ).fetchone() == (reports[1].report_id,)
-    assert reused_report._connection.execute(
+        "SELECT report_id FROM current_review_packages"
+    ).fetchone() == (reports[1].report_id,)
+    assert (
+        reused_report._connection.execute(
             "UPDATE review_preparation_work SET report_id=? WHERE state='failed'",
             (reports[2].report_id,),
-        ).rowcount == 1
+        ).rowcount
+        == 1
+    )
     reused_report.close()
 
     recovery = pipeline_for(reports[3], now=50)
@@ -1963,14 +2060,10 @@ def test_first_generation_and_refresh_publish_only_after_projection(application_
         database: Path | None = None,
     ) -> None:
         repository = open_repository(application_path if database is None else database)
-        repository.request_review_scan(
-            "primary", "ebooks", "lib-1", _PRODUCER, now
-        )
+        repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, now)
         discovery = repository.claim_review_pipeline_action(now + 1)
         assert discovery is not None
-        repository.complete_review_discovery(
-            discovery, 1, "9" * 64, entries, now + 2
-        )
+        repository.complete_review_discovery(discovery, 1, "9" * 64, entries, now + 2)
         assert repository.claim_review_pipeline_action(now + 3) is None
         confirmation = repository.claim_review_pipeline_action(now + 4)
         assert confirmation is not None
@@ -1979,8 +2072,8 @@ def test_first_generation_and_refresh_publish_only_after_projection(application_
         )
         assert repository.claim_review_pipeline_action(now + 6) is None
         assert repository._connection.execute(
-                "SELECT COUNT(*) FROM current_review_packages"
-            ).fetchone() == (0,)
+            "SELECT COUNT(*) FROM current_review_packages"
+        ).fetchone() == (0,)
         assert repository.count_current_review_cases(None) == (0, 0)
         repository.close()
 
@@ -2030,16 +2123,22 @@ def test_first_generation_and_refresh_publish_only_after_projection(application_
         confirm_removal(entries, 110 + index * 20, database)
 
 
-def test_first_generation_real_shadow_projection_precedes_package_cutover(application_path: Path) -> None:
-    report = _report(title="First staged projection", content_digest="a", file_identity="b")
+def test_first_generation_real_shadow_projection_precedes_package_cutover(
+    application_path: Path,
+) -> None:
+    report = _report(
+        title="First staged projection", content_digest="a", file_identity="b"
+    )
     proposal = evaluate_report(report)
 
     def extract(repository, action: PipelineAction, claim_next: bool):
         repository.publish(
             report,
             lambda: True,
-            after_publication=lambda bound, current: bound.complete_review_extraction_publication(
-                action, current.report_id, 10, 0, None, claim_next, None
+            after_publication=lambda bound, current: (
+                bound.complete_review_extraction_publication(
+                    action, current.report_id, 10, 0, None, claim_next, None
+                )
             ),
         )
         return report.report_id, True
@@ -2064,11 +2163,20 @@ def test_first_generation_real_shadow_projection_precedes_package_cutover(applic
     pipeline = ReviewPreparationPipeline(
         repository_factory=lambda: open_repository(application_path),
         libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
-        discover=lambda *_: (1, report.file.content_digest, (replace(_entry("item-1", report.file.identity), library="ebooks"),)),
+        discover=lambda *_: (
+            1,
+            report.file.content_digest,
+            (replace(_entry("item-1", report.file.identity), library="ebooks"),),
+        ),
         extract=extract,
         providers=lambda *_: (),
-        propose=lambda repository, _: (repository.publish_proposal(proposal), proposal.proposal_set_id)[1],
-        admit=lambda repository, _: (lambda value: (value["status"], value.get("review_case_id")))(json.loads(repository.admit_review_case(proposal))),
+        propose=lambda repository, _: (
+            repository.publish_proposal(proposal),
+            proposal.proposal_set_id,
+        )[1],
+        admit=lambda repository, _: (
+            lambda value: (value["status"], value.get("review_case_id"))
+        )(json.loads(repository.admit_review_case(proposal))),
         project=project,
         clock=lambda: 10,
     )
@@ -2080,8 +2188,8 @@ def test_first_generation_real_shadow_projection_precedes_package_cutover(applic
         assert pipeline.run_next(1)
     repository = open_repository(application_path)
     assert ("projection", "queued") == repository._connection.execute(
-            "SELECT stage,state FROM review_preparation_work"
-        ).fetchone()
+        "SELECT stage,state FROM review_preparation_work"
+    ).fetchone()
     assert (0,) == repository._connection.execute(
         "SELECT COUNT(*) FROM current_review_packages"
     ).fetchone()
@@ -2097,8 +2205,12 @@ def test_first_generation_real_shadow_projection_precedes_package_cutover(applic
 
     assert pipeline.run_next(1)
     repository = open_repository(application_path)
-    assert ("complete",) == repository._connection.execute("SELECT state FROM review_preparation_work").fetchone()
-    assert (1,) == repository._connection.execute("SELECT COUNT(*) FROM current_review_packages").fetchone()
+    assert ("complete",) == repository._connection.execute(
+        "SELECT state FROM review_preparation_work"
+    ).fetchone()
+    assert (1,) == repository._connection.execute(
+        "SELECT COUNT(*) FROM current_review_packages"
+    ).fetchone()
     case_id = repository._connection.execute(
         "SELECT review_case_id FROM current_review_packages"
     ).fetchone()[0]
@@ -2117,16 +2229,22 @@ def test_first_generation_real_shadow_projection_precedes_package_cutover(applic
     restarted.close()
 
 
-def test_projection_crash_rolls_back_staged_shadow_outcome_before_requeue(application_path: Path) -> None:
-    report = _report(title="Rollback staged projection", content_digest="c", file_identity="d")
+def test_projection_crash_rolls_back_staged_shadow_outcome_before_requeue(
+    application_path: Path,
+) -> None:
+    report = _report(
+        title="Rollback staged projection", content_digest="c", file_identity="d"
+    )
     proposal = evaluate_report(report)
 
     def extract(repository, action: PipelineAction, claim_next: bool):
         repository.publish(
             report,
             lambda: True,
-            after_publication=lambda bound, current: bound.complete_review_extraction_publication(
-                action, current.report_id, 10, 0, None, claim_next, None
+            after_publication=lambda bound, current: (
+                bound.complete_review_extraction_publication(
+                    action, current.report_id, 10, 0, None, claim_next, None
+                )
             ),
         )
         return report.report_id, True
@@ -2151,17 +2269,20 @@ def test_projection_crash_rolls_back_staged_shadow_outcome_before_requeue(applic
     pipeline = ReviewPreparationPipeline(
         repository_factory=lambda: open_repository(application_path),
         libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
-        discover=lambda *_: (1, report.file.content_digest, (
-            replace(_entry("item-1", report.file.identity), library="ebooks"),
-        )),
+        discover=lambda *_: (
+            1,
+            report.file.content_digest,
+            (replace(_entry("item-1", report.file.identity), library="ebooks"),),
+        ),
         extract=extract,
         providers=lambda *_: (),
         propose=lambda repository, _: (
-            repository.publish_proposal(proposal), proposal.proposal_set_id
+            repository.publish_proposal(proposal),
+            proposal.proposal_set_id,
         )[1],
-        admit=lambda repository, _: (lambda value: (
-            value["status"], value.get("review_case_id")
-        ))(json.loads(repository.admit_review_case(proposal))),
+        admit=lambda repository, _: (
+            lambda value: (value["status"], value.get("review_case_id"))
+        )(json.loads(repository.admit_review_case(proposal))),
         project=project,
         clock=lambda: 10,
     )
@@ -2183,7 +2304,9 @@ def test_projection_crash_rolls_back_staged_shadow_outcome_before_requeue(applic
         observer.close()
 
 
-def test_real_projection_stale_lane_does_not_block_mixed_fifty_work_cohort(application_path: Path) -> None:
+def test_real_projection_stale_lane_does_not_block_mixed_fifty_work_cohort(
+    application_path: Path,
+) -> None:
     reports: dict[str, MetadataReport] = {}
     report_for_item: dict[str, MetadataReport] = {}
     proposals = {}
@@ -2204,9 +2327,9 @@ def test_real_projection_stale_lane_does_not_block_mixed_fifty_work_cohort(appli
         )
         reports[report.report_id] = report
         report_for_item[f"item-{index}"] = report
-        entries.append(replace(
-            _entry(f"item-{index}", report.file.identity), library="ebooks"
-        ))
+        entries.append(
+            replace(_entry(f"item-{index}", report.file.identity), library="ebooks")
+        )
     first = report_for_item["item-0"]
     replacement = MetadataReport.create(
         target=first.target,
@@ -2251,8 +2374,12 @@ def test_real_projection_stale_lane_does_not_block_mixed_fifty_work_cohort(appli
     pipeline = ReviewPreparationPipeline(
         repository_factory=lambda: open_repository(application_path),
         libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
-        discover=lambda *_: (1, "a" * 64, tuple(entries)), extract=extract,
-        providers=lambda *_: (), propose=propose, admit=admit, project=project,
+        discover=lambda *_: (1, "a" * 64, tuple(entries)),
+        extract=extract,
+        providers=lambda *_: (),
+        propose=propose,
+        admit=admit,
+        project=project,
         clock=lambda: 20,
     )
     pipeline.request("primary", "ebooks")
@@ -2295,16 +2422,16 @@ def test_real_projection_stale_lane_does_not_block_mixed_fifty_work_cohort(appli
     assert ("complete", None) == {
         item_id: (state, failure_code) for item_id, state, failure_code in states
     }["item-2"]
-    assert 1 == [
-        (state, failure_code) for _, state, failure_code in states
-    ].count(("stale", "stale"))
-
-
-def test_unrelated_provider_success_does_not_shorten_open_circuit(application_path: Path) -> None:
-    repository = open_repository(application_path)
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 10
+    assert 1 == [(state, failure_code) for _, state, failure_code in states].count(
+        ("stale", "stale")
     )
+
+
+def test_unrelated_provider_success_does_not_shorten_open_circuit(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
     repository.complete_review_discovery(
@@ -2328,11 +2455,11 @@ def test_unrelated_provider_success_does_not_shorten_open_circuit(application_pa
     assert control == (2, 100)
 
 
-def test_terminal_provider_failure_does_not_open_shared_circuit(application_path: Path) -> None:
+def test_terminal_provider_failure_does_not_open_shared_circuit(
+    application_path: Path,
+) -> None:
     repository = open_repository(application_path)
-    repository.request_review_scan(
-        "primary", "fiction", "lib-1", _PRODUCER, 10
-    )
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 10)
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
     repository.complete_review_discovery(
@@ -2356,7 +2483,9 @@ def test_terminal_provider_failure_does_not_open_shared_circuit(application_path
     assert work == ("failed", "provider")
 
 
-def test_repeated_extraction_currentness_drift_requests_rediscovery(application_path: Path) -> None:
+def test_repeated_extraction_currentness_drift_requests_rediscovery(
+    application_path: Path,
+) -> None:
     entry = replace(
         _entry("item-1", "b" * 64),
         library="ebooks",
@@ -2365,9 +2494,7 @@ def test_repeated_extraction_currentness_drift_requests_rediscovery(application_
         repository_factory=lambda: open_repository(application_path),
         libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
         discover=lambda *_: (1, "e" * 64, (entry,)),
-        extract=lambda *_: (_ for _ in ()).throw(
-            ReviewPipelineError("stale")
-        ),
+        extract=lambda *_: (_ for _ in ()).throw(ReviewPipelineError("stale")),
         providers=lambda *_: (),
         propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
         admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
@@ -2394,7 +2521,9 @@ def test_repeated_extraction_currentness_drift_requests_rediscovery(application_
     assert cases == (0,)
 
 
-def test_report_and_extraction_checkpoint_commit_atomically(application_path: Path) -> None:
+def test_report_and_extraction_checkpoint_commit_atomically(
+    application_path: Path,
+) -> None:
     report = _report()
     entry = CatalogueEntry(
         "primary",
@@ -2413,31 +2542,25 @@ def test_report_and_extraction_checkpoint_commit_atomically(application_path: Pa
         "books",
     )
     repository = open_repository(application_path)
-    repository.request_review_scan(
-        "primary", "ebooks", "lib-1", _PRODUCER, 10
-    )
+    repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 10)
     discovery = repository.claim_review_pipeline_action(11)
     assert discovery is not None
-    repository.complete_review_discovery(
-        discovery, 1, "a" * 64, (entry,), 12
-    )
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 12)
     action = repository.claim_review_pipeline_action(13)
     assert action is not None
 
     def fail_after_checkpoint(value, published) -> None:
-        value.complete_review_extraction_publication(
-            action, published.report_id, 14
-        )
+        value.complete_review_extraction_publication(action, published.report_id, 14)
         raise RuntimeError("synthetic rollback")
 
     with pytest.raises(MetadataReportError):
         repository.publish(report, lambda: True, None, fail_after_checkpoint)
     assert repository._connection.execute(
-            "SELECT COUNT(*) FROM metadata_reports"
-        ).fetchone() == (0,)
+        "SELECT COUNT(*) FROM metadata_reports"
+    ).fetchone() == (0,)
     assert repository._connection.execute(
-            "SELECT stage,state,report_id FROM review_preparation_work"
-        ).fetchone() == ("extraction", "running", None)
+        "SELECT stage,state,report_id FROM review_preparation_work"
+    ).fetchone() == ("extraction", "running", None)
     repository.publish(
         report,
         lambda: True,
@@ -2449,9 +2572,7 @@ def test_report_and_extraction_checkpoint_commit_atomically(application_path: Pa
     repository.close()
 
     reopened = open_repository(application_path)
-    reopened.recover_review_pipeline(
-        (("primary", "ebooks", "lib-1", _PRODUCER),)
-    )
+    reopened.recover_review_pipeline((("primary", "ebooks", "lib-1", _PRODUCER),))
     resumed = reopened.claim_review_pipeline_action(16)
     assert resumed is not None
     retry_not_before = reopened._connection.execute(
@@ -2519,7 +2640,9 @@ class _ConcurrentRepository:
     def rollback_review_pipeline_output(self):
         pass
 
-    def advance_review_pipeline_action(self, action, output_id, completed_at, claim_next=False):
+    def advance_review_pipeline_action(
+        self, action, output_id, completed_at, claim_next=False
+    ):
         with self.lock:
             self.completed.append(action.item_id)
 
@@ -2560,7 +2683,9 @@ class _ScheduledPipeline:
 
     def request(self, connection, library):
         self.requests.append((connection, library))
-        return PipelineProgress("review_scan_" + "a" * 64, connection, library, "queued", 0, 0, 0, 0, False)
+        return PipelineProgress(
+            "review_scan_" + "a" * 64, connection, library, "queued", 0, 0, 0, 0, False
+        )
 
     def set_paused(self, paused):
         self.is_paused = paused
@@ -2574,7 +2699,9 @@ def reports_path() -> Iterator[Path]:
         yield Path(directory) / "reports.sqlite3"
 
 
-def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(reports_path: Path) -> None:
+def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(
+    reports_path: Path,
+) -> None:
     predecessor = _report(
         title="Visible predecessor", content_digest="a", file_identity="b"
     )
@@ -2590,9 +2717,12 @@ def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(re
 
         def extract(bound, action: PipelineAction, claim_next: bool):
             bound.publish(
-                report, lambda: True,
-                after_publication=lambda current, published: current.complete_review_extraction_publication(
-                    action, published.report_id, now, 0, None, claim_next, None
+                report,
+                lambda: True,
+                after_publication=lambda current, published: (
+                    current.complete_review_extraction_publication(
+                        action, published.report_id, now, 0, None, claim_next, None
+                    )
                 ),
             )
             return report.report_id, True
@@ -2615,11 +2745,16 @@ def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(re
             repository_factory=lambda: open_repository(reports_path),
             libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
             discover=lambda *_: (
-                1, report.file.content_digest,
+                1,
+                report.file.content_digest,
                 (replace(_entry("item-1", report.file.identity), library="ebooks"),),
             ),
-            extract=extract, providers=lambda *_: (), propose=propose,
-            admit=admit, project=project, clock=lambda: now,
+            extract=extract,
+            providers=lambda *_: (),
+            propose=propose,
+            admit=admit,
+            project=project,
+            clock=lambda: now,
         )
 
     initial = pipeline_for(predecessor, 20)
@@ -2639,13 +2774,17 @@ def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(re
     expected_current = MetadataReport.from_json(current_document).report_id
     assert predecessor.report_id == expected_current
     repository.publish(
-        successor, lambda: True, expected_current,
+        successor,
+        lambda: True,
+        expected_current,
         after_publication=lambda bound, report: bound.stage_provider_retry_successor(
             predecessor.report_id, report, 30
         ),
         expected_package=predecessor_package,
     )
-    assert predecessor_package == repository.current_review_package("primary", "ebooks", "item-1")
+    assert predecessor_package == repository.current_review_package(
+        "primary", "ebooks", "item-1"
+    )
     assert repository.completed_provider_retry_successor(predecessor.report_id) is None
     repository.close()
 
@@ -2657,7 +2796,9 @@ def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(re
     assert current is not None
     assert successor.report_id == current[1]
     assert predecessor_package != current
-    assert successor.report_id == repository.completed_provider_retry_successor(predecessor.report_id)
+    assert successor.report_id == repository.completed_provider_retry_successor(
+        predecessor.report_id
+    )
     pending = repository.pending_provider_recovery_outbox()
     assert 2 == len(pending)
     assert successor.report_id == pending[-1][5]
@@ -2668,10 +2809,12 @@ def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(re
     assert pending == replayed
     for row in replayed:
         restarted.complete_provider_recovery_outbox(
-            row[0], delivered_at=row[9],
+            row[0],
+            delivered_at=row[9],
         )
         restarted.complete_provider_recovery_outbox(
-            row[0], delivered_at=row[9],
+            row[0],
+            delivered_at=row[9],
         )
     assert () == restarted.pending_provider_recovery_outbox()
     restarted.close()
@@ -2793,9 +2936,11 @@ def test_lane_zero_wakes_recovery_with_the_supervisor_clock() -> None:
     supervisor = ReviewPreparationSupervisor(
         pipeline, clock=lambda: clock[0], recovery_wake=woken.append
     )
+
     def run_next() -> bool:
         supervisor._stop.set()
         return False
+
     pipeline.run_next = run_next
     supervisor._wake.set()
     supervisor._run(0)
@@ -2812,12 +2957,16 @@ def test_lane_zero_contains_recovery_store_failure_and_continues() -> None:
         if len(wakes) == 1:
             supervisor._wake.set()
             try:
-                raise ProviderRecoveryStoreError("provider recovery persistence is unavailable")
+                raise ProviderRecoveryStoreError(
+                    "provider recovery persistence is unavailable"
+                )
             except ProviderRecoveryStoreError as error:
                 raise ReviewPipelineError("recovery") from error
 
     supervisor = ReviewPreparationSupervisor(
-        pipeline, polling_interval_seconds=60, clock=lambda: 41,
+        pipeline,
+        polling_interval_seconds=60,
+        clock=lambda: 41,
         recovery_wake=recovery,
     )
 
@@ -2860,8 +3009,10 @@ def test_preparation_stages_emit_exact_advisory_timing_classes() -> None:
     class Timings:
         def __init__(self):
             self.values = []
+
         def append(self, timing):
             self.values.append(timing)
+
         def list(self):
             return tuple(self.values)
 
@@ -2897,17 +3048,17 @@ def test_preparation_stages_emit_exact_advisory_timing_classes() -> None:
         admit=lambda *_: ("admitted", "review_case_" + "3" * 64),
         project=lambda *_: True,
         clock=lambda: 20,
-        timing=StageTimer(
-            timings, monotonic_ns=lambda: next(ticks), clock=lambda: 21
-        ),
+        timing=StageTimer(timings, monotonic_ns=lambda: next(ticks), clock=lambda: 21),
     )
     pipeline._run_claimed_action(repository, action("extraction"), claim_next=False)
     pipeline._run_claimed_action(
-        repository, action("provider", report_id="report_" + "1" * 64),
+        repository,
+        action("provider", report_id="report_" + "1" * 64),
         claim_next=False,
     )
     pipeline._run_claimed_action(
-        repository, action("proposal", report_id="report_" + "1" * 64),
+        repository,
+        action("proposal", report_id="report_" + "1" * 64),
         claim_next=False,
     )
     pipeline._run_claimed_action(
@@ -2921,17 +3072,29 @@ def test_preparation_stages_emit_exact_advisory_timing_classes() -> None:
         claim_next=False,
     )
     assert [(value.stage, value.wait_class) for value in timings.values] == [
-            ("policy_evaluation", "none"),
-            ("policy_evaluation", "none"),
-            ("policy_evaluation", "none"),
-        ]
+        ("policy_evaluation", "none"),
+        ("policy_evaluation", "none"),
+        ("policy_evaluation", "none"),
+    ]
 
 
-def test_drain_rejects_initial_claim_and_persisted_claim_boundary_is_serialized() -> None:
+def test_drain_rejects_initial_claim_and_persisted_claim_boundary_is_serialized() -> (
+    None
+):
     action = PipelineAction(
-        "review_work_" + "1" * 64, "review_scan_" + "a" * 64,
-        "extraction", 1, "primary", "fiction", "lib-1", _PRODUCER,
-        1, "b" * 64, "item", "1" * 64, 1,
+        "review_work_" + "1" * 64,
+        "review_scan_" + "a" * 64,
+        "extraction",
+        1,
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        1,
+        "b" * 64,
+        "item",
+        "1" * 64,
+        1,
         source_fingerprint="c" * 64,
     )
     repository = _ConcurrentRepository([action])
@@ -2940,8 +3103,10 @@ def test_drain_rejects_initial_claim_and_persisted_claim_boundary_is_serialized(
         libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
         discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
         extract=lambda *_: ("report_" + "1" * 64, False),
-        providers=lambda *_: (), propose=lambda *_: "proposal_set_" + "2" * 64,
-        admit=lambda *_: ("admitted", None), project=lambda *_: True,
+        providers=lambda *_: (),
+        propose=lambda *_: "proposal_set_" + "2" * 64,
+        admit=lambda *_: ("admitted", None),
+        project=lambda *_: True,
     )
     pipeline.begin_drain()
     assert not pipeline.run_next()
@@ -3021,9 +3186,19 @@ def test_shutdown_deadline_retains_active_worker_and_durable_claim() -> None:
     started = threading.Event()
     release = threading.Event()
     action = PipelineAction(
-        "review_work_" + "8" * 64, "review_scan_" + "a" * 64,
-        "extraction", 1, "primary", "fiction", "lib-1", _PRODUCER,
-        1, "b" * 64, "slow", "8" * 64, 1,
+        "review_work_" + "8" * 64,
+        "review_scan_" + "a" * 64,
+        "extraction",
+        1,
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        1,
+        "b" * 64,
+        "slow",
+        "8" * 64,
+        1,
         source_fingerprint="c" * 64,
     )
     repository = _ConcurrentRepository([action])
@@ -3037,13 +3212,13 @@ def test_shutdown_deadline_retains_active_worker_and_durable_claim() -> None:
         repository_factory=lambda: cast(ReviewPipelineRepository, repository),
         libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
         discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
-        extract=extract, providers=lambda *_: (),
+        extract=extract,
+        providers=lambda *_: (),
         propose=lambda *_: "proposal_set_" + "4" * 64,
-        admit=lambda *_: ("admitted", None), project=lambda *_: True,
+        admit=lambda *_: ("admitted", None),
+        project=lambda *_: True,
     )
-    supervisor = ReviewPreparationSupervisor(
-        pipeline, graceful_shutdown_seconds=1
-    )
+    supervisor = ReviewPreparationSupervisor(pipeline, graceful_shutdown_seconds=1)
     supervisor.start()
     assert started.wait(1)
     with pytest.raises(ReviewPipelineError, match="shutdown_timeout"):

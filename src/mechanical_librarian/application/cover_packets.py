@@ -32,7 +32,9 @@ SCHEMA_VERSION = "cover-review-packet-v2"
 
 def cover_source_reference(report_id: str, source_id: str) -> str:
     digest = hashlib.sha256(
-        canonical_packet_json({"report_id": report_id, "source_id": source_id}).encode("utf-8")
+        canonical_packet_json({"report_id": report_id, "source_id": source_id}).encode(
+            "utf-8"
+        )
     ).hexdigest()
     return "cover_ref_" + digest
 
@@ -91,7 +93,8 @@ def prepare_cover_packet(
     """Project exact report-bound previews into one deterministic private packet."""
     report = MetadataReport.from_json(report_document)
     retrieved = tuple(
-        source for source in report.cover_sources
+        source
+        for source in report.cover_sources
         if source.state is CoverSourceState.RETRIEVED
     )
     if not retrieved:
@@ -171,11 +174,13 @@ def _omit_group(
     reason: str,
 ) -> None:
     for reference in sorted(candidate.references):
-        omissions.append({
-            "preview_bytes": len(candidate.payload),
-            "reason": reason,
-            "reference": reference,
-        })
+        omissions.append(
+            {
+                "preview_bytes": len(candidate.payload),
+                "reason": reason,
+                "reference": reference,
+            }
+        )
 
 
 def _finalize_cover_packet(
@@ -194,12 +199,16 @@ def _finalize_cover_packet(
                 expected_height=candidate.preview_height,
             )
 
-    oversize = [value for value in candidates if len(value.payload) > MAX_COVER_PREVIEW_BYTES]
+    oversize = [
+        value for value in candidates if len(value.payload) > MAX_COVER_PREVIEW_BYTES
+    ]
     if any(value.incumbent for value in oversize):
         raise ValueError("cover packet incumbent exceeds the preview limit")
     for value in oversize:
         _omit_group(omissions, value, "preview_byte_limit")
-    candidates = [value for value in candidates if len(value.payload) <= MAX_COVER_PREVIEW_BYTES]
+    candidates = [
+        value for value in candidates if len(value.payload) <= MAX_COVER_PREVIEW_BYTES
+    ]
 
     incumbents = [value for value in candidates if value.incumbent]
     if len(incumbents) > 1:
@@ -247,21 +256,27 @@ def _finalize_cover_packet(
             if source.artifact is not None
         }
         for reference in sorted(set(candidate.references) - {candidate.reference}):
-            omissions.append({
-                "preview_sha256": source_digests[reference],
-                "reason": "duplicate_preview",
-                "reference": reference,
-                "retained_reference": candidate.reference,
-            })
+            omissions.append(
+                {
+                    "preview_sha256": source_digests[reference],
+                    "reason": "duplicate_preview",
+                    "reference": reference,
+                    "retained_reference": candidate.reference,
+                }
+            )
         provenance: list[dict[str, object]] = []
         for source in candidate.sources:
             detail = source.provenance
-            provenance.append({
-                "context": [] if detail is None else [value.to_data() for value in detail.context],
-                "designation": None if detail is None else detail.designation.value,
-                "provider": None if detail is None else detail.provider,
-                "source_kind": source.kind.value,
-            })
+            provenance.append(
+                {
+                    "context": []
+                    if detail is None
+                    else [value.to_data() for value in detail.context],
+                    "designation": None if detail is None else detail.designation.value,
+                    "provider": None if detail is None else detail.provider,
+                    "source_kind": source.kind.value,
+                }
+            )
         provenance = normalize_provenance(provenance)
         source_bindings = sorted(
             {
@@ -282,23 +297,27 @@ def _finalize_cover_packet(
         transport_reference = cover_transport_reference(
             candidate.reference, source_binding_data, candidate.digest
         )
-        candidate_data.append({
-            "height": candidate.height,
-            "incumbent": candidate.incumbent,
-            "media_type": "image/png",
-            "preview_bytes": len(candidate.payload),
-            "preview_height": candidate.preview_height,
-            "preview_sha256": candidate.source_digest,
-            "preview_variant": PREVIEW_VARIANT,
-            "preview_width": candidate.preview_width,
-            "provenance": provenance,
-            "reference": candidate.reference,
-            "source_bindings": source_binding_data,
-            "transport_reference": transport_reference,
-            "transport_sha256": candidate.digest,
-            "width": candidate.width,
-        })
-        images.append(CoverPacketImage(transport_reference, candidate.digest, candidate.payload))
+        candidate_data.append(
+            {
+                "height": candidate.height,
+                "incumbent": candidate.incumbent,
+                "media_type": "image/png",
+                "preview_bytes": len(candidate.payload),
+                "preview_height": candidate.preview_height,
+                "preview_sha256": candidate.source_digest,
+                "preview_variant": PREVIEW_VARIANT,
+                "preview_width": candidate.preview_width,
+                "provenance": provenance,
+                "reference": candidate.reference,
+                "source_bindings": source_binding_data,
+                "transport_reference": transport_reference,
+                "transport_sha256": candidate.digest,
+                "width": candidate.width,
+            }
+        )
+        images.append(
+            CoverPacketImage(transport_reference, candidate.digest, candidate.payload)
+        )
 
     omissions.sort(key=lambda value: (value["reference"], value["reason"]))
     packet_body = {
@@ -308,9 +327,8 @@ def _finalize_cover_packet(
     }
     packet = {
         **packet_body,
-        "packet_reference": "cover_packet_" + hashlib.sha256(
-            canonical_packet_json(packet_body).encode()
-        ).hexdigest(),
+        "packet_reference": "cover_packet_"
+        + hashlib.sha256(canonical_packet_json(packet_body).encode()).hexdigest(),
     }
     document = canonical_packet_json(packet)
     bound_images = tuple(

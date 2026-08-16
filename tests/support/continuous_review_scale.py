@@ -106,7 +106,10 @@ class _AudiobookshelfFixture:
                     library = route.split("/")[3]
                     rows = fixture.summaries[library]
                     page = int(parse_qs(parsed.query).get("page", ["0"])[0])
-                    value = {"total": len(rows), "results": rows[page * 100 : (page + 1) * 100]}
+                    value = {
+                        "total": len(rows),
+                        "results": rows[page * 100 : (page + 1) * 100],
+                    }
                 elif route.startswith("/api/items/"):
                     time.sleep(0.001)
                     value = fixture.details[route.rsplit("/", 1)[-1]]
@@ -345,7 +348,9 @@ def qualify_installed_pipeline(
                     (
                         "transient"
                         if transient
-                        else "configuration" if configuration_failure else None
+                        else "configuration"
+                        if configuration_failure
+                        else None
                     ),
                     claim_next,
                 ),
@@ -362,17 +367,14 @@ def qualify_installed_pipeline(
             return proposal.proposal_set_id
 
         def admit(_, proposal_id: str):
-            result = json.loads(
-                repository.admit_review_case(proposals[proposal_id])
-            )
+            result = json.loads(repository.admit_review_case(proposals[proposal_id]))
             return result["status"], result.get("review_case_id")
 
         def pipeline() -> ReviewPreparationPipeline:
             return ReviewPreparationPipeline(
                 repository_factory=lambda: repository,
                 libraries=tuple(
-                    ("primary", name, name, producers[name])
-                    for name in entries
+                    ("primary", name, name, producers[name]) for name in entries
                 ),
                 discover=discover,
                 extract=extract,
@@ -392,8 +394,7 @@ def qualify_installed_pipeline(
             "SELECT circuit_open_until FROM review_preparation_control"
         ).fetchone()[0]
         retry_at = repository._connection.execute(
-            "SELECT retry_not_before FROM review_preparation_work "
-            "WHERE item_id=?",
+            "SELECT retry_not_before FROM review_preparation_work WHERE item_id=?",
             (transient_item,),
         ).fetchone()[0]
         assert circuit == 0
@@ -404,16 +405,20 @@ def qualify_installed_pipeline(
         assert not (run_next(restarted))
         clock[0] = retry_at
         while True:
-            if cast(
-                PipelineProgress, restarted.progress("primary", "fiction")
-            ).state == "completed":
+            if (
+                cast(PipelineProgress, restarted.progress("primary", "fiction")).state
+                == "completed"
+            ):
                 break
             advanced = run_next(restarted)
             if not advanced:
-                assert cast(
-                    PipelineProgress,
-                    restarted.progress("primary", "fiction"),
-                ).state == "completed"
+                assert (
+                    cast(
+                        PipelineProgress,
+                        restarted.progress("primary", "fiction"),
+                    ).state
+                    == "completed"
+                )
 
         before_new = len(extracted)
         initial_extracted = tuple(extracted)
@@ -496,7 +501,9 @@ def qualify_installed_pipeline(
         )
         try:
             _wait_for_https(first_process, origin)
-            assert fixture.discovery_started.wait(timeout=15), "first-start reconciliation was not observed"
+            assert fixture.discovery_started.wait(timeout=15), (
+                "first-start reconciliation was not observed"
+            )
             with closing(sqlite3.connect(database)) as connection:
                 states = {
                     row[0]
@@ -527,10 +534,10 @@ def qualify_installed_pipeline(
                 deadline = time.monotonic() + 60
                 while True:
                     if second_process.poll() is not None:
-                        pytest.fail("installed review server exited during reconciliation")
-                    peak_rss_kib = max(
-                        peak_rss_kib, _rss_kib(second_process.pid)
-                    )
+                        pytest.fail(
+                            "installed review server exited during reconciliation"
+                        )
+                    peak_rss_kib = max(peak_rss_kib, _rss_kib(second_process.pid))
                     status = client.get(origin + "/api/v1/review-preparation")
                     if status.status_code == 503:
                         if time.monotonic() >= deadline:
@@ -539,8 +546,10 @@ def qualify_installed_pipeline(
                                     "SELECT library_name,state,total FROM review_preparation_scans "
                                     "ORDER BY library_name"
                                 ).fetchall()
-                            pytest.fail("installed reconciliation status remained unavailable: "
-                            + repr(observed))
+                            pytest.fail(
+                                "installed reconciliation status remained unavailable: "
+                                + repr(observed)
+                            )
                         time.sleep(0.02)
                         continue
                     assert status.status_code == 200, status.text
@@ -557,8 +566,13 @@ def qualify_installed_pipeline(
                     if time.monotonic() >= deadline:
                         pytest.fail("installed reconciliation did not complete")
                     time.sleep(0.02)
-            assert sum(item["total"] for item in projection["libraries"]) == expected_total
-            assert sum(item["checked"] for item in projection["libraries"]) == expected_total
+            assert (
+                sum(item["total"] for item in projection["libraries"]) == expected_total
+            )
+            assert (
+                sum(item["checked"] for item in projection["libraries"])
+                == expected_total
+            )
             assert sum(item["blocked"] for item in projection["libraries"]) == 0
             assert peak_rss_kib < 524_288
         finally:

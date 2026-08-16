@@ -49,23 +49,33 @@ def test_installed_mutations_fail_closed_without_browser_assets() -> None:
         "scripts.qualify_audiobookshelf_field_effect.ReactAssetLoader"
     ) as loader:
         loader.return_value.load.return_value = ReactAssetRecovery()
-        with pytest.raises(QualificationError, match="installed_browser_assets_unavailable"):
-            _installed_mutation_headers(
-                {"Origin": "https://review.test"}, "csrf-token"
-            )
+        with pytest.raises(
+            QualificationError, match="installed_browser_assets_unavailable"
+        ):
+            _installed_mutation_headers({"Origin": "https://review.test"}, "csrf-token")
 
 
 def test_installed_consent_uses_only_capability_allowed_destinations() -> None:
-    grants = _installed_consent_grants({"capabilities": [
-        {"library": "alpha", "destinations": [
-            {"destination": "description", "state": "not_ready"},
-            {"destination": "title", "state": "allowed"},
-        ]},
-        {"library": "beta", "destinations": [
-            {"destination": "authors", "state": "allowed"},
-        ]},
-    ]}, (("alpha", "alpha-id", Path("alpha")),
-         ("beta", "beta-id", Path("beta"))))
+    grants = _installed_consent_grants(
+        {
+            "capabilities": [
+                {
+                    "library": "alpha",
+                    "destinations": [
+                        {"destination": "description", "state": "not_ready"},
+                        {"destination": "title", "state": "allowed"},
+                    ],
+                },
+                {
+                    "library": "beta",
+                    "destinations": [
+                        {"destination": "authors", "state": "allowed"},
+                    ],
+                },
+            ]
+        },
+        (("alpha", "alpha-id", Path("alpha")), ("beta", "beta-id", Path("beta"))),
+    )
 
     assert grants == [
         {"library": "alpha", "destinations": ["title"]},
@@ -162,8 +172,10 @@ def test_return_to_automatic_requires_requested_scan_before_hold_clear(
     requested_at = 20
     assert not _require_installed_return_lineage_progress(
         SimpleNamespace(
-            scan_id=requested_scan_id, state="processing",
-            rescan_requested=True, updated_at=requested_at,
+            scan_id=requested_scan_id,
+            state="processing",
+            rescan_requested=True,
+            updated_at=requested_at,
         ),
         requested_scan_id,
         requested_at,
@@ -171,8 +183,10 @@ def test_return_to_automatic_requires_requested_scan_before_hold_clear(
     )
     assert _require_installed_return_lineage_progress(
         SimpleNamespace(
-            scan_id=requested_scan_id, state="completed",
-            rescan_requested=False, updated_at=requested_at + 1,
+            scan_id=requested_scan_id,
+            state="completed",
+            rescan_requested=False,
+            updated_at=requested_at + 1,
         ),
         requested_scan_id,
         requested_at,
@@ -180,19 +194,24 @@ def test_return_to_automatic_requires_requested_scan_before_hold_clear(
     )
     assert _require_installed_return_lineage_progress(
         SimpleNamespace(
-            scan_id=requested_scan_id, state="completed",
-            rescan_requested=False, updated_at=requested_at + 1,
+            scan_id=requested_scan_id,
+            state="completed",
+            rescan_requested=False,
+            updated_at=requested_at + 1,
         ),
         requested_scan_id,
         requested_at,
         object(),
     )
     progress = SimpleNamespace(
-        scan_id=requested_scan_id, state=state,
+        scan_id=requested_scan_id,
+        state=state,
         rescan_requested=rescan_requested,
         updated_at=requested_at + updated_at_offset,
     )
-    with pytest.raises(QualificationError, match="installed_return_fresh_lineage_failed"):
+    with pytest.raises(
+        QualificationError, match="installed_return_fresh_lineage_failed"
+    ):
         _require_installed_return_lineage_progress(
             progress, requested_scan_id, requested_at, hold
         )
@@ -205,8 +224,11 @@ def test_return_lineage_reads_hold_before_progress() -> None:
             lambda *_: events.append("hold") or None  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - `append` returning `None` is what lets the following value be the fake's result while the call order is recorded.
         ),
         review_pipeline_progress=(
-            lambda *_: events.append("progress") or SimpleNamespace(  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - `append` returning `None` is what lets the following value be the fake's result while the call order is recorded.
-                state="completed"
+            lambda *_: (
+                events.append("progress")
+                or SimpleNamespace(  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - `append` returning `None` is what lets the following value be the fake's result while the call order is recorded.
+                    state="completed"
+                )
             )
         ),
     )
@@ -220,7 +242,9 @@ def test_return_lineage_reads_hold_before_progress() -> None:
     assert hold is None
 
 
-def test_hardcover_fixture_uses_distinct_candidate_identities_per_discovery_lane() -> None:
+def test_hardcover_fixture_uses_distinct_candidate_identities_per_discovery_lane() -> (
+    None
+):
     client = _qualification_hardcover_client(
         {}, "synthetic-provider-token-a", {}, {}, {}
     )
@@ -249,7 +273,9 @@ def test_hardcover_fixture_uses_distinct_candidate_identities_per_discovery_lane
 
 def test_missing_installed_destination_fails_full_chain_qualification() -> None:
     expected = {"title": "automatic_policy", "cover": "human"}
-    with pytest.raises(QualificationError, match="installed_scheduler_failed") as captured:
+    with pytest.raises(
+        QualificationError, match="installed_scheduler_failed"
+    ) as captured:
         _require_installed_full_chain_coverage(
             {"title": "automatic_policy"},
             expected,
@@ -266,7 +292,9 @@ def test_missing_installed_destination_fails_full_chain_qualification() -> None:
     )
 
 
-def test_lifecycle_evidence_reads_cleanup_from_persistence_not_public_activity() -> None:
+def test_lifecycle_evidence_reads_cleanup_from_persistence_not_public_activity() -> (
+    None
+):
     _require_installed_lifecycle_evidence(
         activity_status=200,
         suspensions=({"scope": "destination"},),
@@ -292,12 +320,21 @@ def test_operator_overlay_preserves_content_and_binds_valid_isbn_metadata() -> N
 
         assert 13 == len(isbn)
         assert isbn.isdigit()
-        assert 0 == sum(
+        assert (
+            0
+            == sum(
                 int(value) * (1 if position % 2 == 0 else 3)
                 for position, value in enumerate(isbn)
-            ) % 10
-        with zipfile.ZipFile(source) as original, zipfile.ZipFile(destination) as overlaid:
-            assert original.read("OEBPS/chapter.xhtml") == overlaid.read("OEBPS/chapter.xhtml")
+            )
+            % 10
+        )
+        with (
+            zipfile.ZipFile(source) as original,
+            zipfile.ZipFile(destination) as overlaid,
+        ):
+            assert original.read("OEBPS/chapter.xhtml") == overlaid.read(
+                "OEBPS/chapter.xhtml"
+            )
             package = ET.fromstring(overlaid.read("OEBPS/content.opf"))
             metadata = package.find("{http://www.idpf.org/2007/opf}metadata")
             assert metadata is not None

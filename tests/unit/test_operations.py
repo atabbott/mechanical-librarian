@@ -32,18 +32,37 @@ from mechanical_librarian.domain.field_effect import (
 
 
 def _plan() -> FieldEffectPlan:
-    authority = EffectAuthority("human_decision_" + "a" * 64,
-                                "review_case_" + "b" * 64, "c" * 64, "fake_service",
-                                "human", "candidate", None, None)
-    consent = EffectConsent.create(connection="connection", library="library",
-                                   destination="cover", envelope_identity="a" * 64,
-                                   granted_at=1)
+    authority = EffectAuthority(
+        "human_decision_" + "a" * 64,
+        "review_case_" + "b" * 64,
+        "c" * 64,
+        "fake_service",
+        "human",
+        "candidate",
+        None,
+        None,
+    )
+    consent = EffectConsent.create(
+        connection="connection",
+        library="library",
+        destination="cover",
+        envelope_identity="a" * 64,
+        granted_at=1,
+    )
     return FieldEffectPlan.create(
-        connection="connection", library="library", work_id="work",
-        destination="cover", pre_value=None, desired_value="cover_" + "d" * 64,
-        target_fingerprint="c" * 64, target_version="version",
-        dependency_digests=("e" * 64,), authority=authority, consent=consent,
-        capability_digest="a" * 64, created_at=1,
+        connection="connection",
+        library="library",
+        work_id="work",
+        destination="cover",
+        pre_value=None,
+        desired_value="cover_" + "d" * 64,
+        target_fingerprint="c" * 64,
+        target_version="version",
+        dependency_digests=("e" * 64,),
+        authority=authority,
+        consent=consent,
+        capability_digest="a" * 64,
+        created_at=1,
     )
 
 
@@ -66,24 +85,35 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
     catalogue = Mock()
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
-        with patch.object(container, "DATA", root), \
-             patch.object(container, "CONFIG", root / "config.json"), \
-             patch.object(container, "DATABASE", root / "application.sqlite3"), \
-             patch.object(container, "CATALOGUE", root / "catalogue.sqlite3"), \
-             patch.object(container, "ARTIFACTS", root / "artifacts"), \
-             patch.object(container, "open_repository", return_value=repository) as open_db, \
-             patch.object(container, "open_catalogue", return_value=catalogue) as open_cat, \
-             patch.object(container, "run_review_server") as serve:
+        with (
+            patch.object(container, "DATA", root),
+            patch.object(container, "CONFIG", root / "config.json"),
+            patch.object(container, "DATABASE", root / "application.sqlite3"),
+            patch.object(container, "CATALOGUE", root / "catalogue.sqlite3"),
+            patch.object(container, "ARTIFACTS", root / "artifacts"),
+            patch.object(
+                container, "open_repository", return_value=repository
+            ) as open_db,
+            patch.object(
+                container, "open_catalogue", return_value=catalogue
+            ) as open_cat,
+            patch.object(container, "run_review_server") as serve,
+        ):
             container.main()
-        open_db.assert_called_once_with(root / "application.sqlite3", create=True,
-                                        cross_thread=True)
+        open_db.assert_called_once_with(
+            root / "application.sqlite3", create=True, cross_thread=True
+        )
         open_cat.assert_called_once_with(root / "catalogue.sqlite3", create=True)
         repository.close.assert_called_once_with()
         catalogue.close.assert_called_once_with()
-        serve.assert_called_once_with(root / "config.json",
-                                      root / "application.sqlite3",
-                                      root / "catalogue.sqlite3",
-                                      root / "artifacts", "0.0.0.0", 8443)
+        serve.assert_called_once_with(
+            root / "config.json",
+            root / "application.sqlite3",
+            root / "catalogue.sqlite3",
+            root / "artifacts",
+            "0.0.0.0",
+            8443,
+        )
         assert root.stat().st_mode & 0o777 == 0o700
 
 
@@ -92,7 +122,10 @@ def test_container_definition_keeps_one_non_root_process_volume_and_port() -> No
     dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
     compose = (root / "compose.yaml").read_text(encoding="utf-8")
     assert "USER 65532:65532" in dockerfile
-    assert 'ENTRYPOINT ["/opt/mechanical-librarian/bin/mechanical-librarian-container"]' in dockerfile
+    assert (
+        'ENTRYPOINT ["/opt/mechanical-librarian/bin/mechanical-librarian-container"]'
+        in dockerfile
+    )
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile
     assert dockerfile.count("EXPOSE ") == 1
     assert "read_only: true" in compose
@@ -106,13 +139,17 @@ def test_status_is_not_ready_until_exact_current_snapshot_opens_and_drains() -> 
     timings = LocalTimingStore(Path("unused"), enabled=False)
     # `append` returns `None`, so the `or` always yields the snapshot dict; the
     # call is there to record that the snapshot was taken.
-    service = OperationalStatus(snapshot=lambda: calls.append(True) or {"signals": []},  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
-                                timings=timings)
+    service = OperationalStatus(
+        snapshot=lambda: calls.append(True) or {"signals": []},  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
+        timings=timings,
+    )
     assert not service.ready()
     service.start()
     assert service.ready()
     assert service.status()["summary"] == {
-        "automatic_recovery": 0, "healthy": True, "owner_action_required": 0,
+        "automatic_recovery": 0,
+        "healthy": True,
+        "owner_action_required": 0,
     }
     service.begin_drain()
     assert not service.ready()
@@ -122,18 +159,46 @@ def test_status_is_not_ready_until_exact_current_snapshot_opens_and_drains() -> 
 
 def test_common_root_causes_aggregate_but_currentness_remains_work_local() -> None:
     signals = [
-        {"kind": "authentication_failure", "cause": "authentication",
-         "scope": "connection", "connection": "primary", "library": None,
-         "category": None, "work_id": "one", "field": None},
-        {"kind": "authentication_failure", "cause": "authentication",
-         "scope": "connection", "connection": "primary", "library": None,
-         "category": None, "work_id": "two", "field": None},
-        {"kind": "owner_action_required", "cause": "currentness_conflict",
-         "scope": "field", "connection": "primary", "library": "books",
-         "category": None, "work_id": "one", "field": "title"},
-        {"kind": "owner_action_required", "cause": "currentness_conflict",
-         "scope": "field", "connection": "primary", "library": "books",
-         "category": None, "work_id": "two", "field": "title"},
+        {
+            "kind": "authentication_failure",
+            "cause": "authentication",
+            "scope": "connection",
+            "connection": "primary",
+            "library": None,
+            "category": None,
+            "work_id": "one",
+            "field": None,
+        },
+        {
+            "kind": "authentication_failure",
+            "cause": "authentication",
+            "scope": "connection",
+            "connection": "primary",
+            "library": None,
+            "category": None,
+            "work_id": "two",
+            "field": None,
+        },
+        {
+            "kind": "owner_action_required",
+            "cause": "currentness_conflict",
+            "scope": "field",
+            "connection": "primary",
+            "library": "books",
+            "category": None,
+            "work_id": "one",
+            "field": "title",
+        },
+        {
+            "kind": "owner_action_required",
+            "cause": "currentness_conflict",
+            "scope": "field",
+            "connection": "primary",
+            "library": "books",
+            "category": None,
+            "work_id": "two",
+            "field": "title",
+        },
     ]
     incidents = aggregate_incidents(signals)
     assert [value.count for value in incidents] == [2, 1, 1]
@@ -188,16 +253,20 @@ def test_opt_in_timings_are_bounded_private_and_survive_reopen() -> None:
         assert not path.with_suffix(".tmp").exists()
 
 
-def test_timing_failure_cannot_change_measured_authority_and_private_roots_reject_links() -> None:
+def test_timing_failure_cannot_change_measured_authority_and_private_roots_reject_links() -> (
+    None
+):
     class FailingTimings:
         def append(self, timing) -> None:
             raise OSError("synthetic disk failure")
+
         def list(self):
             return ()
 
     completed = []
     with StageTimer(
-        FailingTimings(), monotonic_ns=iter((0, 2_000_000)).__next__,
+        FailingTimings(),
+        monotonic_ns=iter((0, 2_000_000)).__next__,
         clock=lambda: 1,
     ).measure("apply", "target"):
         completed.append("durable")
@@ -222,8 +291,11 @@ def test_timing_failure_cannot_change_measured_authority_and_private_roots_rejec
 
 
 def test_support_preview_and_export_are_bounded_and_redacted_again() -> None:
-    state = {"status": "ready", "secret": "do-not-export",
-             "nested": {"private_path": "/owner/books", "code": "ok"}}
+    state = {
+        "status": "ready",
+        "secret": "do-not-export",
+        "nested": {"private_path": "/owner/books", "code": "ok"},
+    }
     bundle = SupportBundle((("runtime", lambda: state),))
     preview = bundle.preview()
     assert cast(int, preview["bytes"]) <= MAX_SUPPORT_BYTES
@@ -238,7 +310,9 @@ def test_support_preview_and_export_are_bounded_and_redacted_again() -> None:
 
 
 def test_support_rejects_oversize_and_depth() -> None:
-    bundle = SupportBundle((("runtime", lambda: {"safe": "x" * (MAX_SUPPORT_BYTES + 1)}),))
+    bundle = SupportBundle(
+        (("runtime", lambda: {"safe": "x" * (MAX_SUPPORT_BYTES + 1)}),)
+    )
     # Long strings redact before bounding.
     assert bundle.preview()["payload"]["sections"]["runtime"]["safe"] == "[redacted]"
     nested = value = cast(dict[str, Any], {})
@@ -273,13 +347,17 @@ def test_cover_recovery_contains_permission_capacity_and_write_failures() -> Non
         store = PrivateCoverRecoveryStore(root, lambda _: b"x", maximum_entries=1)
         store.capture(plan)
         other = FieldEffectPlan.create(
-            connection=plan.connection, library=plan.library,
-            work_id="other-work", destination=plan.destination,
-            pre_value=plan.pre_value, desired_value=plan.desired_value,
+            connection=plan.connection,
+            library=plan.library,
+            work_id="other-work",
+            destination=plan.destination,
+            pre_value=plan.pre_value,
+            desired_value=plan.desired_value,
             target_fingerprint=plan.target_fingerprint,
             target_version=plan.target_version,
             dependency_digests=plan.dependency_digests,
-            authority=plan.authority, consent=plan.consent,
+            authority=plan.authority,
+            consent=plan.consent,
             capability_digest=plan.capability_digest,
             created_at=plan.created_at,
         )
@@ -296,8 +374,10 @@ def test_cover_recovery_contains_permission_capacity_and_write_failures() -> Non
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory) / "recovery"
         store = PrivateCoverRecoveryStore(root, lambda _: b"x")
-        with patch("mechanical_librarian.adapters.private_recovery.os.write",
-                   side_effect=OSError("synthetic disk full")):
+        with patch(
+            "mechanical_librarian.adapters.private_recovery.os.write",
+            side_effect=OSError("synthetic disk full"),
+        ):
             with pytest.raises(OSError):
                 store.capture(plan)
         store.capture(plan)

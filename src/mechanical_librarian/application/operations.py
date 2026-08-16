@@ -15,14 +15,24 @@ from dataclasses import dataclass
 from typing import Callable, Iterator, Protocol, Sequence, cast
 
 STAGES = (
-    "extraction", "provider_search", "policy_evaluation", "human_wait",
-    "apply", "verification", "reconciliation",
+    "extraction",
+    "provider_search",
+    "policy_evaluation",
+    "human_wait",
+    "apply",
+    "verification",
+    "reconciliation",
 )
 WAIT_CLASSES = ("none", "owner", "provider", "target", "recovery")
 KINDS = (
-    "healthy_activity", "owner_action_required", "automatic_recovery",
-    "field_suspended", "category_suspended", "authentication_failure",
-    "backup_failure", "service_incompatibility",
+    "healthy_activity",
+    "owner_action_required",
+    "automatic_recovery",
+    "field_suspended",
+    "category_suspended",
+    "authentication_failure",
+    "backup_failure",
+    "service_incompatibility",
 )
 SCOPES = ("runtime", "connection", "library", "category", "work", "field")
 MAX_TIMINGS = 256
@@ -44,24 +54,39 @@ class StageTiming:
     recorded_at: int
 
     def __post_init__(self) -> None:
-        if (self.stage not in STAGES or self.wait_class not in WAIT_CLASSES
-                or type(self.duration_ms) is not int
-                or not 0 <= self.duration_ms <= 86_400_000
-                or type(self.recorded_at) is not int or self.recorded_at < 0):
+        if (
+            self.stage not in STAGES
+            or self.wait_class not in WAIT_CLASSES
+            or type(self.duration_ms) is not int
+            or not 0 <= self.duration_ms <= 86_400_000
+            or type(self.recorded_at) is not int
+            or self.recorded_at < 0
+        ):
             raise OperationsError("invalid_timing")
 
     def to_data(self) -> dict[str, object]:
-        return {"duration_ms": self.duration_ms, "recorded_at": self.recorded_at,
-                "stage": self.stage, "wait_class": self.wait_class}
+        return {
+            "duration_ms": self.duration_ms,
+            "recorded_at": self.recorded_at,
+            "stage": self.stage,
+            "wait_class": self.wait_class,
+        }
 
     @classmethod
     def from_data(cls, value: object) -> "StageTiming":
         if type(value) is not dict or set(value) != {
-            "duration_ms", "recorded_at", "stage", "wait_class"
+            "duration_ms",
+            "recorded_at",
+            "stage",
+            "wait_class",
         }:
             raise OperationsError("invalid_timing")
-        return cls(value["stage"], value["duration_ms"], value["wait_class"],
-                   value["recorded_at"])
+        return cls(
+            value["stage"],
+            value["duration_ms"],
+            value["wait_class"],
+            value["recorded_at"],
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,22 +103,38 @@ class Incident:
     count: int = 1
 
     def __post_init__(self) -> None:
-        identifiers = (self.connection, self.library, self.category,
-                       self.work_id, self.field)
-        if (self.kind not in KINDS or self.scope not in SCOPES
-                or not 1 <= len(self.incident_id) <= 96
-                or not 1 <= len(self.cause) <= 64
-                or type(self.count) is not int or not 1 <= self.count <= 10_000
-                or any(value is not None and (not value or len(value) > 512)
-                       for value in identifiers)):
+        identifiers = (
+            self.connection,
+            self.library,
+            self.category,
+            self.work_id,
+            self.field,
+        )
+        if (
+            self.kind not in KINDS
+            or self.scope not in SCOPES
+            or not 1 <= len(self.incident_id) <= 96
+            or not 1 <= len(self.cause) <= 64
+            or type(self.count) is not int
+            or not 1 <= self.count <= 10_000
+            or any(
+                value is not None and (not value or len(value) > 512)
+                for value in identifiers
+            )
+        ):
             raise OperationsError("invalid_incident")
 
     def to_data(self) -> dict[str, object]:
         return {
-            "category": self.category, "cause": self.cause,
-            "connection": self.connection, "count": self.count,
-            "field": self.field, "incident_id": self.incident_id,
-            "kind": self.kind, "library": self.library, "scope": self.scope,
+            "category": self.category,
+            "cause": self.cause,
+            "connection": self.connection,
+            "count": self.count,
+            "field": self.field,
+            "incident_id": self.incident_id,
+            "kind": self.kind,
+            "library": self.library,
+            "scope": self.scope,
             "work_id": self.work_id,
         }
 
@@ -166,9 +207,13 @@ class SupportExporter(Protocol):
 class OperationalStatus:
     """Compose one typed, value-free runtime snapshot."""
 
-    def __init__(self, *, snapshot: Callable[[], dict[str, object]],
-                 timings: TimingRepository,
-                 support: SupportExporter | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        snapshot: Callable[[], dict[str, object]],
+        timings: TimingRepository,
+        support: SupportExporter | None = None,
+    ) -> None:
         self._snapshot = snapshot
         self._timings = timings
         self._support = support
@@ -194,9 +239,16 @@ class OperationalStatus:
             "readiness": "ready" if self.ready() else "draining",
             "schema_version": "operational-status-v1",
             "summary": {
-                "automatic_recovery": sum(value.kind == "automatic_recovery" for value in incidents),
-                "healthy": not any(value.kind not in {"healthy_activity", "automatic_recovery"} for value in incidents),
-                "owner_action_required": sum(value.kind == "owner_action_required" for value in incidents),
+                "automatic_recovery": sum(
+                    value.kind == "automatic_recovery" for value in incidents
+                ),
+                "healthy": not any(
+                    value.kind not in {"healthy_activity", "automatic_recovery"}
+                    for value in incidents
+                ),
+                "owner_action_required": sum(
+                    value.kind == "owner_action_required" for value in incidents
+                ),
             },
             "timings": [value.to_data() for value in self._timings.list()],
         }
@@ -215,7 +267,10 @@ class OperationalStatus:
 def aggregate_incidents(signals: object) -> tuple[Incident, ...]:
     # ``len`` and the iteration below are only reached once the exact-type test
     # has proven ``signals`` is a list or a tuple.
-    if type(signals) not in (list, tuple) or len(cast("Sequence[object]", signals)) > 1_000:
+    if (
+        type(signals) not in (list, tuple)
+        or len(cast("Sequence[object]", signals)) > 1_000
+    ):
         raise OperationsError("invalid_status")
     aggregated: dict[tuple[object, ...], Incident] = {}
     for signal in cast("Sequence[object]", signals):
@@ -231,13 +286,13 @@ def aggregate_incidents(signals: object) -> tuple[Incident, ...]:
         field = signal.get("field")
         # Currentness conflicts are intentionally work/field-local. Shared
         # service causes aggregate at their narrow service scope.
-        key = ((kind, cause, scope, connection, library, category, work_id, field)
-               if cause == "currentness_conflict"
-               else (kind, cause, scope, connection, library, category, None, field))
-        previous = aggregated.get(key)
-        readable_key = ":".join(
-            "-" if value is None else str(value) for value in key
+        key = (
+            (kind, cause, scope, connection, library, category, work_id, field)
+            if cause == "currentness_conflict"
+            else (kind, cause, scope, connection, library, category, None, field)
         )
+        previous = aggregated.get(key)
+        readable_key = ":".join("-" if value is None else str(value) for value in key)
         canonical_key = json.dumps(
             key, ensure_ascii=True, separators=(",", ":")
         ).encode("ascii")
@@ -249,18 +304,31 @@ def aggregate_incidents(signals: object) -> tuple[Incident, ...]:
         )
         # ``Incident.__post_init__`` rejects any non-string kind, cause, or
         # scope before the value escapes this call.
-        candidate = Incident(incident_id, cast("str", kind), cast("str", cause),
-                             cast("str", scope), connection,
-                             library, category,
-                             work_id if cause == "currentness_conflict" else None,
-                             field, 1 if previous is None else previous.count + 1)
+        candidate = Incident(
+            incident_id,
+            cast("str", kind),
+            cast("str", cause),
+            cast("str", scope),
+            connection,
+            library,
+            category,
+            work_id if cause == "currentness_conflict" else None,
+            field,
+            1 if previous is None else previous.count + 1,
+        )
         aggregated[key] = candidate
-    return tuple(sorted(aggregated.values(), key=lambda item: item.incident_id))[:MAX_INCIDENTS]
+    return tuple(sorted(aggregated.values(), key=lambda item: item.incident_id))[
+        :MAX_INCIDENTS
+    ]
 
 
 def canonical_support(value: dict[str, object]) -> bytes:
-    encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":"),
-                         sort_keys=True).encode("utf-8") + b"\n"
+    encoded = (
+        json.dumps(
+            value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode("utf-8")
+        + b"\n"
+    )
     if len(encoded) > MAX_SUPPORT_BYTES:
         raise OperationsError("support_too_large")
     return encoded

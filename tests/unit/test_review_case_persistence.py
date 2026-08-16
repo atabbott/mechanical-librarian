@@ -64,9 +64,27 @@ def test_partial_human_decision_remains_current_unapplied() -> None:
         repository.publish(report, lambda: True)
         repository.publish_proposal(proposal)
         case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
-        case = ReviewCase.create_from_data(json.loads(repository.get_review_case(case_id))["case"])
-        field = next(value for value in case.proposals if value["result"]["outcome"] == "unresolved_choice")
-        repository.record_human_decision(HumanDecision.create(case, proposal_id=field["proposal_id"], target_fingerprint=case.target_fingerprint, destination=field["destination"], actor="owner", outcome="keep_current", selected_value=None, idempotency_key="partial-count-0001", occurred_at=1_000))
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        field = next(
+            value
+            for value in case.proposals
+            if value["result"]["outcome"] == "unresolved_choice"
+        )
+        repository.record_human_decision(
+            HumanDecision.create(
+                case,
+                proposal_id=field["proposal_id"],
+                target_fingerprint=case.target_fingerprint,
+                destination=field["destination"],
+                actor="owner",
+                outcome="keep_current",
+                selected_value=None,
+                idempotency_key="partial-count-0001",
+                occurred_at=1_000,
+            )
+        )
         assert 1 == repository.current_unapplied_count("ebooks")
         repository.close()
 
@@ -96,7 +114,9 @@ def test_nondefault_resolved_policy_replays_admits_reopens_and_browses() -> None
 
 def test_case_parser_rejects_duplicate_and_oversized_documents() -> None:
     with pytest.raises(ReviewCaseValueError):
-        ReviewCase.from_json('{"schema_version":"review-case-v1","schema_version":"review-case-v1"}')
+        ReviewCase.from_json(
+            '{"schema_version":"review-case-v1","schema_version":"review-case-v1"}'
+        )
     with pytest.raises(ReviewCaseValueError):
         ReviewCase.from_json("x" * 2_097_153)
 
@@ -109,10 +129,32 @@ def test_admission_result_requires_canonical_closed_shape() -> None:
 
 
 def test_transition_has_deterministic_identity() -> None:
-    transition = ReviewTransition("primary", "ebooks", "item-1", 1, "proposal_set_" + "a" * 64, "report_" + "b" * 64, "no_case", None, None, "nonactionable")
+    transition = ReviewTransition(
+        "primary",
+        "ebooks",
+        "item-1",
+        1,
+        "proposal_set_" + "a" * 64,
+        "report_" + "b" * 64,
+        "no_case",
+        None,
+        None,
+        "nonactionable",
+    )
     assert transition.transition_id.startswith("review_transition_")
     with pytest.raises(ReviewCaseValueError):
-        ReviewTransition("primary", "ebooks", "item-1", 0, "x", "y", "admitted", None, None, "actionable")
+        ReviewTransition(
+            "primary",
+            "ebooks",
+            "item-1",
+            0,
+            "x",
+            "y",
+            "admitted",
+            None,
+            None,
+            "actionable",
+        )
 
 
 @pytest.mark.parametrize(
@@ -125,7 +167,9 @@ def test_transition_has_deterministic_identity() -> None:
     ),
     ids=("admitted", "no_case", "superseded", "retired"),
 )
-def test_transition_rejects_impossible_predecessor_pointers(kind, predecessor, successor, reason) -> None:
+def test_transition_rejects_impossible_predecessor_pointers(
+    kind, predecessor, successor, reason
+) -> None:
     with pytest.raises(ReviewCaseValueError):
         ReviewTransition(
             "primary",
@@ -179,8 +223,12 @@ def test_nonactionable_set_retires_without_creating_case_and_replays() -> None:
         replay = repository.admit_review_case(proposal)
         assert "no_case" == json.loads(first)["status"]
         assert "no_case" == json.loads(replay)["status"]
-        assert (0,) == repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone()
-        assert (1,) == repository._connection.execute("SELECT COUNT(*) FROM review_case_transitions").fetchone()
+        assert (0,) == repository._connection.execute(
+            "SELECT COUNT(*) FROM review_cases"
+        ).fetchone()
+        assert (1,) == repository._connection.execute(
+            "SELECT COUNT(*) FROM review_case_transitions"
+        ).fetchone()
         repository.close()
 
 
@@ -193,33 +241,25 @@ def test_transition_kind_tracks_an_active_prior_case() -> None:
         repository.publish(first, lambda: True)
         first_set = evaluate_report(first)
         repository.publish_proposal(first_set)
-        outcomes.append(
-            json.loads(repository.admit_review_case(first_set))["status"]
-        )
+        outcomes.append(json.loads(repository.admit_review_case(first_set))["status"])
 
         second = _report("Second", "c", "d")
         repository.publish(second, lambda: True)
         second_set = _actionable(second)
         repository.publish_proposal(second_set)
-        outcomes.append(
-            json.loads(repository.admit_review_case(second_set))["status"]
-        )
+        outcomes.append(json.loads(repository.admit_review_case(second_set))["status"])
 
         third = _report("Third", "e", "f", actionable=False)
         repository.publish(third, lambda: True)
         third_set = evaluate_report(third)
         repository.publish_proposal(third_set)
-        outcomes.append(
-            json.loads(repository.admit_review_case(third_set))["status"]
-        )
+        outcomes.append(json.loads(repository.admit_review_case(third_set))["status"])
 
         fourth = _report("Fourth", "0", "1", actionable=False)
         repository.publish(fourth, lambda: True)
         fourth_set = evaluate_report(fourth)
         repository.publish_proposal(fourth_set)
-        outcomes.append(
-            json.loads(repository.admit_review_case(fourth_set))["status"]
-        )
+        outcomes.append(json.loads(repository.admit_review_case(fourth_set))["status"])
 
         transitions = [
             row[0]
@@ -257,12 +297,16 @@ def test_successor_makes_prior_case_historical() -> None:
         repository.publish(first, lambda: True)
         first_set = _actionable(first)
         repository.publish_proposal(first_set)
-        first_case = json.loads(repository.admit_review_case(first_set))["review_case_id"]
+        first_case = json.loads(repository.admit_review_case(first_set))[
+            "review_case_id"
+        ]
         successor = _report("Changed", "c", "d")
         repository.publish(successor, lambda: True)
         successor_set = _actionable(successor)
         repository.publish_proposal(successor_set)
-        successor_case = json.loads(repository.admit_review_case(successor_set))["review_case_id"]
+        successor_case = json.loads(repository.admit_review_case(successor_set))[
+            "review_case_id"
+        ]
         assert not json.loads(repository.get_review_case(first_case))["current"]
         assert json.loads(repository.get_review_case(successor_case))["current"]
         repository.close()
@@ -294,9 +338,14 @@ def test_nonactionable_successor_retires_current_case_without_empty_case() -> No
         repository.publish(successor, lambda: True)
         successor_set = evaluate_report(successor)
         repository.publish_proposal(successor_set)
-        assert "retired" == json.loads(repository.admit_review_case(successor_set))["status"]
+        assert (
+            "retired"
+            == json.loads(repository.admit_review_case(successor_set))["status"]
+        )
         assert not json.loads(repository.get_review_case(case_id))["current"]
-        assert (1,) == repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone()
+        assert (1,) == repository._connection.execute(
+            "SELECT COUNT(*) FROM review_cases"
+        ).fetchone()
         repository.close()
 
 
@@ -311,8 +360,12 @@ def test_stale_and_cross_target_proposals_mutate_nothing() -> None:
         repository.publish(current, lambda: True)
         with pytest.raises(ReviewAdmissionStaleError):
             repository.admit_review_case(stale)
-        assert (0,) == repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone()
-        assert (0,) == repository._connection.execute("SELECT COUNT(*) FROM review_case_transitions").fetchone()
+        assert (0,) == repository._connection.execute(
+            "SELECT COUNT(*) FROM review_cases"
+        ).fetchone()
+        assert (0,) == repository._connection.execute(
+            "SELECT COUNT(*) FROM review_case_transitions"
+        ).fetchone()
         repository.close()
 
 
@@ -412,7 +465,9 @@ def test_replay_uses_current_checkpoint_outcome_not_transition_hash() -> None:
         repository.publish(first, lambda: True)
         first_set = evaluate_report(first)
         repository.publish_proposal(first_set)
-        assert "no_case" == json.loads(repository.admit_review_case(first_set))["status"]
+        assert (
+            "no_case" == json.loads(repository.admit_review_case(first_set))["status"]
+        )
 
         successor = _report("Changed", "c", "d")
         repository.publish(successor, lambda: True)
@@ -425,8 +480,12 @@ def test_replay_uses_current_checkpoint_outcome_not_transition_hash() -> None:
             lambda: True,
             expected_current=successor.report_id,
         )
-        assert "retired" == json.loads(repository.admit_review_case(first_set))["status"]
-        assert "retired" == json.loads(repository.admit_review_case(first_set))["status"]
+        assert (
+            "retired" == json.loads(repository.admit_review_case(first_set))["status"]
+        )
+        assert (
+            "retired" == json.loads(repository.admit_review_case(first_set))["status"]
+        )
         repository.close()
 
 
@@ -441,9 +500,7 @@ def test_impossible_transition_pointer_combination_fails_closed() -> None:
         transition_id = repository._connection.execute(
             "SELECT transition_id FROM current_review_case_lineages"
         ).fetchone()[0]
-        repository._connection.execute(
-            "DROP TRIGGER review_case_transitions_no_update"
-        )
+        repository._connection.execute("DROP TRIGGER review_case_transitions_no_update")
         repository._connection.execute("PRAGMA ignore_check_constraints=ON")
         repository._connection.execute(
             "UPDATE review_case_transitions SET kind='admitted',"
@@ -470,6 +527,7 @@ def test_concurrent_identical_admission_converges() -> None:
         repository.publish_proposal(proposal)
         repository.close()
         barrier, results = threading.Barrier(2), []
+
         def admit() -> None:
             if sys.platform.startswith("linux"):
                 barrier.wait()
@@ -498,14 +556,26 @@ def test_transition_failure_rolls_back_case_and_pointer() -> None:
         repository.publish(report, lambda: True)
         proposal = _actionable(report)
         repository.publish_proposal(proposal)
-        repository._connection.execute("CREATE TRIGGER injected_review_transition_failure BEFORE INSERT ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'injected'); END")
+        repository._connection.execute(
+            "CREATE TRIGGER injected_review_transition_failure BEFORE INSERT ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'injected'); END"
+        )
         with pytest.raises(MetadataReportError):
             repository.admit_review_case(proposal)
-        assert (0,) == repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone()
-        assert (0,) == repository._connection.execute("SELECT COUNT(*) FROM current_review_case_lineages").fetchone()
-        assert (0,) == repository._connection.execute("SELECT COUNT(*) FROM review_case_transitions").fetchone()
-        repository._connection.execute("DROP TRIGGER injected_review_transition_failure")
-        assert "admitted" == json.loads(repository.admit_review_case(proposal))["status"]
+        assert (0,) == repository._connection.execute(
+            "SELECT COUNT(*) FROM review_cases"
+        ).fetchone()
+        assert (0,) == repository._connection.execute(
+            "SELECT COUNT(*) FROM current_review_case_lineages"
+        ).fetchone()
+        assert (0,) == repository._connection.execute(
+            "SELECT COUNT(*) FROM review_case_transitions"
+        ).fetchone()
+        repository._connection.execute(
+            "DROP TRIGGER injected_review_transition_failure"
+        )
+        assert (
+            "admitted" == json.loads(repository.admit_review_case(proposal))["status"]
+        )
         repository.close()
 
 
@@ -519,6 +589,7 @@ def test_exact_current_schema_restarts_and_prior_schema_is_rejected() -> None:
         old = Path(directory) / "old.sqlite"
         old.write_bytes(database.read_bytes())
         import sqlite3
+
         connection = sqlite3.connect(old)
         connection.execute("DROP TABLE review_case_transitions")
         connection.commit()
@@ -539,7 +610,9 @@ def test_corrupt_case_is_redacted_and_unrelated_history_survives() -> None:
         case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
         assert proposal.to_json() == repository.get_proposal(proposal.proposal_set_id)
         repository._connection.execute("DROP TRIGGER review_cases_no_update")
-        repository._connection.execute("UPDATE review_cases SET document='{}' WHERE review_case_id=?", (case_id,))
+        repository._connection.execute(
+            "UPDATE review_cases SET document='{}' WHERE review_case_id=?", (case_id,)
+        )
         with pytest.raises(MetadataReportError):
             repository.get_review_case(case_id)
         assert proposal.to_json() == repository.get_proposal(proposal.proposal_set_id)
@@ -566,7 +639,9 @@ def test_malformed_current_pointer_is_not_projected_as_historical() -> None:
         repository.publish_proposal(proposal)
         case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
         repository._connection.execute("PRAGMA foreign_keys=OFF")
-        repository._connection.execute("UPDATE current_review_case_lineages SET review_case_id='bad' WHERE item_id='item-1'")
+        repository._connection.execute(
+            "UPDATE current_review_case_lineages SET review_case_id='bad' WHERE item_id='item-1'"
+        )
         repository._connection.execute("PRAGMA foreign_keys=ON")
         with pytest.raises(MetadataReportError):
             repository.get_review_case(case_id)
@@ -598,6 +673,7 @@ def test_held_immediate_lock_serializes_identical_admission() -> None:
         repository.publish_proposal(proposal)
         repository._connection.execute("BEGIN IMMEDIATE")
         result = []
+
         def admit() -> None:
             local = open_repository(database, create=False)
             try:
@@ -623,9 +699,17 @@ def test_disk_full_equivalent_rolls_back_every_review_row() -> None:
         repository.publish(report, lambda: True)
         proposal = _actionable(report)
         repository.publish_proposal(proposal)
-        repository._connection.execute("CREATE TRIGGER injected_full BEFORE INSERT ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END")
+        repository._connection.execute(
+            "CREATE TRIGGER injected_full BEFORE INSERT ON review_case_transitions BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END"
+        )
         with pytest.raises(MetadataReportError):
             repository.admit_review_case(proposal)
-        for table in ("review_cases", "review_case_transitions", "current_review_case_lineages"):
-            assert (0,) == repository._connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+        for table in (
+            "review_cases",
+            "review_case_transitions",
+            "current_review_case_lineages",
+        ):
+            assert (0,) == repository._connection.execute(
+                f"SELECT COUNT(*) FROM {table}"
+            ).fetchone()
         repository.close()

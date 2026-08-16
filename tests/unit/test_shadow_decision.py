@@ -226,11 +226,14 @@ def _combination_seam(
     title_proposal = next(
         value for value in packet.proposals if value["destination"] == "title"
     )
-    actions = tuple(
-        value
-        for value in catalogue.actions
-        if value.proposal_id != title_proposal["proposal_id"]
-    ) + title_actions
+    actions = (
+        tuple(
+            value
+            for value in catalogue.actions
+            if value.proposal_id != title_proposal["proposal_id"]
+        )
+        + title_actions
+    )
     seam_packet = SimpleNamespace(
         proposals=packet.proposals,
         bibliographic_combinations=(
@@ -264,11 +267,14 @@ def test_supported_fields_select_the_unique_eligible_candidate(destination) -> N
     decision = result.decisions[0]
     assert "recommend_candidate" == decision.recommendation
     assert "unique_supported_candidate" == decision.reason_code
-    assert compile_shadow_review_actions(packet).action_for(
+    assert (
+        compile_shadow_review_actions(packet).action_for(
             decision.proposal_id,
             decision.recommendation,
             decision.candidate_id,
-        ) is not None
+        )
+        is not None
+    )
 
 
 @pytest.mark.parametrize(
@@ -281,7 +287,9 @@ def test_supported_fields_select_the_unique_eligible_candidate(destination) -> N
         "publishedYear",
     ),
 )
-def test_report_only_source_evidence_is_not_blocked_by_write_sufficiency(destination) -> None:
+def test_report_only_source_evidence_is_not_blocked_by_write_sufficiency(
+    destination,
+) -> None:
     packet = _packet(
         destination,
         sufficiency="manual",
@@ -350,7 +358,9 @@ def test_every_unsupported_field_selects_exact_manual_action(destination) -> Non
             id="manual_sufficiency",
         ),
         pytest.param(
-            _packet(provider_support=0), "insufficient_support", id="no_provider_support"
+            _packet(provider_support=0),
+            "insufficient_support",
+            id="no_provider_support",
         ),
         pytest.param(
             _packet(local_support=0), "insufficient_support", id="no_local_support"
@@ -362,7 +372,9 @@ def test_every_unsupported_field_selects_exact_manual_action(destination) -> Non
             _packet(candidate_count=0), "no_eligible_action", id="no_candidate"
         ),
         pytest.param(
-            _packet(candidate_count=2), "ambiguous_eligible_actions", id="two_candidates"
+            _packet(candidate_count=2),
+            "ambiguous_eligible_actions",
+            id="two_candidates",
         ),
     ),
 )
@@ -400,12 +412,18 @@ def test_published_date_precision_refinement_abstains_safely() -> None:
 
     timestamp = json.loads(_packet("publishedDate").to_json())
     timestamp["citations"][0]["fact"]["date_precision"] = "timestamp"
-    assert "manual" == decide_shadow_packet(_rebuild(timestamp)).decisions[0].recommendation
+    assert (
+        "manual"
+        == decide_shadow_packet(_rebuild(timestamp)).decisions[0].recommendation
+    )
 
     timestamp["proposals"][0]["candidates"][0]["decision_summary"]["support"][
         "independent_provider_correlations"
     ] = 2
-    assert "recommend_candidate" == decide_shadow_packet(_rebuild(timestamp)).decisions[0].recommendation
+    assert (
+        "recommend_candidate"
+        == decide_shadow_packet(_rebuild(timestamp)).decisions[0].recommendation
+    )
 
 
 def test_supported_title_projects_through_exact_unsupported_witnesses() -> None:
@@ -477,9 +495,7 @@ def test_evidence_backed_title_conflict_selects_only_the_supported_bundle() -> N
     )
     proposal = evaluate_report(report)
     title_result = next(
-        value
-        for value in proposal.results
-        if value.destination.value == "title"
+        value for value in proposal.results if value.destination.value == "title"
     )
     assert "unresolved_choice" == title_result.outcome.value
     packet = ShadowReviewPacket.create(
@@ -524,13 +540,11 @@ def test_missing_excluded_wrong_or_unbound_witness_keeps_title_manual(
         variant=variant,
     )
     with patch(
-        "mechanical_librarian.domain.shadow_decision."
-        "compile_shadow_review_actions",
+        "mechanical_librarian.domain.shadow_decision.compile_shadow_review_actions",
         return_value=catalogue,
     ):
         decisions = {
-            value.destination: value
-            for value in decide_shadow_packet(packet).decisions
+            value.destination: value for value in decide_shadow_packet(packet).decisions
         }
     assert "manual" == decisions["title"].recommendation
     assert "bibliographic_combination_unresolved" == decisions["title"].reason_code
@@ -573,9 +587,7 @@ def test_unbound_eligible_title_does_not_preempt_exact_combination_match() -> No
     ) -> tuple[PolicyAction, ...]:
         eligible = original(packet_value, catalogue_value, proposal)
         return (
-            (*eligible, competing)
-            if proposal["destination"] == "title"
-            else eligible
+            (*eligible, competing) if proposal["destination"] == "title" else eligible
         )
 
     with patch(
@@ -614,10 +626,10 @@ def test_identical_fully_witnessed_combinations_select_title_once() -> None:
     }
     assert "recommend_candidate" == decisions["title"].recommendation
     assert "unique_supported_candidate" == decisions["title"].reason_code
-    assert tuple(
-            value["combination_id"]
-            for value in packet.bibliographic_combinations
-        ) == decisions["title"].combination_ids
+    assert (
+        tuple(value["combination_id"] for value in packet.bibliographic_combinations)
+        == decisions["title"].combination_ids
+    )
 
 
 def test_identical_combination_projection_is_provider_order_invariant() -> None:
@@ -643,9 +655,12 @@ def test_identical_combination_projection_is_provider_order_invariant() -> None:
 
 
 def test_combination_seam_requires_at_least_one_unanimous_full_action() -> None:
-    assert "at_least_one" == shadow_decision_module._RULE_TABLE["combinations"][
+    assert (
+        "at_least_one"
+        == shadow_decision_module._RULE_TABLE["combinations"][
             "fully_witnessed_combination_requirement"
         ]
+    )
     packet = _combination_packet(
         providers=(
             _source(
@@ -685,8 +700,8 @@ def test_combination_seam_requires_at_least_one_unanimous_full_action() -> None:
         combinations=tuple(reversed(packet.bibliographic_combinations)),
     )
     assert selected == shadow_decision_module._combination_selections(
-            reversed_packet, reversed_catalogue, reversed_eligible
-        )
+        reversed_packet, reversed_catalogue, reversed_eligible
+    )
 
     citation_disagreement = (
         replace(title, citation_ids=("citation_a",)),
@@ -695,9 +710,12 @@ def test_combination_seam_requires_at_least_one_unanimous_full_action() -> None:
     seam_packet, seam_catalogue, eligible = _combination_seam(
         packet, citation_disagreement
     )
-    assert shadow_decision_module._combination_selections(
+    assert (
+        shadow_decision_module._combination_selections(
             seam_packet, seam_catalogue, eligible
-        ) is None
+        )
+        is None
+    )
 
     preservation_combinations = json.loads(
         json.dumps(packet.bibliographic_combinations)
@@ -718,9 +736,12 @@ def test_combination_seam_requires_at_least_one_unanimous_full_action() -> None:
         (candidate, preservation),
         combinations=tuple(preservation_combinations),
     )
-    assert shadow_decision_module._combination_selections(
+    assert (
+        shadow_decision_module._combination_selections(
             seam_packet, seam_catalogue, eligible
-        ) is None
+        )
+        is None
+    )
 
     combination_disagreement = (
         replace(title, combination_ids=(first_id,)),
@@ -729,16 +750,21 @@ def test_combination_seam_requires_at_least_one_unanimous_full_action() -> None:
     seam_packet, seam_catalogue, eligible = _combination_seam(
         packet, combination_disagreement
     )
-    assert shadow_decision_module._combination_selections(
+    assert (
+        shadow_decision_module._combination_selections(
             seam_packet, seam_catalogue, eligible
-        ) is None
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(
     "mutate",
     (
         pytest.param(lambda selections: selections.pop(), id="dropped_selection"),
-        pytest.param(lambda selections: selections.reverse(), id="reordered_selections"),
+        pytest.param(
+            lambda selections: selections.reverse(), id="reordered_selections"
+        ),
         pytest.param(
             lambda selections: selections.__setitem__(
                 1, json.loads(json.dumps(selections[0]))
@@ -793,24 +819,28 @@ def test_identity_replay_and_document_validation_are_canonical() -> None:
 
 def test_v5_policy_identity_rejects_v4_replay() -> None:
     assert "deterministic-shadow-decision-policy-v5" == DECISION_POLICY_VERSION
-    assert "d7e765d71a6b52259a8c8e54961afe63d54344a19785b288f0ddb59b7db5e5f8" == DECISION_POLICY_SHA256
+    assert (
+        "d7e765d71a6b52259a8c8e54961afe63d54344a19785b288f0ddb59b7db5e5f8"
+        == DECISION_POLICY_SHA256
+    )
     packet = _packet()
     document = json.loads(decide_shadow_packet(packet).to_json())
     document["policy_version"] = "deterministic-shadow-decision-policy-v4"
-    document["policy_sha256"] = "a86201443a027971fdb8943763c1911300a586ecc3fe732b01622a7596649a99"
-    core = {
-        key: value
-        for key, value in document.items()
-        if key != "decision_set_id"
-    }
-    document["decision_set_id"] = "shadow_decision_set_" + hashlib.sha256(
-        json.dumps(
-            core,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-    ).hexdigest()
+    document["policy_sha256"] = (
+        "a86201443a027971fdb8943763c1911300a586ecc3fe732b01622a7596649a99"
+    )
+    core = {key: value for key, value in document.items() if key != "decision_set_id"}
+    document["decision_set_id"] = (
+        "shadow_decision_set_"
+        + hashlib.sha256(
+            json.dumps(
+                core,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+    )
     with pytest.raises(ShadowDecisionError):
         ShadowDecisionSet.from_json(
             json.dumps(

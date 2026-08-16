@@ -18,12 +18,8 @@ if TYPE_CHECKING:
 
 ACTION_CATALOGUE_SCHEMA = "shadow-review-action-catalogue-v1"
 ACTION_POLICY_VERSION = "shadow-review-action-policy-v1"
-_ACTION_KINDS = frozenset(
-    {"manual", "recommend_candidate", "recommend_keep_current"}
-)
-_ASSESSMENTS = frozenset(
-    {"fills_empty", "preserves_target", "replaces_target"}
-)
+_ACTION_KINDS = frozenset({"manual", "recommend_candidate", "recommend_keep_current"})
+_ASSESSMENTS = frozenset({"fills_empty", "preserves_target", "replaces_target"})
 _BIBLIOGRAPHIC_DESTINATIONS = frozenset({"title", "subtitle", "series"})
 _DESTINATION_POLICIES = {
     TargetDestination.TITLE.value: "bibliographic",
@@ -93,8 +89,7 @@ class PolicyAction:
             or type(self.combination_ids) is not tuple
             or self.combination_ids != tuple(sorted(set(self.combination_ids)))
             or any(
-                type(value) is not str or not value
-                for value in self.combination_ids
+                type(value) is not str or not value for value in self.combination_ids
             )
             or self.action_id
             != _action_id(
@@ -171,16 +166,13 @@ class PolicyActionCatalogue:
             or any(type(value) is not PolicyAction for value in self.actions)
             or type(self.exclusions) is not tuple
             or any(
-                type(value) is not PolicyActionExclusion
-                for value in self.exclusions
+                type(value) is not PolicyActionExclusion for value in self.exclusions
             )
         ):
             raise PolicyActionCompilationError("policy action catalogue is invalid")
         action_ids = tuple(value.action_id for value in self.actions)
         exclusion_ids = tuple(value.exclusion_id for value in self.exclusions)
-        excluded_action_ids = tuple(
-            value.action_id for value in self.exclusions
-        )
+        excluded_action_ids = tuple(value.action_id for value in self.exclusions)
         action_keys = tuple(
             (value.proposal_id, value.recommendation, value.candidate_id)
             for value in self.actions
@@ -197,14 +189,12 @@ class PolicyActionCatalogue:
             or len(action_keys) != len(set(action_keys))
             or exclusion_ids != tuple(sorted(set(exclusion_ids)))
             or len(excluded_action_ids) != len(set(excluded_action_ids))
-            or set(action_ids)
-            & set(excluded_action_ids)
-            or set(manual_proposals)
-            != {value.proposal_id for value in self.actions}
+            or set(action_ids) & set(excluded_action_ids)
+            or set(manual_proposals) != {value.proposal_id for value in self.actions}
             or len(manual_proposals) != len(set(manual_proposals))
-            or not {
-                value.proposal_id for value in self.exclusions
-            }.issubset(set(manual_proposals))
+            or not {value.proposal_id for value in self.exclusions}.issubset(
+                set(manual_proposals)
+            )
         ):
             raise PolicyActionCompilationError("policy action catalogue is invalid")
 
@@ -314,17 +304,13 @@ def _combination_citations(
     candidates = {
         candidate["candidate_id"]: candidate
         for proposal in packet.proposals
-        for candidate in cast(
-            "list[dict[str, object]]", proposal["candidates"]
-        )
+        for candidate in cast("list[dict[str, object]]", proposal["candidates"])
     }
     references: set[str] = set()
     for combination in packet.bibliographic_combinations:
         if combination["combination_id"] not in combination_ids:
             continue
-        for selection in cast(
-            "list[dict[str, object]]", combination["selections"]
-        ):
+        for selection in cast("list[dict[str, object]]", combination["selections"]):
             candidate = candidates.get(selection.get("alternative_id"))
             if candidate is None:
                 continue
@@ -377,11 +363,7 @@ def _candidate_combination_ids(
                 )
             )
         }
-    if (
-        known
-        and destination in _BIBLIOGRAPHIC_DESTINATIONS
-        and not combination_ids
-    ):
+    if known and destination in _BIBLIOGRAPHIC_DESTINATIONS and not combination_ids:
         reasons.add("bibliographic_combination_binding_missing")
     return combination_ids
 
@@ -484,12 +466,9 @@ def _candidate_action(
         if type(raw_correlations) is list
         else set()
     )
-    if (
-        not correlation_ids
-        or any(
-            (value, proposal_id, candidate_id) not in correlation_bindings
-            for value in correlation_ids
-        )
+    if not correlation_ids or any(
+        (value, proposal_id, candidate_id) not in correlation_bindings
+        for value in correlation_ids
     ):
         reasons.add("correlation_binding_missing")
     publication_reasons, publication_safe = _publication_reasons(
@@ -557,9 +536,7 @@ def _keep_action(
     current = proposal.get("current")
     reasons: set[str] = set()
     references: set[str] = set()
-    current_text = (
-        _text_value(current.get("value")) if type(current) is dict else None
-    )
+    current_text = _text_value(current.get("value")) if type(current) is dict else None
     rejected_preservation_reasons: set[str] = set()
     for candidate in cast("list[dict[str, object]]", proposal["candidates"]):
         candidate_text = _text_value(candidate.get("value"))
@@ -596,9 +573,7 @@ def _keep_action(
             if any(
                 selection.get("destination") == destination
                 and selection.get("kind") == "preserve_target"
-                for selection in cast(
-                    "list[dict[str, object]]", value["selections"]
-                )
+                for selection in cast("list[dict[str, object]]", value["selections"])
             )
         }
         if not combination_ids:
@@ -633,9 +608,7 @@ def compile_shadow_review_actions(
     # ShadowReviewPacket.__post_init__ has already proved every citation
     # carries a str "citation_id" and every correlation a str
     # "correlation_id" over lists of proposal and candidate identities.
-    known_citations = {
-        cast("str", value["citation_id"]) for value in packet.citations
-    }
+    known_citations = {cast("str", value["citation_id"]) for value in packet.citations}
     correlation_bindings = {
         (cast("str", correlation["correlation_id"]), proposal_id, candidate_id)
         for correlation in packet.correlations
@@ -648,9 +621,7 @@ def compile_shadow_review_actions(
         proposal_id = cast("str", proposal["proposal_id"])
         destination = cast("str", proposal["destination"])
         if destination not in _DESTINATION_POLICIES:
-            raise PolicyActionCompilationError(
-                "packet destination policy is unknown"
-            )
+            raise PolicyActionCompilationError("packet destination policy is unknown")
         proposal_reasons = proposal.get("reasons")
         forced_manual_reasons = (
             {"no_safe_bibliographic_combination"}

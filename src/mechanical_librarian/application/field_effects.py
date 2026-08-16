@@ -27,12 +27,20 @@ class GuardedApplicationError(RuntimeError):
 
 
 class TargetServiceUnavailable(RuntimeError):
-    def __init__(self, scope: Literal["connection", "destination"],
-                 reason: Literal["connection_unavailable", "insufficient_permission",
-                                 "field_unavailable",
-                                 "unexpected_effect_behavior"] | None = None) -> None:
-        resolved = reason or ("connection_unavailable" if scope == "connection"
-                              else "field_unavailable")
+    def __init__(
+        self,
+        scope: Literal["connection", "destination"],
+        reason: Literal[
+            "connection_unavailable",
+            "insufficient_permission",
+            "field_unavailable",
+            "unexpected_effect_behavior",
+        ]
+        | None = None,
+    ) -> None:
+        resolved = reason or (
+            "connection_unavailable" if scope == "connection" else "field_unavailable"
+        )
         super().__init__(resolved)
         self.scope = scope
         self.reason = resolved
@@ -48,9 +56,14 @@ class TargetObservation:
 class TargetEffectResult:
     outcome: Literal["accepted", "ambiguous", "conflict"]
     suspension_scope: Literal["connection", "destination"] | None = None
-    suspension_reason: Literal[
-        "connection_unavailable", "insufficient_permission", "unexpected_effect_behavior"
-    ] | None = None
+    suspension_reason: (
+        Literal[
+            "connection_unavailable",
+            "insufficient_permission",
+            "unexpected_effect_behavior",
+        ]
+        | None
+    ) = None
 
     def __post_init__(self) -> None:
         if (self.suspension_scope is None) != (self.suspension_reason is None):
@@ -60,7 +73,10 @@ class TargetEffectResult:
 @dataclass(frozen=True, slots=True)
 class CapabilityObservation:
     category: Literal[
-        "allowed", "insufficient_permission", "connection_unavailable", "field_unavailable"
+        "allowed",
+        "insufficient_permission",
+        "connection_unavailable",
+        "field_unavailable",
     ]
     digest: str
 
@@ -81,47 +97,85 @@ class AuthoritySnapshot:
 
 
 class FieldEffectRepository(Protocol):
-    def record_field_effect(self, operation: FieldEffectOperation) -> FieldEffectOperation: ...
+    def record_field_effect(
+        self, operation: FieldEffectOperation
+    ) -> FieldEffectOperation: ...
     def get_field_effect(self, plan_id: str) -> FieldEffectOperation: ...
-    def claim_field_effect(self, plan_id: str, expected_state: str, claim_token: str,
-                           claimed_at: int) -> FieldEffectOperation: ...
-    def transition_field_effect(self, plan_id: str, expected_state: str, state: str,
-                                changed_at: int, failure: str | None = None) -> FieldEffectOperation: ...
+    def claim_field_effect(
+        self, plan_id: str, expected_state: str, claim_token: str, claimed_at: int
+    ) -> FieldEffectOperation: ...
+    def transition_field_effect(
+        self,
+        plan_id: str,
+        expected_state: str,
+        state: str,
+        changed_at: int,
+        failure: str | None = None,
+    ) -> FieldEffectOperation: ...
     def supersede_field_effect(self, decision_id: str, superseded_at: int) -> int: ...
     def set_field_effect_paused(self, paused: bool, changed_at: int) -> None: ...
     def field_effect_paused(self) -> bool: ...
-    def revoke_field_effect_authority(self, decision_id: str, changed_at: int) -> int: ...
+    def revoke_field_effect_authority(
+        self, decision_id: str, changed_at: int
+    ) -> int: ...
     def revoke_field_effect_consent(self, consent_id: str, changed_at: int) -> int: ...
-    def schedule_field_effect_reconciliation(self, plan_id: str, expected_state: str,
-                                             changed_at: int,
-                                             failure: str = "ambiguous") -> FieldEffectOperation: ...
-    def complete_field_effect_reconciliation(self, plan_id: str, state: str,
-                                             failure: str | None, changed_at: int,
-                                             reevaluate: bool = False) -> FieldEffectOperation: ...
+    def schedule_field_effect_reconciliation(
+        self,
+        plan_id: str,
+        expected_state: str,
+        changed_at: int,
+        failure: str = "ambiguous",
+    ) -> FieldEffectOperation: ...
+    def complete_field_effect_reconciliation(
+        self,
+        plan_id: str,
+        state: str,
+        failure: str | None,
+        changed_at: int,
+        reevaluate: bool = False,
+    ) -> FieldEffectOperation: ...
     def field_effect_cleanup_pending(self, plan_id: str) -> bool: ...
     def complete_field_effect_cleanup(self, plan_id: str, changed_at: int) -> None: ...
     def fail_field_effect_cleanup(self, plan_id: str, changed_at: int) -> None: ...
-    def claim_next_field_effect_action(self, changed_at: int,
-                                       plan_id: str | None = None) -> dict[str, object] | None: ...
-    def complete_forward_reevaluation(self, action_id: str, changed_at: int) -> None: ...
+    def claim_next_field_effect_action(
+        self, changed_at: int, plan_id: str | None = None
+    ) -> dict[str, object] | None: ...
+    def complete_forward_reevaluation(
+        self, action_id: str, changed_at: int
+    ) -> None: ...
     def pending_field_effect_cleanups(self, limit: int) -> tuple[str, ...]: ...
     def pending_field_effect_plan_ids(self, limit: int) -> tuple[str, ...]: ...
     def retire_stale_cover_decision(
         self, decision_id: str, changed_at: int
     ) -> bool: ...
     def field_effect_event_documents(self, plan_id: str) -> tuple[str, ...]: ...
-    def suspend_field_effect_capability(self, *, scope: str, connection: str,
-                                        destination: str, reason: str,
-                                        changed_at: int) -> None: ...
-    def field_effect_capability_suspension(self, connection: str,
-                                           destination: str) -> str | None: ...
-    def grant_field_effect_consent_matrix(self, connection: str,
-                                          grants: tuple[tuple[str, tuple[str, ...]], ...],
-                                          granted_at: int) -> tuple[EffectConsent, ...]: ...
-    def clear_field_effect_capability_suspension(self, *, scope: str,
-                                                 connection: str, destination: str,
-                                                 reason: str,
-                                                 observed_at: int) -> None: ...
+    def suspend_field_effect_capability(
+        self,
+        *,
+        scope: str,
+        connection: str,
+        destination: str,
+        reason: str,
+        changed_at: int,
+    ) -> None: ...
+    def field_effect_capability_suspension(
+        self, connection: str, destination: str
+    ) -> str | None: ...
+    def grant_field_effect_consent_matrix(
+        self,
+        connection: str,
+        grants: tuple[tuple[str, tuple[str, ...]], ...],
+        granted_at: int,
+    ) -> tuple[EffectConsent, ...]: ...
+    def clear_field_effect_capability_suspension(
+        self,
+        *,
+        scope: str,
+        connection: str,
+        destination: str,
+        reason: str,
+        observed_at: int,
+    ) -> None: ...
 
 
 class TargetService(Protocol):
@@ -138,13 +192,16 @@ class CapabilityObserver(Protocol):
 
 
 class AuthorityCurrentness(Protocol):
-    def resolve(self, decision: HumanDecision | AutomaticDecision) -> AuthoritySnapshot: ...
+    def resolve(
+        self, decision: HumanDecision | AutomaticDecision
+    ) -> AuthoritySnapshot: ...
     def current(self, authority: EffectAuthority) -> bool: ...
 
 
 class ConsentCurrentness(Protocol):
-    def resolve(self, *, connection: str, library: str,
-                destination: str) -> EffectConsent: ...
+    def resolve(
+        self, *, connection: str, library: str, destination: str
+    ) -> EffectConsent: ...
     def current(self, consent: EffectConsent) -> bool: ...
 
 
@@ -165,21 +222,35 @@ class ForwardReevaluation(Protocol):
     def emit(self, plan: FieldEffectPlan) -> None: ...
 
 
-def authority_from_decision(decision: HumanDecision | AutomaticDecision) -> EffectAuthority | None:
+def authority_from_decision(
+    decision: HumanDecision | AutomaticDecision,
+) -> EffectAuthority | None:
     """Project only exact existing authoritative decisions; advice cannot enter."""
     if type(decision) is HumanDecision:
         if decision.outcome != "accept":
             return None
-        return EffectAuthority(decision.decision_id, decision.review_case_id,
-                               decision.target_fingerprint, "fake_service", "human",
-                               "candidate", None, None)
+        return EffectAuthority(
+            decision.decision_id,
+            decision.review_case_id,
+            decision.target_fingerprint,
+            "fake_service",
+            "human",
+            "candidate",
+            None,
+            None,
+        )
     if type(decision) is AutomaticDecision:
         if decision.outcome != "candidate":
             return None
         return EffectAuthority(
-            decision.decision_id, decision.review_case_id, decision.target_fingerprint,
-            "fake_service", "automatic_policy", "candidate",
-            decision.resolved_policy_id, decision.qualification_manifest_sha256,
+            decision.decision_id,
+            decision.review_case_id,
+            decision.target_fingerprint,
+            "fake_service",
+            "automatic_policy",
+            "candidate",
+            decision.resolved_policy_id,
+            decision.qualification_manifest_sha256,
         )
     raise GuardedApplicationError("unauthorized_origin")
 
@@ -187,15 +258,23 @@ def authority_from_decision(decision: HumanDecision | AutomaticDecision) -> Effe
 class GuardedFieldApplication:
     """Deep effect kernel; preclaim order is deliberately visible and fixed."""
 
-    def __init__(self, repository: FieldEffectRepository, target: TargetService,
-                 backup: BackupReadiness, capabilities: CapabilityObserver,
-                 authority: AuthorityCurrentness, dependencies: DependencyCurrentness,
-                 consent: ConsentCurrentness, cover_recovery: CoverRecovery,
-                 reevaluation: ForwardReevaluation, clock: Callable[[], int],
-                 preclaim_hook: Callable[[FieldEffectPlan], None] | None = None,
-                 claim_hook: Callable[[FieldEffectPlan], None] | None = None,
-                 recovery_hook: Callable[[FieldEffectPlan], None] | None = None,
-                 timing: StageTimer | None = None) -> None:
+    def __init__(
+        self,
+        repository: FieldEffectRepository,
+        target: TargetService,
+        backup: BackupReadiness,
+        capabilities: CapabilityObserver,
+        authority: AuthorityCurrentness,
+        dependencies: DependencyCurrentness,
+        consent: ConsentCurrentness,
+        cover_recovery: CoverRecovery,
+        reevaluation: ForwardReevaluation,
+        clock: Callable[[], int],
+        preclaim_hook: Callable[[FieldEffectPlan], None] | None = None,
+        claim_hook: Callable[[FieldEffectPlan], None] | None = None,
+        recovery_hook: Callable[[FieldEffectPlan], None] | None = None,
+        timing: StageTimer | None = None,
+    ) -> None:
         self._repository = repository
         self._target = target
         self._backup = backup
@@ -232,10 +311,21 @@ class GuardedFieldApplication:
         with self._admission_lock:
             self._draining.set()
 
-    def plan(self, decision: HumanDecision | AutomaticDecision, *, connection: str,
-             library: str, work_id: str, destination: str, pre_value: object,
-             desired_value: object, target_fingerprint: str, target_version: str,
-             dependency_digests: tuple[str, ...], capability_digest: str) -> FieldEffectOperation | None:
+    def plan(
+        self,
+        decision: HumanDecision | AutomaticDecision,
+        *,
+        connection: str,
+        library: str,
+        work_id: str,
+        destination: str,
+        pre_value: object,
+        desired_value: object,
+        target_fingerprint: str,
+        target_version: str,
+        dependency_digests: tuple[str, ...],
+        capability_digest: str,
+    ) -> FieldEffectOperation | None:
         projected = authority_from_decision(decision)
         if projected is None:
             return None
@@ -246,20 +336,40 @@ class GuardedFieldApplication:
             # decision's authority unresolved, so no plan row is recorded and
             # the cause is chained rather than discarded.
             raise GuardedApplicationError("decision_value") from error
-        expected = (connection, library, work_id, destination, projected.review_case_id,
-                    target_fingerprint, target_version)
-        actual = (snapshot.connection, snapshot.library, snapshot.work_id,
-                  snapshot.destination, snapshot.review_case_id,
-                  snapshot.target_fingerprint, snapshot.target_version)
-        if (actual != expected or snapshot.decision_value != desired_value
-                or decision.destination != destination
-                or decision.review_case_id != snapshot.review_case_id
-                or decision.target_fingerprint != snapshot.target_fingerprint):
+        expected = (
+            connection,
+            library,
+            work_id,
+            destination,
+            projected.review_case_id,
+            target_fingerprint,
+            target_version,
+        )
+        actual = (
+            snapshot.connection,
+            snapshot.library,
+            snapshot.work_id,
+            snapshot.destination,
+            snapshot.review_case_id,
+            snapshot.target_fingerprint,
+            snapshot.target_version,
+        )
+        if (
+            actual != expected
+            or snapshot.decision_value != desired_value
+            or decision.destination != destination
+            or decision.review_case_id != snapshot.review_case_id
+            or decision.target_fingerprint != snapshot.target_fingerprint
+        ):
             raise GuardedApplicationError("authority_binding")
         projected = EffectAuthority(
-            projected.decision_id, projected.review_case_id,
-            projected.target_fingerprint, snapshot.source, projected.origin,
-            projected.outcome, projected.policy_identity,
+            projected.decision_id,
+            projected.review_case_id,
+            projected.target_fingerprint,
+            snapshot.source,
+            projected.origin,
+            projected.outcome,
+            projected.policy_identity,
             projected.qualification_identity,
         )
         try:
@@ -274,11 +384,18 @@ class GuardedFieldApplication:
             raise GuardedApplicationError("consent")
         effect_value = project_decision_value(destination, desired_value)
         plan = FieldEffectPlan.create(
-            connection=connection, library=library, work_id=work_id,
-            destination=destination, pre_value=pre_value, desired_value=effect_value,
-            target_fingerprint=target_fingerprint, target_version=target_version,
-            dependency_digests=dependency_digests, authority=projected,
-            consent=consent, capability_digest=capability_digest,
+            connection=connection,
+            library=library,
+            work_id=work_id,
+            destination=destination,
+            pre_value=pre_value,
+            desired_value=effect_value,
+            target_fingerprint=target_fingerprint,
+            target_version=target_version,
+            dependency_digests=dependency_digests,
+            authority=projected,
+            consent=consent,
+            capability_digest=capability_digest,
             created_at=self._clock(),
         )
         if plan.pre_value == plan.desired_value:
@@ -322,7 +439,9 @@ class GuardedFieldApplication:
         guarded = self._preclaim(operation)
         if guarded is not None:
             return guarded
-        token = hashlib.sha256(f"{plan.plan_id}:{operation.attempt + 1}".encode()).hexdigest()
+        token = hashlib.sha256(
+            f"{plan.plan_id}:{operation.attempt + 1}".encode()
+        ).hexdigest()
         try:
             self._claim_hook(plan)
             with self._admission_lock:
@@ -431,9 +550,11 @@ class GuardedFieldApplication:
             self._recover_cleanup(result)
             return result
         if observed.value == operation.plan.pre_value:
-            if (self._authority.current(operation.plan.authority)
-                    and self._dependencies.current(operation.plan.dependency_digests)
-                    and operation.attempt < 3):
+            if (
+                self._authority.current(operation.plan.authority)
+                and self._dependencies.current(operation.plan.dependency_digests)
+                and operation.attempt < 3
+            ):
                 return self._repository.complete_field_effect_reconciliation(
                     plan_id, "retryable", "not_applied", self._clock()
                 )
@@ -449,7 +570,9 @@ class GuardedFieldApplication:
         return result
 
     def supersede(self, decision_id: str) -> int:
-        count = self._repository.revoke_field_effect_authority(decision_id, self._clock())
+        count = self._repository.revoke_field_effect_authority(
+            decision_id, self._clock()
+        )
         self.run_pending_cleanups()
         return count
 
@@ -497,7 +620,9 @@ class GuardedFieldApplication:
             operation.plan.plan_id, "applying", self._clock(), "readback"
         )
 
-    def _complete(self, operation: FieldEffectOperation, expected: str) -> FieldEffectOperation:
+    def _complete(
+        self, operation: FieldEffectOperation, expected: str
+    ) -> FieldEffectOperation:
         result = self._repository.transition_field_effect(
             operation.plan.plan_id, expected, "verified", self._clock()
         )
@@ -505,7 +630,9 @@ class GuardedFieldApplication:
             self._recover_cleanup(result)
         return result
 
-    def _stale(self, operation: FieldEffectOperation, failure: str) -> FieldEffectOperation:
+    def _stale(
+        self, operation: FieldEffectOperation, failure: str
+    ) -> FieldEffectOperation:
         result = self._repository.transition_field_effect(
             operation.plan.plan_id, operation.state, "stale", self._clock(), failure
         )
@@ -518,13 +645,20 @@ class GuardedFieldApplication:
         plan = operation.plan
         if not self._backup.ready(plan):
             return self._stale(operation, "backup")
-        if self._repository.field_effect_capability_suspension(
-                plan.connection, plan.destination) is not None:
+        if (
+            self._repository.field_effect_capability_suspension(
+                plan.connection, plan.destination
+            )
+            is not None
+        ):
             return self._stale(operation, "capability")
         capability = self._capabilities.observe(plan)
         if capability.category != "allowed":
-            scope = ("connection" if capability.category == "connection_unavailable"
-                     else "destination")
+            scope = (
+                "connection"
+                if capability.category == "connection_unavailable"
+                else "destination"
+            )
             self._repository.suspend_field_effect_capability(
                 scope=scope,
                 connection=plan.connection,
@@ -561,7 +695,9 @@ class GuardedFieldApplication:
             raise GuardedApplicationError("draining")
         return None
 
-    def _persist_target_suspension(self, plan: FieldEffectPlan, error: Exception) -> None:
+    def _persist_target_suspension(
+        self, plan: FieldEffectPlan, error: Exception
+    ) -> None:
         if not isinstance(error, TargetServiceUnavailable):
             return
         self._repository.suspend_field_effect_capability(
@@ -573,8 +709,10 @@ class GuardedFieldApplication:
         )
 
     def _recover_cleanup(self, operation: FieldEffectOperation) -> bool:
-        if (operation.plan.destination != "cover"
-                or not self._repository.field_effect_cleanup_pending(operation.plan.plan_id)):
+        if (
+            operation.plan.destination != "cover"
+            or not self._repository.field_effect_cleanup_pending(operation.plan.plan_id)
+        ):
             return False
         try:
             self._cover_recovery.remove(operation.plan.plan_id)
@@ -592,8 +730,9 @@ class GuardedFieldApplication:
         )
         return True
 
-    def run_pending_actions(self, *, limit: int = 100,
-                            plan_id: str | None = None) -> int:
+    def run_pending_actions(
+        self, *, limit: int = 100, plan_id: str | None = None
+    ) -> int:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise GuardedApplicationError("invalid_limit")
         completed = 0
@@ -620,10 +759,7 @@ class GuardedFieldApplication:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise GuardedApplicationError("invalid_limit")
         plan_ids = self._repository.pending_field_effect_cleanups(limit)
-        return sum(
-            self._recover_cleanup(self.status(plan_id))
-            for plan_id in plan_ids
-        )
+        return sum(self._recover_cleanup(self.status(plan_id)) for plan_id in plan_ids)
 
     def recover_pending(self, *, limit: int = 100) -> tuple[int, int]:
         """Bounded restart entrypoint for the two closed recovery obligations."""

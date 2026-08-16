@@ -58,17 +58,13 @@ def test_current_case_snapshot_cannot_mix_concurrent_supersession() -> None:
         reader.publish(report, lambda: True)
         proposal_set = evaluate_report(report)
         reader.publish_proposal(proposal_set)
-        case_id = json.loads(reader.admit_review_case(proposal_set))[
-            "review_case_id"
-        ]
+        case_id = json.loads(reader.admit_review_case(proposal_set))["review_case_id"]
         newer = _report(title="New Title", file_identity="c")
         pointer_written = threading.Event()
         finished = threading.Event()
         writer_errors: list[BaseException] = []
         writer_path = (
-            database
-            if reader._binding is None
-            else reader._binding.alias_path
+            database if reader._binding is None else reader._binding.alias_path
         )
 
         def supersede() -> None:
@@ -82,9 +78,11 @@ def test_current_case_snapshot_cannot_mix_concurrent_supersession() -> None:
                 connection.execute("PRAGMA busy_timeout=5000")
                 writer = SQLiteMetadataReportRepository(connection)
                 writer._connection.set_trace_callback(
-                    lambda statement: pointer_written.set()
-                    if statement.startswith("INSERT INTO current_metadata_reports")
-                    else None
+                    lambda statement: (
+                        pointer_written.set()
+                        if statement.startswith("INSERT INTO current_metadata_reports")
+                        else None
+                    )
                 )
                 writer.publish(
                     newer,
@@ -108,13 +106,18 @@ def test_current_case_snapshot_cannot_mix_concurrent_supersession() -> None:
                 started = True
                 threading.Thread(target=supersede, daemon=True).start()
                 if not pointer_written.wait(5):
-                    pytest.fail(f"supersession did not reach its pointer: {writer_errors!r}")
+                    pytest.fail(
+                        f"supersession did not reach its pointer: {writer_errors!r}"
+                    )
             return document
 
         with patch.object(reader, "get_review_case", side_effect=interleave):
             snapshot = reader.read_current_review_case(case_id, 50)
         assert json.loads(snapshot.case_document)["current"] is True
-        assert MetadataReport.from_json(snapshot.report_document).report_id == report.report_id
+        assert (
+            MetadataReport.from_json(snapshot.report_document).report_id
+            == report.report_id
+        )
         assert finished.wait(5)
         assert writer_errors == []
         assert json.loads(reader.get_review_case(case_id))["current"] is False
@@ -134,9 +137,7 @@ def test_review_reads_hold_one_snapshot_across_concurrent_decision(
         reader.publish(report, lambda: True)
         proposal_set = evaluate_report(report)
         reader.publish_proposal(proposal_set)
-        case_id = json.loads(reader.admit_review_case(proposal_set))[
-            "review_case_id"
-        ]
+        case_id = json.loads(reader.admit_review_case(proposal_set))["review_case_id"]
         case = ReviewCase.create_from_data(
             json.loads(reader.get_review_case(case_id))["case"]
         )
@@ -160,9 +161,7 @@ def test_review_reads_hold_one_snapshot_across_concurrent_decision(
         finished = threading.Event()
         writer_errors: list[BaseException] = []
         writer_path = (
-            database
-            if reader._binding is None
-            else reader._binding.alias_path
+            database if reader._binding is None else reader._binding.alias_path
         )
 
         def write_decision() -> None:
@@ -176,9 +175,11 @@ def test_review_reads_hold_one_snapshot_across_concurrent_decision(
                 connection.execute("PRAGMA busy_timeout=5000")
                 writer = SQLiteMetadataReportRepository(connection)
                 writer._connection.set_trace_callback(
-                    lambda statement: inserted.set()
-                    if statement.startswith("INSERT INTO human_decisions")
-                    else None
+                    lambda statement: (
+                        inserted.set()
+                        if statement.startswith("INSERT INTO human_decisions")
+                        else None
+                    )
                 )
                 writer.record_human_decision(decision)
             except BaseException as error:
@@ -200,9 +201,7 @@ def test_review_reads_hold_one_snapshot_across_concurrent_decision(
             result = original(*args)
             if not started:
                 started = True
-                threading.Thread(
-                    target=write_decision, daemon=True
-                ).start()
+                threading.Thread(target=write_decision, daemon=True).start()
                 assert inserted.wait(5)
             return result
 
@@ -233,9 +232,9 @@ def test_review_reads_hold_one_snapshot_across_concurrent_decision(
                 before = reader.read_current_review_case(case_id, 50)
                 assert before.decision_documents == ()
                 assert not any(
-                        item.get("kind") == "human_decision_recorded"
-                        for item in before.history
-                    )
+                    item.get("kind") == "human_decision_recorded"
+                    for item in before.history
+                )
             elif surface == "library":
                 before = reader.read_review_library(None, 10, 0, None)
                 assert before.attention_total == 1
@@ -251,9 +250,8 @@ def test_review_reads_hold_one_snapshot_across_concurrent_decision(
             after = reader.read_current_review_case(case_id, 50)
             assert len(after.decision_documents) == 1
             assert any(
-                    item.get("kind") == "human_decision_recorded"
-                    for item in after.history
-                )
+                item.get("kind") == "human_decision_recorded" for item in after.history
+            )
         elif surface == "library":
             after = reader.read_review_library(None, 10, 0, None)
             assert after.attention_total == 0
@@ -299,9 +297,7 @@ def test_sqlite_logout_classification_is_atomic_across_connections() -> None:
             competing_started.set()
             try:
                 competing_outcomes.append(
-                    second.revoke_review_session(
-                        "a" * 64, "c" * 64, 151
-                    )
+                    second.revoke_review_session("a" * 64, "c" * 64, 151)
                 )
             except BaseException as error:
                 competing_errors.append(error)
@@ -370,9 +366,7 @@ def test_concurrent_http_decisions_preserve_both_immutable_revisions() -> None:
         root = Path(directory)
         database = root / "application.sqlite3"
         hash_path = root / "owner.hash"
-        hash_path.write_text(
-            PasswordHasher().hash("correct horse"), encoding="utf-8"
-        )
+        hash_path.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
         os.chmod(hash_path, 0o600)
         repository = open_repository(database, cross_thread=True)
         report = _report()
@@ -399,9 +393,7 @@ def test_concurrent_http_decisions_preserve_both_immutable_revisions() -> None:
                 headers={"Origin": "https://review.test"},
                 json={"password": "correct horse"},
             ).json()
-            field = client.get(
-                f"/api/v1/review-cases/{case_id}"
-            ).json()["fields"][0]
+            field = client.get(f"/api/v1/review-cases/{case_id}").json()["fields"][0]
             base_payload = {
                 "destination": field["destination"],
                 "proposal_id": field["proposal_id"],
@@ -434,22 +426,22 @@ def test_concurrent_http_decisions_preserve_both_immutable_revisions() -> None:
                 )
             assert statuses == [200, 200]
             assert repository._connection.execute(
-                    "SELECT count(*) FROM human_decisions"
-                ).fetchone() == (2,)
+                "SELECT count(*) FROM human_decisions"
+            ).fetchone() == (2,)
             assert repository._connection.execute(
-                    "SELECT count(*) FROM human_decision_events"
-                ).fetchone() == (2,)
-            library = client.get(
-                "/api/v1/library?lens=no_attention_needed"
-            )
+                "SELECT count(*) FROM human_decision_events"
+            ).fetchone() == (2,)
+            library = client.get("/api/v1/library?lens=no_attention_needed")
             assert library.status_code == 200, library.text
             assert library.json()["counts"] == {
-                    "all": 1,
-                    "needs_attention": 0,
-                    "no_attention_needed": 1,
-                }
+                "all": 1,
+                "needs_attention": 0,
+                "no_attention_needed": 1,
+            }
             assert len(library.json()["items"]) == 1
-            assert library.json()["items"][0]["attention_state"] == "no_attention_needed"
+            assert (
+                library.json()["items"][0]["attention_state"] == "no_attention_needed"
+            )
             assert library.json()["items"][0]["attention_count"] == 0
             client.cookies.clear()
             second_login = client.post(
@@ -458,9 +450,7 @@ def test_concurrent_http_decisions_preserve_both_immutable_revisions() -> None:
                 json={"password": "correct horse"},
             )
             assert second_login.status_code == 200
-            second_context = client.get(
-                f"/api/v1/review-cases/{case_id}"
-            ).json()
+            second_context = client.get(f"/api/v1/review-cases/{case_id}").json()
             assert second_context["fields"][0]["human_decision"] is not None
         finally:
             client.close()
@@ -504,8 +494,8 @@ def test_decision_event_failure_rolls_back_acknowledgement_atomically() -> None:
         with pytest.raises(MetadataReportError):
             repository.record_human_decision(decision)
         assert repository._connection.execute(
-                "SELECT count(*) FROM human_decisions"
-            ).fetchone() == (0,)
+            "SELECT count(*) FROM human_decisions"
+        ).fetchone() == (0,)
         repository.close()
 
 
@@ -540,15 +530,18 @@ def test_sqlite_human_decision_is_atomic_idempotent_and_reopens_exactly() -> Non
             idempotency_key="sqlite-decision-0001",
             occurred_at=1_000,
         )
-        assert HumanDecision.from_json(
+        assert (
+            HumanDecision.from_json(
                 repository.record_human_decision(decision)
-            ).decision_id == decision.decision_id
-        assert HumanDecision.from_json(
-                repository.find_human_decision(
-                    decision.idempotency_digest
-                )
-                or ""
-            ).decision_id == decision.decision_id
+            ).decision_id
+            == decision.decision_id
+        )
+        assert (
+            HumanDecision.from_json(
+                repository.find_human_decision(decision.idempotency_digest) or ""
+            ).decision_id
+            == decision.decision_id
+        )
         retry = HumanDecision.create(
             case,
             proposal_id=proposal["proposal_id"],
@@ -560,9 +553,10 @@ def test_sqlite_human_decision_is_atomic_idempotent_and_reopens_exactly() -> Non
             idempotency_key="sqlite-decision-0001",
             occurred_at=1_001,
         )
-        assert HumanDecision.from_json(
-                repository.record_human_decision(retry)
-            ).decision_id == decision.decision_id
+        assert (
+            HumanDecision.from_json(repository.record_human_decision(retry)).decision_id
+            == decision.decision_id
+        )
         conflict = HumanDecision.create(
             case,
             proposal_id=proposal["proposal_id"],
@@ -588,25 +582,37 @@ def test_sqlite_human_decision_is_atomic_idempotent_and_reopens_exactly() -> Non
             idempotency_key="sqlite-decision-0002",
             occurred_at=1_003,
         )
-        assert HumanDecision.from_json(
+        assert (
+            HumanDecision.from_json(
                 repository.record_human_decision(duplicate)
-            ).decision_id == duplicate.decision_id
+            ).decision_id
+            == duplicate.decision_id
+        )
         assert repository.count_current_attention_fields(None) == 0
-        assert repository.get_review_case_history(case_id, 10)[0]["kind"] == "human_decision_recorded"
+        assert (
+            repository.get_review_case_history(case_id, 10)[0]["kind"]
+            == "human_decision_recorded"
+        )
         repository.close()
 
         reopened = open_repository(database, create=False)
         try:
             documents = reopened.get_review_case_decisions(case_id)
             assert len(documents) == 2
-            assert HumanDecision.from_json(documents[0]).decision_id == decision.decision_id
-            assert HumanDecision.from_json(documents[1]).decision_id == duplicate.decision_id
-            assert HumanDecision.from_json(
-                    reopened.find_human_decision(
-                        decision.idempotency_digest
-                    )
-                    or ""
-                ).decision_id == decision.decision_id
+            assert (
+                HumanDecision.from_json(documents[0]).decision_id
+                == decision.decision_id
+            )
+            assert (
+                HumanDecision.from_json(documents[1]).decision_id
+                == duplicate.decision_id
+            )
+            assert (
+                HumanDecision.from_json(
+                    reopened.find_human_decision(decision.idempotency_digest) or ""
+                ).decision_id
+                == decision.decision_id
+            )
             detail = InspectCurrentReviewCase(reopened).run(case_id)
             assert not detail["fields"][0]["needs_attention"]
             newer = _report(content_digest="c", file_identity="d")
@@ -623,9 +629,9 @@ def test_sqlite_human_decision_is_atomic_idempotent_and_reopens_exactly() -> Non
             )
             assert replayed["decision_id"] == decision.decision_id
             assert reopened._connection.execute(
-                    "SELECT (SELECT count(*) FROM human_decisions),"
-                    "(SELECT count(*) FROM human_decision_events)"
-                ).fetchone() == (2, 2)
+                "SELECT (SELECT count(*) FROM human_decisions),"
+                "(SELECT count(*) FROM human_decision_events)"
+            ).fetchone() == (2, 2)
             with pytest.raises(ReviewWebError) as replay_conflict:
                 RecordHumanDecision(reopened, lambda: 2_001).run(
                     case_id,
@@ -673,9 +679,9 @@ def test_decision_reports_persistence_only_where_the_store_was_asked() -> None:
             repository.publish(report, lambda: True)
             proposal_set = evaluate_report(report)
             repository.publish_proposal(proposal_set)
-            case_id = json.loads(
-                repository.admit_review_case(proposal_set)
-            )["review_case_id"]
+            case_id = json.loads(repository.admit_review_case(proposal_set))[
+                "review_case_id"
+            ]
             case = ReviewCase.create_from_data(
                 json.loads(repository.get_review_case(case_id))["case"]
             )
@@ -694,9 +700,7 @@ def test_decision_reports_persistence_only_where_the_store_was_asked() -> None:
                         destination=proposal["destination"],
                         actor="owner",
                         outcome="accept",
-                        selected_value=(
-                            proposal["result"]["alternatives"][0]["value"]
-                        ),
+                        selected_value=(proposal["result"]["alternatives"][0]["value"]),
                         idempotency_key=key,
                     )
                 return raised.value
@@ -712,13 +716,14 @@ def test_decision_reports_persistence_only_where_the_store_was_asked() -> None:
             assert local.code == "unavailable"
             assert local.__cause__ is clock_fault
             assert (0,) == repository._connection.execute(
-                    "SELECT count(*) FROM human_decisions"
-                ).fetchone()
+                "SELECT count(*) FROM human_decisions"
+            ).fetchone()
 
             # The store's own failure keeps the identity that names it.
             store_fault = OSError("database is gone")
             with patch.object(
-                type(repository), "record_human_decision",
+                type(repository),
+                "record_human_decision",
                 side_effect=store_fault,
             ):
                 stored = record(lambda: 1_000, "decision-store-0001")
@@ -735,18 +740,33 @@ def test_session_survives_exact_current_reopen_and_prior_schema_is_rejected() ->
         repository.create_review_session("a" * 64, "b" * 64, 100, 200)
         repository.close()
         reopened = open_repository(path, create=False)
-        assert reopened.authenticate_review_session("a" * 64, 150) == ("owner", "b" * 64, 200)
+        assert reopened.authenticate_review_session("a" * 64, 150) == (
+            "owner",
+            "b" * 64,
+            200,
+        )
         assert reopened.rotate_review_session_csrf("a" * 64, "c" * 64, 150) == "rotated"
-        assert reopened.authenticate_review_session("a" * 64, 150) == ("owner", "c" * 64, 200)
+        assert reopened.authenticate_review_session("a" * 64, 150) == (
+            "owner",
+            "c" * 64,
+            200,
+        )
         assert reopened.revoke_review_session("a" * 64, "d" * 64, 151) == "csrf"
-        assert reopened.authenticate_review_session("a" * 64, 151) == ("owner", "c" * 64, 200)
+        assert reopened.authenticate_review_session("a" * 64, 151) == (
+            "owner",
+            "c" * 64,
+            200,
+        )
         assert reopened.revoke_review_session("a" * 64, "c" * 64, 151) == "revoked"
         assert reopened.revoke_review_session("a" * 64, "c" * 64, 151) == "unauthorized"
         reopened.create_review_session("e" * 64, "f" * 64, 100, 200)
         assert reopened.revoke_review_session("e" * 64, "f" * 64, 200) == "unauthorized"
         with pytest.raises(MetadataReportError):
             reopened.authenticate_review_session("a" * 64, 152)
-        assert reopened.rotate_review_session_csrf("a" * 64, "d" * 64, 152) == "unauthorized"
+        assert (
+            reopened.rotate_review_session_csrf("a" * 64, "d" * 64, 152)
+            == "unauthorized"
+        )
         reopened.close()
 
 
@@ -791,9 +811,7 @@ def test_authenticated_preparation_status_survives_writer_journal_churn() -> Non
         hash_path.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
         os.chmod(hash_path, 0o600)
         repository = open_repository(database, cross_thread=True)
-        repository.request_review_scan(
-            "primary", "fiction", "lib-1", "f" * 64, 1
-        )
+        repository.request_review_scan("primary", "fiction", "lib-1", "f" * 64, 1)
         repository.set_review_pipeline_paused(True, 2)
         authority = repository.authority
         assert authority is not None
@@ -852,12 +870,12 @@ def test_authenticated_preparation_status_survives_writer_journal_churn() -> Non
         def churn_journal_descriptors() -> None:
             writer_repository = None
             try:
-                writer_repository = open_repository(
-                    database, authority=authority
-                )
+                writer_repository = open_repository(database, authority=authority)
                 for updated_at in range(3, 28):
                     if not release_writer.wait(5):
-                        pytest.fail("authenticated status read did not release writer churn")
+                        pytest.fail(
+                            "authenticated status read did not release writer churn"
+                        )
                     release_writer.clear()
                     paused = updated_at % 2 == 1
                     state = "queued" if paused else "discovering"
@@ -901,7 +919,10 @@ def test_authenticated_preparation_status_survives_writer_journal_churn() -> Non
                 assert control_started.is_set()
                 assert commit_attempted.is_set()
                 payload = status.json()
-                assert (payload["paused"], payload["libraries"][0]["state"]) in ((True, "queued"), (False, "discovering"))
+                assert (payload["paused"], payload["libraries"][0]["state"]) in (
+                    (True, "queued"),
+                    (False, "discovering"),
+                )
                 assert payload["libraries"][0]["connection"] == "primary"
                 assert payload["libraries"][0]["library"] == "fiction"
                 assert commit_completed.wait(5)

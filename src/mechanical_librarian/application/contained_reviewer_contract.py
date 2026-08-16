@@ -31,13 +31,26 @@ def canonical_json(value: object) -> str:
 class ContainedReviewerError(RuntimeError):
     """A value-free failure at the contained-reviewer trust boundary."""
 
-    _CODES = frozenset({
-        "auth", "cancel", "local_cli_abort", "malformed_output", "profile",
-        "response_format", "runtime", "setup", "timeout",
-    })
+    _CODES = frozenset(
+        {
+            "auth",
+            "cancel",
+            "local_cli_abort",
+            "malformed_output",
+            "profile",
+            "response_format",
+            "runtime",
+            "setup",
+            "timeout",
+        }
+    )
 
     def __init__(self, code: str, *, count: int = 0, digest: str | None = None) -> None:
-        if code not in self._CODES or type(count) is not int or not 0 <= count <= 2_147_483_647:
+        if (
+            code not in self._CODES
+            or type(count) is not int
+            or not 0 <= count <= 2_147_483_647
+        ):
             raise ValueError("invalid contained-reviewer failure")
         if digest is not None and re.fullmatch(r"[0-9a-f]{64}", digest) is None:
             raise ValueError("invalid contained-reviewer failure")
@@ -63,15 +76,29 @@ class ContainedReviewerIdentity:
 
     def __post_init__(self) -> None:
         if (
-            any(re.fullmatch(r"[0-9a-f]{64}", value) is None for value in
-                (self.executable_sha256, self.sandbox_sha256))
-            or any(type(value) is not str or not value or len(value.encode("utf-8")) > 256
-                   for value in (self.executable_version, self.sandbox_version, self.model, self.reasoning))
-            or type(self.timeout_seconds) is not int or not 1 <= self.timeout_seconds <= 600
-            or type(self.output_bytes) is not int or not 2 <= self.output_bytes <= 1_048_576
-            or type(self.memory_bytes) is not int or not 16_777_216 <= self.memory_bytes <= 8_589_934_592
-            or type(self.process_limit) is not int or not 1 <= self.process_limit <= 64
-            or type(self.file_bytes) is not int or not 2 <= self.file_bytes <= 1_048_576
+            any(
+                re.fullmatch(r"[0-9a-f]{64}", value) is None
+                for value in (self.executable_sha256, self.sandbox_sha256)
+            )
+            or any(
+                type(value) is not str or not value or len(value.encode("utf-8")) > 256
+                for value in (
+                    self.executable_version,
+                    self.sandbox_version,
+                    self.model,
+                    self.reasoning,
+                )
+            )
+            or type(self.timeout_seconds) is not int
+            or not 1 <= self.timeout_seconds <= 600
+            or type(self.output_bytes) is not int
+            or not 2 <= self.output_bytes <= 1_048_576
+            or type(self.memory_bytes) is not int
+            or not 16_777_216 <= self.memory_bytes <= 8_589_934_592
+            or type(self.process_limit) is not int
+            or not 1 <= self.process_limit <= 64
+            or type(self.file_bytes) is not int
+            or not 2 <= self.file_bytes <= 1_048_576
             or self.output_bytes > self.file_bytes
         ):
             raise ContainedReviewerError("profile")
@@ -120,7 +147,10 @@ class ContainedReviewRequest:
             if (
                 type(self.instruction) is not str
                 or not 1 <= len(self.instruction.encode("utf-8")) <= 4096
-                or any(ord(value) < 32 and value not in "\n\t" for value in self.instruction)
+                or any(
+                    ord(value) < 32 and value not in "\n\t"
+                    for value in self.instruction
+                )
                 or not 2 <= len(self.input_document.encode("utf-8")) <= MAX_INPUT_BYTES
                 or not 2 <= len(self.output_schema.encode("utf-8")) <= MAX_SCHEMA_BYTES
                 or canonical_json(input_value) != self.input_document
@@ -129,17 +159,27 @@ class ContainedReviewRequest:
                 or type(schema_value) is not dict
             ):
                 raise ValueError
-        except (json.JSONDecodeError, RecursionError, TypeError, UnicodeError, ValueError) as error:
+        except (
+            json.JSONDecodeError,
+            RecursionError,
+            TypeError,
+            UnicodeError,
+            ValueError,
+        ) as error:
             raise ContainedReviewerError("response_format") from error
 
     @property
     def digest(self) -> str:
-        return hashlib.sha256(canonical_json({
-            "input": self.input_document,
-            "instruction": self.instruction,
-            "images": [],
-            "output_schema": self.output_schema,
-        }).encode("utf-8")).hexdigest()
+        return hashlib.sha256(
+            canonical_json(
+                {
+                    "input": self.input_document,
+                    "instruction": self.instruction,
+                    "images": [],
+                    "output_schema": self.output_schema,
+                }
+            ).encode("utf-8")
+        ).hexdigest()
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -169,15 +209,19 @@ class _CoverReviewRequest:
 
     @property
     def digest(self) -> str:
-        return hashlib.sha256(canonical_json({
-            "input": self.input_document,
-            "instruction": self.instruction,
-            "images": [
-                {"reference": value.reference, "sha256": value.digest}
-                for value in self.images
-            ],
-            "output_schema": self.output_schema,
-        }).encode("utf-8")).hexdigest()
+        return hashlib.sha256(
+            canonical_json(
+                {
+                    "input": self.input_document,
+                    "instruction": self.instruction,
+                    "images": [
+                        {"reference": value.reference, "sha256": value.digest}
+                        for value in self.images
+                    ],
+                    "output_schema": self.output_schema,
+                }
+            ).encode("utf-8")
+        ).hexdigest()
 
 
 def admit_cover_review_request(
@@ -192,7 +236,13 @@ def admit_cover_review_request(
         admitted = bind_cover_packet(packet_document, image_payloads)
         images = tuple(_CoverReviewImage(*value) for value in admitted.images)
         return _CoverReviewRequest._admit(base, images)
-    except (json.JSONDecodeError, RecursionError, TypeError, UnicodeError, ValueError) as error:
+    except (
+        json.JSONDecodeError,
+        RecursionError,
+        TypeError,
+        UnicodeError,
+        ValueError,
+    ) as error:
         raise ContainedReviewerError("response_format") from error
 
 
@@ -266,7 +316,12 @@ def _reject_json_constant(value: str) -> object:
 
 
 __all__ = [
-    "ContainedReviewRequest", "ContainedReviewResult", "ContainedReviewer",
-    "ContainedReviewerAttempt", "ContainedReviewerError", "ContainedReviewerIdentity",
-    "admit_cover_review_request", "canonical_json",
+    "ContainedReviewRequest",
+    "ContainedReviewResult",
+    "ContainedReviewer",
+    "ContainedReviewerAttempt",
+    "ContainedReviewerError",
+    "ContainedReviewerIdentity",
+    "admit_cover_review_request",
+    "canonical_json",
 ]

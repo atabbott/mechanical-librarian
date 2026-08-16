@@ -154,7 +154,9 @@ def _verify_pytest_environment() -> None:
     paths, so they are not echoed.
     """
 
-    present = tuple(name for name in _REJECTED_PYTEST_ENVIRONMENT if os.environ.get(name))
+    present = tuple(
+        name for name in _REJECTED_PYTEST_ENVIRONMENT if os.environ.get(name)
+    )
     if present:
         raise RuntimeError(f"pytest_environment_override:{','.join(present)}")
 
@@ -535,9 +537,7 @@ def _report_failure_tracebacks(
     otherwise be bounded by nothing. Room for the closing omission notice is
     reserved up front so truncation is always declared.
     """
-    reserved = len(
-        f"==== {tier} tracebacks omitted: {len(tracebacks)} ====\n".encode()
-    )
+    reserved = len(f"==== {tier} tracebacks omitted: {len(tracebacks)} ====\n".encode())
     remaining = _MAX_TRACEBACK_STREAM_BYTES - reserved
     omitted = 0
     for index, (identifier, detail) in enumerate(tracebacks):
@@ -649,9 +649,7 @@ def _run_complete(root: Path, source_sha: str) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "tier", choices=(*COHORTS, "complete-installed", "complete")
-    )
+    parser.add_argument("tier", choices=(*COHORTS, "complete-installed", "complete"))
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--source-sha")
     arguments = parser.parse_args(argv)

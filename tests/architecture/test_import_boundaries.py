@@ -7,7 +7,14 @@ PACKAGE_ROOT = Path(__file__).parents[2] / "src" / "mechanical_librarian"
 WORKBENCH_ROOT = (
     Path(__file__).parents[2] / "workbench" / "mechanical_librarian_workbench"
 )
-LAYERS = {"interfaces", "application", "domain", "adapters", "infrastructure", "bootstrap"}
+LAYERS = {
+    "interfaces",
+    "application",
+    "domain",
+    "adapters",
+    "infrastructure",
+    "bootstrap",
+}
 ALLOWED = {
     "domain": {"domain"},
     "application": {"application", "domain"},
@@ -46,7 +53,11 @@ def _imports(path: Path) -> list[str]:
 
 def _layer(module: str) -> str | None:
     parts = module.split(".")
-    return parts[1] if len(parts) > 1 and parts[0] == "mechanical_librarian" and parts[1] in LAYERS else None
+    return (
+        parts[1]
+        if len(parts) > 1 and parts[0] == "mechanical_librarian" and parts[1] in LAYERS
+        else None
+    )
 
 
 def test_production_source_obeys_dependency_direction() -> None:
@@ -56,7 +67,11 @@ def test_production_source_obeys_dependency_direction() -> None:
         origin_layer = _layer(origin)
         for target in _imports(path):
             target_layer = _layer(target)
-            if target.startswith("tests") or (origin_layer and target_layer and target_layer not in ALLOWED[origin_layer]):
+            if target.startswith("tests") or (
+                origin_layer
+                and target_layer
+                and target_layer not in ALLOWED[origin_layer]
+            ):
                 violations.append(f"{origin} imports {target}")
     assert violations == []
 
@@ -113,12 +128,12 @@ def test_http_interface_receives_only_composed_review_application() -> None:
     interface = (PACKAGE_ROOT / "interfaces" / "web" / "app.py").read_text(
         encoding="utf-8"
     )
-    application = (
-        PACKAGE_ROOT / "application" / "review_application.py"
-    ).read_text(encoding="utf-8")
-    review_services = (
-        PACKAGE_ROOT / "application" / "review_web.py"
-    ).read_text(encoding="utf-8")
+    application = (PACKAGE_ROOT / "application" / "review_application.py").read_text(
+        encoding="utf-8"
+    )
+    review_services = (PACKAGE_ROOT / "application" / "review_web.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "ReviewWebRepository" not in interface
     assert "_SerializedReviewRepository" not in interface
@@ -129,10 +144,22 @@ def test_http_interface_receives_only_composed_review_application() -> None:
 
 
 def test_runtime_has_one_cli_command_and_no_write_authority() -> None:
-    cli = (PACKAGE_ROOT / "interfaces" / "cli" / "__init__.py").read_text(encoding="utf-8")
+    cli = (PACKAGE_ROOT / "interfaces" / "cli" / "__init__.py").read_text(
+        encoding="utf-8"
+    )
     assert cli.count('add_parser("review-serve"') == 1
-    for unsupported in ('add_parser("metadata-report"', 'add_parser("proposal-set', 'add_parser("review-case', 'add_parser("catalogue"', 'add_parser("batch"', 'add_parser("shadow-review', 'add_parser("reviewer-auth'):
+    for unsupported in (
+        'add_parser("metadata-report"',
+        'add_parser("proposal-set',
+        'add_parser("review-case',
+        'add_parser("catalogue"',
+        'add_parser("batch"',
+        'add_parser("shadow-review',
+        'add_parser("reviewer-auth',
+    ):
         assert unsupported not in cli
-    source = "\n".join(path.read_text(encoding="utf-8") for path in PACKAGE_ROOT.rglob("*.py"))
+    source = "\n".join(
+        path.read_text(encoding="utf-8") for path in PACKAGE_ROOT.rglob("*.py")
+    )
     assert "DELETE FROM metadata_reports" not in source
     assert "UPDATE metadata_reports" not in source

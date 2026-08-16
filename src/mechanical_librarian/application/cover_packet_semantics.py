@@ -42,16 +42,33 @@ _DESIGNATION_RANK: dict[str | None, int] = {
     "work": 2,
     "default": 3,
 }
-_CONTEXT_FIELDS = frozenset({
-    "country", "format", "isbn", "language", "publication_date",
-    "publication_place", "publisher",
-})
-_SOURCE_OMISSIONS = frozenset({
-    "source_absent", "source_animated_or_multiframe", "source_decode_failed",
-    "source_invalid_declaration", "source_oversized", "source_rejected",
-    "source_source_changed", "source_timeout", "source_truncated",
-    "source_unavailable", "source_unsafe_remote", "source_unsupported_format",
-})
+_CONTEXT_FIELDS = frozenset(
+    {
+        "country",
+        "format",
+        "isbn",
+        "language",
+        "publication_date",
+        "publication_place",
+        "publisher",
+    }
+)
+_SOURCE_OMISSIONS = frozenset(
+    {
+        "source_absent",
+        "source_animated_or_multiframe",
+        "source_decode_failed",
+        "source_invalid_declaration",
+        "source_oversized",
+        "source_rejected",
+        "source_source_changed",
+        "source_timeout",
+        "source_truncated",
+        "source_unavailable",
+        "source_unsafe_remote",
+        "source_unsupported_format",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,19 +148,11 @@ def validate_cover_preview(
         ):
             raise ValueError
         structural_width, structural_height = _validate_png_structure(payload)
-        pixels = _decode_rgba_pixels(
-            payload, structural_width, structural_height
-        )
-        if _canonical_rgba_png(
-            structural_width, structural_height, pixels
-        ) != payload:
+        pixels = _decode_rgba_pixels(payload, structural_width, structural_height)
+        if _canonical_rgba_png(structural_width, structural_height, pixels) != payload:
             raise ValueError
-        if (
-            expected_width is not None
-            and structural_width != expected_width
-        ) or (
-            expected_height is not None
-            and structural_height != expected_height
+        if (expected_width is not None and structural_width != expected_width) or (
+            expected_height is not None and structural_height != expected_height
         ):
             raise ValueError
         return structural_width, structural_height
@@ -177,9 +186,7 @@ def normalize_cover_preview(
         _validate_png_structure(structural)
         pixels = _decode_rgba_pixels(structural, width, height)
         normalized = _canonical_rgba_png(width, height, pixels)
-        validate_cover_preview(
-            normalized, expected_width=width, expected_height=height
-        )
+        validate_cover_preview(normalized, expected_width=width, expected_height=height)
         return NormalizedCoverPreview(
             normalized, hashlib.sha256(normalized).hexdigest(), width, height
         )
@@ -200,13 +207,18 @@ def cover_transport_reference(
     transport_sha256: str,
 ) -> str:
     """Derive a transport reference from its source and canonical identities."""
-    return "cover_transport_ref_" + hashlib.sha256(
-        canonical_packet_json({
-            "candidate_reference": candidate_reference,
-            "source_bindings": source_bindings,
-            "transport_sha256": transport_sha256,
-        }).encode("utf-8")
-    ).hexdigest()
+    return (
+        "cover_transport_ref_"
+        + hashlib.sha256(
+            canonical_packet_json(
+                {
+                    "candidate_reference": candidate_reference,
+                    "source_bindings": source_bindings,
+                    "transport_sha256": transport_sha256,
+                }
+            ).encode("utf-8")
+        ).hexdigest()
+    )
 
 
 def _decode_rgba_pixels(payload: bytes, width: int, height: int) -> bytes:
@@ -243,8 +255,8 @@ def _structural_png_without_ancillary(
         chunk_count += 1
         if chunk_count > _MAX_PNG_CHUNKS or len(payload) - offset < 12:
             raise ValueError
-        length = struct.unpack(">I", payload[offset:offset + 4])[0]
-        chunk_type = payload[offset + 4:offset + 8]
+        length = struct.unpack(">I", payload[offset : offset + 4])[0]
+        chunk_type = payload[offset + 4 : offset + 8]
         data_start = offset + 8
         data_end = data_start + length
         crc_end = data_end + 4
@@ -261,11 +273,11 @@ def _structural_png_without_ancillary(
         if chunk_count == 1:
             if chunk_type != b"IHDR" or length != 13:
                 raise ValueError
-            width, height = struct.unpack(">II", payload[data_start:data_start + 8])
+            width, height = struct.unpack(">II", payload[data_start : data_start + 8])
             if (
                 not 1 <= width <= MAX_COVER_PREVIEW_WIDTH
                 or not 1 <= height <= MAX_COVER_PREVIEW_HEIGHT
-                or payload[data_start + 8:data_end] != b"\x08\x06\x00\x00\x00"
+                or payload[data_start + 8 : data_end] != b"\x08\x06\x00\x00\x00"
             ):
                 raise ValueError
             saw_header = True
@@ -311,11 +323,11 @@ def _canonical_rgba_png(width: int, height: int, pixels: bytes) -> bytes:
     row_bytes = width * 4
     for offset in range(0, len(pixels), row_bytes):
         scanlines.append(0)
-        scanlines.extend(pixels[offset:offset + row_bytes])
+        scanlines.extend(pixels[offset : offset + row_bytes])
 
     compressed = bytearray(b"\x78\x01")
     for offset in range(0, len(scanlines), 65_535):
-        block = scanlines[offset:offset + 65_535]
+        block = scanlines[offset : offset + 65_535]
         compressed.append(1 if offset + len(block) == len(scanlines) else 0)
         compressed.extend(struct.pack("<H", len(block)))
         compressed.extend(struct.pack("<H", len(block) ^ 0xFFFF))
@@ -352,8 +364,8 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
         chunk_count += 1
         if chunk_count > _MAX_PNG_CHUNKS or len(payload) - offset < 12:
             raise ValueError
-        length = struct.unpack(">I", payload[offset:offset + 4])[0]
-        chunk_type = payload[offset + 4:offset + 8]
+        length = struct.unpack(">I", payload[offset : offset + 4])[0]
+        chunk_type = payload[offset + 4 : offset + 8]
         data_start = offset + 8
         data_end = data_start + length
         crc_end = data_end + 4
@@ -370,11 +382,11 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
         if chunk_count == 1:
             if chunk_type != b"IHDR" or length != 13:
                 raise ValueError
-            width, height = struct.unpack(">II", payload[data_start:data_start + 8])
+            width, height = struct.unpack(">II", payload[data_start : data_start + 8])
             if (
                 not 1 <= width <= MAX_COVER_PREVIEW_WIDTH
                 or not 1 <= height <= MAX_COVER_PREVIEW_HEIGHT
-                or payload[data_start + 8:data_end] != b"\x08\x06\x00\x00\x00"
+                or payload[data_start + 8 : data_end] != b"\x08\x06\x00\x00\x00"
             ):
                 raise ValueError
             saw_header = True
@@ -427,14 +439,17 @@ def bind_cover_packet(
         if (
             type(packet) is not dict
             or canonical_packet_json(packet) != packet_document
-            or set(packet) != {"candidates", "omissions", "packet_reference", "schema_version"}
+            or set(packet)
+            != {"candidates", "omissions", "packet_reference", "schema_version"}
             or packet["schema_version"] != "cover-review-packet-v2"
             or type(packet["candidates"]) is not list
             or not 1 <= len(packet["candidates"]) <= MAX_COVER_PREVIEWS
             or type(packet["omissions"]) is not list
             or _PACKET_REFERENCE.fullmatch(packet["packet_reference"]) is None
             or type(image_payloads) is not tuple
-            or any(type(value) is not tuple or len(value) != 3 for value in image_payloads)
+            or any(
+                type(value) is not tuple or len(value) != 3 for value in image_payloads
+            )
         ):
             raise ValueError
         candidates = packet["candidates"]
@@ -472,9 +487,7 @@ def bind_cover_packet(
         if total > MAX_COVER_PACKET_BYTES:
             raise ValueError
         _validate_candidate_order(candidates, candidate_facts)
-        retained = {
-            value["reference"]: value["preview_sha256"] for value in candidates
-        }
+        retained = {value["reference"]: value["preview_sha256"] for value in candidates}
         source_bindings = {
             binding["reference"]: (candidate["reference"], binding["preview_sha256"])
             for candidate in candidates
@@ -485,12 +498,17 @@ def bind_cover_packet(
         ):
             raise ValueError
         _validate_omissions(packet["omissions"], retained, source_bindings, total)
-        packet_body = canonical_packet_json({
-            "candidates": packet["candidates"],
-            "omissions": packet["omissions"],
-            "schema_version": packet["schema_version"],
-        })
-        if packet["packet_reference"] != "cover_packet_" + hashlib.sha256(packet_body.encode()).hexdigest():
+        packet_body = canonical_packet_json(
+            {
+                "candidates": packet["candidates"],
+                "omissions": packet["omissions"],
+                "schema_version": packet["schema_version"],
+            }
+        )
+        if (
+            packet["packet_reference"]
+            != "cover_packet_" + hashlib.sha256(packet_body.encode()).hexdigest()
+        ):
             raise ValueError
         return AdmittedCoverPacket(packet_document, image_payloads)
     except (
@@ -507,11 +525,22 @@ def bind_cover_packet(
 def _validate_candidate(value: object) -> tuple[tuple[str, ...], int]:
     if (
         type(value) is not dict
-        or set(value) != {
-            "height", "incumbent", "media_type", "preview_bytes",
-            "preview_height", "preview_sha256", "preview_variant", "preview_width",
-            "provenance", "reference", "source_bindings", "transport_reference",
-            "transport_sha256", "width",
+        or set(value)
+        != {
+            "height",
+            "incumbent",
+            "media_type",
+            "preview_bytes",
+            "preview_height",
+            "preview_sha256",
+            "preview_variant",
+            "preview_width",
+            "provenance",
+            "reference",
+            "source_bindings",
+            "transport_reference",
+            "transport_sha256",
+            "width",
         }
         or _COVER_REFERENCE.fullmatch(value["reference"]) is None
         or _DIGEST.fullmatch(value["preview_sha256"]) is None
@@ -543,7 +572,8 @@ def _validate_candidate(value: object) -> tuple[tuple[str, ...], int]:
     if (
         source_bindings != tuple(sorted(set(source_bindings)))
         or (value["reference"], value["preview_sha256"]) not in source_bindings
-        or value["transport_reference"] != cover_transport_reference(
+        or value["transport_reference"]
+        != cover_transport_reference(
             value["reference"], value["source_bindings"], value["transport_sha256"]
         )
     ):
@@ -586,7 +616,11 @@ def _validate_provenance(
         raise ValueError
     source_kind = value["source_kind"]
     if source_kind in {"abs", "epub"}:
-        if value["provider"] is not None or value["designation"] is not None or value["context"]:
+        if (
+            value["provider"] is not None
+            or value["designation"] is not None
+            or value["context"]
+        ):
             raise ValueError
         return source_kind, "", "", ()
     if (
@@ -602,7 +636,11 @@ def _validate_provenance(
 
 
 def _validate_context(value: object) -> tuple[str, str]:
-    if type(value) is not dict or set(value) != {"field", "value"} or value["field"] not in _CONTEXT_FIELDS:
+    if (
+        type(value) is not dict
+        or set(value) != {"field", "value"}
+        or value["field"] not in _CONTEXT_FIELDS
+    ):
         raise ValueError
     validated = validate_projection_text(value["value"], "cover context", 280)
     return value["field"], validated
@@ -613,7 +651,8 @@ def _validate_candidate_order(
     facts: tuple[tuple[tuple[str, ...], int], ...],
 ) -> None:
     incumbent_positions = [
-        index for index, candidate in enumerate(candidates)
+        index
+        for index, candidate in enumerate(candidates)
         if candidate["incumbent"] is True
     ]
     if len(incumbent_positions) > 1 or incumbent_positions not in ([], [0]):
@@ -666,11 +705,18 @@ def _validate_omissions(
             expected = {"reason", "reference"}
         elif reason == "duplicate_preview":
             expected = {"preview_sha256", "reason", "reference", "retained_reference"}
-        elif reason in {"aggregate_byte_limit", "preview_byte_limit", "shortlist_limit"}:
+        elif reason in {
+            "aggregate_byte_limit",
+            "preview_byte_limit",
+            "shortlist_limit",
+        }:
             expected = {"preview_bytes", "reason", "reference"}
         else:
             raise ValueError
-        if set(omission) != expected or _COVER_REFERENCE.fullmatch(omission["reference"]) is None:
+        if (
+            set(omission) != expected
+            or _COVER_REFERENCE.fullmatch(omission["reference"]) is None
+        ):
             raise ValueError
         reference = omission["reference"]
         if reference in retained or reference in omitted_references:
@@ -688,14 +734,21 @@ def _validate_omissions(
             duplicate_references.add(reference)
         elif reference in source_bindings:
             raise ValueError
-        elif reason in {"aggregate_byte_limit", "preview_byte_limit", "shortlist_limit"}:
+        elif reason in {
+            "aggregate_byte_limit",
+            "preview_byte_limit",
+            "shortlist_limit",
+        }:
             preview_bytes = omission["preview_bytes"]
             if (
                 type(preview_bytes) is not int
                 or not 1 <= preview_bytes <= 2_147_483_647
             ):
                 raise ValueError
-            if reason == "preview_byte_limit" and preview_bytes <= MAX_COVER_PREVIEW_BYTES:
+            if (
+                reason == "preview_byte_limit"
+                and preview_bytes <= MAX_COVER_PREVIEW_BYTES
+            ):
                 raise ValueError
             if reason == "aggregate_byte_limit" and (
                 preview_bytes > MAX_COVER_PREVIEW_BYTES
@@ -733,8 +786,15 @@ def _reject_json_constant(value: str) -> object:
 
 
 __all__ = [
-    "MAX_COVER_PACKET_BYTES", "MAX_COVER_PREVIEW_BYTES", "MAX_COVER_PREVIEWS",
-    "bind_cover_packet", "candidate_priority", "canonical_packet_json",
-    "cover_transport_reference", "designation_rank", "normalize_cover_preview",
-    "normalize_provenance", "provenance_sort_key",
+    "MAX_COVER_PACKET_BYTES",
+    "MAX_COVER_PREVIEW_BYTES",
+    "MAX_COVER_PREVIEWS",
+    "bind_cover_packet",
+    "candidate_priority",
+    "canonical_packet_json",
+    "cover_transport_reference",
+    "designation_rank",
+    "normalize_cover_preview",
+    "normalize_provenance",
+    "provenance_sort_key",
 ]

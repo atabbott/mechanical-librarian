@@ -45,9 +45,7 @@ def _unused_port() -> int:
         return int(listener.getsockname()[1])
 
 
-def _encrypted_private_key(
-    source: Path, destination: Path, password: str
-) -> Path:
+def _encrypted_private_key(source: Path, destination: Path, password: str) -> Path:
     subprocess.run(
         [
             "openssl",
@@ -99,8 +97,8 @@ def test_incomplete_mismatched_linked_or_exposed_identity_fails_closed() -> None
             private_key, root / "empty-encrypted.key", ""
         )
         assert empty_encrypted.read_bytes().startswith(
-                b"-----BEGIN ENCRYPTED PRIVATE KEY-----"
-            )
+            b"-----BEGIN ENCRYPTED PRIVATE KEY-----"
+        )
         for candidate_certificate, candidate_key in (
             (None, str(private_key)),
             (str(certificate), None),
@@ -111,9 +109,7 @@ def test_incomplete_mismatched_linked_or_exposed_identity_fails_closed() -> None
             (str(certificate), str(empty_encrypted)),
         ):
             with pytest.raises(ConfigurationError):
-                with open_review_tls_identity(
-                    candidate_certificate, candidate_key
-                ):
+                with open_review_tls_identity(candidate_certificate, candidate_key):
                     pytest.fail("invalid TLS identity was admitted")
 
 
@@ -133,9 +129,7 @@ def test_uvicorn_second_load_rejects_encrypted_keys_noninteractively() -> None:
             "ca_certs": None,
             "ciphers": "TLSv1",
         }
-        create_ssl_context(
-            str(certificate), str(private_key), **arguments
-        )
+        create_ssl_context(str(certificate), str(private_key), **arguments)
         with pytest.raises(ssl.SSLError):
             create_ssl_context(str(certificate), str(encrypted), **arguments)
 
@@ -157,9 +151,7 @@ def test_encrypted_envelopes_fail_before_ssl_parsing() -> None:
         ) as context:
             for candidate in encrypted:
                 with pytest.raises(ConfigurationError):
-                    with open_review_tls_identity(
-                        str(certificate), str(candidate)
-                    ):
+                    with open_review_tls_identity(str(certificate), str(candidate)):
                         pytest.fail("encrypted key reached SSL parsing")
         context.assert_not_called()
 
@@ -184,9 +176,7 @@ def _protocol(
     state: ServerState | None = None,
 ) -> tuple[BoundedReviewH11Protocol, Mock]:
     config, loop = environment
-    protocol = BoundedReviewH11Protocol(
-        config, state or ServerState(), {}, _loop=loop
-    )
+    protocol = BoundedReviewH11Protocol(config, state or ServerState(), {}, _loop=loop)
     transport = Mock()
     transport.get_extra_info.side_effect = lambda name: {
         "sockname": ("127.0.0.1", 8443),
@@ -352,7 +342,10 @@ def test_server_uses_validated_tls_before_opening_the_database() -> None:
         def qualified_run(app, **arguments):
             assert Path(arguments["ssl_certfile"]).exists()
             assert Path(arguments["ssl_keyfile"]).exists()
-            assert arguments["ssl_keyfile_password"] == REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD
+            assert (
+                arguments["ssl_keyfile_password"]
+                == REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD
+            )
             assert not arguments["proxy_headers"]
             assert arguments["http"] is BoundedReviewH11Protocol
             assert arguments["limit_concurrency"] == MAX_REVIEW_CONNECTIONS
@@ -418,9 +411,7 @@ def test_server_uses_validated_tls_before_opening_the_database() -> None:
                 "127.0.0.1",
                 8443,
             )
-        opened.assert_called_once_with(
-            database, create=False, cross_thread=True
-        )
+        opened.assert_called_once_with(database, create=False, cross_thread=True)
 
 
 def test_missing_or_invalid_tls_fails_before_database_or_server() -> None:
@@ -466,14 +457,19 @@ def test_missing_or_invalid_tls_fails_before_database_or_server() -> None:
             ),
         )
         for review in configurations:
-            with patch(
+            with (
+                patch(
                     "mechanical_librarian.bootstrap.composition.load_configuration_file",
                     return_value=SimpleNamespace(review=review),
-                ), patch(
+                ),
+                patch(
                     "mechanical_librarian.bootstrap.composition.open_repository"
-                ) as opened, patch(
+                ) as opened,
+                patch(
                     "mechanical_librarian.bootstrap.composition.uvicorn.run"
-                ) as served, pytest.raises(ConfigurationError):
+                ) as served,
+                pytest.raises(ConfigurationError),
+            ):
                 run_review_server(
                     Path("/config.json"),
                     Path("/application.sqlite3"),

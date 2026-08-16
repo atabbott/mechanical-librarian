@@ -54,7 +54,9 @@ def _operation(*_args: object) -> str:
 
 
 def _operations() -> WorkbenchOperations:
-    return WorkbenchOperations(*(_operation for _ in WorkbenchOperations.__dataclass_fields__))
+    return WorkbenchOperations(
+        *(_operation for _ in WorkbenchOperations.__dataclass_fields__)
+    )
 
 
 def _network_files(context: WorkbenchContext) -> tuple[str, ...]:
@@ -66,15 +68,32 @@ def _network_files(context: WorkbenchContext) -> tuple[str, ...]:
     profile = context.path("contained-reviewer-profile.json")
     profile.write_text("{}", encoding="utf-8")
     profile.chmod(0o600)
-    context.path("reviewer-instruction.txt").write_text("Summarize the input.", encoding="utf-8")
-    context.path("reviewer-input.json").write_text('{"value":"synthetic"}', encoding="utf-8")
-    context.path("reviewer-output-schema.json").write_text('{"$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"properties":{"summary":{"type":"string"}},"required":["summary"],"type":"object"}', encoding="utf-8")
+    context.path("reviewer-instruction.txt").write_text(
+        "Summarize the input.", encoding="utf-8"
+    )
+    context.path("reviewer-input.json").write_text(
+        '{"value":"synthetic"}', encoding="utf-8"
+    )
+    context.path("reviewer-output-schema.json").write_text(
+        '{"$schema":"https://json-schema.org/draft/2020-12/schema","additionalProperties":false,"properties":{"summary":{"type":"string"}},"required":["summary"],"type":"object"}',
+        encoding="utf-8",
+    )
     context.path("batch.json").write_text("{}", encoding="utf-8")
-    return tuple(sorted({
-        hashlib.sha256(context.path(name).read_bytes()).hexdigest()
-        for name in ("config.json", "contained-reviewer-profile.json", "reviewer-instruction.txt",
-                     "reviewer-input.json", "reviewer-output-schema.json", "batch.json")
-    }))
+    return tuple(
+        sorted(
+            {
+                hashlib.sha256(context.path(name).read_bytes()).hexdigest()
+                for name in (
+                    "config.json",
+                    "contained-reviewer-profile.json",
+                    "reviewer-instruction.txt",
+                    "reviewer-input.json",
+                    "reviewer-output-schema.json",
+                    "batch.json",
+                )
+            }
+        )
+    )
 
 
 def test_runtime_exposes_only_review_server() -> None:
@@ -85,14 +104,19 @@ def test_runtime_exposes_only_review_server() -> None:
 
 def test_workbench_catalogue_maps_every_relocated_capability() -> None:
     assert len(CAPABILITIES) == 19
-    assert {operation for capability in CAPABILITIES for operation in capability.operations} == set(WorkbenchOperations.__dataclass_fields__)
+    assert {
+        operation for capability in CAPABILITIES for operation in capability.operations
+    } == set(WorkbenchOperations.__dataclass_fields__)
 
 
 @pytest.mark.parametrize("name", tuple(WorkbenchOperations.__dataclass_fields__))
 def test_default_bindings_are_the_shared_application_composition(name: str) -> None:
     operations = WorkbenchOperations.production_operations()
     if name == "run_contained_reviewer":
-        assert "scripts.workbench_contained_reviewer" == getattr(operations, name).__module__
+        assert (
+            "scripts.workbench_contained_reviewer"
+            == getattr(operations, name).__module__
+        )
         assert not hasattr(composition, name)
     else:
         assert getattr(operations, name) is getattr(composition, name)
@@ -104,17 +128,26 @@ def test_every_catalogued_scenario_executes_through_typed_requests() -> None:
         ReportRequest("observe", connection="primary", library="books", item="item"),
         ReportRequest("inspect", report_id="report"),
         ReportRequest("cover", report_id="report", artifact_id="artifact"),
-        ProposalRequest("create", "report"), ProposalRequest("inspect", "proposal"),
-        ReviewCaseRequest("admit", "proposal"), ReviewCaseRequest("inspect", "case"),
-        CatalogueRequest("refresh", connection="primary"), CatalogueRequest("list"),
+        ProposalRequest("create", "report"),
+        ProposalRequest("inspect", "proposal"),
+        ReviewCaseRequest("admit", "proposal"),
+        ReviewCaseRequest("inspect", "case"),
+        CatalogueRequest("refresh", connection="primary"),
+        CatalogueRequest("list"),
         CatalogueRequest(
-            "get", connection="primary", library="books",
-            library_id="library-id", selector="item",
+            "get",
+            connection="primary",
+            library="books",
+            library_id="library-id",
+            selector="item",
         ),
-        BatchRequest("preview"), BatchRequest("inspect"), BatchRequest("run", manifest_id=digest),
+        BatchRequest("preview"),
+        BatchRequest("inspect"),
+        BatchRequest("run", manifest_id=digest),
         DecisionPreviewRequest("case"),
         ContainedReviewerRequest(
-            "invoke", instruction="reviewer-instruction.txt",
+            "invoke",
+            instruction="reviewer-instruction.txt",
             input_document="reviewer-input.json",
             output_schema="reviewer-output-schema.json",
         ),
@@ -157,20 +190,21 @@ def test_every_catalogued_scenario_executes_through_typed_requests() -> None:
                 return_value=adjudicated,
             ),
         ):
-            results = tuple(execute(context, request, operations) for request in requests)
+            results = tuple(
+                execute(context, request, operations) for request in requests
+            )
         assert [item.name for item in results] == [
-                item.name for item in CAPABILITIES
-                if item.name != "cover-packet-review"
-            ]
+            item.name for item in CAPABILITIES if item.name != "cover-packet-review"
+        ]
         assert len(tuple(context.path("attempts").iterdir())) == 7
         batch_artifact = context.path("artifacts/" + results[12].artifacts[0])
         assert json.loads(batch_artifact.read_text(encoding="utf-8")) == {
-                "completed": True,
-                "events": [
-                    {"kind": "item", "status": "completed"},
-                    {"kind": "summary", "status": "completed"},
-                ],
-            }
+            "completed": True,
+            "events": [
+                {"kind": "item", "status": "completed"},
+                {"kind": "summary", "status": "completed"},
+            ],
+        }
 
 
 def test_cover_policy_scenario_redacts_invalid_evidence() -> None:
@@ -311,17 +345,25 @@ def test_contained_reviewer_uses_admitted_bytes_after_durable_attempt() -> None:
 
         def invoke(*payloads: object) -> str:
             assert len(fsync_calls) >= 2
-            assert (expected[0], "invoke", expected[1], expected[2], expected[3]) == payloads
+            assert (
+                expected[0],
+                "invoke",
+                expected[1],
+                expected[2],
+                expected[3],
+            ) == payloads
             return '{"ok":true}'
 
         operations = replace(_operations(), run_contained_reviewer=invoke)
-        with mock.patch.object(
-            context, "require_network", bind_then_replace
-        ), mock.patch(
-            "mechanical_librarian_workbench.context.os.fsync",
-            side_effect=lambda descriptor: (
-                fsync_calls.append(descriptor), real_fsync(descriptor)  # type: ignore[func-returns-value]  # reason: the tuple deliberately records the call and yields element [1]; append's None is discarded.
-            )[1],
+        with (
+            mock.patch.object(context, "require_network", bind_then_replace),
+            mock.patch(
+                "mechanical_librarian_workbench.context.os.fsync",
+                side_effect=lambda descriptor: (
+                    fsync_calls.append(descriptor),
+                    real_fsync(descriptor),  # type: ignore[func-returns-value]  # reason: the tuple deliberately records the call and yields element [1]; append's None is discarded.
+                )[1],
+            ),
         ):
             execute(context, request, operations)
 
@@ -329,7 +371,12 @@ def test_contained_reviewer_uses_admitted_bytes_after_durable_attempt() -> None:
 @pytest.mark.parametrize(
     ("workbench_request", "operation_name"),
     (
-        (ReportRequest("observe", connection="primary", library="books", item="item"), "run_metadata_report"),
+        (
+            ReportRequest(
+                "observe", connection="primary", library="books", item="item"
+            ),
+            "run_metadata_report",
+        ),
         (ProposalRequest("create", "report"), "create_proposal_set"),
         (ReviewCaseRequest("admit", "proposal"), "admit_review_case"),
         (CatalogueRequest("refresh", connection="primary"), "run_catalogue"),
@@ -347,21 +394,29 @@ def test_network_operations_execute_exact_admitted_snapshots(
         config.write_text(
             json.dumps(
                 {
-                    "connections": [{
-                        "endpoint": "http://127.0.0.1:8765",
-                        "secret_file": str(secret),
-                    }]
+                    "connections": [
+                        {
+                            "endpoint": "http://127.0.0.1:8765",
+                            "secret_file": str(secret),
+                        }
+                    ]
                 },
                 separators=(",", ":"),
             ),
             encoding="utf-8",
         )
         context.network = IsolatedNetworkProfile(
-            "isolated-test", True, True,
-            tuple(sorted({
-                hashlib.sha256(config.read_bytes()).hexdigest(),
-                hashlib.sha256(secret.read_bytes()).hexdigest(),
-            })),
+            "isolated-test",
+            True,
+            True,
+            tuple(
+                sorted(
+                    {
+                        hashlib.sha256(config.read_bytes()).hexdigest(),
+                        hashlib.sha256(secret.read_bytes()).hexdigest(),
+                    }
+                )
+            ),
         )
         original_require_network = context.require_network
 
@@ -398,6 +453,7 @@ def test_network_operations_execute_exact_admitted_snapshots(
                 replace(_operations(), **{operation_name: operation}),
             )
 
+
 with WorkbenchContext.temporary() as context:
     secret = context.path("secret.txt")
     secret.write_bytes(b"admitted credential")
@@ -406,10 +462,12 @@ with WorkbenchContext.temporary() as context:
     config.write_text(
         json.dumps(
             {
-                "connections": [{
-                    "endpoint": "http://127.0.0.1:8765",
-                    "secret_file": str(secret),
-                }]
+                "connections": [
+                    {
+                        "endpoint": "http://127.0.0.1:8765",
+                        "secret_file": str(secret),
+                    }
+                ]
             },
             separators=(",", ":"),
         ),
@@ -418,12 +476,18 @@ with WorkbenchContext.temporary() as context:
     manifest = context.path("batch.json")
     manifest.write_bytes(b"{}")
     context.network = IsolatedNetworkProfile(
-        "isolated-test", True, True,
-        tuple(sorted({
-            hashlib.sha256(config.read_bytes()).hexdigest(),
-            hashlib.sha256(manifest.read_bytes()).hexdigest(),
-            hashlib.sha256(secret.read_bytes()).hexdigest(),
-        })),
+        "isolated-test",
+        True,
+        True,
+        tuple(
+            sorted(
+                {
+                    hashlib.sha256(config.read_bytes()).hexdigest(),
+                    hashlib.sha256(manifest.read_bytes()).hexdigest(),
+                    hashlib.sha256(secret.read_bytes()).hexdigest(),
+                }
+            )
+        ),
     )
     expected_manifest = manifest.read_bytes()
     original_require_network = context.require_network
@@ -445,13 +509,12 @@ with WorkbenchContext.temporary() as context:
         secret.write_bytes(b"replacement credential")
         return bound
 
-    def run_batch(config_path: Path, _catalogue: Path, manifest_path: Path,
-                  *_args: object) -> bool:
+    def run_batch(
+        config_path: Path, _catalogue: Path, manifest_path: Path, *_args: object
+    ) -> bool:
         assert manifest_path.read_bytes() == expected_manifest
         execution = json.loads(config_path.read_text(encoding="utf-8"))
-        execution_secret = Path(
-            execution["connections"][0]["secret_file"]
-        )
+        execution_secret = Path(execution["connections"][0]["secret_file"])
         assert execution_secret.read_bytes() == b"admitted credential"
         return True
 
@@ -494,9 +557,7 @@ def test_context_refuses_production_traversal_and_unapproved_inputs() -> None:
             context.path("../escape")
 
 
-@pytest.mark.parametrize(
-    "missing", ("connection", "library", "library_id", "selector")
-)
+@pytest.mark.parametrize("missing", ("connection", "library", "library_id", "selector"))
 def test_action_specific_inputs_are_required(missing: str) -> None:
     with pytest.raises(ValueError):
         ReportRequest("observe")
@@ -587,9 +648,15 @@ def test_runtime_configuration_failure_has_its_typed_exit() -> None:
     errors = io.StringIO()
     result = main(
         (
-            "review-serve", "--config", "config.json",
-            "--database", "reports.sqlite", "--catalogue", "catalogue.sqlite",
-            "--artifacts", "artifacts",
+            "review-serve",
+            "--config",
+            "config.json",
+            "--database",
+            "reports.sqlite",
+            "--catalogue",
+            "catalogue.sqlite",
+            "--artifacts",
+            "artifacts",
         ),
         review_serve_runner=fail,
         stderr=errors,
@@ -616,9 +683,7 @@ def test_network_profile_rejects_production_shaped_configuration(document: str) 
         config = context.path("config.json")
         config.write_text(document, encoding="utf-8")
         digest = hashlib.sha256(config.read_bytes()).hexdigest()
-        context.network = IsolatedNetworkProfile(
-            "isolated-test", True, True, (digest,)
-        )
+        context.network = IsolatedNetworkProfile("isolated-test", True, True, (digest,))
         with pytest.raises(WorkbenchFailure) as caught:
             execute(
                 context,
@@ -635,20 +700,30 @@ def test_network_profile_rejects_production_shaped_configuration(document: str) 
         secret.chmod(0o644)
         config = context.path("config.json")
         config.write_text(
-            json.dumps({
-                "connections": [{
-                    "endpoint": "http://127.0.0.1:8765",
-                    "secret_file": str(secret),
-                }]
-            }),
+            json.dumps(
+                {
+                    "connections": [
+                        {
+                            "endpoint": "http://127.0.0.1:8765",
+                            "secret_file": str(secret),
+                        }
+                    ]
+                }
+            ),
             encoding="utf-8",
         )
         context.network = IsolatedNetworkProfile(
-            "isolated-test", True, True,
-            tuple(sorted({
-                hashlib.sha256(config.read_bytes()).hexdigest(),
-                hashlib.sha256(secret.read_bytes()).hexdigest(),
-            })),
+            "isolated-test",
+            True,
+            True,
+            tuple(
+                sorted(
+                    {
+                        hashlib.sha256(config.read_bytes()).hexdigest(),
+                        hashlib.sha256(secret.read_bytes()).hexdigest(),
+                    }
+                )
+            ),
         )
         with pytest.raises(WorkbenchFailure) as caught:
             execute(
@@ -665,10 +740,13 @@ def test_isolated_configuration_is_bounded_before_json_decode() -> None:
     with WorkbenchContext.temporary() as context:
         config = context.path("config.json")
         config.write_bytes(b"{" + b" " * 1_048_576 + b"}")
-        with mock.patch(
-            "mechanical_librarian_workbench.context.json.loads",
-            side_effect=AssertionError("decoder must not be reached"),
-        ) as loads, pytest.raises(PermissionError):
+        with (
+            mock.patch(
+                "mechanical_librarian_workbench.context.json.loads",
+                side_effect=AssertionError("decoder must not be reached"),
+            ) as loads,
+            pytest.raises(PermissionError),
+        ):
             context.require_isolated_configuration(config)
         loads.assert_not_called()
 
@@ -689,7 +767,9 @@ def test_persistent_workspace_and_artifacts_are_owner_only() -> None:
         )
         payload, private = context.require_isolated_configuration(config)
         context.network = IsolatedNetworkProfile(
-            "isolated-test", True, True,
+            "isolated-test",
+            True,
+            True,
             (hashlib.sha256(payload).hexdigest(),),
         )
         bound = context.require_network(config, *private, first_payload=payload)
@@ -813,9 +893,7 @@ def test_batch_accepts_exact_schema_maximum_authority_files() -> None:
 
         assert result.data["status"] == "completed"
         attempt = json.loads(
-            next(context.path("attempts").iterdir()).read_text(
-                encoding="utf-8"
-            )
+            next(context.path("attempts").iterdir()).read_text(encoding="utf-8")
         )
         assert len(attempt["input_sha256"]) == 37
 

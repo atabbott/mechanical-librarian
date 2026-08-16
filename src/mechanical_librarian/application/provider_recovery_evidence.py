@@ -48,8 +48,14 @@ class ProviderFailureObserver(Protocol):
     """
 
     def observe_failure(
-        self, *, connection: str, adapter: str, scope: str, generation: int,
-        failure: str, now: int,
+        self,
+        *,
+        connection: str,
+        adapter: str,
+        scope: str,
+        generation: int,
+        failure: str,
+        now: int,
     ) -> None: ...
 
 
@@ -69,7 +75,8 @@ def classify_provider_recovery_failure(error: Exception) -> tuple[str, int | Non
         return "disabled", None
     if isinstance(error, ProviderRetrySharedFailure):
         failure = (
-            "transient" if error.failure in {"unavailable", "incomplete"}
+            "transient"
+            if error.failure in {"unavailable", "incomplete"}
             else error.failure
         )
         return failure, error.retry_after
@@ -104,51 +111,93 @@ def record_provider_recovery_observations(
 ) -> None:
     """Persist only terminal F22 provider classifications; never retry them."""
     failures = {
-        ProviderStatus.AUTHENTICATION: "authentication", ProviderStatus.AUTHORIZATION: "authorization",
-        ProviderStatus.RATE_LIMITED: "rate_limited", ProviderStatus.UNAVAILABLE: "transient",
+        ProviderStatus.AUTHENTICATION: "authentication",
+        ProviderStatus.AUTHORIZATION: "authorization",
+        ProviderStatus.RATE_LIMITED: "rate_limited",
+        ProviderStatus.UNAVAILABLE: "transient",
         ProviderStatus.INCOMPLETE: "transient",
     }
     for observation in report.providers:
         statuses = (observation.status, *(lane.status for lane in observation.lanes))
         terminal = tuple(failures[status] for status in statuses if status in failures)
-        failure = (
-            next((value for value in terminal if value in {"authentication", "authorization", "configuration"}), None)
-            or next((value for value in terminal if value in {"rate_limited", "transient"}), None)
+        failure = next(
+            (
+                value
+                for value in terminal
+                if value in {"authentication", "authorization", "configuration"}
+            ),
+            None,
+        ) or next(
+            (value for value in terminal if value in {"rate_limited", "transient"}),
+            None,
         )
         if failure is not None:
             adapter = adapters.get(observation.provider)
             if adapter is None:
                 raise ReviewPipelineError("configuration")
             store.observe_failure(
-                connection=observation.provider, adapter=adapter, scope=scope,
-                generation=generation, failure=failure, now=now,
+                connection=observation.provider,
+                adapter=adapter,
+                scope=scope,
+                generation=generation,
+                failure=failure,
+                now=now,
             )
 
 
 def provider_recovery_jobs(
-    report: MetadataReport, *, package: tuple[str | None, str, str | None, int | None, str],
-    configuration: ApplicationConfiguration, scope: str,
+    report: MetadataReport,
+    *,
+    package: tuple[str | None, str, str | None, int | None, str],
+    configuration: ApplicationConfiguration,
+    scope: str,
 ) -> tuple[ProviderRecoveryJob, ...]:
     """Create bounded retry work only from a published terminal package."""
     adapters = {provider.name: provider.adapter for provider in configuration.providers}
     retryable = {
-        ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION,
-        ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE,
+        ProviderStatus.AUTHENTICATION,
+        ProviderStatus.AUTHORIZATION,
+        ProviderStatus.RATE_LIMITED,
+        ProviderStatus.UNAVAILABLE,
         ProviderStatus.INCOMPLETE,
     }
     jobs = []
     for observation in report.providers:
-        lane_ids = tuple(sorted(lane.identity for lane in observation.lanes if lane.status in retryable))
+        lane_ids = tuple(
+            sorted(
+                lane.identity for lane in observation.lanes if lane.status in retryable
+            )
+        )
         if not lane_ids:
             continue
         adapter = adapters.get(observation.provider)
         if adapter is None:
             raise ReviewPipelineError("configuration")
-        jobs.append(ProviderRecoveryJob(
-            observation.provider, adapter, scope,
-            configuration.provider_recovery_generation, report.report_id,
-            report.target.connection, report.target.library, report.target.item,
-            report.file.identity, report.report_id, *package,
-            json.dumps(lane_ids, separators=(",", ":")),
-        ))
-    return tuple(sorted(jobs, key=lambda job: (job.connection, job.adapter, job.scope, job.generation, job.member_id)))
+        jobs.append(
+            ProviderRecoveryJob(
+                observation.provider,
+                adapter,
+                scope,
+                configuration.provider_recovery_generation,
+                report.report_id,
+                report.target.connection,
+                report.target.library,
+                report.target.item,
+                report.file.identity,
+                report.report_id,
+                *package,
+                json.dumps(lane_ids, separators=(",", ":")),
+            )
+        )
+    return tuple(
+        sorted(
+            jobs,
+            key=lambda job: (
+                job.connection,
+                job.adapter,
+                job.scope,
+                job.generation,
+                job.member_id,
+            ),
+        )
+    )
