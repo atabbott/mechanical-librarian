@@ -7,6 +7,41 @@
 
 ## Unreleased
 
+- Declare the automatic-safety seam the served composition already binds.
+  `compose_review_application` builds the policy notebook and the owner-only
+  automatic-safety controls from one `policy_store`, but
+  `AutomaticSafetyControls` accepted `object` and cast to the protocol it
+  names, so no signature anywhere could catch a store that lacked the safety
+  members. A miswiring surfaced only at runtime, as "automatic safety is
+  unavailable" on every safety read, pause, suspend, and recover -- a
+  capability outage wearing a transient-storage message. That is not
+  hypothetical: it shipped during #658 and was caught in review. The composed
+  parameter now names both contracts it is bound to. No wiring, message, or
+  behaviour changed; the store passed there already implements both seams.
+  (#667)
+- Compose the `policy-preview` CLI only from a contract its repository
+  satisfies in full. `run_policy_preview` handed `SQLiteShadowPreviewRepository`
+  to six `compose_review_application` parameters it does not implement -- every
+  session, review-case, decision, library, browser-state, and policy-mutation
+  member -- behind six `# type: ignore[arg-type]` and a `LATENT DEFECT`
+  comment. The preview was correct only because it called two of the operations
+  composed there; any other one was a runtime `AttributeError` waiting for a
+  caller. The preview now composes a preview-scoped application over one
+  read-only store contract, so no session, review-case, decision, library,
+  browser-state, or policy-mutation operation exists on it to reach a member the
+  repository lacks. All six suppressions and the comment are deleted and strict
+  mypy stays clean without them.
+  The narrowing is static only: the same repository object is passed, nothing is
+  wrapped or forwarded at runtime, so no capability can be lost the way a
+  runtime facade silently removed automatic safety during #658. The preview
+  boundary stands alone rather than sitting under the served application, and
+  the three rules both paths need -- the automatic-qualification rule, the
+  public F20 disposition guard, and the named-library invariant -- moved into
+  this module's shared validation vocabulary instead of being copied, so no
+  rejection rule or its message exists in two places.
+  `policy-preview` output, exit codes, and failure messages are byte-identical
+  across thirteen success and failure scenarios, and the database is unchanged
+  in every one. (#667)
 - Move review-pipeline construction, provider-recovery activation, and policy
   resolution out of the composition root and into owned application modules.
   `bootstrap/composition.py` was 2,418 lines in which the largest function,

@@ -3,7 +3,13 @@ from __future__ import annotations
 import inspect
 import threading
 import unittest
+from typing import get_protocol_members, get_type_hints
 
+from mechanical_librarian.application.metadata_policy import (
+    AutomaticSafetyControls,
+    AutomaticSafetyRepository,
+    PolicyImpactRepository,
+)
 from mechanical_librarian.application.review_application import (
     AttentionView,
     CaseDetailView,
@@ -17,6 +23,36 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.interfaces.web import create_review_app
 from tests.unit.test_review_case_persistence import _report
 from tests.unit.test_review_web import _Repository
+
+
+class ComposedPolicyStoreContractTests(unittest.TestCase):
+    """Prove the composed policy store declares both seams it is bound to.
+
+    `compose_review_application` builds a policy notebook and the owner-only
+    automatic-safety controls from one `policy_store`. `AutomaticSafetyControls`
+    accepted `object` and cast to the protocol it names, so a store without the
+    safety members composed cleanly and turned every safety read, pause,
+    suspend, and recover on the served path into "automatic safety is
+    unavailable" -- a capability outage wearing a storage-failure message
+    (#658).
+    """
+
+    def test_composed_policy_store_declares_the_safety_seam(self) -> None:
+        safety = get_protocol_members(AutomaticSafetyRepository)
+        declared = get_type_hints(compose_review_application)["policy_store"]
+        self.assertLessEqual(safety, get_protocol_members(declared))
+        # The notebook's own contract does not carry these members, so the
+        # assertion above is a live check of what the composition declares
+        # rather than a restatement of the policy contract.
+        self.assertEqual(
+            frozenset(), safety & get_protocol_members(PolicyImpactRepository)
+        )
+
+    def test_automatic_safety_controls_declare_the_store_they_require(self) -> None:
+        self.assertIs(
+            AutomaticSafetyRepository,
+            get_type_hints(AutomaticSafetyControls.__init__)["repository"],
+        )
 
 
 class ReviewApplicationTests(unittest.TestCase):
