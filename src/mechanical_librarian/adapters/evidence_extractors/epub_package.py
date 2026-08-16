@@ -1955,6 +1955,236 @@ def _package_identity_observations(
     return observations, warnings
 
 
+@dataclass
+class _Manifest:
+    """Accepted manifest state the spine, NCX and cover stages resolve against.
+
+    Only items that passed every manifest check appear here, so a later stage
+    resolving an ``idref`` against it can never reach a rejected declaration.
+    """
+
+    ids: dict[str, str] = field(default_factory=dict)
+    nodes: dict[str, _Node] = field(default_factory=dict)
+    media_types: dict[str, str] = field(default_factory=dict)
+    local_ids: set[str] = field(default_factory=set)
+    resources: set[str] = field(default_factory=set)
+    fallbacks: dict[str, str] = field(default_factory=dict)
+    media_overlays: list[str] = field(default_factory=list)
+    nav_count: int = 0
+    cover_ids: list[str] = field(default_factory=list)
+
+
+def _manifest_item(
+    request: EpubPackageRequest,
+    package_name: str,
+    entries: dict[str, _Entry],
+    item: _Node,
+    id_registry: dict[str, _Node],
+    manifest: _Manifest,
+) -> tuple[list[EpubPackageDeclaration], list[EpubPackageWarning]]:
+    """Validate one ``<item>`` and record what it declares.
+
+    Rejects the whole package when the manifest holds a foreign element.
+    Everything else is per-item: an item with an ambiguous id, a missing or
+    oversize media type or property, text that fails projection safety, a
+    reference that escapes the container, or a local target that is not in the
+    archive is warned about and dropped whole -- never partially accepted.
+    Appends accepted state to ``manifest``.
+    """
+    warnings: list[EpubPackageWarning] = []
+    if item.name != f"{{{_OPF_NS}}}item":
+        raise _Rejected(EpubInspectionOutcome.MALFORMED)
+    identifier = _attribute(item, "id")
+    href = _attribute(item, "href")
+    media_type = _attribute(item, "media-type")
+    if (
+        not identifier
+        or id_registry.get(identifier) is not item
+        or not href
+        or not media_type
+        or _MEDIA_TYPE.fullmatch(media_type) is None
+    ):
+        warnings.append(EpubPackageWarning("invalid_manifest_item"))
+        return [], warnings
+    properties = tuple(sorted(set((_attribute(item, "properties") or "").split())))
+    if (
+        len(properties) > 64
+        or len(media_type) > 128
+        or any(len(value) > 64 for value in properties)
+    ):
+        warnings.append(EpubPackageWarning("invalid_manifest_item"))
+        return [], warnings
+    try:
+        validate_projection_text(identifier, "public manifest identifier", 256)
+        validate_projection_text(media_type, "public manifest media type", 128)
+        for property_value in properties:
+            validate_code(property_value, "manifest property")
+            validate_projection_text(
+                property_value, "public manifest property", 64
+            )
+    except EvidenceValueError:
+        warnings.append(
+            EpubPackageWarning(
+                "unsafe_manifest_item",
+                _citation(request, package_name, EpubPackageCitationSection.MANIFEST, item),
+            )
+        )
+        return [], warnings
+    try:
+        resource_identity, resolved = _declared_resource_identity(
+            package_name, href, entries
+        )
+    except _InvalidReferenceSyntax:
+        warnings.append(EpubPackageWarning("invalid_manifest_item"))
+        return [], warnings
+    if resolved is not None and resolved not in entries:
+        warnings.append(
+            EpubPackageWarning(
+                "missing_manifest_resource",
+                _citation(request, package_name, EpubPackageCitationSection.MANIFEST, item),
+            )
+        )
+        return [], warnings
+    if resource_identity in manifest.resources:
+        warnings.append(EpubPackageWarning("duplicate_manifest_resource"))
+    manifest.resources.add(resource_identity)
+    manifest.ids[identifier] = resource_identity
+    manifest.nodes[identifier] = item
+    manifest.media_types[identifier] = media_type
+    if resolved is not None:
+        manifest.local_ids.add(identifier)
+    fallback = _attribute(item, "fallback")
+    if fallback:
+        manifest.fallbacks[identifier] = fallback
+    media_overlay = _attribute(item, "media-overlay")
+    if media_overlay:
+        manifest.media_overlays.append(media_overlay)
+    valid_navigation = (
+        "nav" in properties
+        and identifier in manifest.local_ids
+        and media_type == "application/xhtml+xml"
+    )
+    valid_cover = (
+        "cover-image" in properties
+        and identifier in manifest.local_ids
+        and media_type
+        in {"image/gif", "image/jpeg", "image/png", "image/svg+xml", "image/webp"}
+    )
+    if "nav" in properties and not valid_navigation:
+        warnings.append(EpubPackageWarning("invalid_navigation_declaration"))
+    if "cover-image" in properties and not valid_cover:
+        warnings.append(EpubPackageWarning("invalid_cover_declaration"))
+    if valid_navigation:
+        manifest.nav_count += 1
+    if valid_cover:
+        manifest.cover_ids.append(identifier)
+    declarations = [
+        EpubPackageDeclaration(
+            EpubPackageDeclarationKind.MANIFEST_ITEM,
+            item.ordinal,
+            _citation(request, package_name, EpubPackageCitationSection.MANIFEST, item),
+            resource_identity,
+            identifier,
+            media_type,
+            properties,
+        )
+    ]
+    if valid_navigation:
+        declarations.append(
+            EpubPackageDeclaration(
+                EpubPackageDeclarationKind.NAVIGATION,
+                item.ordinal,
+                _citation(request, package_name, EpubPackageCitationSection.NAVIGATION, item),
+                resource_identity,
+                identifier,
+                media_type,
+                properties,
+            )
+        )
+    if valid_cover:
+        declarations.append(
+            EpubPackageDeclaration(
+                EpubPackageDeclarationKind.COVER,
+                item.ordinal,
+                _citation(request, package_name, EpubPackageCitationSection.COVER, item),
+                resource_identity,
+                identifier,
+                media_type,
+                properties,
+            )
+        )
+    return declarations, warnings
+
+
+def _manifest_integrity(
+    manifest: _Manifest, version: str
+) -> list[EpubPackageWarning]:
+    """Check the manifest's cross-item relationships once every item is known.
+
+    Prunes fallbacks that resolve to nothing, so the spine stage can never
+    follow a fallback chain out of the accepted manifest. Reports contradictory
+    covers, unusable media overlays, fallback cycles and a missing or repeated
+    EPUB3 navigation document.
+    """
+    warnings: list[EpubPackageWarning] = []
+    cover_resources = {manifest.ids[identifier] for identifier in manifest.cover_ids}
+    if len(cover_resources) > 1:
+        warnings.append(EpubPackageWarning("contradictory_cover_declaration"))
+    if any(fallback not in manifest.ids for fallback in manifest.fallbacks.values()):
+        warnings.append(EpubPackageWarning("invalid_manifest_fallback"))
+        manifest.fallbacks = {
+            source: target
+            for source, target in manifest.fallbacks.items()
+            if target in manifest.ids
+        }
+    if any(overlay not in manifest.ids for overlay in manifest.media_overlays):
+        warnings.append(EpubPackageWarning("invalid_media_overlay"))
+    if any(
+        overlay not in manifest.local_ids
+        or manifest.media_types.get(overlay) != "application/smil+xml"
+        for overlay in manifest.media_overlays
+    ):
+        warnings.append(EpubPackageWarning("invalid_media_overlay"))
+    for start in manifest.fallbacks:
+        visited = set()
+        current = start
+        while current in manifest.fallbacks:
+            if current in visited:
+                warnings.append(EpubPackageWarning("cyclic_manifest_fallback"))
+                break
+            visited.add(current)
+            current = manifest.fallbacks[current]
+    if version == "3.0" and manifest.nav_count != 1:
+        warnings.append(EpubPackageWarning("invalid_navigation_declaration"))
+    return warnings
+
+
+def _manifest_declarations(
+    request: EpubPackageRequest,
+    package_name: str,
+    frame: _PackageFrame,
+    entries: dict[str, _Entry],
+    id_registry: dict[str, _Node],
+) -> tuple[_Manifest, list[EpubPackageDeclaration], list[EpubPackageWarning]]:
+    """Project the manifest section in declared order.
+
+    Returns the accepted manifest state plus its declarations and warnings. A
+    package whose manifest holds a foreign element is rejected outright; every
+    other failure drops exactly one item.
+    """
+    manifest = _Manifest()
+    declarations: list[EpubPackageDeclaration] = []
+    warnings: list[EpubPackageWarning] = []
+    for item in frame.manifest.children:
+        item_declarations, item_warnings = _manifest_item(
+            request, package_name, entries, item, id_registry, manifest
+        )
+        declarations.extend(item_declarations)
+        warnings.extend(item_warnings)
+    warnings.extend(_manifest_integrity(manifest, frame.version))
+    return manifest, declarations, warnings
+
+
 def _package_report(
     request: EpubPackageRequest,
     package_name: str,
@@ -1970,7 +2200,6 @@ def _package_report(
     frame = _package_frame(request, root)
     version = frame.version
     metadata_nodes = frame.metadata_nodes
-    manifest = frame.manifest
     spine = frame.spine
     tours = frame.tours
     usage = replace(usage, metadata_nodes=len(metadata_nodes))
@@ -2002,137 +2231,18 @@ def _package_report(
     )
     observations.extend(identity_observations)
     warnings.extend(identity_warnings)
-    manifest_ids: dict[str, str] = {}
-    manifest_nodes: dict[str, _Node] = {}
-    manifest_media_types: dict[str, str] = {}
-    local_manifest_ids: set[str] = set()
-    manifest_resources: set[str] = set()
-    manifest_fallbacks: dict[str, str] = {}
-    media_overlays: list[str] = []
-    nav_count = 0
-    cover_current_ids: list[str] = []
-    for item in manifest.children:
-        if item.name != f"{{{_OPF_NS}}}item":
-            raise _Rejected(EpubInspectionOutcome.MALFORMED)
-        identifier = _attribute(item, "id")
-        href = _attribute(item, "href")
-        media_type = _attribute(item, "media-type")
-        if (
-            not identifier
-            or id_registry.get(identifier) is not item
-            or not href
-            or not media_type
-            or _MEDIA_TYPE.fullmatch(media_type) is None
-        ):
-            warnings.append(EpubPackageWarning("invalid_manifest_item"))
-            continue
-        properties = tuple(sorted(set((_attribute(item, "properties") or "").split())))
-        if (
-            len(properties) > 64
-            or len(media_type) > 128
-            or any(len(value) > 64 for value in properties)
-        ):
-            warnings.append(EpubPackageWarning("invalid_manifest_item"))
-            continue
-        try:
-            validate_projection_text(identifier, "public manifest identifier", 256)
-            validate_projection_text(media_type, "public manifest media type", 128)
-            for property_value in properties:
-                validate_code(property_value, "manifest property")
-                validate_projection_text(
-                    property_value, "public manifest property", 64
-                )
-        except EvidenceValueError:
-            warnings.append(
-                EpubPackageWarning(
-                    "unsafe_manifest_item",
-                    _citation(request, package_name, EpubPackageCitationSection.MANIFEST, item),
-                )
-            )
-            continue
-        try:
-            resource_identity, resolved = _declared_resource_identity(
-                package_name, href, entries
-            )
-        except _InvalidReferenceSyntax:
-            warnings.append(EpubPackageWarning("invalid_manifest_item"))
-            continue
-        if resolved is not None and resolved not in entries:
-            warnings.append(
-                EpubPackageWarning(
-                    "missing_manifest_resource",
-                    _citation(request, package_name, EpubPackageCitationSection.MANIFEST, item),
-                )
-            )
-            continue
-        if resource_identity in manifest_resources:
-            warnings.append(EpubPackageWarning("duplicate_manifest_resource"))
-        manifest_resources.add(resource_identity)
-        manifest_ids[identifier] = resource_identity
-        manifest_nodes[identifier] = item
-        manifest_media_types[identifier] = media_type
-        if resolved is not None:
-            local_manifest_ids.add(identifier)
-        fallback = _attribute(item, "fallback")
-        if fallback:
-            manifest_fallbacks[identifier] = fallback
-        media_overlay = _attribute(item, "media-overlay")
-        if media_overlay:
-            media_overlays.append(media_overlay)
-        valid_navigation = (
-            "nav" in properties
-            and identifier in local_manifest_ids
-            and media_type == "application/xhtml+xml"
-        )
-        valid_cover = (
-            "cover-image" in properties
-            and identifier in local_manifest_ids
-            and media_type
-            in {"image/gif", "image/jpeg", "image/png", "image/svg+xml", "image/webp"}
-        )
-        if "nav" in properties and not valid_navigation:
-            warnings.append(EpubPackageWarning("invalid_navigation_declaration"))
-        if "cover-image" in properties and not valid_cover:
-            warnings.append(EpubPackageWarning("invalid_cover_declaration"))
-        if valid_navigation:
-            nav_count += 1
-        if valid_cover:
-            cover_current_ids.append(identifier)
-        declarations.append(
-            EpubPackageDeclaration(
-                EpubPackageDeclarationKind.MANIFEST_ITEM,
-                item.ordinal,
-                _citation(request, package_name, EpubPackageCitationSection.MANIFEST, item),
-                resource_identity,
-                identifier,
-                media_type,
-                properties,
-            )
-        )
-        if valid_navigation:
-            declarations.append(
-                EpubPackageDeclaration(
-                    EpubPackageDeclarationKind.NAVIGATION,
-                    item.ordinal,
-                    _citation(request, package_name, EpubPackageCitationSection.NAVIGATION, item),
-                    resource_identity,
-                    identifier,
-                    media_type,
-                    properties,
-                )
-            )
-        if valid_cover:
-            declarations.append(
-                EpubPackageDeclaration(
-                    EpubPackageDeclarationKind.COVER,
-                    item.ordinal,
-                    _citation(request, package_name, EpubPackageCitationSection.COVER, item),
-                    resource_identity,
-                    identifier,
-                    media_type,
-                    properties,
-                )
-            )
+    manifest_state, manifest_declarations, manifest_warnings = _manifest_declarations(
+        request, package_name, frame, entries, id_registry
+    )
+    declarations.extend(manifest_declarations)
+    warnings.extend(manifest_warnings)
+    manifest_ids = manifest_state.ids
+    manifest_nodes = manifest_state.nodes
+    manifest_media_types = manifest_state.media_types
+    local_manifest_ids = manifest_state.local_ids
+    manifest_resources = manifest_state.resources
+    manifest_fallbacks = manifest_state.fallbacks
+    cover_current_ids = manifest_state.cover_ids
     cover_current_resources = {
         manifest_ids[identifier] for identifier in cover_current_ids
     }
@@ -2141,34 +2251,6 @@ def _package_report(
         if cover_current_ids and len(cover_current_resources) == 1
         else None
     )
-    if len(cover_current_resources) > 1:
-        warnings.append(EpubPackageWarning("contradictory_cover_declaration"))
-    if any(fallback not in manifest_ids for fallback in manifest_fallbacks.values()):
-        warnings.append(EpubPackageWarning("invalid_manifest_fallback"))
-        manifest_fallbacks = {
-            source: target
-            for source, target in manifest_fallbacks.items()
-            if target in manifest_ids
-        }
-    if any(overlay not in manifest_ids for overlay in media_overlays):
-        warnings.append(EpubPackageWarning("invalid_media_overlay"))
-    if any(
-        overlay not in local_manifest_ids
-        or manifest_media_types.get(overlay) != "application/smil+xml"
-        for overlay in media_overlays
-    ):
-        warnings.append(EpubPackageWarning("invalid_media_overlay"))
-    for start in manifest_fallbacks:
-        visited = set()
-        current = start
-        while current in manifest_fallbacks:
-            if current in visited:
-                warnings.append(EpubPackageWarning("cyclic_manifest_fallback"))
-                break
-            visited.add(current)
-            current = manifest_fallbacks[current]
-    if version == "3.0" and nav_count != 1:
-        warnings.append(EpubPackageWarning("invalid_navigation_declaration"))
 
     spine_media_types = (
         _EPUB3_SPINE_MEDIA_TYPES if version == "3.0" else _EPUB2_SPINE_MEDIA_TYPES
