@@ -716,13 +716,7 @@ class BrowseReviewLibrary:
                 if raw_total is None:
                     raw_total = snapshot.total
                 for row in raw_rows:
-                    case_document, report_document, destination, work_attention_count = row[:4]
-                    # The declared row carries both trailing columns, but these
-                    # two guards still run: a store that reports only the four
-                    # attention columns reaches here and must keep paging
-                    # rather than fail the whole read on an index.
-                    automatic_outcome = row[4] if len(row) > 4 else None
-                    cause = row[5] if len(row) > 5 else None
+                    case_document, report_document, destination, work_attention_count, automatic_outcome, cause = row
                     item = _attention_item(
                         case_document,
                         report_document,
