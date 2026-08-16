@@ -114,6 +114,9 @@ from mechanical_librarian.application.cover_consideration import (
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.metadata_policy import (
+    current_resolved_policy as _current_resolved_policy,
+)
 from mechanical_librarian.application.metadata_report import (
     ArtifactAuthorityError,
     CoverReadError,
@@ -196,7 +199,6 @@ from mechanical_librarian.domain.epub_opening import EpubOpeningLimits
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
-    resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -270,7 +272,6 @@ if TYPE_CHECKING:
     from mechanical_librarian.application.review_pipeline import (
         ReviewPipelineRepository,
     )
-    from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
     from mechanical_librarian.domain.provider_recovery import ProviderRecovery
 
 
@@ -1113,36 +1114,6 @@ def admit_review_case_loaded(
         return AdmitReviewCase(repository, current).run(proposal_set_id)
     finally:
         repository.close()
-
-
-def _current_resolved_policy(
-    configuration: ApplicationConfiguration,
-    repository: _NonClosingRepository | SQLiteMetadataReportRepository,
-    library: str,
-) -> ResolvedMetadataPolicy:
-    persisted = repository.current_resolved_metadata_policy(library)
-    profile = MetadataPolicyProfile.from_data(
-        json.loads(repository.active_metadata_policy())
-    )
-    configured = next(
-        (value for value in configuration.libraries if value.name == library),
-        None,
-    )
-    if configured is None:
-        raise ReviewCaseError("configuration")
-    configured_resolution = resolve_policy(
-        profile, library, configured.policy_override
-    )
-    if persisted is not None:
-        if persisted != configured_resolution:
-            raise ReviewCaseError("configuration")
-        return persisted
-    bound_id = repository.bind_initial_metadata_policy_resolution(
-        configured_resolution.canonical_json
-    )
-    if bound_id != configured_resolution.resolved_id:
-        raise ReviewCaseError("configuration")
-    return configured_resolution
 
 
 def create_review_pipeline(
@@ -2254,7 +2225,6 @@ def run_policy_preview(
     config_path: Path, database_path: Path, document: dict[str, object]
 ) -> dict[str, object]:
     """Compose the existing read-only policy notebook for one CLI preview."""
-    from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 
     configuration = load_configuration_file(config_path)
     repository = open_shadow_preview_repository(database_path)
