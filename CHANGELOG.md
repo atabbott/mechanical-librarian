@@ -7,6 +7,38 @@
 
 ## Unreleased
 
+- Widen the provider-recovery transaction epilogue to the sites #662 left
+  longhand, with every site naming the extra exception types it admits.
+  `_rollback_on_failure` now takes them as `*wrapped` and concatenates them onto
+  the `sqlite3.Error, OverflowError` pair every write path shares, so the six
+  narrow sites keep their set by passing nothing, and a widening is visible in
+  the call rather than implied by which copy was pasted. Ten sites pass
+  `ProviderRecoveryError`; `complete_success`, which unpacks a health row
+  positionally, also passes `AttributeError`. No site's caught set changed.
+  The group is ten, not the nine #706 counted: `complete_missing_jobs` spreads
+  the same handler over four physical lines rather than one, so normalising
+  whitespace merges it into the group instead of leaving it a variant. Nine of
+  the ten sat directly beneath the `ProviderRecoveryStoreError` re-raise the
+  helper already owned, and since the helper is a context manager wrapping the
+  whole body, there is no way to adopt one handler of such a pair without the
+  other — each adoption removes both, which is why ten sites delete twenty-one
+  guarded rollbacks.
+  `provider_recovery.py` goes 1,062 to 978, a net `-84`: implementation `-86`,
+  twelve lines added — one shared `except` and eleven `with` lines, each
+  replacing a `try:` — against ninety-eight deleted; structure `0`, because the
+  signature is rewritten in place rather than added; and `+2` of the docstring
+  #706's acceptance asked for. Twelve against ninety-eight passes the
+  consolidation clause, and since every added line replaces a deleted one it
+  passes just as clearly on net-new implementation of zero. The clause's
+  structure exemption is not needed to reach that verdict.
+  Four tests pin the three distinct caught sets from both ends — what each set
+  wraps and what it still lets escape untouched — and a fifth pins the argument
+  at all seventeen call sites, so the six narrow ones cannot be re-scoped
+  underneath the behavioural tests. #662's mutation check still bites:
+  deleting the guarded rollback from the shared handler fails three of them.
+  No SQL, transaction nesting, or caller-visible error identity changed.
+  `enqueue_jobs` and `resume_fanout` keep their longhand, because adopting
+  either would add or drop a type rather than name one. (#706)
 - State which lines the code-economy consolidation test measures, so two
   readers measuring the same change reach the same verdict. #692 required a
   consolidation to be lighter than the copies it replaces without saying whether
