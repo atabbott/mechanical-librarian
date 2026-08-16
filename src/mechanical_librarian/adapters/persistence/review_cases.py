@@ -83,6 +83,7 @@ from mechanical_librarian.domain.review_case import (
     ReviewTransition,
     is_actionable,
 )
+from mechanical_librarian.domain.review_field_classification import ReviewFieldCause
 
 # The exact column shape of the current_review_case_lineages pointer selected
 # by _validated_review_pointer.  Nullability follows the schema below:
@@ -465,7 +466,13 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
 
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[tuple[str, str, str, int, str | None, str | None], ...]:
+    ) -> tuple[
+        tuple[str, str, str, int, str | None, ReviewFieldCause | None], ...
+    ]:
+        # The last column is a `CASE` expression over
+        # `_AUTOMATIC_SAFETY_ATTENTION_SQL` whose only non-null result is the
+        # literal `'automatic_safety_suspended'`, so the cause is narrower than
+        # the `str` the row validation below proves.
         try:
             query, pattern = _review_search_pattern(search)
             rows = self._connection.execute(
@@ -508,7 +515,10 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     or (row[5] is not None and type(row[5]) is not str)
                 ):
                     raise MetadataReportError("review attention field is invalid")
-                values.append((case_document, report_document, row[2], row[3], row[4], row[5]))
+                values.append((
+                    case_document, report_document, row[2], row[3], row[4],
+                    cast("ReviewFieldCause | None", row[5]),
+                ))
             return tuple(values)
         except (
             sqlite3.Error,

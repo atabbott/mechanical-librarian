@@ -119,6 +119,7 @@ from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
 )
+from mechanical_librarian.domain.review_field_classification import ReviewFieldCause
 from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
 from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeError,
@@ -1030,7 +1031,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[tuple[str, str, str, int, str | None, str | None], ...]:
+    ) -> tuple[
+        tuple[str, str, str, int, str | None, ReviewFieldCause | None], ...
+    ]:
         return self._review_cases.list_current_attention_documents(
             search, limit, offset
         )

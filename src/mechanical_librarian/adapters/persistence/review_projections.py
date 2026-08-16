@@ -81,7 +81,10 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         count_current_review_cases: Callable[[str | None], tuple[int, int]],
         list_current_attention_documents: Callable[
             [str | None, int, int],
-            tuple[tuple[str, str, str, int, str | None, str | None], ...],
+            tuple[
+                tuple[str, str, str, int, str | None, ReviewFieldCause | None],
+                ...,
+            ],
         ],
         count_current_attention_fields: Callable[[str | None], int],
     ) -> None:
@@ -353,18 +356,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
     ) -> ReviewAttentionSnapshot:
         with self._consistent_review_read():
             snapshot = ReviewAttentionSnapshot(
-                # ReviewAttentionSnapshot.rows is declared as a 4-tuple, but
-                # this repository has always produced (and review_web's
-                # attention() reader has always consumed, via its len(row)
-                # guards) the two extra automatic-outcome and cause columns.
-                # The declaration in application/review_web.py is the stale
-                # half of that pair; this cast records the real shape.
-                rows=cast(
-                    "tuple[tuple[str, str, str, int], ...]",
-                    self.list_current_attention_documents(
-                        search, limit, offset
-                    ),
-                ),
+                rows=self.list_current_attention_documents(search, limit, offset),
                 total=self.count_current_attention_fields(search),
             )
         return snapshot
