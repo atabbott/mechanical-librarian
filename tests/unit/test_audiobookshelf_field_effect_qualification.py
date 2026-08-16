@@ -225,10 +225,8 @@ def test_return_lineage_reads_hold_before_progress() -> None:
         ),
         review_pipeline_progress=(
             lambda *_: (
-                events.append("progress")
-                or SimpleNamespace(  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - `append` returning `None` is what lets the following value be the fake's result while the call order is recorded.
-                    state="completed"
-                )
+                events.append("progress")  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - `append` returning `None` is what lets the following value be the fake's result while the call order is recorded.
+                or SimpleNamespace(state="completed")
             )
         ),
     )

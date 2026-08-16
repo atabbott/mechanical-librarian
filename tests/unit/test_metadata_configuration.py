@@ -617,8 +617,8 @@ def test_target_authorization_is_confined_to_current_item_get() -> None:
         secret.chmod(0o600)
         requests: list[httpx.Request] = []
         transport = httpx.MockTransport(
-            lambda request: requests.append(request) or httpx.Response(200)
-        )  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
+            lambda request: requests.append(request) or httpx.Response(200)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
+        )
         client = target_client("https://library.invalid", str(secret), 5)
         # Replace only the transport for this structural authorization test.
         client._transport = transport

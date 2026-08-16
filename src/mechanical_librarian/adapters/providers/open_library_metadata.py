@@ -1278,8 +1278,8 @@ def _candidate(
         if field in edition and edition[field] is not None:
             try:
                 evidence.append(
-                    ProviderEvidence(kind, _description(edition[field]), scope)
-                )  # type: ignore[arg-type]  # reason: `_description` unwraps an untrusted provider member, so its value stays `object`; `ProviderEvidence` validates it and this `try` already absorbs ValueError/EvidenceValueError for a non-string payload.
+                    ProviderEvidence(kind, _description(edition[field]), scope)  # type: ignore[arg-type]  # reason: `_description` unwraps an untrusted provider member, so its value stays `object`; `ProviderEvidence` validates it and this `try` already absorbs ValueError/EvidenceValueError for a non-string payload.
+                )
             except (ValueError, EvidenceValueError):
                 pass
     for field, kind in (

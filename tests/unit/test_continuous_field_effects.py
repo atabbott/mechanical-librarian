@@ -596,8 +596,8 @@ def test_pending_return_paging_reaches_completed_request_after_first_hundred() -
     repository.pending_field_effect_manual_returns = pending  # type: ignore[method-assign]  # reason: deliberate per-instance stub of the double's method for this case.
     repository.clear_field_effect_manual_hold = (  # type: ignore[method-assign]  # reason: deliberate per-instance stub of the double's method for this case.
         lambda review_case_id, destination, changed_at, token=None: (
-            cleared.append(review_case_id) or ("primary", "alpha")
-        )  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - the recorded call is the point and `append` returning `None` is what lets the context tuple be the result.
+            cleared.append(review_case_id) or ("primary", "alpha")  # type: ignore[func-returns-value]  # reason: deliberate `append(...) or value` idiom - the recorded call is the point and `append` returning `None` is what lets the context tuple be the result.
+        )
     )
     progress = SimpleNamespace(
         scan_id="review_scan",

@@ -651,8 +651,8 @@ def test_five_candidate_scenario_binds_packet_attempt_and_image_order() -> None:
             by_artifact[artifact]
         ),
         run_cover_packet_reviewer=lambda *args: (
-            observed.append(args) or '{"status":"completed"}'
-        ),  # type: ignore[func-returns-value]  # reason: the `or` deliberately records the call and yields the document; append's None is discarded.
+            observed.append(args) or '{"status":"completed"}'  # type: ignore[func-returns-value]  # reason: the `or` deliberately records the call and yields the document; append's None is discarded.
+        ),
     )
     with WorkbenchContext.temporary() as context:
         files = {

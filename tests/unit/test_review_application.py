@@ -308,8 +308,8 @@ def test_connection_probe_does_not_hold_the_global_application_gate(
         # lambda, so the discarded `None` element is the point, not a mistake.
         target=lambda: (
             application.library(lens="all", search=None, limit=20, cursor=None),
-            browse_finished.set(),
-        )  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
+            browse_finished.set(),  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
+        )
     )
     browse.start()
     assert browse_finished.wait(1)

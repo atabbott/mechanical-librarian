@@ -565,31 +565,36 @@ class ReviewCase:
             or target.fingerprint != raw["target_fingerprint"]
         ):
             raise ReviewCaseValueError("review case target is invalid")
+        # Every member read out of `raw` is `object` until the guards above have
+        # rejected the shapes this class refuses; mypy reports one `arg-type`
+        # per argument line, so the suppression is per argument rather than per
+        # call. `target` and `target_fingerprint` need none: the equality check
+        # above narrows them.
         data = cls._data(
-            raw["proposal_set_id"],
-            raw["report_id"],
+            raw["proposal_set_id"],  # type: ignore[arg-type]
+            raw["report_id"],  # type: ignore[arg-type]
             raw["target"],
             raw["target_fingerprint"],
-            raw["file_identity"],
-            results,
-            raw["relationships"],
-            raw["proposal_document"],
-        )  # type: ignore[arg-type]
+            raw["file_identity"],  # type: ignore[arg-type]
+            results,  # type: ignore[arg-type]
+            raw["relationships"],  # type: ignore[arg-type]
+            raw["proposal_document"],  # type: ignore[arg-type]
+        )
         identity = (
             "review_case_"
             + hashlib.sha256(_canonical(data).encode("utf-8")).hexdigest()
         )
         return cls(
             identity,
-            raw["proposal_set_id"],
-            raw["report_id"],
+            raw["proposal_set_id"],  # type: ignore[arg-type]
+            raw["report_id"],  # type: ignore[arg-type]
             raw["target"],
             raw["target_fingerprint"],
-            raw["file_identity"],
-            results,
-            raw["relationships"],
-            raw["proposal_document"],
-        )  # type: ignore[arg-type]
+            raw["file_identity"],  # type: ignore[arg-type]
+            results,  # type: ignore[arg-type]
+            raw["relationships"],  # type: ignore[arg-type]
+            raw["proposal_document"],  # type: ignore[arg-type]
+        )
 
 
 def is_actionable(proposal_set: ProposalSet) -> bool:

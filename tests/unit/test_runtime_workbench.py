@@ -360,8 +360,8 @@ def test_contained_reviewer_uses_admitted_bytes_after_durable_attempt() -> None:
             mock.patch(
                 "mechanical_librarian_workbench.context.os.fsync",
                 side_effect=lambda descriptor: (
-                    fsync_calls.append(descriptor),
-                    real_fsync(descriptor),  # type: ignore[func-returns-value]  # reason: the tuple deliberately records the call and yields element [1]; append's None is discarded.
+                    fsync_calls.append(descriptor),  # type: ignore[func-returns-value]  # reason: the tuple deliberately records the call and yields element [1]; append's None is discarded.
+                    real_fsync(descriptor),
                 )[1],
             ),
         ):

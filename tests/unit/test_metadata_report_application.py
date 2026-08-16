@@ -500,9 +500,11 @@ def test_application_replays_after_file_reorder_and_constructs_provider_once() -
         repository_factory=lambda: cast(ReportRepository, repository),
         providers=(
             ProviderBinding(
-                "catalogue", True, lambda: constructions.append("one") or Provider()
+                "catalogue",
+                True,
+                lambda: constructions.append("one") or Provider(),  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the construction and still yields the provider.
             ),
-        ),  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the construction and still yields the provider.
+        ),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
         ),
@@ -823,11 +825,11 @@ def test_unsupported_media_precedes_inspector_provider_and_repository() -> None:
         target=target,
         inspector=inspector,
         repository_factory=lambda: (
-            activity.append("repository") or cast(ReportRepository, repository)
-        ),  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the call and still yields the repository.
+            activity.append("repository") or cast(ReportRepository, repository)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the call and still yields the repository.
+        ),
         providers=(
-            ProviderBinding("catalogue", True, lambda: activity.append("provider")),
-        ),  # type: ignore[return-value]  # reason: a sentinel factory the test proves is never invoked, so it never has to yield a provider.
+            ProviderBinding("catalogue", True, lambda: activity.append("provider")),  # type: ignore[return-value]  # reason: a sentinel factory the test proves is never invoked, so it never has to yield a provider.
+        ),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
         ),
@@ -858,11 +860,11 @@ def test_currentness_drift_inside_publication_precondition_publishes_nothing() -
         target=target,
         inspector=inspector,
         repository_factory=lambda: (
-            activity.append("repository") or cast(ReportRepository, repository)
-        ),  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the call and still yields the repository.
+            activity.append("repository") or cast(ReportRepository, repository)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the call and still yields the repository.
+        ),
         providers=(
-            ProviderBinding("catalogue", False, lambda: activity.append("provider")),
-        ),  # type: ignore[return-value]  # reason: a sentinel factory the test proves is never invoked, so it never has to yield a provider.
+            ProviderBinding("catalogue", False, lambda: activity.append("provider")),  # type: ignore[return-value]  # reason: a sentinel factory the test proves is never invoked, so it never has to yield a provider.
+        ),
         connection=TargetConnectionConfiguration(
             "primary", "https://example.invalid", "/private/target"
         ),

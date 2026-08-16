@@ -118,13 +118,13 @@ def test_google_books_keyless_keyed_and_disabled_composition():
             composition,
             "GoogleBooksMetadataProvider",
             side_effect=lambda *args, **kwargs: (
-                constructed.append((args, kwargs)) or object()
+                constructed.append((args, kwargs)) or object()  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
             ),
         ),
         patch.object(
             composition, "GenerateMetadataReport", return_value=service
         ) as generate,
-    ):  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
+    ):
         assert "report" == composition.run_metadata_report_loaded(
             config, Path("/reports"), Path("/artifacts"), "primary", "books", "item", 0
         )
@@ -261,13 +261,13 @@ def test_foreground_report_shares_one_open_library_pacer():
             composition,
             "OpenLibraryMetadataProvider",
             side_effect=lambda *args, **kwargs: (
-                constructed.append(kwargs["pacer"]) or object()
+                constructed.append(kwargs["pacer"]) or object()  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
             ),
         ),
         patch.object(
             composition, "GenerateMetadataReport", return_value=service
         ) as generate,
-    ):  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
+    ):
         assert "report" == composition.run_metadata_report_loaded(
             config, Path("/reports"), Path("/artifacts"), "primary", "books", "item", 0
         )
@@ -419,13 +419,13 @@ def test_foreground_report_shares_one_hardcover_pacer():
             composition,
             "HardcoverMetadataProvider",
             side_effect=lambda *args, **kwargs: (
-                constructed.append(kwargs["pacer"]) or object()
+                constructed.append(kwargs["pacer"]) or object()  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
             ),
         ),
         patch.object(
             composition, "GenerateMetadataReport", return_value=service
         ) as generate,
-    ):  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
+    ):
         assert "report" == composition.run_metadata_report_loaded(
             config, Path("/reports"), Path("/artifacts"), "primary", "books", "item", 0
         )

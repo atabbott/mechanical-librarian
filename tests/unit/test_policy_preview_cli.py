@@ -198,11 +198,11 @@ def test_canonical_profile_is_delegated_read_only_and_canonical_output() -> None
                 str(path),
             ],
             policy_preview_runner=lambda _config, _database, value: (
-                calls.append(value) or result
+                calls.append(value) or result  # type: ignore[func-returns-value,return-value]  # reason: the `append(...) or value` recorder idiom is deliberate; the recorded profile is a JSON document
             ),
             stdout=output,
             stderr=io.StringIO(),
-        )  # type: ignore[func-returns-value,return-value]  # reason: the `append(...) or value` recorder idiom is deliberate; the recorded profile is a JSON document
+        )
         assert 0 == code
         assert [profile] == calls
         assert before == path.read_bytes()

@@ -421,9 +421,9 @@ def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing() -> None
     calls: list[int] = []
     client = httpx.Client(
         transport=httpx.MockTransport(
-            lambda request: calls.append(1) or httpx.Response(200)
+            lambda request: calls.append(1) or httpx.Response(200)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the call and still yields the response.
         )
-    )  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the call and still yields the response.
+    )
     provider = HardcoverMetadataProvider("catalogue", client, 65_536)
     assert provider.observe(isbn_lookup(())).status == ProviderStatus.INSUFFICIENT_INPUT
     assert calls == []

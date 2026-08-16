@@ -135,9 +135,9 @@ def test_provider_stops_after_durable_item(status: ProviderStatus) -> None:
         projection=lambda: "p",
         expected_projection="p",
         current_entry=lambda *_: second if _[-1][-1] == "item-2" else first,
-        report=lambda value: calls.append(value.item_id) or ("report", (status,)),
+        report=lambda value: calls.append(value.item_id) or ("report", (status,)),  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
         emit=lines.append,
-    ).run()  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
+    ).run()
     assert (
         calls,
         [line.get("outcome") for line in lines[:-1]],
@@ -162,7 +162,7 @@ def test_inspection_continues_and_generic_metadata_stops() -> None:
         expected_projection="p",
         current_entry=lambda *_: entry("item-2") if _[-1][-1] == "item-2" else entry(),
         report=lambda value: (
-            calls.append(value.item_id)
+            calls.append(value.item_id)  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
             or (
                 (_ for _ in ()).throw(ItemInspectionError("bad"))
                 if value.item_id == "item"
@@ -170,7 +170,7 @@ def test_inspection_continues_and_generic_metadata_stops() -> None:
             )
         ),
         emit=lines.append,
-    ).run()  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
+    ).run()
     assert (calls, lines[0]["outcome"], lines[1]["outcome"], result) == (
         ["item", "item-2"],
         "item_failed",
@@ -186,11 +186,11 @@ def test_inspection_continues_and_generic_metadata_stops() -> None:
         expected_projection="p",
         current_entry=lambda *_: entry("item-2") if _[-1][-1] == "item-2" else entry(),
         report=lambda value: (
-            calls.append(value.item_id)
+            calls.append(value.item_id)  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
             or (_ for _ in ()).throw(MetadataReportError("publication"))
         ),
         emit=lines.append,
-    ).run()  # type: ignore[func-returns-value]  # reason: the `append(...) or value` recorder idiom is deliberate
+    ).run()
     assert (
         calls,
         [line.get("outcome") for line in lines[:-1]],
