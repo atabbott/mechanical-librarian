@@ -7,6 +7,24 @@
 
 ## Unreleased
 
+- Split the four oversized backend test files into per-concern modules. The
+  suite's four largest files -- 21,204 lines and 337 cases between them --
+  each held one or two classes covering unrelated surfaces, so a failure
+  reddened a 5,000-line file instead of naming what broke.
+  `test_metadata_adapters.py` (6,184) becomes six modules, `test_proposal_set.py`
+  (5,527) six, `test_metadata_report.py` (5,213) five, and `test_review_web.py`
+  (4,280) four. No resulting module exceeds 1,413 lines.
+  Three of them doubled as the suite's fixture library: nine modules imported
+  proposal builders out of `test_proposal_set`, seven imported a review-case
+  report out of `test_review_case_persistence`, and a browser-tier module
+  imported a test double out of a fast-tier one. Those builders now live in
+  `tests/support/`, so no cohort reaches into another cohort's tests for them.
+  Every case body is copied verbatim from its source's own lines: no assertion
+  is added, removed, reworded, or weakened. The 337 cases remain 337, and each
+  moved identifier is a 1:1 relocation -- the removed and added leaf-name
+  multisets are identical per commit and across the packet, so no case
+  disappeared and none was invented. Browser, slow, and required-installed
+  manifests are unchanged. (#661)
 - Run the public test tiers on pytest without changing what a tier is.
   `scripts/run_test_tier.py` hand-rolled `unittest` discovery, which foreclosed
   fixtures, `parametrize`, and assertion introspection for every future test in
