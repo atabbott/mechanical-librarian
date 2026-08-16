@@ -41,13 +41,35 @@ broad failure stays readable and stays inside the exact-artifact qualifier's
 per-stream capture bound. A truncated report always declares how many
 tracebacks it omitted. Raw
 cohort output remains discarded; only the traceback of a test that already
-failed is reported, and it carries the runner's own repository paths. That
+failed is reported, and it carries the runner's own repository paths. The
+exact-artifact qualifier reports the same way when a command it runs fails:
+the tail of each captured stream reaches a narrative account beside the
+evidence record, so a failing installed suite names its failing tests instead
+of reporting only `installed_test_suite_failed`, while the record itself stays
+the same path-free document it was. Because the account can quote whatever the
+child quoted, every value in the environment that qualifier constructed for
+the child is replaced by its own variable's name first, on a secret-named
+variable or on a long value that is not a path. That
 narrative stream is standard output, so the machine-readable
 `test-tier-result-v1` and `test-tier-stall-v1` lines keep standard error to
 themselves. Changes add focused unit/integration/security tests, documentation,
-changelog, schema or ADR updates as applicable. Tests, types, safety gates, and
+changelog, schema or ADR updates as applicable; there is no separate contract,
+security, or documentation cohort, so the security behaviour a change
+introduces is proven inside the unit and integration cohorts beside the rest of
+it. Tests, types, safety gates, and
 failure handling are never weakened to make a change pass. The authoritative
-[testing strategy](testing-strategy.md) owns the commands and tier boundary.
+[testing strategy](testing-strategy.md) owns the commands and tier boundary,
+and [CONTRIBUTING.md](../../CONTRIBUTING.md) reconciles every documented check
+against the gate that enforces it.
+
+No coverage percentage is enforced, and none is planned before 1.0. The suite's
+test-to-source line ratio already exceeds 1:1 and the gate's own quality is
+high, so a threshold would add ceremony without adding protection: it would
+measure lines executed rather than behaviour proven, and the failure this
+project keeps finding is a check that stopped checking what it claimed, which a
+percentage cannot see. Revisit the decision before 1.0. Until then, a change
+that adds a code path adds the tests that prove it, and review is what enforces
+that. (2026-08-15)
 
 Hostile files, network responses, configuration, credentials, SQLite rows, and
 subprocess output are bounded and fail closed. Diagnostics are value-free when
@@ -99,8 +121,10 @@ query, raw response, private path, or report.
 Functional slices are reviewed and qualified at the exact candidate head.
 Tier-2 work adds independent safety and challenger review plus receipt-bound
 aggregate qualification. Public CI is necessary but not merge authority; the
-maintainer-owned exact-head controller and reconciliation workflow remain
-authoritative.
+maintainer-owned exact-head controller and its tracking reconciliation remain
+authoritative. Neither is a GitHub workflow: `public-gate.yml` is the only
+workflow this repository has, and the controller's closing-reference,
+`tracking-exempt`, and post-merge checks run outside it.
 
 A change is done when its supported outcome and failures are documented and
 tested, generated artifacts reproduce, gates pass at the exact head, required

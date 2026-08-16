@@ -203,9 +203,13 @@ Every change must include the smallest appropriate combination of:
 - security review for credentials, network access, parsers, AI inputs, writes,
   backups, authentication, or upgrades.
 
-Do not weaken tests, safety gates, types, linters, or coverage thresholds to
-make a change pass. Fix the implementation or explicitly revise the governing
-decision with rationale and review.
+Do not weaken tests, safety gates, types, or linters to make a change pass. Fix
+the implementation or explicitly revise the governing decision with rationale
+and review. There is no coverage threshold to weaken: the decision not to
+enforce one is recorded in
+[quality strategy](docs/development/quality-strategy.md), and
+[CONTRIBUTING.md](CONTRIBUTING.md) lists every check the gate does enforce
+beside the ones that are maintainer-manual.
 
 ## Functional slice delivery
 

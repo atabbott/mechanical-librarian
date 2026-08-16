@@ -1,13 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Report the failing tests when an installed suite fails qualification, with
+  every secret-named environment value redacted first, and reconcile the
+  documented check set with the only workflow: the dead contract tier and the
+  uninvoked linked-issue validator are gone, `run_test_tier.py --list` runs,
+  and CONTRIBUTING lists each check as gate-enforced or maintainer-manual.
+  (#654)
+- Format the backend with `ruff format` and gate it on every change. (#670)
 - Make Library, Attention, and review detail use one truthful field
   classification: automatic abstentions return to owner review, automatic
   outcomes remain inspectable and overrideable, and unavailable fields explain
   their state without a fake empty-value choice. (#598)
-
-## Unreleased
-
-- Format the backend with `ruff format` and gate it on every change. (#670)
 - Convert every `tests/unit/` module to pytest, completing the suite
   conversion and retiring the last shared `TestCase` base. (#697)
 - Convert every `TestCase` module outside `tests/unit/` to pytest, the pilot
