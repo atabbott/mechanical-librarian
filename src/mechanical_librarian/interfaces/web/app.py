@@ -1036,10 +1036,11 @@ def create_review_app(
     ) -> str:
         _require_session(sessions, ml_session)
         assert ml_session is not None
+        routed = _routed_path(request)
         if (
-            request.url.path.startswith("/api/v1/")
+            routed.startswith("/api/v1/")
             and request.method not in {"GET", "HEAD", "OPTIONS"}
-            and request.url.path != "/api/v1/session/login"
+            and routed != "/api/v1/session/login"
         ):
             bundle = assets.load()
             if isinstance(bundle, ReactAssetRecovery):
@@ -1069,7 +1070,7 @@ def create_review_app(
     async def trust_boundary(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        if request.url.path not in {"/health/live", "/health/ready"}:
+        if _routed_path(request) not in {"/health/live", "/health/ready"}:
             if not _request_matches_origin(request, configuration):
                 return _secured_error(400, "invalid_origin")
             if request.method not in {"GET", "HEAD", "OPTIONS"} and request.headers.get("origin") != configuration.canonical_origin:
@@ -1110,7 +1111,7 @@ def create_review_app(
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
-        if request.url.path.startswith("/api/v1/metadata-policy/"):
+        if _routed_path(request).startswith("/api/v1/metadata-policy/"):
             if any(item.get("loc") == ("header", "x-csrf-token") for item in error.errors()):
                 return _error(403, "csrf")
             return _error(422, "policy_validation")
@@ -2132,6 +2133,20 @@ def load_owner_password_verifier(path: Path) -> Callable[[str], bool]:
             return False
 
     return verify
+
+
+def _routed_path(request: Request) -> str:
+    """Return the path the router dispatched on, never the reconstructed one.
+
+    `request.url` is rebuilt from the `Host` header, so a header carrying a
+    path, query, or fragment moves `request.url.path` away from the path that
+    chose the endpoint: `Host: review.test/health/live#` reads as
+    `/health/live` on a request the router sent to a mutating API route
+    (GHSA-86qp-5c8j-p5mr). Every path-based decision here has to read the ASGI
+    scope, which routing itself uses and no header can move.
+    """
+    path: str = request.scope["path"]
+    return path
 
 
 def _request_matches_origin(request: Request, configuration: ReviewWebConfiguration) -> bool:

@@ -64,6 +64,38 @@
   either would add or drop a type rather than name one. The helper's docstring
   names both and why, so the shared baseline is not mistaken for a module
   invariant and neither path is later widened into agreement with it. (#706)
+- Take every path-based security decision in the web layer on the path the
+  router dispatched on, not on the URL Starlette rebuilds from the `Host`
+  header. `request.url` is reconstructed as `scheme://<Host header><path>`, so
+  a `Host` carrying a path and a `#` terminator discards the real path into a
+  fragment and leaves `request.url.path` reading as something the request never
+  addressed (GHSA-86qp-5c8j-p5mr). One header did both bypasses at once: with
+  `Host: review.test/health/live#`, `request.url.path` was exactly
+  `/health/live`, so the trust boundary took the request for a health probe and
+  skipped origin validation and the cross-site `Origin` check entirely, while
+  the build-identity gate saw a path that does not start with `/api/v1/` and
+  skipped the browser-build check -- on a request the router had already sent
+  to a mutating API route. Against the assembled application that admitted a
+  `POST /api/v1/session/login` carrying no `Origin` at all, which issued a
+  session, and a `POST /api/v1/session/logout` carrying no `Origin` and no
+  `x-ml-build-identity`, which destroyed one. Behind a trusted proxy the two
+  decisions separate, because the origin decision moves to `X-Forwarded-Host`
+  while `request.url` keeps following the raw `Host`; both are pinned, together
+  and apart. The exception handler's `/api/v1/metadata-policy/` test read the
+  same reconstructed value and moved with them. A `%23` or `%3F` in the request
+  path splits the same two values without any help from the header -- it
+  decodes into the routed path and terminates the reconstructed one -- so that
+  case is pinned as well, and it is the case no amount of `Host` validation
+  upstream of the application can close.
+  Substituting one value for the other changes no outcome that was not the
+  defect: across the unit and integration cohorts the three decision sites were
+  evaluated 341 times and the two values agreed every time except on the nine
+  deliberately poisoned requests the new tests send. The one request set that
+  changes verdict is the mirror image of the same bug -- a request the router
+  sent to `/health/live` or `/health/ready` while carrying a path-bearing
+  `Host` was refused `invalid_origin` because the reconstructed path was not a
+  health path, and is now served, which is what exempting the health endpoints
+  always meant. Everything else the change touches is a tightening. (#702)
 - Report the failure that actually ended a provider-recovery transaction. Two
   of the store's transactional write paths abandoned theirs with an unguarded
   `ROLLBACK`, and SQLite can end a transaction itself when a statement fails
