@@ -44,11 +44,21 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.review_field_classification import (
+    ReviewFieldCause,
+)
 from tests.support.review_cases import _report
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
 )
+
+# The exact attention row `ReviewAttentionSnapshot` declares. `rows` below is
+# annotated with it because mypy resolves a bare `tuple(...)` against the
+# declared return type and reports a narrowed row as `arg-type`, which
+# `[tool.mypy.overrides]` disables for `tests.*`; an annotated local reports it
+# as `misc`, which the gate still enforces (#703).
+_AttentionRow = tuple[str, str, str, int, str | None, ReviewFieldCause | None]
 
 
 class FakeReviewRepository:
@@ -78,6 +88,12 @@ class FakeReviewRepository:
         self.shadow_mode = "review"
         self.shadow_outcomes: tuple[tuple[str, int], ...] = ()
         self.case_ready_at = 990
+        # The two trailing attention columns the real adapter selects, keyed by
+        # destination so a work's rows carry different values: the shadow
+        # disposition recorded for that destination, and the cause when
+        # automatic handling is suspended for it.
+        self.attention_dispositions: dict[str, str] = {}
+        self.attention_causes: dict[str, ReviewFieldCause] = {}
 
     def review_case_ready_at(self, review_case_id: str) -> int | None:
         if review_case_id != self.case.review_case_id:
@@ -409,15 +425,21 @@ class FakeReviewRepository:
 
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[tuple[str, str, str, int], ...]:
-        rows = [
+    ) -> tuple[_AttentionRow, ...]:
+        rows: list[_AttentionRow] = [
             (
                 case.to_json(),
                 report.to_json(),
-                proposal["destination"],
+                cast(str, proposal["destination"]),
                 sum(
                     self._field_attention(case, other)
                     for other in case.proposals
+                ),
+                self.attention_dispositions.get(
+                    cast(str, proposal["destination"])
+                ),
+                self.attention_causes.get(
+                    cast(str, proposal["destination"])
                 ),
             )
             for case, report in self._searched(search)

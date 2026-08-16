@@ -35,6 +35,29 @@
   worked into the clause with their line counts, and its entry reconciles every
   bucket of both, so the measurement basis is not rediscovered by argument a
   third time. (#708)
+- Make the Library work card's attention line agree with itself. The noun
+  pluralised and the verb did not, so a work with one open field read "1 field
+  need attention". It now reads "1 field needs attention", and two or more
+  still read "2 fields need attention". No assertion covered the string, in
+  any tier, which is why three green tiers passed over it; one now pins both
+  forms. (#705)
+- Make the review-web test double produce the Attention row the repository
+  actually produces, and delete the two `len(row)` guards it was propping up.
+  #668 kept those guards because removing them failed nine tests whose stores
+  reported only four of the six declared columns -- but those stores are test
+  doubles, not a second real producer, so the guards were protecting the
+  fixtures rather than the product. The shared double now emits the automatic
+  outcome and the cause, keyed by destination so one work's rows carry
+  different values, and the six paging fakes that assert nothing about either
+  column carry them as `None`. The Attention reader unpacks the declared row
+  directly. A new test drives a work whose title field is suspended for
+  automatic safety, whose series field has an automatic abstention, and whose
+  subtitle field has neither, and pins the three different classifications the
+  owner is shown; with the double back at four columns it fails. The double's
+  row list is annotated with the declared row type, because mypy resolves the
+  bare `tuple(...)` return against the declared type and reports a narrowed row
+  as `arg-type`, which the `tests.*` override disables. No product behaviour,
+  SQL, or projection changed. (#703)
 - Give the duplicated provider and review-surface logic one home each, and
   record where an abstraction would have cost more than the copies it removed.
   Four consolidations landed and two were declined on measurement.
