@@ -7,6 +7,57 @@
 
 ## Unreleased
 
+- Give the duplicated provider and review-surface logic one home each, and
+  record where an abstraction would have cost more than the copies it removed.
+  Four consolidations landed and two were declined on measurement.
+  The provider-recovery store repeated one commit/rollback epilogue in six
+  write paths byte for byte. A `_rollback_on_failure` context manager replaces
+  them, and the module's other eleven epilogues keep their longhand because
+  they admit `ProviderRecoveryError` or `AttributeError` as well: widening the
+  shared handler to swallow them would change which failures the six report as
+  a store failure. Two tests now pin the epilogue's own behaviour -- a failing
+  `COMMIT` rolls back and reports persistence unavailable with the sqlite error
+  as its cause, and a store error raised inside the transaction rolls back and
+  keeps its identity -- forced through a connection substituted at
+  construction. `-23` lines.
+  The three metadata adapters each declared an identical sixteen-line
+  `_ProviderFailure`; `retry_safety.ProviderFailure` is now the one identity,
+  with every per-provider status, category and bound unchanged and still pinned
+  by the adapter suites. Google Books' `_record_attempt` also took a
+  `retryable` argument its body never read, computed at six call sites;
+  removing it leaves all three adapters' attempt recording byte-identical.
+  `-24` lines.
+  Consolidating that attempt recording is declined, with the measurement rather
+  than an assertion: a shared `record_provider_attempt` was built, made
+  lint-clean, type-clean and green, and measured 5,869 lines across the four
+  modules against 5,849 for the longhand. Because each adapter would still need
+  a forwarding method to reach its own name, attempt count and record list, the
+  abstraction removes no copy and costs 20 lines. The longhand stays. Moving
+  the attempt log into a shared aggregate would be lighter, but it rewrites
+  attempt accounting across three adapters, which this change must leave
+  untouched; it is recorded, not attempted.
+  On the review surfaces, four route modules formatted the same server value
+  four ways, so `media_kind` reached the owner as `Media Kind` on Activity,
+  `Media kind` on Library and Attention, and `media kind` on Detail's field
+  tabs and headings. `frontend/src/labels.ts` settles it on sentence case --
+  the convention three of the four already used, and the one that does not make
+  a server enum look like a proper noun -- with `labelWords` for a label set
+  inside a sentence, which two surfaces were deriving by hand. Activity's
+  destinations and reasons lose their title case, Detail's field tabs and
+  headings gain a capital, and Library's `Choose a … value` control loses a
+  mid-sentence one; Attention and the rest are unchanged.
+  The two cover layouts, which must stay visually distinct and do, were also
+  deriving their data identically: one image URL template character for
+  character, one failed-image set, one prepare mutation. `useCoverChoiceData`
+  owns those three and no markup moved. The idempotency key both review routes
+  generated now lives beside the controller that puts it on a command.
+  The browser consolidations are relocations across module boundaries, so they
+  add a header, imports and explicit parameters for what were closure captures
+  and are not required to be lighter: `+7` for the labels module across eight
+  files, `+16` for the cover module, `-1` for the idempotency key. Neither left
+  a copy behind, which is the test a move has to pass. Six frontend assertions
+  moved with the copy the casing convention deliberately changed; the suite
+  stays at 149. (#662)
 - Keep installed pytest plugins and oversized parameter names out of the test
   tiers. Two further defects in the engine adoption, both found in review of
   #661.
