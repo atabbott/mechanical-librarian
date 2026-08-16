@@ -22,6 +22,7 @@ from mechanical_librarian.application.review_pipeline import (
 from mechanical_librarian.application.review_web import (
     InspectCurrentReviewCase,
     ReviewWebError,
+    _case_and_report,
     _choice_contexts,
     _choice_limitations,
     _choice_observation,
@@ -31,6 +32,7 @@ from mechanical_librarian.application.review_web import (
     _decode_cursor,
     _encode_cursor,
     _evidence_by_reference,
+    _library_item,
     _provider_comparison_notices,
     _provider_label,
 )
@@ -1248,6 +1250,45 @@ class ReviewWebReadModelTests(ReviewWebTestCase):
         self.assertTrue(item["work_id"].startswith("library_work_"))
         self.assertEqual(item["attention_state"], "no_attention_needed")
         self.assertEqual(item["dispositions"], [])
+
+    def test_row_projection_refuses_every_document_the_parsers_cannot_read(self) -> None:
+        """Every unreadable stored document is `unavailable`, surrogates included.
+
+        `MetadataReport.from_json` does not funnel into one declared type: its
+        length guard encodes the document outside the block that converts
+        `UnicodeError` to `ReportValueError`, so a row holding an unpaired
+        surrogate escapes it as `UnicodeEncodeError`. Narrowing `_library_item`
+        to `ReportValueError` let that escape the page instead of failing it;
+        `_case_and_report` stays narrowed because `UnicodeEncodeError` is itself
+        a `ValueError` and so never left that handler's reach (#698).
+        """
+        report = _report()
+        case = ReviewCase.create(evaluate_report(report), report)
+        surrogate = '{"a": "\ud800"}'
+
+        # The regression: this reaches both handlers as `UnicodeEncodeError`,
+        # not as the parser's declared refusal.
+        with self.assertRaises(UnicodeEncodeError):
+            MetadataReport.from_json(surrogate)
+
+        for document in ("{not a report}", surrogate):
+            with self.assertRaises(ReviewWebError) as raised:
+                _library_item(None, document, ())
+            self.assertEqual(raised.exception.code, "unavailable")
+            with self.assertRaises(ReviewWebError) as raised:
+                _case_and_report(case.to_json(), document)
+            self.assertEqual(raised.exception.code, "unavailable")
+
+        with self.assertRaises(ReviewWebError) as raised:
+            _case_and_report(case.to_json(), report.to_json()[:-1])
+        self.assertEqual(raised.exception.code, "unavailable")
+
+        # `_case_and_report` still lets a fault in the projection itself past.
+        fault = RuntimeError("projection is broken")
+        with patch.object(MetadataReport, "from_json", side_effect=fault):
+            with self.assertRaises(RuntimeError) as surfaced:
+                _case_and_report(case.to_json(), report.to_json())
+            self.assertIs(surfaced.exception, fault)
 
     def test_attention_cursor_keeps_the_complete_work_field_count(self) -> None:
         report = _bibliographic_report(

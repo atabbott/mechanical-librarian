@@ -229,6 +229,113 @@ class MetadataReportApplicationTests(unittest.TestCase):
             service.run("item-1", 0)
         self.assertEqual(raised.exception.provider, "catalogue")
 
+    def test_provider_factory_fault_is_not_reported_as_a_credential_failure(self) -> None:
+        """A broken factory is a construction fault, not a missing secret.
+
+        The credential branch above already carries every failure the factory
+        declares. The broad handler beside it reported everything else as
+        `CredentialError` too, which named the provider's stored secret as the
+        cause, marked the preparation non-retryable on `authentication`, and
+        recorded a durable authentication fault against that provider's
+        recovery health -- for a `TypeError` no credential can fix (#698).
+        """
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+
+        def broken():
+            raise TypeError("factory() takes no arguments")
+
+        service = GenerateMetadataReport(
+            target=FakeTarget([TargetSnapshot("ebook", "Title", (selected,))]),
+            inspector=FakeInspector(InspectionResult("c" * 64, ())),
+            repository_factory=FakeReportRepository,
+            providers=(ProviderBinding("catalogue", True, broken),),
+            connection=TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/private/target"
+            ),
+            library=LibraryConfiguration(
+                "ebooks", "primary", "library-id", "ebook", "books",
+                ("catalogue",),
+            ),
+            mount=MediaMountConfiguration(
+                "books", "/media", "/library", True
+            ),
+            limits=ReportLimits(),
+        )
+        with self.assertRaises(MetadataReportError) as raised:
+            service.run("item-1", 0)
+        self.assertNotIsInstance(raised.exception, CredentialError)
+        self.assertEqual(str(raised.exception), "provider construction failed")
+        self.assertIsInstance(raised.exception.__cause__, TypeError)
+
+    def test_failing_access_time_still_yields_the_promised_unavailable_lane(self) -> None:
+        """A broken diagnostic cannot cost the lane the handler promises.
+
+        The provider handler converts any `observe` failure into one unavailable
+        lane so a single adapter cannot deny the owner the whole report. It read
+        the optional access time with `getattr(provider, "accessed_at", None)`,
+        whose default absorbs only `AttributeError`, so a property raising
+        anything else propagated out of the handler and aborted the report --
+        the opposite of the invariant the handler was annotated with. An answer
+        that is not an access time reaches the domain rule and fails the same
+        way, so both the read and the check are guarded now (#698).
+        """
+        selected = TargetFile("a" * 64, "book.epub", "epub")
+        snapshot = TargetSnapshot("ebook", "Current title", (selected,))
+        claim = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="9780306406157",
+            canonical="9780306406157",
+            excerpt="eBook ISBN: 9780306406157",
+            applicability="ebook",
+            checksum="valid_isbn_13",
+            applicability_basis="ebook",
+        )
+
+        def run_with(reading: object) -> tuple[MetadataReport, FakeReportRepository]:
+            class Provider:
+                @property
+                def accessed_at(self):
+                    if isinstance(reading, BaseException):
+                        raise reading
+                    return reading
+
+                def observe(self, _plan, *, deadline):
+                    raise RuntimeError("adapter transport failed")
+
+            repository = FakeReportRepository()
+            service = GenerateMetadataReport(
+                target=FakeTarget([snapshot, snapshot]),
+                inspector=FakeInspector(InspectionResult("c" * 64, (claim,))),
+                repository_factory=lambda: cast(ReportRepository, repository),
+                providers=(ProviderBinding("catalogue", True, Provider),),
+                connection=TargetConnectionConfiguration(
+                    "primary", "https://example.invalid", "/private/target"
+                ),
+                library=LibraryConfiguration(
+                    "ebooks", "primary", "library-id", "ebook", "books",
+                    ("catalogue",),
+                ),
+                mount=MediaMountConfiguration("books", "/media", "/library", True),
+                limits=ReportLimits(),
+            )
+            return MetadataReport.from_json(service.run("item-1", 0)), repository
+
+        for reading in (
+            RuntimeError("access clock is unavailable"),
+            "not-an-access-time",
+        ):
+            with self.subTest(reading=reading):
+                report, repository = run_with(reading)
+
+                observation = report.providers[0]
+                self.assertTrue(observation.lanes)
+                for lane in observation.lanes:
+                    self.assertIs(lane.status, ProviderStatus.UNAVAILABLE)
+                # `None` is the recorded "not obtainable" access time, and the
+                # lane the handler promised is present either way.
+                self.assertIsNone(observation.accessed_at)
+                self.assertTrue(repository.closed)
+
     def test_application_replays_after_file_reorder_and_constructs_provider_once(self) -> None:
         first_file = TargetFile("a" * 64, "one.epub", "epub")
         second_file = TargetFile("b" * 64, "two.epub", "epub")

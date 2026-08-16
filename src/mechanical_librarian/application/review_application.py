@@ -376,6 +376,16 @@ class ReviewApplication:
 
     def stop(self) -> None:
         deadline = time.monotonic() + self._graceful_shutdown_seconds
+        # Every shutdown step below must be attempted even after an earlier one
+        # fails, or a background lane keeps running past the point the owner
+        # asked it to stop. The five collectors are broad because the steps are
+        # injected components whose raisable sets this composition never sees,
+        # and because a step that failed for an unexpected reason is still a
+        # step that did not stop its lane. Nothing is discarded: the first
+        # failure is what propagates, so a shutdown that did not complete is
+        # never reported as one that did, and every later failure is noted on
+        # it rather than lost -- a second lane that also failed to stop has to
+        # stay visible to whoever reads the first.
         failures: list[Exception] = []
         if isinstance(self._field_application, ContinuousGuardedApplication):
             try:
@@ -406,7 +416,10 @@ class ReviewApplication:
             except Exception as error:
                 failures.append(error)
         if failures:
-            raise failures[0]
+            first, *later = failures
+            for failure in later:
+                first.add_note(f"further shutdown failure: {failure!r}")
+            raise first
         if self._close_state_owner:
             self._state_owner.close()
 

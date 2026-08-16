@@ -96,6 +96,18 @@ class CreateProposalSet:
         except (ReportValueError, ProposalValueError) as error:
             raise ProposalSetError("proposal input is invalid") from error
         except Exception as error:
+            # This spans the whole run, not the publication alone: policy
+            # resolution, report evaluation, and the currency check are inside
+            # the same block, and each reaches an injected seam that declares no
+            # error type. So the message names the outcome the caller gets --
+            # no published proposal set -- and not the phase that failed; a
+            # policy resolver that raises is reported here too, before any
+            # publication was attempted. What the message does rule out is the
+            # one thing above it: the domain parsers name their malformed-input
+            # failures, those are matched already, and a fault that reached here
+            # is not a valid-input problem and must not be reported as one.
+            # Separating the phases would move caller-visible error identities
+            # that no proven misclassification justifies moving.
             raise ProposalSetError("proposal publication failed") from error
 
 
@@ -115,6 +127,10 @@ class GetProposalSet:
         except ProposalSetError:
             raise
         except Exception as error:
+            # One untyped repository read feeding one domain parser: a stored
+            # document that will not reopen and a store that would not produce
+            # it are the same outcome to a caller, and neither is separable
+            # from the other without an error type the seam does not declare.
             raise ProposalSetError("proposal is unavailable") from error
 
 

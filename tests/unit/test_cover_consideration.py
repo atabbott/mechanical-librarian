@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 import unittest
+from typing import cast
+from unittest.mock import patch
 
+from mechanical_librarian.application import cover_observation
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationError,
     CoverConsiderationService,
+    ReviewRunner,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.review_web import _needs_attention
@@ -233,6 +237,55 @@ class CoverConsiderationTests(unittest.TestCase):
                 str(value["consideration_id"]),
                 str(candidate["reference"]),
             )
+
+
+    def test_local_projection_fault_is_not_recorded_as_reviewer_failure(self) -> None:
+        """Only the contained process can produce reviewer failure evidence.
+
+        The handler wrapped all of `observe_cover_packet` -- the packet binding,
+        the schema construction, the envelope parse, and the result validation
+        -- not just the reviewer dispatch. A fault in this layer's own
+        projection was therefore recorded as `reviewer_status="failed"` with
+        reviewer failure evidence, and the workflow continued as though the
+        contained process had failed. Everything before the dispatch is ours,
+        so a failure there surfaces instead (#698).
+        """
+        dispatches: list[object] = []
+
+        def reviewer(*args: object) -> str:
+            dispatches.append(args)
+            raise RuntimeError("contained reviewer exited")
+
+        service = CoverConsiderationService(
+            self.store,
+            read_preview=lambda artifact, _variant: self.payload_by_artifact[artifact],
+            read_preview_digest=lambda digest: self.payload_by_preview[digest],
+            clock=lambda: self.now,
+            reviewer_profile=b"profile",
+            reviewer=cast("ReviewRunner", reviewer),
+        )
+
+        # A failure of the contained process is still one reviewable outcome.
+        value = service.ensure(
+            "review_case_" + "2" * 64, self.report.to_json(), self.proposal
+        )
+        self.assertEqual(value["reviewer_status"], "failed")
+        self.assertEqual(len(dispatches), 1)
+
+        # A fault in the projection that runs before the reviewer is reached is
+        # not a reviewer outcome, and never reaches the reviewer at all.
+        fault = RuntimeError("cover request projection is broken")
+        with patch.object(
+            cover_observation, "admit_cover_review_request", side_effect=fault
+        ):
+            with self.assertRaises(RuntimeError) as surfaced:
+                service.ensure(
+                    "review_case_" + "3" * 64,
+                    self.report.to_json(),
+                    self.proposal,
+                )
+        self.assertIs(surfaced.exception, fault)
+        self.assertEqual(len(dispatches), 1)
 
 
 if __name__ == "__main__":

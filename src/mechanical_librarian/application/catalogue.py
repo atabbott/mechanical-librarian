@@ -135,6 +135,18 @@ def catalogue_fingerprint(configuration: ApplicationConfiguration) -> Fingerprin
     return Fingerprint.from_canonical_value(value, schema=SchemaVersion("catalogue-config-v1"))
 
 
+def _release_refresh(repository: CatalogueRepository, failure: BaseException) -> None:
+    """Release the held refresh lock without letting cleanup replace ``failure``."""
+    try:
+        repository.abort_refresh()
+    except Exception as error:
+        # ``CatalogueRepository`` declares no error type, so breadth is what
+        # guarantees the caller still sees the failure they asked about. The
+        # release failure is not discarded: it is noted on that failure, which
+        # the caller re-raises unchanged.
+        failure.add_note(f"refresh lock release failed: {error!r}")
+
+
 class RefreshCurrentCatalogue:
     """One deep refresh interface hiding bounded enumeration and publication."""
 
@@ -150,8 +162,17 @@ class RefreshCurrentCatalogue:
             for library in configuration.libraries:
                 entries.extend(self._reader.read_library(library.connection, library, 10_000 - len(entries)))
             return self._repository.publish(fingerprint, tuple(entries))
-        except Exception:
-            self._repository.abort_refresh()
+        except Exception as error:
+            # Cleanup only. The refresh lock is held across the reader and the
+            # publish, neither of which declares an error type, and any failure
+            # whatsoever must release it or no later refresh can start. The
+            # failure is re-raised exactly as it arrived, so this handler
+            # classifies nothing and hides nothing -- including when the release
+            # itself fails, which would otherwise replace the refresh failure
+            # the caller asked about with a lock fault. ``abort_refresh`` is
+            # equally undeclared, so its failure is noted on the original and
+            # the original is what propagates.
+            _release_refresh(self._repository, error)
             raise
 
     def refresh_library(
@@ -190,8 +211,11 @@ class RefreshCurrentCatalogue:
             return self._repository.publish(
                 fingerprint, retained + tuple(discovered)
             )
-        except Exception:
-            self._repository.abort_refresh()
+        except Exception as error:
+            # Same held refresh lock and the same cleanup-only contract as
+            # ``refresh``: release it on every failure, note a release that
+            # itself fails on the original, then re-raise unchanged.
+            _release_refresh(self._repository, error)
             raise
 
     def inspect(self, configuration: ApplicationConfiguration, *, exact: tuple[str, str, str, str] | None = None, facet: str | None = None, limit: int = 500) -> tuple[CatalogueEntry, ...]:

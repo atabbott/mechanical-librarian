@@ -68,6 +68,12 @@ class ForegroundBatchRun:
                 self._emit({"item": selection.item, "outcome": "stopped"})
                 return self._finish(completed, skipped, failed, True)
             except Exception:
+                # Every per-item outcome the batch can continue past is matched
+                # by type above, so a failure reaching here is one the batch
+                # cannot characterise. Stopping is the conservative reading: the
+                # run halts with the completed work recorded and the stop
+                # reported, rather than counting an unnamed fault as a skipped
+                # or failed item and continuing over the rest of the library.
                 self._emit({"item": selection.item, "outcome": "stopped"})
                 return self._finish(completed, skipped, failed, True)
             report_id, statuses = report

@@ -18,6 +18,7 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_QUALIFICATION_CANDIDATE_SHA256,
 )
@@ -863,6 +864,61 @@ class ContinuousGuardedApplicationTests(unittest.TestCase):
         )
         self.assertNotIn("report_documents", activity)
         self.assertTrue(all("report_id" not in event for event in activity["events"]))
+
+    def test_activity_refuses_every_stored_report_the_parser_cannot_read(self) -> None:
+        """Every unreadable stored report is `activity`, surrogates included.
+
+        `MetadataReport.from_json` does not funnel into one declared type: its
+        length guard encodes the document outside the block that converts
+        `UnicodeError` to `ReportValueError`, so a stored row holding an
+        unpaired surrogate escapes it as `UnicodeEncodeError`. Narrowing this
+        handler to `ReportValueError` let that reach the owner as an unhandled
+        codec fault instead of a refusal (#698).
+        """
+        decision = self._decisions(1)[0]
+
+        def repository_for(report_document: str) -> type[_PagedRepository]:
+            class Repository(_PagedRepository):
+                def field_effect_activity_data(self, limit):
+                    event = {
+                        "connection": "primary", "destination": "title",
+                        "failure": None, "library": "alpha", "occurred_at": 1,
+                        "origin": "human", "report_id": "report-1",
+                        "state": "verified", "work_id": "work",
+                    }
+                    return {
+                        "consented_destinations": [], "consented_libraries": [],
+                        "counts": {}, "events": [dict(event)],
+                        "paused": False,
+                        "report_documents": {"report-1": report_document},
+                        "suspensions": [],
+                    }
+
+                def field_effect_activity_page(self, **_query):
+                    data = self.field_effect_activity_data(50)
+                    return {
+                        "events": data["events"],
+                        "report_documents": data["report_documents"],
+                        "current_waiting": None, "page": 1, "page_count": 1,
+                        "page_size": 25, "total": 1,
+                    }
+
+            return Repository
+
+        # The surrogate row is the regression: it reaches the handler as
+        # `UnicodeEncodeError`, not as the parser's declared refusal.
+        with self.assertRaises(UnicodeEncodeError):
+            MetadataReport.from_json('{"a": "\ud800"}')
+
+        for report_document in ('{"a": "\ud800"}', "{}"):
+            service = ContinuousGuardedApplication(
+                repository_for(report_document)([decision]),
+                cast("dict[tuple[str, str], GuardedFieldApplication]", {("primary", "alpha"): _Planner()}),
+                {("primary", "alpha"): _AllowedCapability()}, _Authority(),
+                (("primary", "alpha"),), lambda: 1, lambda *_: None,
+            )
+            with self.assertRaisesRegex(GuardedApplicationError, "activity"):
+                service.activity()
 
     def test_successful_probe_preserves_unexpected_behavior_suspension(self) -> None:
         decision = self._decisions(1)[0]

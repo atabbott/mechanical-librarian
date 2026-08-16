@@ -331,6 +331,11 @@ class ContinuousGuardedApplication:
         try:
             progress = self._request_scan(*context)
         except Exception as error:
+            # ``_request_scan`` is an injected callable reaching the target
+            # through the preparation pipeline, so its raisable set belongs to
+            # whatever the composition root bound. A scan that was not
+            # requested cannot release the hold, and breadth is what keeps this
+            # fail-closed: the hold stays until a scan is demonstrably running.
             raise GuardedApplicationError("scan") from error
         scan_id = getattr(progress, "scan_id", None)
         requested_at = getattr(progress, "updated_at", None)
@@ -546,6 +551,13 @@ class ContinuousGuardedApplication:
                 try:
                     report = MetadataReport.from_json(report_document)
                 except Exception as error:
+                    # ``from_json`` does not funnel into one declared type. Its
+                    # length guard encodes the document *outside* the block that
+                    # converts ``UnicodeError`` to ``ReportValueError``, so an
+                    # unpaired surrogate in a stored row escapes as
+                    # ``UnicodeEncodeError``. Breadth is what keeps every
+                    # unreadable row one ``activity`` refusal instead of letting
+                    # a codec fault reach the owner as an unhandled error.
                     raise GuardedApplicationError("activity") from error
                 if report.report_id != report_id:
                     raise GuardedApplicationError("activity")
@@ -868,6 +880,10 @@ class ContinuousGuardedApplication:
             try:
                 progress = self._scan_progress(*release.context)
             except Exception as error:
+                # Same injected, untyped seam as the manual-return request. A
+                # progress reading that did not arrive proves nothing about the
+                # scan, so it must raise rather than let the pending return be
+                # released against an unobserved state.
                 raise GuardedApplicationError("scan") from error
             if (
                 getattr(progress, "scan_id", None) != release.scan_id

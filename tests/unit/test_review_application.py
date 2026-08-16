@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import threading
 import unittest
-from typing import get_protocol_members, get_type_hints
+from typing import cast, get_protocol_members, get_type_hints
 
 from mechanical_librarian.application.metadata_policy import (
     AutomaticSafetyControls,
@@ -17,6 +17,10 @@ from mechanical_librarian.application.review_application import (
     ReviewApplicationError,
     compose_review_application,
 )
+from mechanical_librarian.application.review_pipeline import (
+    ReviewPreparationSupervisor,
+)
+from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -107,6 +111,78 @@ class ReviewApplicationTests(unittest.TestCase):
         self.assertEqual(
             self.application.authenticate(tokens.session_token, browser_csrf),
             "owner",
+        )
+
+    def test_password_verifier_fault_is_not_reported_as_a_wrong_password(self) -> None:
+        """A verifier that raises has not decided the password is wrong.
+
+        The verifier's contract is a bool, so `False` is the wrong-password
+        answer and a raise is a fault in the hasher or its stored digest. That
+        raise was absorbed into `verified = False`, so a broken Argon2 hash, a
+        signature change, or an exhausted memory cost all reached the owner as
+        `invalid_credentials` and a 401 -- a fault presented as a rejection no
+        correct password could clear (#698).
+        """
+        application = compose_review_application(
+            state_owner=self.repository,
+            session_store=self.repository,
+            case_store=self.repository,
+            decision_store=self.repository,
+            library_store=self.repository,
+            policy_store=self.repository,
+            verify_password=lambda _: (_ for _ in ()).throw(
+                MemoryError("argon2 memory cost unavailable")
+            ),
+            clock=lambda: self.now,
+            session_lifetime_seconds=600,
+            graceful_shutdown_seconds=30,
+        )
+
+        with self.assertRaises(ReviewWebError) as raised:
+            application.login("correct horse")
+
+        self.assertEqual(raised.exception.code, "runtime")
+        self.assertIsInstance(raised.exception.__cause__, MemoryError)
+
+    def test_a_later_shutdown_failure_is_kept_on_the_one_that_propagates(self) -> None:
+        """A second lane that also failed to stop must stay visible.
+
+        `stop` attempts every step and then raises the first failure. Raising
+        it alone discarded every later one with its traceback, so an owner
+        shutting the server down saw one lane's failure and no sign that a
+        second background lane was also still running (#698).
+        """
+        class _FailingPreparation:
+            def begin_drain(self) -> None:
+                raise RuntimeError("drain lane did not stop")
+
+            def stop(self, deadline: float | None = None) -> None:
+                raise RuntimeError("preparation lane did not stop")
+
+        application = compose_review_application(
+            state_owner=self.repository,
+            session_store=self.repository,
+            case_store=self.repository,
+            decision_store=self.repository,
+            library_store=self.repository,
+            policy_store=self.repository,
+            verify_password=lambda value: value == "correct horse",
+            clock=lambda: self.now,
+            session_lifetime_seconds=600,
+            graceful_shutdown_seconds=30,
+            preparation=cast("ReviewPreparationSupervisor", _FailingPreparation()),
+        )
+
+        with self.assertRaises(RuntimeError) as raised:
+            application.stop()
+
+        self.assertEqual(str(raised.exception), "drain lane did not stop")
+        self.assertEqual(
+            getattr(raised.exception, "__notes__", []),
+            [
+                "further shutdown failure: "
+                "RuntimeError('preparation lane did not stop')"
+            ],
         )
 
     def test_policy_candidate_workflows_are_application_operations(self) -> None:

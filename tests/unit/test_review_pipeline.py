@@ -436,6 +436,45 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertTrue(pipeline.check_connection("primary"))
         self.assertEqual(pipeline.connection_conditions()[0].state, "recovered")
 
+    def test_unreadable_connection_conditions_reach_the_caller_as_pipeline_error(
+        self,
+    ) -> None:
+        """The condition read owes its caller this layer's error type.
+
+        The read was a bare `try/finally`, so the bound repository's own
+        `MetadataReportError` escaped untyped. Its caller is the recovery
+        runner's blocked-target callback on the supervisor's lane, and that
+        lane survives only a `ReviewPipelineError`: an unconverted fault ended
+        the lane thread outright, stopping recovery and ordinary preparation
+        with it (#698).
+        """
+        closed: list[bool] = []
+
+        class _UnreadableConditions:
+            def target_connection_conditions(self) -> tuple[object, ...]:
+                raise MetadataReportError("target connection condition is unavailable")
+
+            def close(self) -> None:
+                closed.append(True)
+
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: cast(
+                "ReviewPipelineRepository", _UnreadableConditions()
+            ),
+            libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+            discover=lambda *_: (_ for _ in ()).throw(AssertionError),
+            extract=lambda *_: (_ for _ in ()).throw(AssertionError),
+            providers=lambda *_: (), propose=lambda *_: "", admit=lambda *_: ("", None),
+            project=lambda *_: True, check_connection=lambda _: None, clock=lambda: 6,
+        )
+
+        with self.assertRaises(ReviewPipelineError) as raised:
+            pipeline.connection_conditions()
+
+        self.assertEqual(raised.exception.code, "persistence")
+        self.assertIsInstance(raised.exception.__cause__, MetadataReportError)
+        self.assertEqual(closed, [True])
+
     def test_checking_condition_allows_admission_replay_and_rejects_stale_finish_epoch(self) -> None:
         repository = open_repository(self.path)
         repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
