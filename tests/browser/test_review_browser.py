@@ -600,12 +600,12 @@ class ReviewBrowserQualificationTests(unittest.TestCase):
                         page.get_by_role("button", name="Choose proposed value", exact=False).count(),
                         0,
                     )
-                    page.get_by_role("button", name="series", exact=True).click()
+                    page.get_by_role("button", name="Series", exact=True).click()
                     page.get_by_role("button", name="Use dark mode").click()
                     page.get_by_role("button", name="Use light mode").wait_for()
                     page.get_by_role("button", name="Choose current value:", exact=False).first.click()
                     page.get_by_text("Decision recorded.", exact=False).wait_for()
-                    page.get_by_role("button", name="series", exact=True).click()
+                    page.get_by_role("button", name="Series", exact=True).click()
                     page.get_by_text("Human decision: keep current by owner. Recorded value:", exact=False).wait_for()
                     self.assertEqual(
                         page.get_by_role("button", name="Choose current value:", exact=False).count(),

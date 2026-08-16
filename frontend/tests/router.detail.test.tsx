@@ -210,7 +210,7 @@ describe('Detail route', () => {
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledWith('case-1', expect.objectContaining({ selectedValue: second })))
     expect(await screen.findByText('Decision recorded. Continuing with authors.')).toBeVisible()
     await waitFor(() => expect(router.state.location.search).toEqual({ field: 'authors', subview: 'review' }))
-    expect(await screen.findByRole('heading', { name: 'authors' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Authors' })).toBeVisible()
     expect(http.getCaseDetail).toHaveBeenCalledTimes(2)
   })
 
@@ -249,7 +249,7 @@ describe('Detail route', () => {
     expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
     expect(screen.getAllByLabelText('Reviewer facts').at(0)).toHaveTextContent('Available choices0')
-    await user.click(screen.getByRole('button', { name: 'series' }))
+    await user.click(screen.getByRole('button', { name: 'Series' }))
     expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
     expect(screen.getAllByLabelText('Reviewer facts').at(1)).toHaveTextContent('Available choices0')
   })
@@ -450,7 +450,7 @@ describe('Detail route', () => {
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
     expect(screen.getAllByLabelText('Reviewer facts').at(0)).toHaveTextContent('Available choices0')
 
-    await user.click(screen.getByRole('button', { name: 'authors' }))
+    await user.click(screen.getByRole('button', { name: 'Authors' }))
 
     expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
     expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
@@ -468,7 +468,7 @@ describe('Detail route', () => {
     expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
     expect(screen.getAllByLabelText('Reviewer facts').at(0)).toHaveTextContent('Available choices0')
-    await user.click(screen.getByRole('button', { name: 'authors' }))
+    await user.click(screen.getByRole('button', { name: 'Authors' }))
     expect(screen.getAllByLabelText('Reviewer facts').at(1)).toHaveTextContent('Available choices0')
 
     refreshAvailable = true
@@ -477,9 +477,9 @@ describe('Detail route', () => {
     await user.click(await screen.findByRole('link', { name: 'Open full review' }))
 
     expect(await screen.findByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'title' }))
+    await user.click(screen.getByRole('button', { name: 'Title' }))
     expect(screen.getByText('Human decision: keep current by owner. Recorded value: Old title.')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'authors' }))
+    await user.click(screen.getByRole('button', { name: 'Authors' }))
     expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Choose proposed value 1: New title' })).toBeVisible()
     expect(screen.getAllByLabelText('Reviewer facts').at(1)).toHaveTextContent('Available choices3')
@@ -526,14 +526,14 @@ describe('Detail route', () => {
     await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalledTimes(5))
     expect(screen.getByText(locked)).toHaveAttribute('role', 'alert')
     expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
-    await user.click(screen.getByRole('button', { name: 'authors' }))
+    await user.click(screen.getByRole('button', { name: 'Authors' }))
     expect(screen.queryByRole('button', { name: /Choose proposed value/ })).toBeNull()
 
     postLockRefreshAvailable = true
     await user.click(screen.getByRole('link', { name: 'Library' }))
     await user.click(await screen.findByRole('button', { name: 'A Book' }))
     await user.click(await screen.findByRole('link', { name: 'Open full review' }))
-    await user.click(await screen.findByRole('button', { name: 'authors' }))
+    await user.click(await screen.findByRole('button', { name: 'Authors' }))
     expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Choose proposed value 1: New title' })).toBeVisible()
     expect(screen.queryByText(locked)).toBeNull()

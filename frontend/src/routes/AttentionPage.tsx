@@ -3,14 +3,13 @@ import type { SyntheticEvent } from 'react'
 
 import type { AttentionItemView, AttentionView } from '../api/http'
 import { useRouteReadyFocus } from '../focus'
+import { fieldLabel, labelWords } from '../labels'
 import { attentionRoute } from '../router'
 
-const destinationLabel = (value: string) =>
-  value.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase())
 const reasonLabel = (item: AttentionItemView) =>
   item.classificationReason ?? 'The current evidence requires a human choice'
 const outcomePreview = (item: AttentionItemView) =>
-  `Inspect the current value and available ${destinationLabel(item.destination).toLowerCase()} choices${item.provenance.length ? ` · ${String(item.provenance.length)} evidence ${item.provenance.length === 1 ? 'record' : 'records'} available` : ''}.`
+  `Inspect the current value and available ${labelWords(item.destination)} choices${item.provenance.length ? ` · ${String(item.provenance.length)} evidence ${item.provenance.length === 1 ? 'record' : 'records'} available` : ''}.`
 const authors = (item: AttentionItemView) =>
   item.authors.length ? item.authors.join(', ') : 'Author details unavailable'
 const groupItems = (items: readonly AttentionItemView[]) => {
@@ -67,7 +66,7 @@ export default function AttentionPage({ data }: { data: AttentionView }) {
                 <header>
                   <div>
                     <p className="eyebrow">
-                      {work.library} · {destinationLabel(work.mediaKind)}
+                      {work.library} · {fieldLabel(work.mediaKind)}
                     </p>
                     <h2>{work.title}</h2>
                     <p>{authors(work)}</p>
@@ -86,7 +85,7 @@ export default function AttentionPage({ data }: { data: AttentionView }) {
                       search={{ field: item.destination, subview: 'review' }}
                     >
                       <span className="attention-field-name">
-                        <strong>{destinationLabel(item.destination)}</strong>
+                        <strong>{fieldLabel(item.destination)}</strong>
                         <small>Open exact field</small>
                       </span>
                       <span>

@@ -952,3 +952,82 @@ class ProviderRecoveryTests(unittest.TestCase):
             connection.close()
             with self.assertRaises(ProviderRecoveryStoreError):
                 SQLiteProviderRecoveryStore.open(path)
+
+
+class _CommitFailingConnection:
+    """Delegate to a real connection while refusing every ``COMMIT``.
+
+    The store's connection is the seam the transaction epilogue must cross, so
+    substituting it at construction keeps the failure forced from outside the
+    store rather than by replacing one of its own members.
+    """
+
+    def __init__(self, connection: sqlite3.Connection, *, fail_commit: bool) -> None:
+        self._connection = connection
+        self._fail_commit = fail_commit
+        self.statements: list[str] = []
+
+    @property
+    def in_transaction(self) -> bool:
+        return self._connection.in_transaction
+
+    def execute(
+        self, statement: str, parameters: tuple[object, ...] = ()
+    ) -> sqlite3.Cursor:
+        self.statements.append(statement)
+        if self._fail_commit and statement == "COMMIT":
+            raise sqlite3.OperationalError("disk I/O error")
+        return self._connection.execute(statement, parameters)
+
+    def close(self) -> None:
+        self._connection.close()
+
+
+class TransactionEpilogueTests(unittest.TestCase):
+    """Pin the shared commit/rollback epilogue the six write paths reuse."""
+
+    @staticmethod
+    def _store_over(
+        directory: str, *, generation: int, fail_commit: bool
+    ) -> tuple[SQLiteProviderRecoveryStore, _CommitFailingConnection]:
+        path = Path(directory) / "recovery.sqlite"
+        prepared = SQLiteProviderRecoveryStore.open(path)
+        prepared.record(
+            ProviderRecovery.failed(
+                connection="google", adapter="google_books", scope="books",
+                generation=generation, failure="transient", now=0, retry_after=1,
+            ),
+            occurred_at=0,
+        )
+        prepared.close()
+        connection = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
+        connection.execute("PRAGMA foreign_keys=ON")
+        proxy = _CommitFailingConnection(connection, fail_commit=fail_commit)
+        return SQLiteProviderRecoveryStore(cast(sqlite3.Connection, proxy)), proxy
+
+    def test_commit_failure_rolls_back_and_reports_persistence_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store, proxy = self._store_over(directory, generation=1, fail_commit=True)
+            with self.assertRaises(ProviderRecoveryStoreError) as raised:
+                store.reconcile_generation(generation=2, now=10)
+            self.assertEqual(
+                "provider recovery persistence is unavailable", str(raised.exception)
+            )
+            self.assertIsInstance(raised.exception.__cause__, sqlite3.OperationalError)
+            self.assertIn("ROLLBACK", proxy.statements)
+            self.assertFalse(proxy.in_transaction)
+            store.close()
+
+    def test_store_failure_rolls_back_and_keeps_its_own_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store, proxy = self._store_over(directory, generation=2, fail_commit=False)
+            with self.assertRaises(ProviderRecoveryStoreError) as raised:
+                store.reconcile_generation(generation=1, now=10)
+            self.assertEqual(
+                "provider recovery generation is stale", str(raised.exception)
+            )
+            self.assertIsNone(raised.exception.__cause__)
+            self.assertIn("ROLLBACK", proxy.statements)
+            self.assertNotIn("COMMIT", proxy.statements)
+            self.assertFalse(proxy.in_transaction)
+            store.close()

@@ -16,6 +16,7 @@ import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderAttemptRecord,
+    ProviderFailure,
     ProviderIncompleteCause,
     ProviderIncompleteCauseRecord,
     _DiscoveryRequestLedger,
@@ -279,7 +280,7 @@ class GoogleBooksMetadataProvider:
                 requested_family=family,
                 schema_rejections=lambda count: self._reject_schema_members(count),
             )
-        except _ProviderFailure as error:
+        except ProviderFailure as error:
             return self._result(lookup, error.status, references=references)
         except (
             EvidenceValueError,
@@ -363,12 +364,11 @@ class GoogleBooksMetadataProvider:
                     self._record_attempt(
                         started,
                         category="cancellation",
-                        retryable=False,
                         delay=None,
                         outcome="cancelled",
                     )
                 raise
-            except _ProviderFailure as error:
+            except ProviderFailure as error:
                 if self._attempt_count == attempts_before_dispatch:
                     raise
                 can_retry = (
@@ -390,7 +390,6 @@ class GoogleBooksMetadataProvider:
                     self._record_attempt(
                         started,
                         category=error.category,
-                        retryable=error.retryable,
                         delay=delay,
                         outcome=(
                             "exhausted"
@@ -405,7 +404,6 @@ class GoogleBooksMetadataProvider:
                     self._record_attempt(
                         started,
                         category="cancellation",
-                        retryable=False,
                         delay=delay,
                         outcome="cancelled",
                     )
@@ -414,15 +412,13 @@ class GoogleBooksMetadataProvider:
                     self._record_attempt(
                         started,
                         category=error.category,
-                        retryable=error.retryable,
                         delay=delay,
                         outcome="deadline_exhausted",
                     )
-                    raise _ProviderFailure(ProviderStatus.UNAVAILABLE) from None
+                    raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
                 self._record_attempt(
                     started,
                     category=error.category,
-                    retryable=error.retryable,
                     delay=delay,
                     outcome="retry",
                 )
@@ -430,12 +426,11 @@ class GoogleBooksMetadataProvider:
             self._record_attempt(
                 started,
                 category="none",
-                retryable=False,
                 delay=None,
                 outcome="response_received",
             )
             return value
-        raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+        raise ProviderFailure(ProviderStatus.UNAVAILABLE)
 
     def _request_once(
         self, query: str, *, deadline: float | None, is_retry: bool
@@ -483,7 +478,7 @@ class GoogleBooksMetadataProvider:
                     in {"", "identity"}
                 )
                 if response.is_stream_consumed and not identity_encoding:
-                    raise _ProviderFailure(ProviderStatus.MALFORMED)
+                    raise ProviderFailure(ProviderStatus.MALFORMED)
                 payload = _body(
                     response,
                     min(self._maximum_bytes, self._remaining_response_bytes),
@@ -492,9 +487,9 @@ class GoogleBooksMetadataProvider:
                     consume=self._consume_response_bytes,
                 )
                 if not identity_encoding:
-                    raise _ProviderFailure(ProviderStatus.MALFORMED)
+                    raise ProviderFailure(ProviderStatus.MALFORMED)
                 if response.status_code == 503:
-                    raise _ProviderFailure(
+                    raise ProviderFailure(
                         ProviderStatus.UNAVAILABLE,
                         category="http_503",
                         retryable=True,
@@ -504,7 +499,7 @@ class GoogleBooksMetadataProvider:
                         ),
                     )
                 if response.status_code != 200:
-                    raise _ProviderFailure(
+                    raise ProviderFailure(
                         _error_status(response.status_code, payload)
                     )
                 if (
@@ -514,41 +509,41 @@ class GoogleBooksMetadataProvider:
                     .lower()
                     != "application/json"
                 ):
-                    raise _ProviderFailure(ProviderStatus.MALFORMED)
-        except _ProviderFailure as error:
+                    raise ProviderFailure(ProviderStatus.MALFORMED)
+        except ProviderFailure as error:
             if error.status is ProviderStatus.OVERSIZED:
                 self._remaining_response_bytes = 0
             raise
         except httpx.HTTPError as error:
             category = transient_transport_failure(error)
             if category is not None:
-                raise _ProviderFailure(
+                raise ProviderFailure(
                     ProviderStatus.UNAVAILABLE,
                     category=category,
                     retryable=True,
                 ) from None
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE) from None
+            raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
         except (OSError, ValueError):
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE) from None
+            raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
         try:
             value = _decode(payload)
         except (TypeError, ValueError, UnicodeError, RecursionError):
-            raise _ProviderFailure(ProviderStatus.MALFORMED) from None
+            raise ProviderFailure(ProviderStatus.MALFORMED) from None
         if type(value) is not dict:
-            raise _ProviderFailure(ProviderStatus.MALFORMED)
+            raise ProviderFailure(ProviderStatus.MALFORMED)
         return value
 
     def _consume_response_bytes(self, amount: int) -> None:
         self._remaining_response_bytes -= amount
         if self._remaining_response_bytes < 0:
             self._remaining_response_bytes = 0
-            raise _ProviderFailure(ProviderStatus.OVERSIZED)
+            raise ProviderFailure(ProviderStatus.OVERSIZED)
 
     def _incomplete(
         self, cause: ProviderIncompleteCause
-    ) -> _ProviderFailure:
+    ) -> ProviderFailure:
         self._incomplete_causes.append(ProviderIncompleteCauseRecord(cause))
-        return _ProviderFailure(ProviderStatus.INCOMPLETE)
+        return ProviderFailure(ProviderStatus.INCOMPLETE)
 
     def _retry_delay(self, retry_index: int) -> float:
         jitter = self._jitter()
@@ -572,7 +567,6 @@ class GoogleBooksMetadataProvider:
         started: float,
         *,
         category: str,
-        retryable: bool,
         delay: float | None,
         outcome: str,
     ) -> None:
@@ -1034,11 +1028,11 @@ def _body(
         try:
             declared = int(length)
             if declared < 0:
-                raise _ProviderFailure(ProviderStatus.MALFORMED)
+                raise ProviderFailure(ProviderStatus.MALFORMED)
             if declared > maximum:
-                raise _ProviderFailure(ProviderStatus.OVERSIZED)
+                raise ProviderFailure(ProviderStatus.OVERSIZED)
         except ValueError:
-            raise _ProviderFailure(ProviderStatus.MALFORMED) from None
+            raise ProviderFailure(ProviderStatus.MALFORMED) from None
     chunks: list[bytes] = []
     total = 0
     raw_chunks = (
@@ -1050,10 +1044,10 @@ def _body(
         consume(len(chunk))
         total += len(chunk)
         if total > maximum:
-            raise _ProviderFailure(ProviderStatus.OVERSIZED)
+            raise ProviderFailure(ProviderStatus.OVERSIZED)
         chunks.append(chunk)
         if deadline is not None and clock() >= deadline:
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+            raise ProviderFailure(ProviderStatus.UNAVAILABLE)
     return b"".join(chunks)
 
 
@@ -1106,22 +1100,6 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 def _reject_number(_: str) -> float:
     raise ValueError("provider number is invalid")
-
-
-class _ProviderFailure(Exception):
-    def __init__(
-        self,
-        status: ProviderStatus,
-        *,
-        category: str = "provider_failure",
-        retryable: bool = False,
-        retry_after: float | None = None,
-    ) -> None:
-        super().__init__(status.value)
-        self.status = status
-        self.category = category
-        self.retryable = retryable
-        self.retry_after = retry_after
 
 
 __all__ = ["GOOGLE_BOOKS_URL", "GoogleBooksMetadataProvider"]

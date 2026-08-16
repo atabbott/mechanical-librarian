@@ -270,7 +270,7 @@ describe('Activity route', () => {
 
     expect(await screen.findByRole('heading', { name: 'Recovery needs attention' })).toBeVisible()
     await openActivityAuthority(user)
-    expect(screen.getAllByText(/Unexpected Effect Behavior/)).toHaveLength(2)
+    expect(screen.getAllByText(/Unexpected effect behavior/)).toHaveLength(2)
     expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
     expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
   })
