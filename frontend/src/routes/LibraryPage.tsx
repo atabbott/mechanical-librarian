@@ -12,6 +12,7 @@ import type {
   LibraryWorkView,
 } from '../api/http'
 import { useRouteReadyFocus } from '../focus'
+import { fieldLabel, labelWords, opaqueSource } from '../labels'
 import { detailQuery, libraryRoute, PreparationNotice, useReviewContext } from '../router'
 import { actionable, useReviewDecisionController } from '../reviewDecisionController'
 import { automaticChoiceSelected } from '../reviewAutomaticSelection'
@@ -19,8 +20,6 @@ import { ownerChoiceCount } from '../reviewChoiceCounts'
 
 type ReviewField = CaseDetailView['fields'][number]
 
-const friendly = (value: string) =>
-  value.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase())
 const authorLine = (work: LibraryWorkView) =>
   work.authors.length ? work.authors.join(', ') : 'Author details unavailable'
 const providerOutcomeSummary = (work: LibraryWorkView) =>
@@ -40,7 +39,6 @@ const requestKey = () =>
   typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `decision-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
-const opaqueSource = /^(?:local|evidence|provider)_[0-9a-f]+$/iu
 const bounded = (value: string, fallback: string) =>
   opaqueSource.test(value) ? fallback : value.length > 160 ? `${value.slice(0, 157)}…` : value
 const decisionValue = (field: ReviewField) => {
@@ -61,12 +59,12 @@ const fieldReason = (field: ReviewField) =>
   bounded(
     field.classificationReason ||
       (field.humanDecision
-        ? `${friendly(field.humanDecision.outcome)} recorded for this field.`
+        ? `${fieldLabel(field.humanDecision.outcome)} recorded for this field.`
         : field.automaticDecision
-          ? `${friendly(field.automaticDecision.outcome)} selected by deterministic policy.`
+          ? `${fieldLabel(field.automaticDecision.outcome)} selected by deterministic policy.`
           : actionable(field)
-            ? `${friendly(field.disposition)} requires an owner comparison of the retained values.`
-            : `${friendly(field.disposition)} disposition; no human action is available.`),
+            ? `${fieldLabel(field.disposition)} requires an owner comparison of the retained values.`
+            : `${fieldLabel(field.disposition)} disposition; no human action is available.`),
     'Retained reviewer notice',
   )
 const effectSummary = (field: ReviewField) =>
@@ -84,7 +82,7 @@ const effectSummary = (field: ReviewField) =>
         }
       : {
           state: 'Guarded from external update',
-          detail: `${friendly(field.effectCapability)} currently prevents an external update.`,
+          detail: `${fieldLabel(field.effectCapability)} currently prevents an external update.`,
         }
 const completionOutcome = (field: ReviewField) =>
   field.humanDecision?.outcome === 'reject'
@@ -175,7 +173,7 @@ function ChoiceEvidencePanel({
         <aside>
           <strong>Limitation</strong>
           {context.limitations.map((limitation) => (
-            <p key={limitation}>{friendly(limitation)}</p>
+            <p key={limitation}>{fieldLabel(limitation)}</p>
           ))}
         </aside>
       ) : null}
@@ -267,7 +265,7 @@ function MetadataChoice({
             <aside>
               <strong>Limitation</strong>
               {limitations.map((limitation) => (
-                <p key={limitation}>{friendly(limitation)}</p>
+                <p key={limitation}>{fieldLabel(limitation)}</p>
               ))}
             </aside>
           ) : null}
@@ -387,12 +385,12 @@ function LibraryCoverChoicesContent({
             !['plausible_match', 'verified_work_match', 'verified_manifestation_match'].includes(
               candidate.identity.outcome,
             )
-          ? `${friendly(candidate.identity.outcome)}${
+          ? `${fieldLabel(candidate.identity.outcome)}${
               Array.isArray(candidate.identity.reasons)
                 ? ` · ${candidate.identity.reasons
                     .filter((reason): reason is string => typeof reason === 'string')
                     .slice(0, 2)
-                    .map(friendly)
+                    .map(fieldLabel)
                     .join(', ')}`
                 : ''
             }`
@@ -400,9 +398,9 @@ function LibraryCoverChoicesContent({
             ? 'Visual observation unavailable'
             : policyStatus !== null && !acceptableReferences.includes(candidate.reference)
               ? policyReasons.length
-                ? policyReasons.map(friendly).join(', ')
-                : friendly(policyStatus)
-              : friendly(candidate.state)
+                ? policyReasons.map(fieldLabel).join(', ')
+                : fieldLabel(policyStatus)
+              : fieldLabel(candidate.state)
   const card = (candidate: (typeof candidates)[number], index: number) => {
     const alternative = candidates.slice(0, index + 1).filter((item) => !item.incumbent).length
     const source = `/api/v1/review-cases/${encodeURIComponent(reviewCaseId)}/cover-considerations/${encodeURIComponent(consideration.id)}/images/${encodeURIComponent(candidate.reference)}`
@@ -448,10 +446,10 @@ function LibraryCoverChoicesContent({
               {label}
               {context?.recommendation === 'recommended' ? ' · Recommended' : ''}
             </small>
-            <strong>{friendly(candidate.state)}</strong>
+            <strong>{fieldLabel(candidate.state)}</strong>
             <em>
               {context?.rationale ??
-                `${String(candidate.width)} × ${String(candidate.height)} · ${candidate.sourceKinds.map(friendly).join(', ')}`}
+                `${String(candidate.width)} × ${String(candidate.height)} · ${candidate.sourceKinds.map(fieldLabel).join(', ')}`}
             </em>
             <span className="choice-recommendation">
               {context?.recommendation === 'recommended'
@@ -607,7 +605,7 @@ function LibraryCoverChoicesContent({
           {consideration.omissions.map((omission, index) => (
             <p key={String(index)}>
               {typeof omission.reason === 'string'
-                ? friendly(omission.reason)
+                ? fieldLabel(omission.reason)
                 : 'Unavailable source retained in history'}
             </p>
           ))}
@@ -967,7 +965,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 preload="intent"
                 activeProps={{ 'aria-current': 'page' }}
               >
-                {friendly(lens === 'no_attention_needed' ? 'No attention needed' : lens)}
+                {fieldLabel(lens === 'no_attention_needed' ? 'No attention needed' : lens)}
               </Link>
             ))}
           </nav>
@@ -1022,7 +1020,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       </h3>
                       <p>{authorLine(work)}</p>
                       <p>
-                        {work.library} · {friendly(work.mediaKind)}
+                        {work.library} · {fieldLabel(work.mediaKind)}
                       </p>
                       <div className="library-work-status">
                         <span
@@ -1043,8 +1041,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           {work.preparation ? (
                             <p>
                               <strong>
-                                {friendly(work.preparation.status)} at{' '}
-                                {friendly(work.preparation.stage)}
+                                {fieldLabel(work.preparation.status)} at{' '}
+                                {fieldLabel(work.preparation.stage)}
                               </strong>{' '}
                               · {work.preparation.reason} {work.preparation.recovery}
                             </p>
@@ -1054,8 +1052,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                               <li
                                 key={`${outcome.provider}:${outcome.laneKind}:${outcome.status}:${String(index)}`}
                               >
-                                <strong>{outcome.provider}</strong> · {friendly(outcome.laneKind)} ·{' '}
-                                {friendly(outcome.status)} · {String(outcome.providerRequests)}{' '}
+                                <strong>{outcome.provider}</strong> · {fieldLabel(outcome.laneKind)}{' '}
+                                · {fieldLabel(outcome.status)} · {String(outcome.providerRequests)}{' '}
                                 bounded provider request{outcome.providerRequests === 1 ? '' : 's'}.{' '}
                                 {outcome.reason}
                               </li>
@@ -1155,8 +1153,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                     {displayedIdentity.authors.length
                       ? displayedIdentity.authors.join(', ')
                       : 'Author details unavailable'}{' '}
-                    · {displayedIdentity.library} ·{' '}
-                    {friendly(displayedIdentity.mediaKind).toLowerCase()}
+                    · {displayedIdentity.library} · {labelWords(displayedIdentity.mediaKind)}
                   </p>
                 </div>
                 <dl className="selected-work-status">
@@ -1200,7 +1197,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       }}
                     >
                       <small>{String(position)}</small>
-                      <strong>{friendly(field.destination)}</strong>
+                      <strong>{fieldLabel(field.destination)}</strong>
                       <span
                         aria-label={
                           actionable(field)
@@ -1245,7 +1242,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           }}
                         >
                           <small>
-                            {friendly(field.destination)} · {completionOutcome(field)}
+                            {fieldLabel(field.destination)} · {completionOutcome(field)}
                           </small>
                           <strong>{decisionValue(field)}</strong>
                         </button>
@@ -1297,7 +1294,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   ) : null}
                   <header>
                     <div>
-                      <h2>{friendly(selected.destination)}</h2>
+                      <h2>{fieldLabel(selected.destination)}</h2>
                       <p>{fieldReason(selected)}</p>
                     </div>
                     <dl>
@@ -1344,7 +1341,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                     ) : (
                       <section
                         className="direct-choice protected-choice"
-                        aria-label={`Choose a ${friendly(selected.destination)} value`}
+                        aria-label={`Choose a ${labelWords(selected.destination)} value`}
                       >
                         <div
                           className={`direct-choice-grid${selected.preservationOnly ? ' preservation-only' : ''}`}
@@ -1430,7 +1427,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   {comparisonNotices(selected).length ? (
                     <aside className="comparison-notice" aria-label="Comparison condition">
                       {comparisonNotices(selected).map((notice) => (
-                        <p key={notice}>{friendly(notice)}</p>
+                        <p key={notice}>{fieldLabel(notice)}</p>
                       ))}
                     </aside>
                   ) : null}
@@ -1486,7 +1483,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           ✓
                         </span>
                         <div>
-                          <strong>{friendly(field.destination)}</strong>
+                          <strong>{fieldLabel(field.destination)}</strong>
                           <small>
                             {fieldState(field)} · {decisionValue(field)}
                           </small>
@@ -1593,10 +1590,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           : 'Author details unavailable'}
                       </small>
                       <small>
-                        {item.library} · {friendly(item.mediaKind)}
+                        {item.library} · {fieldLabel(item.mediaKind)}
                       </small>
                       <b>
-                        {friendly(item.destination)} ·{' '}
+                        {fieldLabel(item.destination)} ·{' '}
                         {item.classificationReason ?? 'Needs your decision'}
                       </b>
                     </span>

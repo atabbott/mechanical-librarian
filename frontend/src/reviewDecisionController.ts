@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { AmbiguousMutationError, ApiError } from './api/http'
 import type { CaseDetailView, DecisionCommand } from './api/http'
+import { labelWords } from './labels'
 import { detailQuery, useReviewContext } from './router'
 
 export const actionable = (field: CaseDetailView['fields'][number]) => field.needsAttention
@@ -150,7 +151,7 @@ export const useReviewDecisionController = ({
           current.caseId === reviewCaseId
             ? {
                 ...current,
-                text: `Decision recorded. Continuing with ${next.destination.replaceAll('_', ' ')}.`,
+                text: `Decision recorded. Continuing with ${labelWords(next.destination)}.`,
               }
             : current,
         )
@@ -232,7 +233,7 @@ export const useReviewDecisionController = ({
   const currentPending = currentProgress?.command ?? null
   const retry = () => {
     if (!currentPending || reconciliation.data !== null || decision.isPending) return
-    announce(reviewCaseId, `Retrying ${currentPending.outcome.replaceAll('_', ' ')}…`)
+    announce(reviewCaseId, `Retrying ${labelWords(currentPending.outcome)}…`)
     setProgress((current) =>
       current?.caseId === reviewCaseId ? { ...current, phase: 'recording' } : current,
     )
@@ -256,7 +257,7 @@ export const useReviewDecisionController = ({
     submit: (command: DecisionCommand) => {
       order.current = fields.map((field) => field.destination)
       setProgress({ caseId: reviewCaseId, command, phase: 'recording' })
-      announce(reviewCaseId, `Recording ${command.outcome.replaceAll('_', ' ')}…`)
+      announce(reviewCaseId, `Recording ${labelWords(command.outcome)}…`)
       decision.mutate(command)
     },
   }

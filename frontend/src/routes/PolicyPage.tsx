@@ -17,6 +17,7 @@ import type {
   ShadowPostureView,
 } from '../api/http'
 import { Dropdown } from '../components/Dropdown'
+import { fieldLabel } from '../labels'
 import { policyRoute, useReviewContext } from '../router'
 import type { PolicyCritical } from '../router'
 
@@ -405,7 +406,7 @@ const chapters: readonly { key: PolicySection; label: string; description: strin
 ]
 
 const readableCategory = (key: string) =>
-  fields.find((field) => field.key === key)?.label ?? key.replaceAll('_', ' ')
+  fields.find((field) => field.key === key)?.label ?? fieldLabel(key)
 const previewValue = (value: unknown) => {
   if (value === null || value === undefined || value === '') return 'empty'
   if (typeof value === 'string') return value
