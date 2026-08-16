@@ -34,9 +34,17 @@ def normalize_ebook_location(
     format_value = source.get("ebookFormat")
     if type(format_value) is not str:
         extension = metadata.get("ext")
-        format_value = extension[1:] if type(extension) is str and extension.startswith(".") else ""
+        format_value = (
+            extension[1:]
+            if type(extension) is str and extension.startswith(".")
+            else ""
+        )
     format_value = format_value.lower()
-    if not 1 <= len(format_value) <= 16 or not format_value.isascii() or not format_value.isalnum():
+    if (
+        not 1 <= len(format_value) <= 16
+        or not format_value.isascii()
+        or not format_value.isalnum()
+    ):
         raise ValueError("ebook file mapping is invalid")
     item_relative, item_is_file = _item_coordinates(item, service_path)
 
@@ -53,14 +61,14 @@ def normalize_ebook_location(
     if not has_relative:
         if from_path is None:
             raise ValueError("ebook file mapping is invalid")
-        relative = _file_relative_from_absolute(
-            item_relative, item_is_file, from_path
-        )
+        relative = _file_relative_from_absolute(item_relative, item_is_file, from_path)
     elif not is_safe_relative_path(relative):
         raise ValueError("ebook file mapping is invalid")
     elif from_path is not None:
         # has_relative is true on this branch, so `relative` is a non-empty str.
-        canonical = _canonical_relative(item_relative, item_is_file, cast(str, relative))
+        canonical = _canonical_relative(
+            item_relative, item_is_file, cast(str, relative)
+        )
         if from_path != canonical:
             raise ValueError("ebook file mapping is invalid")
         relative = canonical
@@ -71,7 +79,12 @@ def normalize_ebook_location(
         raise ValueError("ebook file mapping is invalid")
     size = metadata.get("size")
     inode = source.get("ino", metadata.get("ino"))
-    if type(size) is not int or size < 0 or type(inode) is not str or not 1 <= len(inode) <= 256:
+    if (
+        type(size) is not int
+        or size < 0
+        or type(inode) is not str
+        or not 1 <= len(inode) <= 256
+    ):
         raise ValueError("ebook file identity is invalid")
     identity = hashlib.sha256(
         canonical_json(

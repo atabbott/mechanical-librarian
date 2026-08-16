@@ -1,4 +1,5 @@
 """Synthetic installed-surface lifecycle proof for review admission storage."""
+
 import json
 import sys
 import tempfile
@@ -70,7 +71,9 @@ def test_absent_restart_replay_successor_and_retirement():
         admitted = json.loads(repository.admit_review_case(proposal))
         case_id = admitted["review_case_id"]
         assert "admitted" == admitted["status"]
-        assert "replayed" == json.loads(repository.admit_review_case(proposal))["status"]
+        assert (
+            "replayed" == json.loads(repository.admit_review_case(proposal))["status"]
+        )
         repository.close()
         repository = open_repository(database, create=False)
         assert json.loads(repository.get_review_case(case_id))["current"]
@@ -87,7 +90,9 @@ def test_absent_restart_replay_successor_and_retirement():
         repository.publish_proposal(retired)
         assert "retired" == json.loads(repository.admit_review_case(retired))["status"]
         assert not (json.loads(repository.get_review_case(later_case))["current"])
-        assert (2,) == repository._connection.execute("SELECT COUNT(*) FROM review_cases").fetchone()
+        assert (2,) == repository._connection.execute(
+            "SELECT COUNT(*) FROM review_cases"
+        ).fetchone()
         repository.close()
 
 
@@ -101,6 +106,7 @@ def test_concurrent_identical_admission_converges():
         repository.publish_proposal(proposal)
         repository.close()
         barrier, outcomes = threading.Barrier(2), []
+
         def admit():
             if sys.platform.startswith("linux"):
                 barrier.wait()

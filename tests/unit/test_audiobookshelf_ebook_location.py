@@ -20,7 +20,15 @@ def _library() -> LibraryConfiguration:
     return LibraryConfiguration("books", "primary", "library-1", "book", "books", ())
 
 
-def _payload(*, relative: str | None = "book.epub", path: str | None = "/media/Author/Book/book.epub", item_relative: object = "Author/Book", item_path: str | None = "/media/Author/Book", is_file: bool = False, size: int = 7) -> dict[str, object]:
+def _payload(
+    *,
+    relative: str | None = "book.epub",
+    path: str | None = "/media/Author/Book/book.epub",
+    item_relative: object = "Author/Book",
+    item_path: str | None = "/media/Author/Book",
+    is_file: bool = False,
+    size: int = 7,
+) -> dict[str, object]:
     metadata: dict[str, object] = {"size": size}
     if relative is not None:
         metadata["relPath"] = relative

@@ -37,9 +37,7 @@ from mechanical_librarian.application.metadata_report import MetadataReportError
 class SQLiteReviewSessionRepository(ConnectionScoped):
     """Admit, authenticate, rotate and revoke the review surface's sessions."""
 
-    def begin_login(
-        self, now: int, window_seconds: int, maximum_failures: int
-    ) -> bool:
+    def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool:
         transaction = self._transaction("begin_login")
         try:
             transaction.begin()
@@ -130,11 +128,7 @@ class SQLiteReviewSessionRepository(ConnectionScoped):
             if row is None:
                 transaction.rollback()
                 return "unauthorized"
-            if (
-                len(row) != 2
-                or row[0] != "owner"
-                or type(row[1]) is not int
-            ):
+            if len(row) != 2 or row[0] != "owner" or type(row[1]) is not int:
                 raise MetadataReportError("review session is unavailable")
             transaction.commit()
             return "rotated"

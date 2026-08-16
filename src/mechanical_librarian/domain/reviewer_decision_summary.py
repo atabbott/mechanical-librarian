@@ -44,8 +44,7 @@ def validate_support_counts(value: object) -> None:
             "target_only_preservation",
         }
         or any(
-            type(item) is not int
-            or not 0 <= item <= MAX_DECISION_SUPPORT
+            type(item) is not int or not 0 <= item <= MAX_DECISION_SUPPORT
             for item in value.values()
         )
     ):
@@ -69,26 +68,15 @@ def _validate_creator_roles(
     references: set[str] = set()
     for key in ("included", "excluded"):
         facts = value[key]
-        if (
-            facts
-            != sorted(
-                facts,
-                key=lambda fact: (
-                    fact.get("reference", "")
-                    if type(fact) is dict
-                    else "",
-                    fact.get("role", "") if type(fact) is dict else "",
-                    fact.get("scope", "") if type(fact) is dict else "",
-                ),
-            )
-            or any(
-                facts[index - 1] == facts[index]
-                for index in range(1, len(facts))
-            )
-        ):
-            raise DecisionSummaryValueError(
-                "decision-summary roles are invalid"
-            )
+        if facts != sorted(
+            facts,
+            key=lambda fact: (
+                fact.get("reference", "") if type(fact) is dict else "",
+                fact.get("role", "") if type(fact) is dict else "",
+                fact.get("scope", "") if type(fact) is dict else "",
+            ),
+        ) or any(facts[index - 1] == facts[index] for index in range(1, len(facts))):
+            raise DecisionSummaryValueError("decision-summary roles are invalid")
         for fact in facts:
             if (
                 type(fact) is not dict
@@ -99,9 +87,7 @@ def _validate_creator_roles(
                 or any(ord(character) < 0x20 for character in fact["role"])
                 or fact["scope"] not in {"edition", "work"}
             ):
-                raise DecisionSummaryValueError(
-                    "decision-summary roles are invalid"
-                )
+                raise DecisionSummaryValueError("decision-summary roles are invalid")
             references.add(fact["reference"])
     if destination != TargetDestination.AUTHORS.value and (
         value["included"] or value["excluded"]
@@ -160,9 +146,7 @@ def validate_candidate_decision_summary(
     }
     if destination not in publication_destinations:
         if publication is not None:
-            raise DecisionSummaryValueError(
-                "candidate decision summary is invalid"
-            )
+            raise DecisionSummaryValueError("candidate decision summary is invalid")
     elif (
         type(publication) is not dict
         or set(publication)
@@ -191,10 +175,8 @@ def validate_candidate_decision_summary(
 def validate_proposal_decision_summary(value: object) -> None:
     if (
         type(value) is not dict
-        or set(value)
-        != {"evidence_sufficiency", "target_only_preservation"}
-        or value["evidence_sufficiency"]
-        not in {"candidate", "keep_current", "manual"}
+        or set(value) != {"evidence_sufficiency", "target_only_preservation"}
+        or value["evidence_sufficiency"] not in {"candidate", "keep_current", "manual"}
         or type(value["target_only_preservation"]) is not int
         or value["target_only_preservation"] not in {0, 1}
     ):
@@ -207,9 +189,7 @@ def correlation_identity(value: str) -> str:
 
 def _known_correlations(report: MetadataReport) -> tuple[str, set[str]]:
     provider_correlations = {
-        correlation_identity(
-            "provider:" + (provider.authority or "unknown")
-        )
+        correlation_identity("provider:" + (provider.authority or "unknown"))
         for provider in report.providers
     }
     provider_correlations.update(
@@ -231,9 +211,9 @@ def compatibility_by_candidate(
         # a str; a candidate selection always carries a str alternative id.
         for selection in cast("list[dict[str, object]]", data["selections"]):
             if selection["kind"] == "candidate":
-                result.setdefault(
-                    cast("str", selection["alternative_id"]), set()
-                ).add(cast("str", data["combination_id"]))
+                result.setdefault(cast("str", selection["alternative_id"]), set()).add(
+                    cast("str", data["combination_id"])
+                )
     return {
         candidate_id: sorted(combination_ids)
         for candidate_id, combination_ids in result.items()
@@ -303,15 +283,12 @@ def _manifestation_binding(
         if provider_correlation not in correlations:
             continue
         for candidate in provider.candidates:
-            if (
-                references.intersection(
-                    _provider_candidate_references(candidate)
-                )
-                and _has_manifestation_anchor(
-                    report,
-                    provider.provider,
-                    candidate,
-                )
+            if references.intersection(
+                _provider_candidate_references(candidate)
+            ) and _has_manifestation_anchor(
+                report,
+                provider.provider,
+                candidate,
             ):
                 return "established"
     return "unresolved"
@@ -379,9 +356,9 @@ def _creator_roles(
         if provider_correlation not in correlations:
             continue
         for candidate in provider.candidates:
-            represented = {
-                claim.reference for claim in candidate.claims
-            }.intersection(references)
+            represented = {claim.reference for claim in candidate.claims}.intersection(
+                references
+            )
             if not represented:
                 continue
             for provider_claim in candidate.claims:
@@ -450,9 +427,7 @@ def _paired_publication_consistency(
     paired_years: set[str] = set()
     # ProposalResult.to_data always projects "alternatives" as a list of
     # ProposalAlternative.to_data dicts.
-    for paired_alternative in cast(
-        "list[dict[str, object]]", paired["alternatives"]
-    ):
+    for paired_alternative in cast("list[dict[str, object]]", paired["alternatives"]):
         if (
             paired_alternative["date_event"]
             != DateEvent.MANIFESTATION_PUBLICATION.value
@@ -518,9 +493,7 @@ def candidate_decision_summary(
         "creator_roles": creator_roles,
         "evidence_scope": alternative["scope"],
         "publication": publication,
-        "selected_manifestation_binding": (
-            _manifestation_binding(report, alternative)
-        ),
+        "selected_manifestation_binding": (_manifestation_binding(report, alternative)),
         "support": {
             "independent_provider_correlations": len(
                 correlations.intersection(provider_correlations)
@@ -543,9 +516,7 @@ def proposal_decision_summary(
         alternative["assessment"] == "preserves_target"
         # ProposalResult.to_data always projects "alternatives" as a list of
         # ProposalAlternative.to_data dicts.
-        for alternative in cast(
-            "list[dict[str, object]]", result["alternatives"]
-        )
+        for alternative in cast("list[dict[str, object]]", result["alternatives"])
     )
     if manual_required:
         sufficiency = "manual"
@@ -568,8 +539,7 @@ def proposal_decision_summary(
     else:
         sufficiency = "manual"
     target_only = int(
-        current.get("state") == "value"
-        and not has_evidence_backed_preservation
+        current.get("state") == "value" and not has_evidence_backed_preservation
     )
     return {
         "evidence_sufficiency": sufficiency,

@@ -71,15 +71,13 @@ def test_external_currentness_drift_is_typed_stale_without_admission() -> None:
         raise CurrentnessError("changed")
 
     result = json.loads(
-        AdmitReviewCase(repository, drift).run(
-            repository.proposal.proposal_set_id
-        )
+        AdmitReviewCase(repository, drift).run(repository.proposal.proposal_set_id)
     )
     assert {
-            "review_case_id": None,
-            "schema_version": "review-admission-v1",
-            "status": "stale",
-        } == result
+        "review_case_id": None,
+        "schema_version": "review-admission-v1",
+        "status": "stale",
+    } == result
     assert 0 == repository.admissions
 
 

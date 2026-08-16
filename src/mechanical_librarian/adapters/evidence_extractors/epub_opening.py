@@ -53,7 +53,16 @@ from mechanical_librarian.domain.identifiers import Fingerprint
 
 _CONTENT_MEDIA = {"application/xhtml+xml", "text/html"}
 _IMAGE_MEDIA = {"image/gif", "image/jpeg", "image/png", "image/svg+xml"}
-_ACTIVE = {"script", "style", "template", "object", "iframe", "frame", "embed", "canvas"}
+_ACTIVE = {
+    "script",
+    "style",
+    "template",
+    "object",
+    "iframe",
+    "frame",
+    "embed",
+    "canvas",
+}
 _EPUB_NS = "http://www.idpf.org/2007/ops"
 _XHTML_NS = "http://www.w3.org/1999/xhtml"
 _OPF_NS = "http://www.idpf.org/2007/opf"
@@ -64,22 +73,67 @@ _MATHML_NS = "http://www.w3.org/1998/Math/MathML"
 _XINCLUDE_NS = "http://www.w3.org/2001/XInclude"
 _XSLT_NS = "http://www.w3.org/1999/XSL/Transform"
 _HTML_VOID = {
-    "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
-    "meta", "param", "source", "track", "wbr",
+    "area",
+    "base",
+    "br",
+    "col",
+    "embed",
+    "hr",
+    "img",
+    "input",
+    "link",
+    "meta",
+    "param",
+    "source",
+    "track",
+    "wbr",
 }
 _HTML_IMPLIED_CLOSE = {
     "li": {"li"},
     "dt": {"dt", "dd"},
     "dd": {"dt", "dd"},
-    "p": {"address", "article", "aside", "blockquote", "div", "dl", "fieldset", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr", "menu", "nav", "ol", "p", "pre", "section", "table", "ul"},
+    "p": {
+        "address",
+        "article",
+        "aside",
+        "blockquote",
+        "div",
+        "dl",
+        "fieldset",
+        "footer",
+        "form",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "header",
+        "hr",
+        "menu",
+        "nav",
+        "ol",
+        "p",
+        "pre",
+        "section",
+        "table",
+        "ul",
+    },
     "tr": {"tr"},
     "th": {"th", "td"},
     "td": {"th", "td"},
 }
 _EXCLUDED_SEMANTICS = {"preview", "sample", "advertisement"}
 _OPENING_SEMANTICS = {
-    "titlepage", "halftitlepage", "copyright-page", "dedication", "contributors",
-    "imprint", "frontmatter", "seriespage", "other-credits",
+    "titlepage",
+    "halftitlepage",
+    "copyright-page",
+    "dedication",
+    "contributors",
+    "imprint",
+    "frontmatter",
+    "seriespage",
+    "other-credits",
 }
 _SOURCE_RANK = {
     "epub3_landmark": 0,
@@ -90,18 +144,47 @@ _ROLE_ORDER = {
     role: index
     for index, role in enumerate(
         (
-            "titlepage", "title_page", "halftitlepage", "copyright-page",
-            "copyright_page", "contributors", "other-credits", "imprint",
-            "seriespage", "dedication", "acknowledgements", "preface",
-            "foreword", "frontmatter", "other.ms_firstpage",
+            "titlepage",
+            "title_page",
+            "halftitlepage",
+            "copyright-page",
+            "copyright_page",
+            "contributors",
+            "other-credits",
+            "imprint",
+            "seriespage",
+            "dedication",
+            "acknowledgements",
+            "preface",
+            "foreword",
+            "frontmatter",
+            "other.ms_firstpage",
         )
     )
 }
 _BODY_SEMANTICS = {"bodymatter"}
-_CLAIM_SEMANTICS = {"title", "fulltitle", "subtitle", "publisher", "imprint", "contributor", "creator"}
+_CLAIM_SEMANTICS = {
+    "title",
+    "fulltitle",
+    "subtitle",
+    "publisher",
+    "imprint",
+    "contributor",
+    "creator",
+}
 _CLAIM_ELEMENTS = {
-    "h1", "h2", "h3", "h4", "h5", "h6", "p", "dt", "dd", "li",
-    "address", "figcaption",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "p",
+    "dt",
+    "dd",
+    "li",
+    "address",
+    "figcaption",
 }
 _BIBLIOGRAPHIC_INDICIA_LABEL = re.compile(
     r"^(?P<label>subtitle|publisher|imprint)\s*:\s*(?P<value>.+)$",
@@ -126,7 +209,9 @@ _NON_BIBLIOGRAPHIC_INDICIA = re.compile(
     re.I,
 )
 _SPACE = re.compile(r"\s+")
-_ISBN = re.compile(r"(?<![0-9Xx])(?:97[89][\s-]*)?[0-9][0-9Xx\s-]{8,20}[0-9Xx](?![0-9Xx])")
+_ISBN = re.compile(
+    r"(?<![0-9Xx])(?:97[89][\s-]*)?[0-9][0-9Xx\s-]{8,20}[0-9Xx](?![0-9Xx])"
+)
 _DATE_TEXT = (
     r"(?<![\w/:+\-])(?:18|19|20|21)\d{2}"
     r"(?:-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12]\d|3[01]))?)?"
@@ -265,24 +350,75 @@ _BIBLIOGRAPHIC_CREDITS = (
         ("translator", "illustrator"),
         EpubObservationApplicability.EDITION,
     ),
-    (re.compile(rf"\b(?:translated|translation)\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("translator",), EpubObservationApplicability.EDITION),
-    (re.compile(rf"\b(?:illustrated|illustrations)\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("illustrator",), EpubObservationApplicability.EDITION),
-    (re.compile(rf"\bedited\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("editor",), EpubObservationApplicability.WORK),
-    (re.compile(rf"\b(?:foreword|introduction)\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("foreword",), EpubObservationApplicability.WORK),
-    (re.compile(rf"\b(?:book|cover|interior)\s+design\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("designer",), EpubObservationApplicability.EDITION),
-    (re.compile(rf"\b(?:photographs?|photography)\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("photographer",), EpubObservationApplicability.EDITION),
-    (re.compile(rf"\b(?:maps?|cartography)\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("cartographer",), EpubObservationApplicability.EDITION),
-    (re.compile(rf"\badapted\s+by\s+{_CREDIT_NAME_TEXT}", re.I), ("adapter",), EpubObservationApplicability.WORK),
+    (
+        re.compile(rf"\b(?:translated|translation)\s+by\s+{_CREDIT_NAME_TEXT}", re.I),
+        ("translator",),
+        EpubObservationApplicability.EDITION,
+    ),
+    (
+        re.compile(
+            rf"\b(?:illustrated|illustrations)\s+by\s+{_CREDIT_NAME_TEXT}", re.I
+        ),
+        ("illustrator",),
+        EpubObservationApplicability.EDITION,
+    ),
+    (
+        re.compile(rf"\bedited\s+by\s+{_CREDIT_NAME_TEXT}", re.I),
+        ("editor",),
+        EpubObservationApplicability.WORK,
+    ),
+    (
+        re.compile(rf"\b(?:foreword|introduction)\s+by\s+{_CREDIT_NAME_TEXT}", re.I),
+        ("foreword",),
+        EpubObservationApplicability.WORK,
+    ),
+    (
+        re.compile(
+            rf"\b(?:book|cover|interior)\s+design\s+by\s+{_CREDIT_NAME_TEXT}", re.I
+        ),
+        ("designer",),
+        EpubObservationApplicability.EDITION,
+    ),
+    (
+        re.compile(rf"\b(?:photographs?|photography)\s+by\s+{_CREDIT_NAME_TEXT}", re.I),
+        ("photographer",),
+        EpubObservationApplicability.EDITION,
+    ),
+    (
+        re.compile(rf"\b(?:maps?|cartography)\s+by\s+{_CREDIT_NAME_TEXT}", re.I),
+        ("cartographer",),
+        EpubObservationApplicability.EDITION,
+    ),
+    (
+        re.compile(rf"\badapted\s+by\s+{_CREDIT_NAME_TEXT}", re.I),
+        ("adapter",),
+        EpubObservationApplicability.WORK,
+    ),
 )
 _CONTEXTUAL_CREDITS = (
-    (re.compile(rf"\b(?:epub|e-?book|digital)\s+conversion\s+by\s+{_CREDIT_NAME_TEXT}", re.I), "conversion"),
+    (
+        re.compile(
+            rf"\b(?:epub|e-?book|digital)\s+conversion\s+by\s+{_CREDIT_NAME_TEXT}", re.I
+        ),
+        "conversion",
+    ),
     (re.compile(rf"\bconverted\s+by\s+{_CREDIT_NAME_TEXT}", re.I), "conversion"),
     (re.compile(rf"\bscann(?:ed|ing)\s+by\s+{_CREDIT_NAME_TEXT}", re.I), "scanner"),
-    (re.compile(rf"\b(?:produced|created)\s+(?:using|with)\s+{_CREDIT_NAME_TEXT}", re.I), "software"),
-    (re.compile(rf"\b(?:distributed|retailed)\s+by\s+{_CREDIT_NAME_TEXT}", re.I), "retailer"),
+    (
+        re.compile(
+            rf"\b(?:produced|created)\s+(?:using|with)\s+{_CREDIT_NAME_TEXT}", re.I
+        ),
+        "software",
+    ),
+    (
+        re.compile(rf"\b(?:distributed|retailed)\s+by\s+{_CREDIT_NAME_TEXT}", re.I),
+        "retailer",
+    ),
     (re.compile(rf"\bworkflow\s*[:\-]\s*{_CREDIT_NAME_TEXT}", re.I), "workflow"),
 )
-_SERIES = re.compile(r"\b(?:book|volume)\s+([0-9]+(?:\.[0-9]+)?)\s+(?:of|in)\s+(?:the\s+)?(.+)", re.I)
+_SERIES = re.compile(
+    r"\b(?:book|volume)\s+([0-9]+(?:\.[0-9]+)?)\s+(?:of|in)\s+(?:the\s+)?(.+)", re.I
+)
 _EBOOK_LABEL = re.compile(
     r"(?<![\w])(?:e[\s-]?book|epub|electronic|digital)(?![\w])",
     re.I,
@@ -292,9 +428,7 @@ _PRINT_LABEL = re.compile(
     re.I,
 )
 _PAPERBACK_LABEL = re.compile(r"(?<![\w])paperback(?![\w])", re.I)
-_HARDCOVER_LABEL = re.compile(
-    r"(?<![\w])(?:hardback|hardcover)(?![\w])", re.I
-)
+_HARDCOVER_LABEL = re.compile(r"(?<![\w])(?:hardback|hardcover)(?![\w])", re.I)
 _NON_ISBN_IDENTIFIER = re.compile(
     r"(?i)(?P<scheme>urn:isbn|[a-z][a-z0-9+.-]{0,31}):\s*(?://)?[^\s|]+"
 )
@@ -458,7 +592,15 @@ class _SourceIO(io.RawIOBase):
     def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
         _check(self._request)
         length = self._request.source.length
-        position = offset if whence == io.SEEK_SET else self._position + offset if whence == io.SEEK_CUR else length + offset if whence == io.SEEK_END else -1
+        position = (
+            offset
+            if whence == io.SEEK_SET
+            else self._position + offset
+            if whence == io.SEEK_CUR
+            else length + offset
+            if whence == io.SEEK_END
+            else -1
+        )
         if not 0 <= position <= length:
             raise OSError("bounded EPUB source seek is invalid")
         self._position = position
@@ -491,9 +633,7 @@ def _is_html_namespace(namespace: str) -> bool:
 
 
 def _same_namespace_region(left: str, right: str) -> bool:
-    return left == right or (
-        _is_html_namespace(left) and _is_html_namespace(right)
-    )
+    return left == right or (_is_html_namespace(left) and _is_html_namespace(right))
 
 
 def _unknown_namespace(prefix: str, state: str) -> str:
@@ -600,9 +740,7 @@ def _recovery_attributes(
         if name not in invalid
     }
     fragment_ids = tuple(
-        mapped[name]
-        for name in ("id", f"{{{_XML_NS}}}id")
-        if mapped.get(name)
+        mapped[name] for name in ("id", f"{{{_XML_NS}}}id") if mapped.get(name)
     )
     return mapped, fragment_ids, frozenset(invalid)
 
@@ -665,7 +803,7 @@ def _preflight_declarations(data: bytes) -> None:
     while index < len(data):
         if raw_end is not None:
             closing_match = re.search(
-                re.escape(raw_end) + br"(?=[\s/>])", lower[index:]
+                re.escape(raw_end) + rb"(?=[\s/>])", lower[index:]
             )
             if closing_match is None:
                 return
@@ -675,11 +813,11 @@ def _preflight_declarations(data: bytes) -> None:
         if opening < 0:
             return
         if lower.startswith(b"<!--", opening):
-            abrupt = re.match(br"-?>", lower[opening + 4 :])
+            abrupt = re.match(rb"-?>", lower[opening + 4 :])
             if abrupt is not None:
                 index = opening + 4 + abrupt.end()
             else:
-                closing = re.search(br"--!?>", lower[opening + 4 :])
+                closing = re.search(rb"--!?>", lower[opening + 4 :])
                 if closing is None:
                     return
                 index = opening + 4 + closing.end()
@@ -699,15 +837,13 @@ def _preflight_declarations(data: bytes) -> None:
             continue
         end = _markup_end(data, opening + 1)
         declaration = lower[opening:end]
-        if re.match(br"<!entity(?:\s|%)", declaration):
+        if re.match(rb"<!entity(?:\s|%)", declaration):
             raise _UnsafeConstruct(
                 "unsupported entity declaration", nodes=0, text_characters=0
             )
-        doctype = re.match(br"<!doctype\s+([^\s\[>]+)", declaration)
+        doctype = re.match(rb"<!doctype\s+([^\s\[>]+)", declaration)
         if doctype is not None:
-            if doctype.group(1) != b"html" or _contains_unquoted(
-                declaration, ord("[")
-            ):
+            if doctype.group(1) != b"html" or _contains_unquoted(declaration, ord("[")):
                 raise _UnsafeConstruct(
                     "unsupported doctype declaration",
                     nodes=0,
@@ -715,13 +851,19 @@ def _preflight_declarations(data: bytes) -> None:
                 )
             index = end
             continue
-        tag = re.match(br"<\s*(/?)\s*([a-z][a-z0-9:-]*)", declaration)
-        if tag is not None and not tag.group(1) and tag.group(2) in {b"script", b"style"}:
+        tag = re.match(rb"<\s*(/?)\s*([a-z][a-z0-9:-]*)", declaration)
+        if (
+            tag is not None
+            and not tag.group(1)
+            and tag.group(2) in {b"script", b"style"}
+        ):
             raw_end = b"</" + tag.group(2)
         index = end
 
 
-def _project_strict(data: bytes, limits: EpubOpeningLimits, request: EpubPackageRequest) -> _Projection:
+def _project_strict(
+    data: bytes, limits: EpubOpeningLimits, request: EpubPackageRequest
+) -> _Projection:
     elements: list[_Element] = []
     stack: list[_Element] = []
     events: list[tuple[str, tuple[int, ...]]] = []
@@ -737,14 +879,19 @@ def _project_strict(data: bytes, limits: EpubOpeningLimits, request: EpubPackage
 
     def start(name: str, attributes: dict[str, str]) -> None:
         _check(request)
-        if len(elements) >= limits.nodes_per_resource or len(stack) + 1 > limits.document_depth:
+        if (
+            len(elements) >= limits.nodes_per_resource
+            or len(stack) + 1 > limits.document_depth
+        ):
             raise _ResourceRejected(
                 nodes=len(elements),
                 text_characters=_projected_text_usage(events),
             )
         mapped = {expanded(key): value for key, value in attributes.items()}
         expanded_name = expanded(name)
-        namespace = expanded_name[1:].partition("}")[0] if expanded_name.startswith("{") else ""
+        namespace = (
+            expanded_name[1:].partition("}")[0] if expanded_name.startswith("{") else ""
+        )
         local_name = _local(expanded_name)
         if namespace in {_XINCLUDE_NS, _XSLT_NS}:
             raise _UnsafeConstruct(
@@ -770,7 +917,9 @@ def _project_strict(data: bytes, limits: EpubOpeningLimits, request: EpubPackage
             )
         )
         element = _Element(
-            len(elements) + 1, local_name, mapped,
+            len(elements) + 1,
+            local_name,
+            mapped,
             _tokens(mapped) if _is_html_namespace(namespace) else set(),
             len(stack) + 1,
             active=parent_active or hidden or local_name in _ACTIVE,
@@ -831,8 +980,7 @@ class _RecoveryParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         _check(self.request)
         raw_attributes = [
-            (name.casefold(), "" if value is None else value)
-            for name, value in attrs
+            (name.casefold(), "" if value is None else value) for name, value in attrs
         ]
         namespaces, default_declared, duplicate_namespace = _recovery_namespaces(
             self.stack[-1].namespaces if self.stack else {"xml": _XML_NS},
@@ -870,26 +1018,26 @@ class _RecoveryParser(HTMLParser):
                     if self.stack[index].name == opened:
                         del self.stack[index:]
                         break
-        if len(self.elements) >= self.limits.nodes_per_resource or len(self.stack) + 1 > self.limits.document_depth:
+        if (
+            len(self.elements) >= self.limits.nodes_per_resource
+            or len(self.stack) + 1 > self.limits.document_depth
+        ):
             raise _ResourceRejected(
                 nodes=len(self.elements),
                 text_characters=_projected_text_usage(self.events),
             )
         parent_active = bool(self.stack and self.stack[-1].active)
-        invalid_hiding = bool(
-            invalid_attributes & {"aria-hidden", "hidden", "type"}
-        )
+        invalid_hiding = bool(invalid_attributes & {"aria-hidden", "hidden", "type"})
         hidden = (
             invalid_hiding
             or "hidden" in mapped
             or mapped.get("aria-hidden", "").casefold() == "true"
-            or (
-                local_name == "input"
-                and mapped.get("type", "").casefold() == "hidden"
-            )
+            or (local_name == "input" and mapped.get("type", "").casefold() == "hidden")
         )
         element = _Element(
-            len(self.elements) + 1, local_name, mapped,
+            len(self.elements) + 1,
+            local_name,
+            mapped,
             _tokens(mapped) if _is_html_namespace(namespace) else set(),
             len(self.stack) + 1,
             active=parent_active or hidden or local_name in _ACTIVE,
@@ -929,15 +1077,12 @@ class _RecoveryParser(HTMLParser):
         region = self.stack[-1].namespace if self.stack else ""
         for index in range(len(self.stack) - 1, -1, -1):
             element = self.stack[index]
-            matches = (
-                element.name == wanted
-                and (
-                    element.namespace == namespace
-                    or (
-                        not separator
-                        and _is_html_namespace(element.namespace)
-                        and _is_html_namespace(namespace)
-                    )
+            matches = element.name == wanted and (
+                element.namespace == namespace
+                or (
+                    not separator
+                    and _is_html_namespace(element.namespace)
+                    and _is_html_namespace(namespace)
                 )
             )
             if not _same_namespace_region(element.namespace, region):
@@ -980,12 +1125,9 @@ class _EncodingScanner(HTMLParser):
             else "unsupported-nonascii-encoding"
         )
 
-    def handle_starttag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         lowered = [
-            (name.casefold(), "" if value is None else value)
-            for name, value in attrs
+            (name.casefold(), "" if value is None else value) for name, value in attrs
         ]
         namespaces, default_declared, duplicate_namespace = _recovery_namespaces(
             self.stack[-1][2] if self.stack else {"xml": _XML_NS}, lowered
@@ -1051,18 +1193,14 @@ class _EncodingScanner(HTMLParser):
                     )
                     if parameter is not None:
                         self.declarations.append(
-                            parameter.group(1)
-                            .decode("ascii", "strict")
-                            .casefold()
+                            parameter.group(1).decode("ascii", "strict").casefold()
                         )
         if local_name not in _HTML_VOID or not _is_html_namespace(namespace):
             self.stack.append(
                 (local_name, namespace, namespaces, inert, ambiguous_default)
             )
 
-    def handle_startendtag(
-        self, tag: str, attrs: list[tuple[str, str | None]]
-    ) -> None:
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         size = len(self.stack)
         self.handle_starttag(tag, attrs)
         if len(self.stack) > size:
@@ -1082,15 +1220,12 @@ class _EncodingScanner(HTMLParser):
         region = self.stack[-1][1] if self.stack else ""
         for index in range(len(self.stack) - 1, -1, -1):
             element = self.stack[index]
-            matches = (
-                element[0] == local_name
-                and (
-                    element[1] == namespace
-                    or (
-                        not separator
-                        and _is_html_namespace(element[1])
-                        and _is_html_namespace(namespace)
-                    )
+            matches = element[0] == local_name and (
+                element[1] == namespace
+                or (
+                    not separator
+                    and _is_html_namespace(element[1])
+                    and _is_html_namespace(namespace)
                 )
             )
             if not _same_namespace_region(element[1], region):
@@ -1102,9 +1237,7 @@ class _EncodingScanner(HTMLParser):
                 return
 
 
-def _xml_declaration_encoding(
-    head: bytes, offset: int
-) -> tuple[tuple[str, ...], bool]:
+def _xml_declaration_encoding(head: bytes, offset: int) -> tuple[tuple[str, ...], bool]:
     declaration = head[offset:]
     if declaration[:5].lower() != b"<?xml":
         return (), False
@@ -1125,7 +1258,7 @@ def _xml_declaration_encoding(
                 quote = None
         elif value in {ord("'"), ord('"')}:
             quote = value
-        elif declaration[index:index + 2] == b"?>":
+        elif declaration[index : index + 2] == b"?>":
             closing = index
             break
         index += 1
@@ -1139,7 +1272,7 @@ def _xml_declaration_encoding(
             index += 1
         if index == len(body):
             break
-        name = re.match(br"[A-Za-z_:][A-Za-z0-9_.:-]*", body[index:])
+        name = re.match(rb"[A-Za-z_:][A-Za-z0-9_.:-]*", body[index:])
         if name is None:
             return (), True
         raw_name = name.group(0)
@@ -1162,9 +1295,7 @@ def _xml_declaration_encoding(
         index = end + 1
         if index < len(body) and body[index] not in b" \t\r\n":
             return (), True
-        attributes.append(
-            (raw_name.decode("ascii", "strict"), attribute_value)
-        )
+        attributes.append((raw_name.decode("ascii", "strict"), attribute_value))
 
     names = [name for name, _value in attributes]
     if not attributes or len(names) != len(set(names)):
@@ -1175,7 +1306,7 @@ def _xml_declaration_encoding(
     encodings: tuple[str, ...] = ()
     if position < len(attributes) and attributes[position][0] == "encoding":
         encoding = attributes[position][1]
-        if re.fullmatch(br"[A-Za-z][A-Za-z0-9._-]*", encoding) is None:
+        if re.fullmatch(rb"[A-Za-z][A-Za-z0-9._-]*", encoding) is None:
             return (), True
         encodings = (encoding.decode("ascii", "strict").casefold(),)
         position += 1
@@ -1223,14 +1354,10 @@ def _looks_wide_encoded(data: bytes) -> bool:
 def _recovery_codec(data: bytes) -> tuple[str, bool]:
     declarations: tuple[str, ...] | list[str]
     if _looks_wide_encoded(data):
-        raise _UnsupportedEncoding(
-            "unsupported encoding", nodes=0, text_characters=0
-        )
+        raise _UnsupportedEncoding("unsupported encoding", nodes=0, text_characters=0)
     declarations, invalid, namespace_invalid = _real_encoding_declarations(data)
     if invalid:
-        raise _UnsupportedEncoding(
-            "unsupported encoding", nodes=0, text_characters=0
-        )
+        raise _UnsupportedEncoding("unsupported encoding", nodes=0, text_characters=0)
     declarations = list(declarations)
     if data.startswith(b"\xef\xbb\xbf"):
         declarations.append("utf-8")
@@ -1238,15 +1365,15 @@ def _recovery_codec(data: bytes) -> tuple[str, bool]:
         return "utf-8-sig", namespace_invalid
     codecs = {_SUPPORTED_CODECS.get(value) for value in declarations}
     if None in codecs or len(codecs) != 1:
-        raise _UnsupportedEncoding(
-            "unsupported encoding", nodes=0, text_characters=0
-        )
+        raise _UnsupportedEncoding("unsupported encoding", nodes=0, text_characters=0)
     codec = codecs.pop()
     assert codec is not None
     return codec, namespace_invalid
 
 
-def _project_recovered(data: bytes, limits: EpubOpeningLimits, request: EpubPackageRequest) -> _Projection:
+def _project_recovered(
+    data: bytes, limits: EpubOpeningLimits, request: EpubPackageRequest
+) -> _Projection:
     codec, namespace_invalid = _recovery_codec(data)
     try:
         text = data.decode(codec, "strict")
@@ -1269,7 +1396,10 @@ def _project_recovered(data: bytes, limits: EpubOpeningLimits, request: EpubPack
             text_characters=_projected_text_usage(parser.events),
         ) from None
     return _finalize_projection(
-        OpeningParseMode.RECOVERED, parser.elements, parser.events, limits,
+        OpeningParseMode.RECOVERED,
+        parser.elements,
+        parser.events,
+        limits,
         ("recovered_markup",),
     )
 
@@ -1290,7 +1420,9 @@ def _finalize_projection(
         current = set(ordinals)
         for character in value:
             if character.isspace():
-                pending_space = current if pending_space is None else pending_space & current
+                pending_space = (
+                    current if pending_space is None else pending_space & current
+                )
                 continue
             if pending_space is not None and parts:
                 shared = pending_space & current & prior
@@ -1313,23 +1445,30 @@ def _finalize_projection(
             continue
         element.start = starts[element.ordinal]
         element.end = ends[element.ordinal]
-        element.exact_text = text[element.start:element.end].strip()
+        element.exact_text = text[element.start : element.end].strip()
         if element.exact_text:
-            leading = len(text[element.start:element.end]) - len(text[element.start:element.end].lstrip())
+            leading = len(text[element.start : element.end]) - len(
+                text[element.start : element.end].lstrip()
+            )
             element.start += leading
             element.end = element.start + len(element.exact_text)
     return _Projection(
-        mode, elements, text, len(elements),
-        max((element.depth for element in elements), default=0), warnings,
-        len(elements), len(text),
+        mode,
+        elements,
+        text,
+        len(elements),
+        max((element.depth for element in elements), default=0),
+        warnings,
+        len(elements),
+        len(text),
     )
 
 
-def _parse(data: bytes, media_type: str, limits: EpubOpeningLimits, request: EpubPackageRequest) -> _Projection:
+def _parse(
+    data: bytes, media_type: str, limits: EpubOpeningLimits, request: EpubPackageRequest
+) -> _Projection:
     if _looks_wide_encoded(data):
-        raise _UnsupportedEncoding(
-            "unsupported encoding", nodes=0, text_characters=0
-        )
+        raise _UnsupportedEncoding("unsupported encoding", nodes=0, text_characters=0)
     _preflight_declarations(data)
     if media_type == "application/xhtml+xml":
         try:
@@ -1343,8 +1482,7 @@ def _parse(data: bytes, media_type: str, limits: EpubOpeningLimits, request: Epu
                 raise _ResourceRejected(
                     nodes=strict_error.nodes + recovery_error.nodes,
                     text_characters=(
-                        strict_error.text_characters
-                        + recovery_error.text_characters
+                        strict_error.text_characters + recovery_error.text_characters
                     ),
                 ) from None
             except _UnsupportedEncoding as recovery_error:
@@ -1352,8 +1490,7 @@ def _parse(data: bytes, media_type: str, limits: EpubOpeningLimits, request: Epu
                     "unsupported encoding",
                     nodes=strict_error.nodes + recovery_error.nodes,
                     text_characters=(
-                        strict_error.text_characters
-                        + recovery_error.text_characters
+                        strict_error.text_characters + recovery_error.text_characters
                     ),
                 ) from None
             except _UnsafeConstruct as recovery_error:
@@ -1361,8 +1498,7 @@ def _parse(data: bytes, media_type: str, limits: EpubOpeningLimits, request: Epu
                     str(recovery_error),
                     nodes=strict_error.nodes + recovery_error.nodes,
                     text_characters=(
-                        strict_error.text_characters
-                        + recovery_error.text_characters
+                        strict_error.text_characters + recovery_error.text_characters
                     ),
                 ) from None
             except _MalformedMarkup as recovery_error:
@@ -1370,8 +1506,7 @@ def _parse(data: bytes, media_type: str, limits: EpubOpeningLimits, request: Epu
                     str(recovery_error),
                     nodes=strict_error.nodes + recovery_error.nodes,
                     text_characters=(
-                        strict_error.text_characters
-                        + recovery_error.text_characters
+                        strict_error.text_characters + recovery_error.text_characters
                     ),
                 ) from None
             projection.work_nodes += strict_error.nodes
@@ -1380,7 +1515,9 @@ def _parse(data: bytes, media_type: str, limits: EpubOpeningLimits, request: Epu
     return _project_recovered(data, limits, request)
 
 
-def _read_member(archive: zipfile.ZipFile, name: str, maximum: int, request: EpubPackageRequest) -> bytes:
+def _read_member(
+    archive: zipfile.ZipFile, name: str, maximum: int, request: EpubPackageRequest
+) -> bytes:
     try:
         info = archive.getinfo(name)
         if info.file_size > maximum:
@@ -1422,13 +1559,21 @@ def _safe_target(
     base_name: str, href: str, names: set[str]
 ) -> tuple[str, str | None] | None:
     raw = href.split("#", 1)[0]
-    if not raw or "?" in raw or "\\" in raw or raw.startswith("/") or ":" in raw.split("/", 1)[0]:
+    if (
+        not raw
+        or "?" in raw
+        or "\\" in raw
+        or raw.startswith("/")
+        or ":" in raw.split("/", 1)[0]
+    ):
         return None
     try:
         decoded = unquote(raw, errors="strict")
     except (UnicodeError, ValueError):
         return None
-    normalized = posixpath.normpath(posixpath.join(posixpath.dirname(base_name), decoded))
+    normalized = posixpath.normpath(
+        posixpath.join(posixpath.dirname(base_name), decoded)
+    )
     if normalized.startswith("../") or normalized == ".." or normalized not in names:
         return None
     try:
@@ -1438,17 +1583,37 @@ def _safe_target(
     return normalized, boundary
 
 
-def _manifest(package_report: EpubPackageReport) -> tuple[dict[str, tuple[str, str, tuple[str, ...]]], dict[str, str], set[str], str | None]:
+def _manifest(
+    package_report: EpubPackageReport,
+) -> tuple[
+    dict[str, tuple[str, str, tuple[str, ...]]], dict[str, str], set[str], str | None
+]:
     by_id: dict[str, tuple[str, str, tuple[str, ...]]] = {}
     spine: dict[str, str] = {}
     encrypted: set[str] = set()
     package_identity: str | None = None
     for declaration in package_report.declarations:
-        if declaration.kind is EpubPackageDeclarationKind.MANIFEST_ITEM and declaration.identifier and declaration.resource_identity and declaration.media_type:
-            by_id[declaration.identifier] = (declaration.resource_identity, declaration.media_type, declaration.properties)
-        elif declaration.kind is EpubPackageDeclarationKind.SPINE_ITEM and declaration.identifier and declaration.resource_identity:
+        if (
+            declaration.kind is EpubPackageDeclarationKind.MANIFEST_ITEM
+            and declaration.identifier
+            and declaration.resource_identity
+            and declaration.media_type
+        ):
+            by_id[declaration.identifier] = (
+                declaration.resource_identity,
+                declaration.media_type,
+                declaration.properties,
+            )
+        elif (
+            declaration.kind is EpubPackageDeclarationKind.SPINE_ITEM
+            and declaration.identifier
+            and declaration.resource_identity
+        ):
             spine[declaration.identifier] = declaration.resource_identity
-        elif declaration.kind is EpubPackageDeclarationKind.ENCRYPTION and declaration.resource_identity:
+        elif (
+            declaration.kind is EpubPackageDeclarationKind.ENCRYPTION
+            and declaration.resource_identity
+        ):
             encrypted.add(declaration.resource_identity)
         elif declaration.kind is EpubPackageDeclarationKind.PACKAGE:
             package_identity = declaration.resource_identity
@@ -1565,7 +1730,16 @@ def _raw_package_annotations(
     )
 
 
-def _navigation_targets(projection: _Projection, nav_name: str, names: set[str], identity_by_name: dict[str, str], manifest_by_identity: dict[str, tuple[str, tuple[str, ...]]], limits: EpubOpeningLimits) -> tuple[list[_Candidate], list[str], int, list[_RoleAssociation], list[_RoleAssociation]]:
+def _navigation_targets(
+    projection: _Projection,
+    nav_name: str,
+    names: set[str],
+    identity_by_name: dict[str, str],
+    manifest_by_identity: dict[str, tuple[str, tuple[str, ...]]],
+    limits: EpubOpeningLimits,
+) -> tuple[
+    list[_Candidate], list[str], int, list[_RoleAssociation], list[_RoleAssociation]
+]:
     targets: list[_Candidate] = []
     warnings: list[str] = []
     links = 0
@@ -1622,16 +1796,24 @@ def _navigation_targets(projection: _Projection, nav_name: str, names: set[str],
         if semantics & _BODY_SEMANTICS:
             body_targets.append(
                 _RoleAssociation(
-                    identity, "epub3_landmark", "bodymatter", target_fragment,
-                    ("epub3_landmark", "bodymatter"), element.ordinal,
+                    identity,
+                    "epub3_landmark",
+                    "bodymatter",
+                    target_fragment,
+                    ("epub3_landmark", "bodymatter"),
+                    element.ordinal,
                 )
             )
         if semantics & _EXCLUDED_SEMANTICS:
             for semantic in sorted(semantics & _EXCLUDED_SEMANTICS):
                 excluded_targets.append(
                     _RoleAssociation(
-                        identity, "epub3_landmark", semantic, target_fragment,
-                        ("epub3_landmark", semantic), element.ordinal,
+                        identity,
+                        "epub3_landmark",
+                        semantic,
+                        target_fragment,
+                        ("epub3_landmark", semantic),
+                        element.ordinal,
                     )
                 )
         for semantic in sorted(semantics):
@@ -1663,16 +1845,29 @@ def _navigation_targets(projection: _Projection, nav_name: str, names: set[str],
     return targets, warnings, links, body_targets, excluded_targets
 
 
-def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile, names_by_identity: dict[str, str], limits: EpubOpeningLimits, request: EpubPackageRequest) -> tuple[list[_Candidate], list[str], list[OpeningResourceResult], int, set[str], list[_RoleAssociation], list[_RoleAssociation], tuple[int, int, int, int, int, int]]:
+def _candidate_graph(
+    package_report: EpubPackageReport,
+    archive: zipfile.ZipFile,
+    names_by_identity: dict[str, str],
+    limits: EpubOpeningLimits,
+    request: EpubPackageRequest,
+) -> tuple[
+    list[_Candidate],
+    list[str],
+    list[OpeningResourceResult],
+    int,
+    set[str],
+    list[_RoleAssociation],
+    list[_RoleAssociation],
+    tuple[int, int, int, int, int, int],
+]:
     # `declared` names both the two-element manifest projection and the
     # three-element resolved spine declaration further down.
     declared: tuple[str, tuple[str, ...]] | tuple[str, str, tuple[str, ...]] | None
     by_id, declared_spine, encrypted, package_identity = _manifest(package_report)
     declarations_by_identity: dict[str, set[tuple[str, tuple[str, ...]]]] = {}
     for identity, media, properties in by_id.values():
-        declarations_by_identity.setdefault(identity, set()).add(
-            (media, properties)
-        )
+        declarations_by_identity.setdefault(identity, set()).add((media, properties))
     manifest_by_identity = {
         identity: next(iter(declarations))
         for identity, declarations in declarations_by_identity.items()
@@ -1692,7 +1887,12 @@ def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile
     navigation_opened = navigation_strict = navigation_recovered = 0
     body_targets: list[_RoleAssociation] = []
     excluded_targets: list[_RoleAssociation] = []
-    navigation = [value for value in package_report.declarations if value.kind is EpubPackageDeclarationKind.NAVIGATION and value.resource_identity]
+    navigation = [
+        value
+        for value in package_report.declarations
+        if value.kind is EpubPackageDeclarationKind.NAVIGATION
+        and value.resource_identity
+    ]
     if (
         len(navigation) == 1
         and navigation[0].resource_identity in names_by_identity
@@ -1703,7 +1903,9 @@ def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile
         data: bytes | None = None
         try:
             navigation_opened = 1
-            data = _read_member(archive, name, limits.expanded_bytes_per_resource, request)
+            data = _read_member(
+                archive, name, limits.expanded_bytes_per_resource, request
+            )
             navigation_expanded = len(data)
             projection = _parse(data, "application/xhtml+xml", limits, request)
             navigation_text = projection.work_text_characters
@@ -1746,8 +1948,10 @@ def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile
             warnings.append("navigation_resource_limit")
             pre_resources.append(
                 OpeningResourceResult(
-                    identity, OpeningResourceDisposition.RESOURCE_LIMIT,
-                    ("epub3_navigation",), warnings=("navigation_resource_limit",),
+                    identity,
+                    OpeningResourceDisposition.RESOURCE_LIMIT,
+                    ("epub3_navigation",),
+                    warnings=("navigation_resource_limit",),
                     opened=navigation_opened == 1,
                 )
             )
@@ -1757,7 +1961,8 @@ def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile
             warnings.extend(("unsafe_construct", "unusable_navigation_document"))
             pre_resources.append(
                 OpeningResourceResult(
-                    identity, OpeningResourceDisposition.MALFORMED,
+                    identity,
+                    OpeningResourceDisposition.MALFORMED,
                     ("epub3_navigation",),
                     warnings=("unsafe_construct", "unusable_navigation_document"),
                     opened=True,
@@ -1769,8 +1974,10 @@ def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile
             warnings.append("unusable_navigation_document")
             pre_resources.append(
                 OpeningResourceResult(
-                    identity, OpeningResourceDisposition.MALFORMED,
-                    ("epub3_navigation",), warnings=("unusable_navigation_document",),
+                    identity,
+                    OpeningResourceDisposition.MALFORMED,
+                    ("epub3_navigation",),
+                    warnings=("unusable_navigation_document",),
                     opened=True,
                 )
             )
@@ -1780,8 +1987,10 @@ def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile
             warnings.append("unusable_navigation_document")
             pre_resources.append(
                 OpeningResourceResult(
-                    identity, OpeningResourceDisposition.MALFORMED,
-                    ("epub3_navigation",), warnings=("unusable_navigation_document",),
+                    identity,
+                    OpeningResourceDisposition.MALFORMED,
+                    ("epub3_navigation",),
+                    warnings=("unusable_navigation_document",),
                     opened=True,
                 )
             )
@@ -1789,20 +1998,21 @@ def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile
             warnings.append("unusable_navigation_document")
             pre_resources.append(
                 OpeningResourceResult(
-                    identity, OpeningResourceDisposition.MALFORMED,
-                    ("epub3_navigation",), warnings=("unusable_navigation_document",),
+                    identity,
+                    OpeningResourceDisposition.MALFORMED,
+                    ("epub3_navigation",),
+                    warnings=("unusable_navigation_document",),
                     opened=navigation_opened == 1,
                 )
             )
-    elif (
-        len(navigation) == 1
-        and navigation[0].resource_identity in encrypted
-    ):
+    elif len(navigation) == 1 and navigation[0].resource_identity in encrypted:
         warnings.append("encrypted_navigation_document")
         pre_resources.append(
             OpeningResourceResult(
-                navigation[0].resource_identity, OpeningResourceDisposition.ENCRYPTED,
-                ("epub3_navigation",), warnings=("encrypted_navigation_document",),
+                navigation[0].resource_identity,
+                OpeningResourceDisposition.ENCRYPTED,
+                ("epub3_navigation",),
+                warnings=("encrypted_navigation_document",),
             )
         )
     elif navigation:
@@ -1829,15 +2039,22 @@ def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile
         except (_ResourceRejected, ValueError):
             warnings.append("unusable_spine_relationship")
     for declaration in package_report.declarations:
-        if declaration.kind is not EpubPackageDeclarationKind.GUIDE_REFERENCE or not declaration.resource_identity or not declaration.identifier:
+        if (
+            declaration.kind is not EpubPackageDeclarationKind.GUIDE_REFERENCE
+            or not declaration.resource_identity
+            or not declaration.identifier
+        ):
             continue
         semantic = declaration.identifier.casefold()
         target_fragment = guide_fragments.get(declaration.source_ordinal)
         if semantic in {"text", "bodymatter"}:
             body_targets.append(
                 _RoleAssociation(
-                    declaration.resource_identity, "epub2_guide", semantic,
-                    target_fragment, ("epub2_guide", semantic),
+                    declaration.resource_identity,
+                    "epub2_guide",
+                    semantic,
+                    target_fragment,
+                    ("epub2_guide", semantic),
                     declaration.source_ordinal,
                 )
             )
@@ -1845,13 +2062,24 @@ def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile
         if semantic in {"preview", "sample", "advertisement"}:
             excluded_targets.append(
                 _RoleAssociation(
-                    declaration.resource_identity, "epub2_guide", semantic,
-                    target_fragment, ("epub2_guide", semantic),
+                    declaration.resource_identity,
+                    "epub2_guide",
+                    semantic,
+                    target_fragment,
+                    ("epub2_guide", semantic),
                     declaration.source_ordinal,
                 )
             )
             continue
-        if semantic not in {"title-page", "copyright-page", "dedication", "acknowledgements", "preface", "foreword", "other.ms-firstpage"}:
+        if semantic not in {
+            "title-page",
+            "copyright-page",
+            "dedication",
+            "acknowledgements",
+            "preface",
+            "foreword",
+            "other.ms-firstpage",
+        }:
             continue
         declared = manifest_by_identity.get(declaration.resource_identity)
         if declared is None:
@@ -1881,7 +2109,9 @@ def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile
     guide_targets: dict[str, set[str]] = {}
     for candidate in candidates:
         if candidate.selection_path[0] == "epub2_guide":
-            guide_targets.setdefault(candidate.selection_path[-1], set()).add(candidate.identity)
+            guide_targets.setdefault(candidate.selection_path[-1], set()).add(
+                candidate.identity
+            )
     if any(len(values) > 1 for values in guide_targets.values()):
         warnings.append("ambiguous_guide_reference")
     if raw_spine is None:
@@ -1912,8 +2142,12 @@ def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile
             continue
         identity, media_type, _properties = declared
         association = _RoleAssociation(
-            identity, "linear_spine_fallback", "linear_spine_fallback", None,
-            ("linear_spine_fallback",), 1_000_000 + order,
+            identity,
+            "linear_spine_fallback",
+            "linear_spine_fallback",
+            None,
+            ("linear_spine_fallback",),
+            1_000_000 + order,
         )
         candidates.append(
             _Candidate(
@@ -1989,7 +2223,11 @@ def _candidate_graph(package_report: EpubPackageReport, archive: zipfile.ZipFile
 def _normal(value: str, field: OpeningField) -> str:
     result = _SPACE.sub(" ", unicodedata.normalize("NFC", value)).strip()
     if field is OpeningField.IDENTIFIER:
-        return "".join(character for character in result.upper() if character.isdigit() or character == "X")
+        return "".join(
+            character
+            for character in result.upper()
+            if character.isdigit() or character == "X"
+        )
     return result
 
 
@@ -2024,8 +2262,7 @@ def _is_non_bibliographic_indicia(text: str) -> bool:
         _NON_BIBLIOGRAPHIC_INDICIA.match(text) is not None
         or _INDICIA_PROMOTION_NOTICE.fullmatch(text) is not None
         or any(
-            pattern.search(text) is not None
-            for pattern, _role in _CONTEXTUAL_CREDITS
+            pattern.search(text) is not None for pattern, _role in _CONTEXTUAL_CREDITS
         )
     )
 
@@ -2048,8 +2285,7 @@ def _bibliographic_indicia_label_occurrences(
             cue.start() != 0
             and not text[cue.start() - 1].isspace()
             and (
-                cue_boundaries is None
-                or base_start + cue.start() not in cue_boundaries
+                cue_boundaries is None or base_start + cue.start() not in cue_boundaries
             )
         ):
             continue
@@ -2058,14 +2294,10 @@ def _bibliographic_indicia_label_occurrences(
         cues.append(cue)
     occurrences: list[_BibliographicIndicia] = []
     for index, cue in enumerate(cues):
-        context_end = (
-            cues[index + 1].start()
-            if index + 1 < len(cues)
-            else len(text)
-        )
+        context_end = cues[index + 1].start() if index + 1 < len(cues) else len(text)
         while context_end > cue.end() and text[context_end - 1].isspace():
             context_end -= 1
-        value = text[cue.end():context_end].strip()
+        value = text[cue.end() : context_end].strip()
         if not value or _is_non_bibliographic_indicia(value):
             continue
         field = {
@@ -2151,11 +2383,33 @@ def _bibliographic_indicia_label_allocations(
 
 
 def _isbn_valid(value: str) -> bool:
-    compact = "".join(character for character in value.upper() if character.isdigit() or character == "X")
-    if len(compact) == 10 and compact[:9].isdigit() and (compact[9].isdigit() or compact[9] == "X"):
-        return sum((10 - index) * (10 if character == "X" else int(character)) for index, character in enumerate(compact)) % 11 == 0
+    compact = "".join(
+        character
+        for character in value.upper()
+        if character.isdigit() or character == "X"
+    )
+    if (
+        len(compact) == 10
+        and compact[:9].isdigit()
+        and (compact[9].isdigit() or compact[9] == "X")
+    ):
+        return (
+            sum(
+                (10 - index) * (10 if character == "X" else int(character))
+                for index, character in enumerate(compact)
+            )
+            % 11
+            == 0
+        )
     if len(compact) == 13 and compact.isdigit():
-        return sum(int(character) * (1 if index % 2 == 0 else 3) for index, character in enumerate(compact)) % 10 == 0
+        return (
+            sum(
+                int(character) * (1 if index % 2 == 0 else 3)
+                for index, character in enumerate(compact)
+            )
+            % 10
+            == 0
+        )
     return False
 
 
@@ -2226,9 +2480,7 @@ def _indicia_date_matches(
 ) -> tuple[tuple[str, DateEvent, DatePrecision, tuple[int, int]], ...]:
     """Recover only locally labelled date events from one bounded indicia span."""
 
-    found: list[
-        tuple[int, str, DateEvent, DatePrecision, tuple[int, int]]
-    ] = []
+    found: list[tuple[int, str, DateEvent, DatePrecision, tuple[int, int]]] = []
     occupied: set[tuple[int, int, DateEvent]] = set()
     ambiguous_spans = _mixed_edition_date_spans(value)
     for event, pattern in _DATE_EVENT_PATTERNS:
@@ -2276,9 +2528,7 @@ def _indicia_dates(
 
 def _indicia_credits(
     value: str,
-) -> tuple[
-    tuple[OpeningField, str, str, EpubObservationApplicability], ...
-]:
+) -> tuple[tuple[OpeningField, str, str, EpubObservationApplicability], ...]:
     """Recover explicit controlled roles while keeping production credits separate."""
 
     found: list[
@@ -2295,8 +2545,7 @@ def _indicia_credits(
     for pattern, roles, applicability in _BIBLIOGRAPHIC_CREDITS:
         for match in pattern.finditer(value):
             if any(
-                start < match.end() and match.start() < end
-                for start, end in occupied
+                start < match.end() and match.start() < end for start, end in occupied
             ):
                 continue
             name = _credit_name(match.group("name"))
@@ -2350,7 +2599,27 @@ def _credit_name(value: str) -> str:
     return name.strip(" ,:")
 
 
-def _claim(field: OpeningField, value: str, applicability: EpubObservationApplicability, element: _Element, projection: _Projection, source: Fingerprint, resource_identity: str, resource_digest: str, selection_path: tuple[str, ...], lineage: str, excerpt_characters: int, *, normalized: str | None = None, identifier_type: str | None = None, applicability_label: str | None = None, citation_context: tuple[_Element, int, int] | None = None, date_event: DateEvent | None = None, date_precision: DatePrecision | None = None, role: str | None = None) -> OpeningClaim | None:
+def _claim(
+    field: OpeningField,
+    value: str,
+    applicability: EpubObservationApplicability,
+    element: _Element,
+    projection: _Projection,
+    source: Fingerprint,
+    resource_identity: str,
+    resource_digest: str,
+    selection_path: tuple[str, ...],
+    lineage: str,
+    excerpt_characters: int,
+    *,
+    normalized: str | None = None,
+    identifier_type: str | None = None,
+    applicability_label: str | None = None,
+    citation_context: tuple[_Element, int, int] | None = None,
+    date_event: DateEvent | None = None,
+    date_precision: DatePrecision | None = None,
+    role: str | None = None,
+) -> OpeningClaim | None:
     original = _SPACE.sub(" ", value).strip()
     if not original:
         return None
@@ -2360,19 +2629,19 @@ def _claim(field: OpeningField, value: str, applicability: EpubObservationApplic
     except EvidenceValueError:
         state = "oversized" if len(original) > excerpt_characters else "unsupported"
     prefix = "unsafe" if state == "unsupported" else state
-    raw = original[:excerpt_characters] if state == "valid" else f"{prefix}-source-text-sha256:" + hashlib.sha256(original.encode("utf-8")).hexdigest()
+    raw = (
+        original[:excerpt_characters]
+        if state == "valid"
+        else f"{prefix}-source-text-sha256:"
+        + hashlib.sha256(original.encode("utf-8")).hexdigest()
+    )
     if not raw:
         return None
     start = element.start
     if state == "valid" and raw != element.exact_text:
         contextual_relative = (
-            projection.text[
-                citation_context[1]:citation_context[2]
-            ].find(raw)
-            if (
-                citation_context is not None
-                and citation_context[0] is element
-            )
+            projection.text[citation_context[1] : citation_context[2]].find(raw)
+            if (citation_context is not None and citation_context[0] is element)
             else -1
         )
         relative = element.exact_text.find(raw)
@@ -2419,7 +2688,8 @@ def _claim(field: OpeningField, value: str, applicability: EpubObservationApplic
         citation_end = citation_start + len(citation_excerpt)
     normalized_value = (
         normalized
-        if state != "valid" and field in {OpeningField.CREATOR_ROLE, OpeningField.CONTRIBUTOR_ROLE}
+        if state != "valid"
+        and field in {OpeningField.CREATOR_ROLE, OpeningField.CONTRIBUTOR_ROLE}
         else None
         if state != "valid"
         else None
@@ -2427,7 +2697,9 @@ def _claim(field: OpeningField, value: str, applicability: EpubObservationApplic
         and identifier_type in {"isbn_10", "isbn_13"}
         and normalized is None
         and not _isbn_valid(raw)
-        else _normal(raw, field) if normalized is None else normalized
+        else _normal(raw, field)
+        if normalized is None
+        else normalized
     )
     if date_event is not None and state == "valid":
         try:
@@ -2443,12 +2715,18 @@ def _claim(field: OpeningField, value: str, applicability: EpubObservationApplic
         return None
     try:
         citation = OpeningCitation(
-            source, resource_identity, resource_digest,
+            source,
+            resource_identity,
+            resource_digest,
             semantic_path,
-            selection_path, lineage, citation_excerpt,
+            selection_path,
+            lineage,
+            citation_excerpt,
             hashlib.sha256(citation_excerpt.encode("utf-8")).hexdigest(),
-            citation_start, citation_end,
-            f"element-{citation_element.ordinal}", projection.mode,
+            citation_start,
+            citation_end,
+            f"element-{citation_element.ordinal}",
+            projection.mode,
             recovery_warnings=projection.warnings,
         )
         return OpeningClaim(
@@ -2502,8 +2780,18 @@ def _promotion_excluded_ordinals(projection: _Projection) -> frozenset[int]:
     by_ordinal = {element.ordinal: element for element in projection.elements}
     structural = {"section", "article", "aside", "nav"}
     claim_containers = {
-        "h1", "h2", "h3", "h4", "h5", "h6",
-        "p", "dt", "dd", "li", "address", "figcaption",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "p",
+        "dt",
+        "dd",
+        "li",
+        "address",
+        "figcaption",
     }
     excluded: set[int] = set()
     semantic_scopes = {
@@ -2543,9 +2831,7 @@ def _promotion_excluded_ordinals(projection: _Projection) -> frozenset[int]:
                         ancestor
                         for ancestor in reversed(notice.ancestors)
                         if (
-                            _is_html_namespace(
-                                by_ordinal[ancestor].namespace
-                            )
+                            _is_html_namespace(by_ordinal[ancestor].namespace)
                             and by_ordinal[ancestor].name in structural
                         )
                     ),
@@ -2677,11 +2963,7 @@ def _recognition_context(
         if body_ordinal is not None and position >= body_ordinal:
             continue
         if any(
-            scope is None
-            or (
-                target is not None
-                and _scope_contains(scope, target)
-            )
+            scope is None or (target is not None and _scope_contains(scope, target))
             for scope in excluded_scopes
         ):
             continue
@@ -2693,9 +2975,7 @@ def _recognition_context(
             key=_association_key,
         )
         selection_path = canonical.selection_path
-        semantics = frozenset(
-            association.role for association, _target in surviving
-        )
+        semantics = frozenset(association.role for association, _target in surviving)
         title_scopes = tuple(
             None if target is None else target.ordinal
             for association, target in surviving
@@ -2739,7 +3019,15 @@ def _recognition_context(
     )
 
 
-def _recognize(projection: _Projection, source: Fingerprint, resource_identity: str, resource_digest: str, context: _RecognitionContext, lineage: str, excerpt_characters: int) -> tuple[list[OpeningClaim], list[str], bool, bool]:
+def _recognize(
+    projection: _Projection,
+    source: Fingerprint,
+    resource_identity: str,
+    resource_digest: str,
+    context: _RecognitionContext,
+    lineage: str,
+    excerpt_characters: int,
+) -> tuple[list[OpeningClaim], list[str], bool, bool]:
     applicability_label: str | None
     claims: list[OpeningClaim] = []
     warnings: list[str] = [*projection.warnings, *context.warnings]
@@ -2796,10 +3084,7 @@ def _recognize(projection: _Projection, source: Fingerprint, resource_identity: 
             continue
         if element.ordinal in promotion_exclusions:
             continue
-        if (
-            context.body_ordinal is not None
-            and element.ordinal >= context.body_ordinal
-        ):
+        if context.body_ordinal is not None and element.ordinal >= context.body_ordinal:
             break
         if any(
             element.ordinal in by_ordinal[scope].ancestors
@@ -2808,10 +3093,7 @@ def _recognize(projection: _Projection, source: Fingerprint, resource_identity: 
             continue
         if any(
             _scope_contains(scope, element)
-            or (
-                scope is not None
-                and element.ordinal in by_ordinal[scope].ancestors
-            )
+            or (scope is not None and element.ordinal in by_ordinal[scope].ancestors)
             for scope in context.excluded_scopes
         ):
             continue
@@ -2886,10 +3168,7 @@ def _recognize(projection: _Projection, source: Fingerprint, resource_identity: 
             if indicia.context_span is not None:
                 key = _bibliographic_indicia_label_key(element, indicia)
                 allocation = bibliographic_label_allocations.get(key)
-                if (
-                    allocation is None
-                    or allocation.emitter_ordinal != element.ordinal
-                ):
+                if allocation is None or allocation.emitter_ordinal != element.ordinal:
                     continue
                 owner = by_ordinal[allocation.owner_ordinal]
                 claim = _claim(
@@ -2928,9 +3207,13 @@ def _recognize(projection: _Projection, source: Fingerprint, resource_identity: 
                     else EpubObservationApplicability.EDITION
                 ),
             )
-        if not bibliographic_label and not bibliographic_indicia and (
-            semantic & {"fulltitle", "title"}
-            or (element.name == "h1" and (title_context or title_ancestor))
+        if (
+            not bibliographic_label
+            and not bibliographic_indicia
+            and (
+                semantic & {"fulltitle", "title"}
+                or (element.name == "h1" and (title_context or title_ancestor))
+            )
         ):
             add(OpeningField.TITLE, text, EpubObservationApplicability.WORK)
         if (
@@ -2947,10 +3230,20 @@ def _recognize(projection: _Projection, source: Fingerprint, resource_identity: 
                 EpubObservationApplicability.WORK,
                 role="author",
             )
-            add(OpeningField.CREATOR_ROLE, text, EpubObservationApplicability.WORK, "author")
+            add(
+                OpeningField.CREATOR_ROLE,
+                text,
+                EpubObservationApplicability.WORK,
+                "author",
+            )
         recovered_credits = _indicia_credits(text)
         bibliographic_credit = False
-        for credit_field, credit_value, credit_role, credit_applicability in recovered_credits:
+        for (
+            credit_field,
+            credit_value,
+            credit_role,
+            credit_applicability,
+        ) in recovered_credits:
             if credit_field is OpeningField.CONTRIBUTOR:
                 bibliographic_credit = True
                 add(
@@ -2986,7 +3279,9 @@ def _recognize(projection: _Projection, source: Fingerprint, resource_identity: 
                     role=credit_role,
                 )
         explicit_semantics = _tokens(element.attributes)
-        if "creator" in explicit_semantics and not lowered.startswith(("by ", "author: ", "written by ")):
+        if "creator" in explicit_semantics and not lowered.startswith(
+            ("by ", "author: ", "written by ")
+        ):
             add(OpeningField.CREATOR, text, EpubObservationApplicability.WORK)
         elif "contributor" in explicit_semantics and not bibliographic_credit:
             add(OpeningField.CONTRIBUTOR, text, EpubObservationApplicability.WORK)
@@ -3039,12 +3334,22 @@ def _recognize(projection: _Projection, source: Fingerprint, resource_identity: 
                 )
         series = _SERIES.search(text)
         if series:
-            add(OpeningField.SERIES_ORDER, series.group(1), EpubObservationApplicability.WORK)
+            add(
+                OpeningField.SERIES_ORDER,
+                series.group(1),
+                EpubObservationApplicability.WORK,
+            )
             add(OpeningField.SERIES, series.group(2), EpubObservationApplicability.WORK)
         if "omnibus" in lowered:
-            add(OpeningField.OMNIBUS_MEMBERSHIP, text, EpubObservationApplicability.WORK)
+            add(
+                OpeningField.OMNIBUS_MEMBERSHIP, text, EpubObservationApplicability.WORK
+            )
         if "anthology" in lowered:
-            add(OpeningField.ANTHOLOGY_MEMBERSHIP, text, EpubObservationApplicability.WORK)
+            add(
+                OpeningField.ANTHOLOGY_MEMBERSHIP,
+                text,
+                EpubObservationApplicability.WORK,
+            )
         isbn_matches = list(_ISBN.finditer(text))
         owner_spans = _non_isbn_identifier_spans(text)
         for match_index, match in enumerate(isbn_matches):
@@ -3055,18 +3360,33 @@ def _recognize(projection: _Projection, source: Fingerprint, resource_identity: 
             if len(compact) not in {10, 13}:
                 continue
             identifier_valid = _isbn_valid(identifier)
-            left_boundary = isbn_matches[match_index - 1].end() if match_index else max(0, match.start() - 64)
-            right_boundary = isbn_matches[match_index + 1].start() if match_index + 1 < len(isbn_matches) else min(len(text), match.end() + 64)
+            left_boundary = (
+                isbn_matches[match_index - 1].end()
+                if match_index
+                else max(0, match.start() - 64)
+            )
+            right_boundary = (
+                isbn_matches[match_index + 1].start()
+                if match_index + 1 < len(isbn_matches)
+                else min(len(text), match.end() + 64)
+            )
             separator = r"[;,|/\n\u2022]"
-            left_vicinity = re.split(separator, lowered[left_boundary:match.start()])[-1]
-            right_vicinity = re.split(separator, lowered[match.end():right_boundary])[0]
+            left_vicinity = re.split(separator, lowered[left_boundary : match.start()])[
+                -1
+            ]
+            right_vicinity = re.split(separator, lowered[match.end() : right_boundary])[
+                0
+            ]
             if match_index + 1 < len(isbn_matches):
-                right_label = _EBOOK_LABEL.search(right_vicinity) or _PRINT_LABEL.search(right_vicinity)
-                if right_label is not None and right_vicinity[right_label.end():].strip() in {"isbn", "isbn-10", "isbn-13"}:
-                    right_vicinity = right_vicinity[:right_label.start()]
+                right_label = _EBOOK_LABEL.search(
+                    right_vicinity
+                ) or _PRINT_LABEL.search(right_vicinity)
+                if right_label is not None and right_vicinity[
+                    right_label.end() :
+                ].strip() in {"isbn", "isbn-10", "isbn-13"}:
+                    right_vicinity = right_vicinity[: right_label.start()]
             left_has_labels = bool(
-                _EBOOK_LABEL.search(left_vicinity)
-                or _PRINT_LABEL.search(left_vicinity)
+                _EBOOK_LABEL.search(left_vicinity) or _PRINT_LABEL.search(left_vicinity)
             )
             right_has_labels = bool(
                 _EBOOK_LABEL.search(right_vicinity)
@@ -3086,9 +3406,7 @@ def _recognize(projection: _Projection, source: Fingerprint, resource_identity: 
                 vicinity = left_vicinity
             else:
                 vicinity = right_vicinity
-            if not (
-                _EBOOK_LABEL.search(vicinity) or _PRINT_LABEL.search(vicinity)
-            ):
+            if not (_EBOOK_LABEL.search(vicinity) or _PRINT_LABEL.search(vicinity)):
                 previous = next(
                     (
                         candidate
@@ -3107,13 +3425,21 @@ def _recognize(projection: _Projection, source: Fingerprint, resource_identity: 
                     ),
                     None,
                 )
-                previous_text = "" if previous is None else previous.exact_text.casefold()[-48:]
-                following_text = "" if following is None else following.exact_text.casefold()[:48]
-                if _EBOOK_LABEL.search(previous_text) or _PRINT_LABEL.search(previous_text):
+                previous_text = (
+                    "" if previous is None else previous.exact_text.casefold()[-48:]
+                )
+                following_text = (
+                    "" if following is None else following.exact_text.casefold()[:48]
+                )
+                if _EBOOK_LABEL.search(previous_text) or _PRINT_LABEL.search(
+                    previous_text
+                ):
                     neighbor = previous
                     neighbor_before = True
                     vicinity = previous_text + " " + vicinity
-                elif _EBOOK_LABEL.search(following_text) or _PRINT_LABEL.search(following_text):
+                elif _EBOOK_LABEL.search(following_text) or _PRINT_LABEL.search(
+                    following_text
+                ):
                     neighbor = following
                     neighbor_before = False
                     vicinity = vicinity + " " + following_text
@@ -3130,7 +3456,13 @@ def _recognize(projection: _Projection, source: Fingerprint, resource_identity: 
                 applicability_label = "ebook"
             elif printed and not ebook:
                 applicability = EpubObservationApplicability.INAPPLICABLE
-                applicability_label = "paperback" if _PAPERBACK_LABEL.search(vicinity) else "hardcover" if _HARDCOVER_LABEL.search(vicinity) else "print"
+                applicability_label = (
+                    "paperback"
+                    if _PAPERBACK_LABEL.search(vicinity)
+                    else "hardcover"
+                    if _HARDCOVER_LABEL.search(vicinity)
+                    else "print"
+                )
             elif ebook and printed:
                 applicability = EpubObservationApplicability.UNKNOWN
                 applicability_label = "ambiguous"
@@ -3225,8 +3557,15 @@ def _recognize(projection: _Projection, source: Fingerprint, resource_identity: 
                 claims.append(claim)
     values: dict[OpeningField, set[str]] = {}
     for claim in claims:
-        values.setdefault(claim.field, set()).add(claim.normalized_value or claim.raw_value)
-    for field, warning in ((OpeningField.TITLE, "ambiguous_title"), (OpeningField.IDENTIFIER, "ambiguous_identifier"), (OpeningField.EDITION, "ambiguous_edition"), (OpeningField.SERIES, "contradictory_series")):
+        values.setdefault(claim.field, set()).add(
+            claim.normalized_value or claim.raw_value
+        )
+    for field, warning in (
+        (OpeningField.TITLE, "ambiguous_title"),
+        (OpeningField.IDENTIFIER, "ambiguous_identifier"),
+        (OpeningField.EDITION, "ambiguous_edition"),
+        (OpeningField.SERIES, "contradictory_series"),
+    ):
         if len(values.get(field, set())) > 1:
             warnings.append(warning)
     return claims, warnings, body_transition, False
@@ -3259,7 +3598,11 @@ class EpubOpeningExtractor:
         if not package_report.succeeded:
             return EpubOpeningReport(package_report.outcome, limits)
         if package_report.outcome is EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE:
-            return EpubOpeningReport(EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE, limits, request.expected_source)
+            return EpubOpeningReport(
+                EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
+                limits,
+                request.expected_source,
+            )
         try:
             return self._extract_validated(request, limits, package_report, archive)
         except _AggregateRejected as error:
@@ -3271,12 +3614,26 @@ class EpubOpeningExtractor:
         except Exception:
             return EpubOpeningReport(EpubInspectionOutcome.INTERNAL_FAILURE, limits)
 
-    def _extract_validated(self, request: EpubPackageRequest, limits: EpubOpeningLimits, package_report: EpubPackageReport, archive: zipfile.ZipFile | None = None) -> EpubOpeningReport:
-        archive_context = nullcontext(archive) if archive is not None else zipfile.ZipFile(_SourceIO(request), "r")
+    def _extract_validated(
+        self,
+        request: EpubPackageRequest,
+        limits: EpubOpeningLimits,
+        package_report: EpubPackageReport,
+        archive: zipfile.ZipFile | None = None,
+    ) -> EpubOpeningReport:
+        archive_context = (
+            nullcontext(archive)
+            if archive is not None
+            else zipfile.ZipFile(_SourceIO(request), "r")
+        )
         with archive_context as archive:
             assert archive is not None
             package_lineage = epub_file_lineage(request.expected_source)
-            names_by_identity = {epub_resource_identity(info.filename): info.filename for info in archive.infolist() if not info.is_dir()}
+            names_by_identity = {
+                epub_resource_identity(info.filename): info.filename
+                for info in archive.infolist()
+                if not info.is_dir()
+            }
             (
                 candidates,
                 warnings,
@@ -3314,33 +3671,62 @@ class EpubOpeningExtractor:
                     break
                 selected += 1
                 if candidate.identity in encrypted:
-                    resources.append(OpeningResourceResult(candidate.identity, OpeningResourceDisposition.ENCRYPTED, candidate.selection_path))
+                    resources.append(
+                        OpeningResourceResult(
+                            candidate.identity,
+                            OpeningResourceDisposition.ENCRYPTED,
+                            candidate.selection_path,
+                        )
+                    )
                     warnings.append("encrypted_optional_resource")
                     continue
                 name = names_by_identity.get(candidate.identity)
                 if name is None:
-                    resources.append(OpeningResourceResult(candidate.identity, OpeningResourceDisposition.MISSING, candidate.selection_path))
+                    resources.append(
+                        OpeningResourceResult(
+                            candidate.identity,
+                            OpeningResourceDisposition.MISSING,
+                            candidate.selection_path,
+                        )
+                    )
                     warnings.append("missing_selected_resource")
                     continue
                 if candidate.media_type in _IMAGE_MEDIA:
-                    resources.append(OpeningResourceResult(candidate.identity, OpeningResourceDisposition.IMAGE_ONLY, candidate.selection_path))
+                    resources.append(
+                        OpeningResourceResult(
+                            candidate.identity,
+                            OpeningResourceDisposition.IMAGE_ONLY,
+                            candidate.selection_path,
+                        )
+                    )
                     warnings.append("image_only_resource")
                     continue
                 if candidate.media_type not in _CONTENT_MEDIA:
-                    resources.append(OpeningResourceResult(candidate.identity, OpeningResourceDisposition.UNSUPPORTED_MEDIA, candidate.selection_path))
+                    resources.append(
+                        OpeningResourceResult(
+                            candidate.identity,
+                            OpeningResourceDisposition.UNSUPPORTED_MEDIA,
+                            candidate.selection_path,
+                        )
+                    )
                     warnings.append("unsupported_resource_media")
                     continue
                 data: bytes | None = None
                 try:
                     opened += 1
-                    data = _read_member(archive, name, limits.expanded_bytes_per_resource, request)
+                    data = _read_member(
+                        archive, name, limits.expanded_bytes_per_resource, request
+                    )
                     expanded += len(data)
                     if expanded > limits.expanded_bytes_per_selection:
                         raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
                     projection = _parse(data, candidate.media_type, limits, request)
                     nodes += projection.work_nodes
                     text_characters += projection.work_text_characters
-                    if nodes > limits.nodes_per_selection or text_characters > limits.text_characters_per_selection:
+                    if (
+                        nodes > limits.nodes_per_selection
+                        or text_characters > limits.text_characters_per_selection
+                    ):
                         raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
                     if projection.mode is OpeningParseMode.STRICT:
                         strict += 1
@@ -3350,15 +3736,26 @@ class EpubOpeningExtractor:
                         projection, candidate, body_targets, excluded_targets
                     )
                     resource_digest = hashlib.sha256(data).hexdigest()
-                    resource_claims, resource_warnings, body_transition, excluded = _recognize(
-                        projection, request.expected_source, candidate.identity,
-                        resource_digest, context,
-                        package_lineage,
-                        limits.excerpt_characters,
+                    resource_claims, resource_warnings, body_transition, excluded = (
+                        _recognize(
+                            projection,
+                            request.expected_source,
+                            candidate.identity,
+                            resource_digest,
+                            context,
+                            package_lineage,
+                            limits.excerpt_characters,
+                        )
                     )
                     claims.extend(resource_claims)
                     warnings.extend(resource_warnings)
-                    disposition = OpeningResourceDisposition.EXCLUDED if excluded else OpeningResourceDisposition.SELECTED if resource_claims else OpeningResourceDisposition.NO_CLAIMS
+                    disposition = (
+                        OpeningResourceDisposition.EXCLUDED
+                        if excluded
+                        else OpeningResourceDisposition.SELECTED
+                        if resource_claims
+                        else OpeningResourceDisposition.NO_CLAIMS
+                    )
                     resources.append(
                         OpeningResourceResult(
                             candidate.identity,
@@ -3382,7 +3779,9 @@ class EpubOpeningExtractor:
                         nodes > limits.nodes_per_selection
                         or text_characters > limits.text_characters_per_selection
                     ):
-                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT) from error
+                        raise _AggregateRejected(
+                            EpubInspectionOutcome.RESOURCE_LIMIT
+                        ) from error
                     code = "selected_resource_limit"
                     resources.append(
                         OpeningResourceResult(
@@ -3401,7 +3800,9 @@ class EpubOpeningExtractor:
                         nodes > limits.nodes_per_selection
                         or text_characters > limits.text_characters_per_selection
                     ):
-                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT) from error
+                        raise _AggregateRejected(
+                            EpubInspectionOutcome.RESOURCE_LIMIT
+                        ) from error
                     code = "unsafe_construct"
                     resources.append(
                         OpeningResourceResult(
@@ -3420,7 +3821,9 @@ class EpubOpeningExtractor:
                         nodes > limits.nodes_per_selection
                         or text_characters > limits.text_characters_per_selection
                     ):
-                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT) from error
+                        raise _AggregateRejected(
+                            EpubInspectionOutcome.RESOURCE_LIMIT
+                        ) from error
                     code = "unsupported_encoding"
                     resources.append(
                         OpeningResourceResult(
@@ -3439,7 +3842,9 @@ class EpubOpeningExtractor:
                         nodes > limits.nodes_per_selection
                         or text_characters > limits.text_characters_per_selection
                     ):
-                        raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT) from error
+                        raise _AggregateRejected(
+                            EpubInspectionOutcome.RESOURCE_LIMIT
+                        ) from error
                     code = "malformed_selected_resource"
                     resources.append(
                         OpeningResourceResult(
@@ -3453,37 +3858,60 @@ class EpubOpeningExtractor:
                     warnings.append(code)
                 except ValueError:
                     code = "malformed_selected_resource"
-                    resources.append(OpeningResourceResult(candidate.identity, OpeningResourceDisposition.MALFORMED, candidate.selection_path, warnings=(code,), opened=True))
+                    resources.append(
+                        OpeningResourceResult(
+                            candidate.identity,
+                            OpeningResourceDisposition.MALFORMED,
+                            candidate.selection_path,
+                            warnings=(code,),
+                            opened=True,
+                        )
+                    )
                     warnings.append(code)
             fact_limit_reached = len(claims) > limits.facts
             if fact_limit_reached:
                 claims = claims[: limits.facts]
             unique_warning_values = sorted(set(warnings))
-            if (
-                fact_limit_reached
-                and len(unique_warning_values) <= limits.warnings
-            ):
+            if fact_limit_reached and len(unique_warning_values) <= limits.warnings:
                 marker = "opening_fact_limit"
                 unique_warning_values = [
-                    warning
-                    for warning in unique_warning_values
-                    if warning != marker
+                    warning for warning in unique_warning_values if warning != marker
                 ][: limits.warnings - 1]
                 unique_warning_values.append(marker)
             unique_warnings = tuple(sorted(unique_warning_values))
             if len(unique_warnings) > limits.warnings:
                 raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT)
-            usage = EpubOpeningUsage(selected, opened, expanded, text_characters, nodes, navigation_links, strict, recovered)
-            outcome = EpubInspectionOutcome.SUCCESS if claims else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
+            usage = EpubOpeningUsage(
+                selected,
+                opened,
+                expanded,
+                text_characters,
+                nodes,
+                navigation_links,
+                strict,
+                recovered,
+            )
+            outcome = (
+                EpubInspectionOutcome.SUCCESS
+                if claims
+                else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
+            )
             try:
                 return EpubOpeningReport(
-                    outcome, limits, request.expected_source, tuple(claims),
-                    tuple(resources), unique_warnings, usage,
+                    outcome,
+                    limits,
+                    request.expected_source,
+                    tuple(claims),
+                    tuple(resources),
+                    unique_warnings,
+                    usage,
                     same_file_lineage=package_lineage,
                 )
             except EvidenceValueError as error:
                 if "byte limit" in str(error):
-                    raise _AggregateRejected(EpubInspectionOutcome.RESOURCE_LIMIT) from None
+                    raise _AggregateRejected(
+                        EpubInspectionOutcome.RESOURCE_LIMIT
+                    ) from None
                 raise
 
 

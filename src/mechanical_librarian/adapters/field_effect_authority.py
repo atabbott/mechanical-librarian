@@ -42,9 +42,12 @@ class PersistedFieldEffectAuthority:
     def resolve(self, decision: HumanDecision | AutomaticDecision) -> AuthoritySnapshot:
         # The repository builds exactly AuthoritySnapshot's keyword shape; see
         # _AuthorityFields above.
-        return AuthoritySnapshot(**cast(
-            "_AuthorityFields", self._repository.field_effect_authority_source(decision)
-        ))
+        return AuthoritySnapshot(
+            **cast(
+                "_AuthorityFields",
+                self._repository.field_effect_authority_source(decision),
+            )
+        )
 
     def current(self, authority: EffectAuthority) -> bool:
         return self._repository.field_effect_authority_is_current(authority)

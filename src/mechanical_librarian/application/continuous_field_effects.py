@@ -59,31 +59,66 @@ class ContinuousFieldEffectRepository(Protocol):
     def field_effect_backup_ready(self) -> bool: ...
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]: ...
     def grant_field_effect_consent_matrix(
-        self, connection: str, grants: tuple[tuple[str, tuple[str, ...]], ...],
+        self,
+        connection: str,
+        grants: tuple[tuple[str, tuple[str, ...]], ...],
         granted_at: int,
     ) -> tuple[EffectConsent, ...]: ...
-    def revoke_library_field_effect_consents(self, connection: str, library: str, changed_at: int) -> int: ...
-    def field_effect_manual_override(self, review_case_id: str, destination: str, changed_at: int) -> int: ...
-    def field_effect_manual_hold_context(self, review_case_id: str, destination: str) -> tuple[str, str] | None: ...
-    def field_effect_manual_hold_token(self, review_case_id: str, destination: str) -> str | None: ...
+    def revoke_library_field_effect_consents(
+        self, connection: str, library: str, changed_at: int
+    ) -> int: ...
+    def field_effect_manual_override(
+        self, review_case_id: str, destination: str, changed_at: int
+    ) -> int: ...
+    def field_effect_manual_hold_context(
+        self, review_case_id: str, destination: str
+    ) -> tuple[str, str] | None: ...
+    def field_effect_manual_hold_token(
+        self, review_case_id: str, destination: str
+    ) -> str | None: ...
     def request_field_effect_manual_return(
-        self, review_case_id: str, destination: str, hold_token: str,
-        scan_id: str, requested_at: int, changed_at: int,
+        self,
+        review_case_id: str,
+        destination: str,
+        hold_token: str,
+        scan_id: str,
+        requested_at: int,
+        changed_at: int,
     ) -> bool: ...
     def get_field_effect(self, plan_id: str) -> FieldEffectOperation: ...
-    def pending_field_effect_decision_documents(self, limit: int, after: tuple[int, str] | None = None) -> tuple[str, ...]: ...
-    def record_current_field_effect_no_change(self, decision: AutomaticDecision, occurred_at: int) -> bool: ...
-    def retire_stale_cover_decision(self, decision_id: str, changed_at: int) -> bool: ...
-    def current_field_effect_consent(self, connection: str, library: str, destination: str) -> EffectConsent: ...
+    def pending_field_effect_decision_documents(
+        self, limit: int, after: tuple[int, str] | None = None
+    ) -> tuple[str, ...]: ...
+    def record_current_field_effect_no_change(
+        self, decision: AutomaticDecision, occurred_at: int
+    ) -> bool: ...
+    def retire_stale_cover_decision(
+        self, decision_id: str, changed_at: int
+    ) -> bool: ...
+    def current_field_effect_consent(
+        self, connection: str, library: str, destination: str
+    ) -> EffectConsent: ...
     def suspend_field_effect_capability(
-        self, *, scope: str, connection: str, destination: str, reason: str,
+        self,
+        *,
+        scope: str,
+        connection: str,
+        destination: str,
+        reason: str,
         changed_at: int,
     ) -> None: ...
     def clear_field_effect_capability_suspension(
-        self, *, scope: str, connection: str, destination: str, reason: str,
+        self,
+        *,
+        scope: str,
+        connection: str,
+        destination: str,
+        reason: str,
         observed_at: int,
     ) -> None: ...
-    def field_effect_capability_suspension(self, connection: str, destination: str) -> str | None: ...
+    def field_effect_capability_suspension(
+        self, connection: str, destination: str
+    ) -> str | None: ...
     def next_field_effect_plan_id(
         self, last_library: str | None
     ) -> tuple[str, str] | None: ...
@@ -91,14 +126,24 @@ class ContinuousFieldEffectRepository(Protocol):
     def field_effect_activity_summary(self) -> dict[str, object]: ...
 
     def field_effect_activity_page(
-        self, *, search: str | None, event_type: str, occurred_after: int,
-        page: int, page_size: int,
+        self,
+        *,
+        search: str | None,
+        event_type: str,
+        occurred_after: int,
+        page: int,
+        page_size: int,
     ) -> dict[str, object]: ...
     def pending_field_effect_manual_returns(
-        self, limit: int, after: tuple[int, str, str] | None = None,
+        self,
+        limit: int,
+        after: tuple[int, str, str] | None = None,
     ) -> tuple[tuple[str, str, str, str, str, str, int, int], ...]: ...
     def clear_field_effect_manual_hold(
-        self, review_case_id: str, destination: str, changed_at: int,
+        self,
+        review_case_id: str,
+        destination: str,
+        changed_at: int,
         expected_hold_token: str | None = None,
     ) -> tuple[str, str] | None: ...
 
@@ -120,17 +165,25 @@ class ContinuousGuardedApplication:
         graceful_shutdown_seconds: int = 30,
         scan_progress: Callable[[str, str], object] | None = None,
         activity_only: bool = False,
-        provider_recovery_snapshot: Callable[[], tuple[dict[str, int | str | None], ...]] | None = None,
+        provider_recovery_snapshot: Callable[
+            [], tuple[dict[str, int | str | None], ...]
+        ]
+        | None = None,
     ) -> None:
-        if ((activity_only and (applications or capabilities))
-                or (not activity_only and (
+        if (
+            (activity_only and (applications or capabilities))
+            or (
+                not activity_only
+                and (
                     set(applications) != set(configured_libraries)
                     or set(capabilities) != set(configured_libraries)
-                ))
-                or not 0.1 <= polling_seconds <= 60.0
-                or type(graceful_shutdown_seconds) is not int
-                or not 1 <= graceful_shutdown_seconds <= 300
-                or type(activity_only) is not bool):
+                )
+            )
+            or not 0.1 <= polling_seconds <= 60.0
+            or type(graceful_shutdown_seconds) is not int
+            or not 1 <= graceful_shutdown_seconds <= 300
+            or type(activity_only) is not bool
+        ):
             raise GuardedApplicationError("configuration")
         connections = {connection for connection, _ in configured_libraries}
         if len(connections) != 1:
@@ -241,20 +294,27 @@ class ContinuousGuardedApplication:
         self, grants: tuple[tuple[str, tuple[str, ...]], ...]
     ) -> dict[str, object]:
         configured = tuple(library for _, library in self._libraries)
-        if (type(grants) is not tuple or not grants
-                or any(type(grant) is not tuple or len(grant) != 2
-                       for grant in grants)):
+        if (
+            type(grants) is not tuple
+            or not grants
+            or any(type(grant) is not tuple or len(grant) != 2 for grant in grants)
+        ):
             raise GuardedApplicationError("consent")
         libraries = tuple(grant[0] for grant in grants)
         submitted = {library: destinations for library, destinations in grants}
-        if (len(set(libraries)) != len(libraries)
-                or any(type(library) is not str or library not in configured
-                       or type(destinations) is not tuple or not destinations
-                       or len(set(destinations)) != len(destinations)
-                       or any(type(destination) is not str
-                              or destination not in SUPPORTED_DESTINATIONS
-                              for destination in destinations)
-                       for library, destinations in grants)):
+        if len(set(libraries)) != len(libraries) or any(
+            type(library) is not str
+            or library not in configured
+            or type(destinations) is not tuple
+            or not destinations
+            or len(set(destinations)) != len(destinations)
+            or any(
+                type(destination) is not str
+                or destination not in SUPPORTED_DESTINATIONS
+                for destination in destinations
+            )
+            for library, destinations in grants
+        ):
             raise GuardedApplicationError("consent")
         if not self._repository.field_effect_backup_ready():
             raise GuardedApplicationError("backup")
@@ -270,19 +330,17 @@ class ContinuousGuardedApplication:
         eligible = {
             str(item["library"]): tuple(
                 str(destination["destination"])
-                for destination in cast(
-                    "list[dict[str, object]]", item["destinations"]
-                )
+                for destination in cast("list[dict[str, object]]", item["destinations"])
                 if destination["state"] == "allowed"
             )
             for item in readiness
         }
-        if (any(item["state"] == "connection_unavailable" for item in readiness)
-                or any(not eligible[str(item["library"])] for item in readiness)):
+        if any(item["state"] == "connection_unavailable" for item in readiness) or any(
+            not eligible[str(item["library"])] for item in readiness
+        ):
             raise GuardedApplicationError("capability")
         if any(
-            set(submitted[library]) != set(eligible[library])
-            for library in libraries
+            set(submitted[library]) != set(eligible[library]) for library in libraries
         ):
             raise GuardedApplicationError("capability")
         connection = self._libraries[0][0]
@@ -309,7 +367,9 @@ class ContinuousGuardedApplication:
             self.wake()
 
     def activate_human_override(
-        self, review_case_id: str, destination: str,
+        self,
+        review_case_id: str,
+        destination: str,
     ) -> None:
         self._repository.field_effect_manual_override(
             review_case_id, destination, self._clock()
@@ -317,7 +377,9 @@ class ContinuousGuardedApplication:
         self.wake()
 
     def return_to_automatic(
-        self, review_case_id: str, destination: str,
+        self,
+        review_case_id: str,
+        destination: str,
     ) -> None:
         context = self._repository.field_effect_manual_hold_context(
             review_case_id, destination
@@ -383,7 +445,9 @@ class ContinuousGuardedApplication:
             self._schedule_cursor = (decision.occurred_at, decision.decision_id)
             # This is intentionally before authority, consent and capability: an
             # equal automatic candidate is a terminal decision fact, not a write.
-            no_change = getattr(self._repository, "record_current_field_effect_no_change", None)
+            no_change = getattr(
+                self._repository, "record_current_field_effect_no_change", None
+            )
             if (
                 type(decision) is AutomaticDecision
                 and no_change is not None
@@ -426,24 +490,34 @@ class ContinuousGuardedApplication:
                     else "destination"
                 )
                 self._repository.suspend_field_effect_capability(
-                    scope=scope, connection=snapshot.connection,
-                    destination=snapshot.destination, reason=observed.category,
+                    scope=scope,
+                    connection=snapshot.connection,
+                    destination=snapshot.destination,
+                    reason=observed.category,
                     changed_at=observed_at,
                 )
                 continue
             for reason in ("insufficient_permission", "field_unavailable"):
                 self._repository.clear_field_effect_capability_suspension(
-                    scope="destination", connection=snapshot.connection,
-                    destination=snapshot.destination, reason=reason,
+                    scope="destination",
+                    connection=snapshot.connection,
+                    destination=snapshot.destination,
+                    reason=reason,
                     observed_at=observed_at,
                 )
             self._repository.clear_field_effect_capability_suspension(
-                scope="connection", connection=snapshot.connection, destination="",
-                reason="connection_unavailable", observed_at=observed_at,
+                scope="connection",
+                connection=snapshot.connection,
+                destination="",
+                reason="connection_unavailable",
+                observed_at=observed_at,
             )
-            if self._repository.field_effect_capability_suspension(
-                snapshot.connection, snapshot.destination
-            ) is not None:
+            if (
+                self._repository.field_effect_capability_suspension(
+                    snapshot.connection, snapshot.destination
+                )
+                is not None
+            ):
                 continue
             operation = application.plan(
                 decision,
@@ -456,8 +530,7 @@ class ContinuousGuardedApplication:
                 target_fingerprint=snapshot.target_fingerprint,
                 target_version=snapshot.target_version,
                 dependency_digests=(
-                    snapshot.dependency_digests
-                    or (snapshot.target_fingerprint,)
+                    snapshot.dependency_digests or (snapshot.target_fingerprint,)
                 ),
                 capability_digest=observed.digest,
             )
@@ -486,8 +559,12 @@ class ContinuousGuardedApplication:
     ) -> dict[str, object]:
         normalized_search = search.strip().casefold() if search is not None else None
         if (
-            (normalized_search is not None and (not normalized_search or len(normalized_search) > 128))
-            or event_type not in {"all", "review", "policy", "metadata", "safety", "unknown"}
+            (
+                normalized_search is not None
+                and (not normalized_search or len(normalized_search) > 128)
+            )
+            or event_type
+            not in {"all", "review", "policy", "metadata", "safety", "unknown"}
             or range_days not in {7, 30, 90}
             or type(page) is not int
             or not 1 <= page <= 1_000_000
@@ -514,18 +591,24 @@ class ContinuousGuardedApplication:
             # reports.  Keep the application boundary aligned with that closed
             # page-size limit rather than rejecting a valid paged projection.
             or len(report_documents) > 100
-            or any(type(key) is not str or type(value) is not str
-                   for key, value in report_documents.items())
+            or any(
+                type(key) is not str or type(value) is not str
+                for key, value in report_documents.items()
+            )
         ):
             raise GuardedApplicationError("activity")
         reports: dict[str, MetadataReport] = {}
         current_waiting = data.get("current_waiting")
         if current_waiting is not None and (
             type(current_waiting) is not dict
-            or set(current_waiting) != {"destination", "library", "state", "work_id", "work_label"}
-            or any(type(value) is not str or len(value) > 512
-                   for value in current_waiting.values())
-            or current_waiting["state"] not in {"planned", "claimed", "applying", "reconciling", "retryable"}
+            or set(current_waiting)
+            != {"destination", "library", "state", "work_id", "work_label"}
+            or any(
+                type(value) is not str or len(value) > 512
+                for value in current_waiting.values()
+            )
+            or current_waiting["state"]
+            not in {"planned", "claimed", "applying", "reconciling", "retryable"}
         ):
             raise GuardedApplicationError("activity")
         for event in events:
@@ -561,13 +644,24 @@ class ContinuousGuardedApplication:
                 if report.report_id != report_id:
                     raise GuardedApplicationError("activity")
                 reports[report_id] = report
-            if (report.target.connection != connection
-                    or report.target.library != event.get("library")
-                    or report.target.item != event.get("work_id")):
+            if (
+                report.target.connection != connection
+                or report.target.library != event.get("library")
+                or report.target.item != event.get("work_id")
+            ):
                 raise GuardedApplicationError("activity")
             event["work_label"] = report.target.current_title or "Untitled"
-            authors = next((field.value for field in report.target.fields if field.destination is TargetDestination.AUTHORS), ())
-            if type(authors) is tuple and all(type(author) is str for author in authors):
+            authors = next(
+                (
+                    field.value
+                    for field in report.target.fields
+                    if field.destination is TargetDestination.AUTHORS
+                ),
+                (),
+            )
+            if type(authors) is tuple and all(
+                type(author) is str for author in authors
+            ):
                 joined = ", ".join(cast("tuple[str, ...]", authors))
                 event["author_label"] = (
                     joined if len(joined) <= 512 else joined[:511].rstrip() + "…"
@@ -581,7 +675,8 @@ class ContinuousGuardedApplication:
             raise GuardedApplicationError("activity")
         consented = {
             (
-                str(value["connection"]), str(value["library"]),
+                str(value["connection"]),
+                str(value["library"]),
                 str(value["destination"]),
             )
             for value in cast(
@@ -638,19 +733,39 @@ class ContinuousGuardedApplication:
                 "list[dict[str, object]]", capability["destinations"]
             ):
                 destination["consented"] = (
-                    connection, library, str(destination["destination"])
+                    connection,
+                    library,
+                    str(destination["destination"]),
                 ) in consented
         prepared = {
-            "automatic": sum(value["automatic"] for value in prepared_by_library.values()),
+            "automatic": sum(
+                value["automatic"] for value in prepared_by_library.values()
+            ),
             "human": sum(value["human"] for value in prepared_by_library.values()),
             "total": sum(value["total"] for value in prepared_by_library.values()),
         }
         provider_recovery = list(self._provider_recovery_snapshot())
         if len(provider_recovery) > 100 or any(
-            type(item) is not dict or set(item) != {"state", "next_eligible_at", "affected_count"}
-            or item["state"] not in {"waiting", "checking", "dormant", "recovered", "fanout", "exhausted"}
-            or type(item["affected_count"]) is not int or not 1 <= item["affected_count"] <= 1_000_000
-            or (item["next_eligible_at"] is not None and (type(item["next_eligible_at"]) is not int or not 0 <= item["next_eligible_at"] <= 8_640_000_000_000))
+            type(item) is not dict
+            or set(item) != {"state", "next_eligible_at", "affected_count"}
+            or item["state"]
+            not in {
+                "waiting",
+                "checking",
+                "dormant",
+                "recovered",
+                "fanout",
+                "exhausted",
+            }
+            or type(item["affected_count"]) is not int
+            or not 1 <= item["affected_count"] <= 1_000_000
+            or (
+                item["next_eligible_at"] is not None
+                and (
+                    type(item["next_eligible_at"]) is not int
+                    or not 0 <= item["next_eligible_at"] <= 8_640_000_000_000
+                )
+            )
             for item in provider_recovery
         ):
             raise GuardedApplicationError("activity")
@@ -658,8 +773,11 @@ class ContinuousGuardedApplication:
             **data,
             "backup_ready": self._repository.field_effect_backup_ready(),
             "configured_libraries": [
-                {"connection": connection, "library": library,
-                 "prepared": prepared_by_library[library]}
+                {
+                    "connection": connection,
+                    "library": library,
+                    "prepared": prepared_by_library[library],
+                }
                 for connection, library in self._libraries
             ],
             "capabilities": capabilities,
@@ -681,7 +799,10 @@ class ContinuousGuardedApplication:
         }
 
     def _capability_readiness(
-        self, libraries: tuple[str, ...], *, force: bool,
+        self,
+        libraries: tuple[str, ...],
+        *,
+        force: bool,
     ) -> list[dict[str, object]]:
         """Project least-authority readiness before consent can be granted."""
         if self._activity_only:
@@ -689,35 +810,44 @@ class ContinuousGuardedApplication:
             for connection, library in self._libraries:
                 if library not in libraries:
                     continue
-                destinations: tuple[tuple[str, str], ...] | list[dict[str, str]] = tuple(
-                    (
-                        destination,
-                        self._repository.field_effect_capability_suspension(
-                            connection, destination
-                        ) or "not_ready",
+                destinations: tuple[tuple[str, str], ...] | list[dict[str, str]] = (
+                    tuple(
+                        (
+                            destination,
+                            self._repository.field_effect_capability_suspension(
+                                connection, destination
+                            )
+                            or "not_ready",
+                        )
+                        for destination in sorted(SUPPORTED_DESTINATIONS)
                     )
-                    for destination in sorted(SUPPORTED_DESTINATIONS)
                 )
-                results.append({
-                    "connection": connection,
-                    "library": library,
-                    "state": (
-                        "connection_unavailable"
-                        if any(state == "connection_unavailable"
-                               for _, state in destinations)
-                        else "not_ready"
-                    ),
-                    "destinations": [
-                        {"destination": destination, "state": state}
-                        for destination, state in destinations
-                    ],
-                })
+                results.append(
+                    {
+                        "connection": connection,
+                        "library": library,
+                        "state": (
+                            "connection_unavailable"
+                            if any(
+                                state == "connection_unavailable"
+                                for _, state in destinations
+                            )
+                            else "not_ready"
+                        ),
+                        "destinations": [
+                            {"destination": destination, "state": state}
+                            for destination, state in destinations
+                        ],
+                    }
+                )
             return results
         now = self._clock()
         representatives: dict[str, str] = {}
         cursor: tuple[int, str] | None = None
         while len(representatives) < len(libraries):
-            documents = self._repository.pending_field_effect_decision_documents(100, cursor)
+            documents = self._repository.pending_field_effect_decision_documents(
+                100, cursor
+            )
             if not documents:
                 break
             for document in documents:
@@ -736,15 +866,17 @@ class ContinuousGuardedApplication:
             with self._capability_lock:
                 cached = self._capability_cache.get(library)
             if not force and cached is not None and now - cached[0] <= 30:
-                results.append({
-                    **cached[1],
-                    "destinations": [
-                        {"destination": destination, "state": state}
-                        for destination, state in cast(
-                            "tuple[tuple[str, str], ...]", cached[1]["destinations"]
-                        )
-                    ],
-                })
+                results.append(
+                    {
+                        **cached[1],
+                        "destinations": [
+                            {"destination": destination, "state": state}
+                            for destination, state in cast(
+                                "tuple[tuple[str, str], ...]", cached[1]["destinations"]
+                            )
+                        ],
+                    }
+                )
                 continue
             work_id = representatives.get(library)
             destinations = []
@@ -754,20 +886,31 @@ class ContinuousGuardedApplication:
                 for destination in sorted(SUPPORTED_DESTINATIONS):
                     observed_at = self._clock()
                     observed = observer.observe(_CapabilityProbe(work_id, destination))  # type: ignore[arg-type]
-                    destinations.append({
-                        "destination": destination, "state": observed.category,
-                    })
+                    destinations.append(
+                        {
+                            "destination": destination,
+                            "state": observed.category,
+                        }
+                    )
                     if observed.category == "allowed":
                         if not self._activity_only:
-                            for reason in ("insufficient_permission", "field_unavailable"):
+                            for reason in (
+                                "insufficient_permission",
+                                "field_unavailable",
+                            ):
                                 self._repository.clear_field_effect_capability_suspension(
-                                    scope="destination", connection=connection,
-                                    destination=destination, reason=reason,
+                                    scope="destination",
+                                    connection=connection,
+                                    destination=destination,
+                                    reason=reason,
                                     observed_at=observed_at,
                                 )
                             self._repository.clear_field_effect_capability_suspension(
-                                scope="connection", connection=connection, destination="",
-                                reason="connection_unavailable", observed_at=observed_at,
+                                scope="connection",
+                                connection=connection,
+                                destination="",
+                                reason="connection_unavailable",
+                                observed_at=observed_at,
                             )
                         remaining = self._repository.field_effect_capability_suspension(
                             connection, destination
@@ -777,8 +920,10 @@ class ContinuousGuardedApplication:
                     elif observed.category == "connection_unavailable":
                         if not self._activity_only:
                             self._repository.suspend_field_effect_capability(
-                                scope="connection", connection=connection,
-                                destination=destination, reason=observed.category,
+                                scope="connection",
+                                connection=connection,
+                                destination=destination,
+                                reason=observed.category,
                                 changed_at=observed_at,
                             )
                         destinations = [
@@ -789,12 +934,17 @@ class ContinuousGuardedApplication:
                     else:
                         if not self._activity_only:
                             self._repository.clear_field_effect_capability_suspension(
-                                scope="connection", connection=connection, destination="",
-                                reason="connection_unavailable", observed_at=observed_at,
+                                scope="connection",
+                                connection=connection,
+                                destination="",
+                                reason="connection_unavailable",
+                                observed_at=observed_at,
                             )
                             self._repository.suspend_field_effect_capability(
-                                scope="destination", connection=connection,
-                                destination=destination, reason=observed.category,
+                                scope="destination",
+                                connection=connection,
+                                destination=destination,
+                                reason=observed.category,
                                 changed_at=observed_at,
                             )
                         remaining = self._repository.field_effect_capability_suspension(
@@ -802,8 +952,9 @@ class ContinuousGuardedApplication:
                         )
                         if remaining is not None:
                             destinations[-1]["state"] = remaining
-                if any(value["state"] == "connection_unavailable"
-                       for value in destinations):
+                if any(
+                    value["state"] == "connection_unavailable" for value in destinations
+                ):
                     state = "connection_unavailable"
                 elif all(value["state"] == "allowed" for value in destinations):
                     state = "allowed"
@@ -817,7 +968,9 @@ class ContinuousGuardedApplication:
                     for destination in sorted(SUPPORTED_DESTINATIONS)
                 ]
             cached_result = {
-                "connection": connection, "library": library, "state": state,
+                "connection": connection,
+                "library": library,
+                "state": state,
                 "destinations": tuple(
                     (str(value["destination"]), str(value["state"]))
                     for value in destinations
@@ -825,16 +978,20 @@ class ContinuousGuardedApplication:
             }
             with self._capability_lock:
                 self._capability_cache[library] = (
-                    now, cast("dict[str, object]", cached_result),
+                    now,
+                    cast("dict[str, object]", cached_result),
                 )
-            results.append({
-                **cached_result,
-                "destinations": [
-                    {"destination": destination, "state": destination_state}
-                    for destination, destination_state
-                    in cached_result["destinations"]
-                ],
-            })
+            results.append(
+                {
+                    **cached_result,
+                    "destinations": [
+                        {"destination": destination, "state": destination_state}
+                        for destination, destination_state in cached_result[
+                            "destinations"
+                        ]
+                    ],
+                }
+            )
         return results
 
     def _run(self) -> None:
@@ -868,8 +1025,14 @@ class ContinuousGuardedApplication:
             ):
                 raise GuardedApplicationError("persistence")
             (
-                review_case_id, destination, connection, library,
-                hold_token, scan_id, requested_at, _updated_at,
+                review_case_id,
+                destination,
+                connection,
+                library,
+                hold_token,
+                scan_id,
+                requested_at,
+                _updated_at,
             ) = row
             if (connection, library) not in self._applications:
                 continue

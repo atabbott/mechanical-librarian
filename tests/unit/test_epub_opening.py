@@ -67,7 +67,9 @@ from tests.support.epub_packages import (
 )
 
 
-def _request(value: bytes, limits: EpubOpeningLimits | None = None) -> EpubPackageRequest:
+def _request(
+    value: bytes, limits: EpubOpeningLimits | None = None
+) -> EpubPackageRequest:
     selected = EpubOpeningLimits() if limits is None else limits
     source = Fingerprint(
         "sha256", SchemaVersion("source-v1"), hashlib.sha256(value).hexdigest()
@@ -126,6 +128,7 @@ def _single(body: bytes, *, media_type: str = "application/xhtml+xml") -> bytes:
         version=2 if recovered_html else 3,
     )
 
+
 _MATERIALIZED_OPENING_RECIPES = tuple(
     name for name in MATERIALIZED_RECIPES if name.startswith("opening_")
 )
@@ -140,7 +143,8 @@ def test_materialized_opening_registry_has_declared_top_level_outcomes(
         EpubInspectionOutcome.RESOURCE_LIMIT
         if name == "opening_resource_limit"
         else EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
-        if name in {
+        if name
+        in {
             "opening_no_applicable",
             "opening_invalid_encoding",
             "opening_utf16le_unsupported",
@@ -161,11 +165,7 @@ def test_materialized_opening_registry_has_declared_top_level_outcomes(
         "opening_xml_declaration_lookalike",
     }:
         assert len(
-            [
-                claim
-                for claim in report.claims
-                if claim.field is OpeningField.TITLE
-            ]
+            [claim for claim in report.claims if claim.field is OpeningField.TITLE]
         ) == (2 if name == "opening_empty_namespace_authority" else 1)
     if name == "opening_implicit_foreign_content":
         assert report.usage.navigation_links == 1
@@ -185,11 +185,18 @@ def test_citations_are_exact_versioned_path_free_and_round_trip_canonically() ->
     }
     for claim in report.claims:
         citation = claim.citation
-        assert citation.projection_end - citation.projection_start == len(citation.exact_excerpt)
-        assert citation.excerpt_digest == hashlib.sha256(citation.exact_excerpt.encode("utf-8")).hexdigest()
+        assert citation.projection_end - citation.projection_start == len(
+            citation.exact_excerpt
+        )
+        assert (
+            citation.excerpt_digest
+            == hashlib.sha256(citation.exact_excerpt.encode("utf-8")).hexdigest()
+        )
         assert ".xhtml" not in report.to_json()
         assert "/Users/" not in report.to_json()
-        assert citation.same_file_lineage == epub_file_lineage(report.source_fingerprint)
+        assert citation.same_file_lineage == epub_file_lineage(
+            report.source_fingerprint
+        )
     assert report.same_file_lineage == epub_file_lineage(report.source_fingerprint)
     assert EpubOpeningReport.from_json(report.to_json()) == report
 
@@ -217,19 +224,34 @@ def test_landmark_terms_require_landmarks_ancestry_and_epub_namespace() -> None:
         package=package,
         entries=(
             ("EPUB/nav.xhtml", nav, zipfile.ZIP_DEFLATED),
-            ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">False Title</h1>'), zipfile.ZIP_DEFLATED),
-            ("EPUB/real.xhtml", _xhtml('<section epub:type="titlepage"><h1>Real Title</h1></section>'), zipfile.ZIP_DEFLATED),
+            (
+                "EPUB/fake.xhtml",
+                _xhtml('<h1 epub:type="fulltitle">False Title</h1>'),
+                zipfile.ZIP_DEFLATED,
+            ),
+            (
+                "EPUB/real.xhtml",
+                _xhtml('<section epub:type="titlepage"><h1>Real Title</h1></section>'),
+                zipfile.ZIP_DEFLATED,
+            ),
         ),
     )
     report = _extract(value)
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Real Title"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Real Title"]
 
 
 def test_projection_preserves_nested_text_void_html_and_body_boundary() -> None:
     nested = _extract(
         _single(_xhtml('<h1 epub:type="fulltitle">The <em>Nested</em> Clock</h1>'))
     )
-    assert next(claim for claim in nested.claims if claim.field is OpeningField.TITLE).raw_value == "The Nested Clock"
+    assert (
+        next(
+            claim for claim in nested.claims if claim.field is OpeningField.TITLE
+        ).raw_value
+        == "The Nested Clock"
+    )
     recovered = _extract(
         _single(
             b'<!doctype html><html><body><input type="hidden"><br><meta charset="utf-8"><h1 epub:type="fulltitle">Visible Title</h1></body></html>',
@@ -239,14 +261,20 @@ def test_projection_preserves_nested_text_void_html_and_body_boundary() -> None:
     assert "Visible Title" in {claim.raw_value for claim in recovered.claims}
     bounded_voids = _extract(
         _single(
-            ("<!doctype html><html><body>" + "<br>" * 100 + '<h1 epub:type="fulltitle">After Voids</h1></body></html>').encode(),
+            (
+                "<!doctype html><html><body>"
+                + "<br>" * 100
+                + '<h1 epub:type="fulltitle">After Voids</h1></body></html>'
+            ).encode(),
             media_type="text/html",
         )
     )
     assert bounded_voids.outcome == EpubInspectionOutcome.SUCCESS
     body = _extract(
         _single(
-            _xhtml('<h1 epub:type="fulltitle">Front Title</h1><main epub:type="bodymatter"><p>eBook ISBN 9780306406157</p></main>')
+            _xhtml(
+                '<h1 epub:type="fulltitle">Front Title</h1><main epub:type="bodymatter"><p>eBook ISBN 9780306406157</p></main>'
+            )
         )
     )
     assert {claim.field for claim in body.claims} == {OpeningField.TITLE}
@@ -256,13 +284,17 @@ def test_projection_preserves_nested_text_void_html_and_body_boundary() -> None:
     assert "The Clock" in {claim.raw_value for claim in structural_break.claims}
     empty_body = _extract(
         _single(
-            _xhtml('<h1 epub:type="fulltitle">Front</h1><hr epub:type="bodymatter"/><p>eBook ISBN 9780306406157</p>')
+            _xhtml(
+                '<h1 epub:type="fulltitle">Front</h1><hr epub:type="bodymatter"/><p>eBook ISBN 9780306406157</p>'
+            )
         )
     )
     assert {claim.field for claim in empty_body.claims} == {OpeningField.TITLE}
     nested_body = _extract(
         _single(
-            _xhtml('<h1 epub:type="fulltitle">Front<span epub:type="bodymatter">Story</span></h1>')
+            _xhtml(
+                '<h1 epub:type="fulltitle">Front<span epub:type="bodymatter">Story</span></h1>'
+            )
         )
     )
     assert nested_body.outcome == EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
@@ -270,7 +302,11 @@ def test_projection_preserves_nested_text_void_html_and_body_boundary() -> None:
     assert "body_transition_reached" in nested_body.warnings
     implied = _extract(
         _single(
-            ("<!doctype html><html><body>" + "<p><span>x" * 40 + '<h1 epub:type="fulltitle">Implied Close Title</h1></body></html>').encode(),
+            (
+                "<!doctype html><html><body>"
+                + "<p><span>x" * 40
+                + '<h1 epub:type="fulltitle">Implied Close Title</h1></body></html>'
+            ).encode(),
             media_type="text/html",
         )
     )
@@ -286,27 +322,33 @@ def test_foreign_inclusion_is_rejected_without_losing_a_safe_sibling() -> None:
         ),
         spine=("hostile", "safe"),
     )
-    hostile = b'''<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:xi="http://www.w3.org/2001/XInclude"><body><xi:include href="https://example.invalid"><xi:fallback><h1 epub:type="fulltitle">Injected</h1></xi:fallback></xi:include></body></html>'''
+    hostile = b"""<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:xi="http://www.w3.org/2001/XInclude"><body><xi:include href="https://example.invalid"><xi:fallback><h1 epub:type="fulltitle">Injected</h1></xi:fallback></xi:include></body></html>"""
     value = _opening_epub(
         package=package,
         entries=(
             ("EPUB/hostile.xhtml", hostile, zipfile.ZIP_DEFLATED),
-            ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Safe Sibling</h1>'), zipfile.ZIP_DEFLATED),
+            (
+                "EPUB/safe.xhtml",
+                _xhtml('<h1 epub:type="fulltitle">Safe Sibling</h1>'),
+                zipfile.ZIP_DEFLATED,
+            ),
         ),
     )
     report = _extract(value)
     assert "Injected" not in report.to_json()
     assert "Safe Sibling" in {claim.raw_value for claim in report.claims}
-    assert OpeningResourceDisposition.MALFORMED in {item.disposition for item in report.resources}
+    assert OpeningResourceDisposition.MALFORMED in {
+        item.disposition for item in report.resources
+    }
 
 
 @pytest.mark.parametrize(
     "injected",
     (
-        b'''<?xml version="1.0"?><include xmlns="http://www.w3.org/2001/XInclude"><fallback><h1 xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" epub:type="fulltitle">Default Injected</h1></fallback></include>''',
-        b'''<!doctype html><html xmlns:q="http://www.w3.org/2001/XInclude"><body><q:include><q:fallback><h1 epub:type="fulltitle">Alias Injected</h1></q:fallback></q:include></body></html>''',
-        b'''<!doctype html><html xmlns:t="http://www.w3.org/1999/XSL/Transform"><body><t:stylesheet><h1 epub:type="fulltitle">Transform Injected</h1></t:stylesheet></body></html>''',
-        b'''<!doctype html><html xmlns:x="http://www.w3.org/1999/xhtml"><body><x:script><h1 epub:type="fulltitle">Script Injected</h1></x:script><h1 epub:type="fulltitle">Visible Alias Safe</h1></body></html>''',
+        b"""<?xml version="1.0"?><include xmlns="http://www.w3.org/2001/XInclude"><fallback><h1 xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" epub:type="fulltitle">Default Injected</h1></fallback></include>""",
+        b"""<!doctype html><html xmlns:q="http://www.w3.org/2001/XInclude"><body><q:include><q:fallback><h1 epub:type="fulltitle">Alias Injected</h1></q:fallback></q:include></body></html>""",
+        b"""<!doctype html><html xmlns:t="http://www.w3.org/1999/XSL/Transform"><body><t:stylesheet><h1 epub:type="fulltitle">Transform Injected</h1></t:stylesheet></body></html>""",
+        b"""<!doctype html><html xmlns:x="http://www.w3.org/1999/xhtml"><body><x:script><h1 epub:type="fulltitle">Script Injected</h1></x:script><h1 epub:type="fulltitle">Visible Alias Safe</h1></body></html>""",
     ),
     ids=("default_namespace", "alias_prefix", "xsl_transform", "aliased_script"),
 )
@@ -323,23 +365,25 @@ def test_foreign_inclusion_guarded_variants_are_rejected(injected: bytes) -> Non
 def test_recovery_resolves_qualified_active_start_and_end_tags(
     media_type: str,
 ) -> None:
-    content = b'''<html xmlns="http://www.w3.org/1999/xhtml" xmlns:x="http://www.w3.org/1999/xhtml" xmlns:s="http://www.w3.org/2000/svg" xmlns:epub="http://www.idpf.org/2007/ops"><body><s:script><x:h1 epub:type="fulltitle">Injected SVG Script</x:h1></s:script><x:h1 epub:type="fulltitle">Safe QName Sibling</x:h1></body>'''
+    content = b"""<html xmlns="http://www.w3.org/1999/xhtml" xmlns:x="http://www.w3.org/1999/xhtml" xmlns:s="http://www.w3.org/2000/svg" xmlns:epub="http://www.idpf.org/2007/ops"><body><s:script><x:h1 epub:type="fulltitle">Injected SVG Script</x:h1></s:script><x:h1 epub:type="fulltitle">Safe QName Sibling</x:h1></body>"""
     report = _extract(_single(content, media_type=media_type))
     assert report.outcome == EpubInspectionOutcome.SUCCESS
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Safe QName Sibling"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Safe QName Sibling"]
 
 
 def test_extension_vocabulary_terms_never_gain_controlled_semantics() -> None:
     prefixed = _extract(
-        _single(
-            _xhtml('<h1 epub:type="vendor:fulltitle">Vendor False Title</h1>')
-        )
+        _single(_xhtml('<h1 epub:type="vendor:fulltitle">Vendor False Title</h1>'))
     )
     assert prefixed.outcome == EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
 
     boundary = _extract(
         _single(
-            _xhtml('<h1 epub:type="fulltitle">Front<span epub:type="vendor:bodymatter">Story</span></h1><p epub:type="vendor:preview">eBook ISBN 9780306406157</p>')
+            _xhtml(
+                '<h1 epub:type="fulltitle">Front<span epub:type="vendor:bodymatter">Story</span></h1><p epub:type="vendor:preview">eBook ISBN 9780306406157</p>'
+            )
         )
     )
     assert "FrontStory" in {claim.raw_value for claim in boundary.claims}
@@ -353,14 +397,24 @@ def test_extension_vocabulary_terms_never_gain_controlled_semantics() -> None:
         ),
         spine=("real",),
     )
-    navigation = _xhtml('<nav epub:type="vendor:landmarks"><a epub:type="titlepage" href="fake.xhtml">False</a></nav>')
+    navigation = _xhtml(
+        '<nav epub:type="vendor:landmarks"><a epub:type="titlepage" href="fake.xhtml">False</a></nav>'
+    )
     selected = _extract(
         _opening_epub(
             package=package,
             entries=(
                 ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
-                ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">Vendor Selected</h1>'), zipfile.ZIP_DEFLATED),
-                ("EPUB/real.xhtml", _xhtml('<h1 epub:type="fulltitle">Spine Selected</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/fake.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Vendor Selected</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+                (
+                    "EPUB/real.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Spine Selected</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
@@ -371,16 +425,25 @@ def test_extension_vocabulary_terms_never_gain_controlled_semantics() -> None:
 def test_same_element_isbn_labels_are_scoped_per_match() -> None:
     report = _extract(
         _single(
-            _xhtml('<section epub:type="copyright-page"><p>eBook ISBN 9780306406157; Paperback ISBN 9781861972712</p></section>')
+            _xhtml(
+                '<section epub:type="copyright-page"><p>eBook ISBN 9780306406157; Paperback ISBN 9781861972712</p></section>'
+            )
         )
     )
-    identifiers = [claim for claim in report.claims if claim.field is OpeningField.IDENTIFIER]
-    assert [claim.applicability_label for claim in identifiers] == ["ebook", "paperback"]
+    identifiers = [
+        claim for claim in report.claims if claim.field is OpeningField.IDENTIFIER
+    ]
+    assert [claim.applicability_label for claim in identifiers] == [
+        "ebook",
+        "paperback",
+    ]
     assert "eBook" in identifiers[0].citation.exact_excerpt
     assert "Paperback" in identifiers[1].citation.exact_excerpt
     suffixes = _extract(
         _single(
-            _xhtml('<section epub:type="copyright-page"><p>ISBN 9780306406157 (eBook); ISBN 9781861972712 (Paperback)</p></section>')
+            _xhtml(
+                '<section epub:type="copyright-page"><p>ISBN 9780306406157 (eBook); ISBN 9781861972712 (Paperback)</p></section>'
+            )
         )
     )
     assert [
@@ -392,15 +455,13 @@ def test_same_element_isbn_labels_are_scoped_per_match() -> None:
         _single(
             _xhtml(
                 '<section epub:type="copyright-page">'
-                '<p>Electronic edition</p><p>ISBN 9780306406157</p>'
-                '</section>'
+                "<p>Electronic edition</p><p>ISBN 9780306406157</p>"
+                "</section>"
             )
         )
     )
     preceding_identifier = next(
-        claim
-        for claim in preceding.claims
-        if claim.field is OpeningField.IDENTIFIER
+        claim for claim in preceding.claims if claim.field is OpeningField.IDENTIFIER
     )
     assert preceding_identifier.applicability_label == "ebook"
     assert "Electronic edition" in preceding_identifier.citation.exact_excerpt
@@ -411,15 +472,13 @@ def test_same_element_isbn_labels_are_scoped_per_match() -> None:
         _single(
             _xhtml(
                 '<section epub:type="copyright-page">'
-                '<p>ISBN 9780306406157</p><p>Electronic edition</p>'
-                '</section>'
+                "<p>ISBN 9780306406157</p><p>Electronic edition</p>"
+                "</section>"
             )
         )
     )
     following_identifier = next(
-        claim
-        for claim in following.claims
-        if claim.field is OpeningField.IDENTIFIER
+        claim for claim in following.claims if claim.field is OpeningField.IDENTIFIER
     )
     assert following_identifier.applicability_label == "ebook"
     assert "Electronic edition" in following_identifier.citation.exact_excerpt
@@ -430,16 +489,14 @@ def test_same_element_isbn_labels_are_scoped_per_match() -> None:
         _single(
             _xhtml(
                 '<section epub:type="copyright-page">'
-                '<p>Electronic paperback edition</p>'
-                '<p>ISBN 9780306406157</p>'
-                '</section>'
+                "<p>Electronic paperback edition</p>"
+                "<p>ISBN 9780306406157</p>"
+                "</section>"
             )
         )
     )
     conflicting_identifier = next(
-        claim
-        for claim in conflicting.claims
-        if claim.field is OpeningField.IDENTIFIER
+        claim for claim in conflicting.claims if claim.field is OpeningField.IDENTIFIER
     )
     assert conflicting_identifier.applicability_label == "ambiguous"
     assert conflicting_identifier.applicability is EpubObservationApplicability.UNKNOWN
@@ -456,8 +513,8 @@ def test_same_element_isbn_labels_survive_each_separator(separator: str) -> None
         _single(
             _xhtml(
                 '<section epub:type="copyright-page"><p>'
-                f'ISBN 9780306406157 (eBook){separator}'
-                'ISBN 9781861972712 (Paperback)</p></section>'
+                f"ISBN 9780306406157 (eBook){separator}"
+                "ISBN 9781861972712 (Paperback)</p></section>"
             )
         )
     )
@@ -474,14 +531,12 @@ def test_same_element_isbn_false_labels_stay_unlabelled(false_label: str) -> Non
         _single(
             _xhtml(
                 '<section epub:type="copyright-page"><p>'
-                f'{false_label} ISBN 9780306406157</p></section>'
+                f"{false_label} ISBN 9780306406157</p></section>"
             )
         )
     )
     identifier = next(
-        claim
-        for claim in unlabelled.claims
-        if claim.field is OpeningField.IDENTIFIER
+        claim for claim in unlabelled.claims if claim.field is OpeningField.IDENTIFIER
     )
     assert identifier.applicability_label == "unlabelled"
     assert identifier.applicability is EpubObservationApplicability.UNKNOWN
@@ -494,15 +549,13 @@ def test_same_element_isbn_labels_are_scoped_out_of_later_semantics(
     scoped = _extract(
         _single(
             _xhtml(
-                '<p>ISBN 9780306406157</p>'
+                "<p>ISBN 9780306406157</p>"
                 f'<section epub:type="{semantic}"><p>Electronic edition</p></section>'
             )
         )
     )
     scoped_identifier = next(
-        claim
-        for claim in scoped.claims
-        if claim.field is OpeningField.IDENTIFIER
+        claim for claim in scoped.claims if claim.field is OpeningField.IDENTIFIER
     )
     assert scoped_identifier.applicability == EpubObservationApplicability.UNKNOWN
     assert scoped_identifier.applicability_label == "unlabelled"
@@ -514,23 +567,25 @@ def test_isbn_recognition_is_occurrence_local_and_rejects_owned_uri_digits() -> 
         _single(
             _xhtml(
                 '<section epub:type="copyright-page"><p>'
-                'ISBN 9781861972712; eBook ISBN 9780306406157; '
-                'LCCN: 9780306406157; '
-                'LCCN https://lccn.loc.gov/9780306406157'
-                '</p></section>'
+                "ISBN 9781861972712; eBook ISBN 9780306406157; "
+                "LCCN: 9780306406157; "
+                "LCCN https://lccn.loc.gov/9780306406157"
+                "</p></section>"
             )
         )
     )
     identifiers = [
         claim for claim in report.claims if claim.field is OpeningField.IDENTIFIER
     ]
-    assert [(claim.normalized_value, claim.applicability_label) for claim in identifiers] == [("9781861972712", "unlabelled"), ("9780306406157", "ebook")]
+    assert [
+        (claim.normalized_value, claim.applicability_label) for claim in identifiers
+    ] == [("9781861972712", "unlabelled"), ("9780306406157", "ebook")]
     forward = _extract(
         _single(
             _xhtml(
                 '<section epub:type="copyright-page"><p>'
-                'ISBN 9781861972712 eBook ISBN 9780306406157'
-                '</p></section>'
+                "ISBN 9781861972712 eBook ISBN 9780306406157"
+                "</p></section>"
             )
         )
     )
@@ -543,8 +598,8 @@ def test_isbn_recognition_is_occurrence_local_and_rejects_owned_uri_digits() -> 
         _single(
             _xhtml(
                 '<section epub:type="copyright-page"><p>'
-                'eBook ISBN 9781861972712 ISBN 9780306406157'
-                '</p></section>'
+                "eBook ISBN 9781861972712 ISBN 9780306406157"
+                "</p></section>"
             )
         )
     )
@@ -560,11 +615,11 @@ def test_colon_delimited_media_labels_and_uri_owners_are_local() -> None:
         _single(
             _xhtml(
                 '<section epub:type="copyright-page"><p>'
-                'Paperback: 9781861972712; Hardcover: 9780306406157; '
-                'eBook: 9780140328721; x:9780306406157, '
-                'https://lccn.loc.gov/9780306406157; '
-                'https://example.invalid/item;id=9780306406157'
-                '</p></section>'
+                "Paperback: 9781861972712; Hardcover: 9780306406157; "
+                "eBook: 9780140328721; x:9780306406157, "
+                "https://lccn.loc.gov/9780306406157; "
+                "https://example.invalid/item;id=9780306406157"
+                "</p></section>"
             )
         )
     )
@@ -582,11 +637,7 @@ def test_colon_delimited_media_labels_and_uri_owners_are_local() -> None:
 def test_identifier_owner_spans_are_computed_once_per_element() -> None:
     values = " ".join("9780306406157" for _ in range(12))
     source = _single(
-        _xhtml(
-            '<section epub:type="copyright-page"><p>'
-            + values
-            + '</p></section>'
-        )
+        _xhtml('<section epub:type="copyright-page"><p>' + values + "</p></section>")
     )
     with patch.object(
         opening,
@@ -602,8 +653,7 @@ def test_canonical_envelope_rejects_forged_versions_lineage_and_usage() -> None:
     report = _extract(opening_claims_complete())
     assert EPUB_OPENING_EXTRACTOR_VERSION == "epub-opening-v3"
     assert all(
-        claim.citation.extractor_version
-        == EPUB_OPENING_EXTRACTOR_VERSION
+        claim.citation.extractor_version == EPUB_OPENING_EXTRACTOR_VERSION
         for claim in report.claims
     )
 
@@ -649,40 +699,53 @@ def test_canonical_envelope_rejects_forged_versions_lineage_and_usage() -> None:
             "resource_digest", "0" * 64
         ),
         lambda value: value["usage"].update({name: 0 for name in value["usage"]}),
-        lambda value: (value.__setitem__("claims", []), value.__setitem__("resources", []), value.__setitem__("same_file_lineage", None), value["usage"].update({name: 0 for name in value["usage"]})),
-        lambda value: value["claims"][0]["citation"].__setitem__("recovery_warnings", ["recovered_markup"]),
+        lambda value: (
+            value.__setitem__("claims", []),
+            value.__setitem__("resources", []),
+            value.__setitem__("same_file_lineage", None),
+            value["usage"].update({name: 0 for name in value["usage"]}),
+        ),
+        lambda value: value["claims"][0]["citation"].__setitem__(
+            "recovery_warnings", ["recovered_markup"]
+        ),
     ):
         value = json.loads(report.to_json())
         mutate(value)
         with pytest.raises(EvidenceValueError):
             EpubOpeningReport.from_json(
-                json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+                json.dumps(
+                    value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+                )
             )
 
     recovered = json.loads(_extract(opening_recovered_html()).to_json())
     recovered["claims"][0]["citation"]["recovery_warnings"] = []
     with pytest.raises(EvidenceValueError):
         EpubOpeningReport.from_json(
-            json.dumps(recovered, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            json.dumps(
+                recovered, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            )
         )
 
     duplicate = json.loads(report.to_json())
     duplicate["resources"].append(dict(duplicate["resources"][0]))
     duplicate["usage"]["selected_documents"] += 1
-    duplicate["usage"]["opened_resources"] += int(
-        duplicate["resources"][0]["opened"]
-    )
-    duplicate["usage"][f'{duplicate["resources"][0]["parse_mode"]}_documents'] += 1
+    duplicate["usage"]["opened_resources"] += int(duplicate["resources"][0]["opened"])
+    duplicate["usage"][f"{duplicate['resources'][0]['parse_mode']}_documents"] += 1
     with pytest.raises(EvidenceValueError):
         EpubOpeningReport.from_json(
-            json.dumps(duplicate, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            json.dumps(
+                duplicate, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            )
         )
 
     failed = json.loads(_extract(opening_resource_limit()).to_json())
     failed["usage"]["opened_resources"] = 1
     with pytest.raises(EvidenceValueError):
         EpubOpeningReport.from_json(
-            json.dumps(failed, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            json.dumps(
+                failed, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            )
         )
 
     no_claims = json.loads(
@@ -692,16 +755,23 @@ def test_canonical_envelope_rejects_forged_versions_lineage_and_usage() -> None:
     no_claims["usage"]["strict_documents"] = 0
     with pytest.raises(EvidenceValueError):
         EpubOpeningReport.from_json(
-            json.dumps(no_claims, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            json.dumps(
+                no_claims, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            )
         )
 
 
 def test_excerpt_profile_and_recovery_warning_are_enforced() -> None:
-    limited = _extract(opening_claims_complete(), EpubOpeningLimits(excerpt_characters=1))
+    limited = _extract(
+        opening_claims_complete(), EpubOpeningLimits(excerpt_characters=1)
+    )
     assert limited.claims
     assert all(len(claim.raw_value) == 1 for claim in limited.claims)
     recovered = _extract(opening_recovered_html())
-    assert all(claim.citation.recovery_warnings == ("recovered_markup",) for claim in recovered.claims)
+    assert all(
+        claim.citation.recovery_warnings == ("recovered_markup",)
+        for claim in recovered.claims
+    )
 
 
 def test_every_controlled_claim_family_and_contributor_role_is_recognized() -> None:
@@ -724,9 +794,9 @@ def test_every_controlled_claim_family_and_contributor_role_is_recognized() -> N
                 '<section epub:type="contributors">'
                 '<p epub:type="contributor">Casey Designer</p>'
                 '<p epub:type="creator">Chris Creator</p>'
-                '<p>Adapted by Alex Adapter</p>'
-                '<p>Contributions by Morgan Example</p>'
-                '</section>'
+                "<p>Adapted by Alex Adapter</p>"
+                "<p>Contributions by Morgan Example</p>"
+                "</section>"
             )
         )
     )
@@ -743,7 +813,11 @@ def test_every_controlled_claim_family_and_contributor_role_is_recognized() -> N
         "Casey Designer",
         "Alex Adapter",
     }
-    assert [claim.normalized_value for claim in roles.claims if claim.field is OpeningField.CREATOR] == ["Chris Creator"]
+    assert [
+        claim.normalized_value
+        for claim in roles.claims
+        if claim.field is OpeningField.CREATOR
+    ] == ["Chris Creator"]
 
 
 def test_indicia_roles_dates_and_production_credits_remain_typed_and_separate() -> None:
@@ -812,8 +886,7 @@ def test_indicia_roles_dates_and_production_credits_remain_typed_and_separate() 
             claim.date_precision,
         )
         for claim in report.claims
-        if claim.field
-        in {OpeningField.PUBLICATION_DATE, OpeningField.DATE_EVENT}
+        if claim.field in {OpeningField.PUBLICATION_DATE, OpeningField.DATE_EVENT}
     ] == [
         (
             OpeningField.DATE_EVENT,
@@ -857,8 +930,7 @@ def test_unlabelled_print_and_invalid_dates_never_become_manifestation_dates() -
         )
     )
     assert not any(
-        claim.field is OpeningField.PUBLICATION_DATE
-        for claim in report.claims
+        claim.field is OpeningField.PUBLICATION_DATE for claim in report.claims
     )
 
     assert [
@@ -868,7 +940,9 @@ def test_unlabelled_print_and_invalid_dates_never_become_manifestation_dates() -
     ] == [("1999", DateEvent.WORK_FIRST_PUBLICATION)]
 
 
-def test_ambiguous_date_spans_fail_closed_without_truncation_or_event_guessing() -> None:
+def test_ambiguous_date_spans_fail_closed_without_truncation_or_event_guessing() -> (
+    None
+):
     report = _extract(
         _single(
             _xhtml(
@@ -883,8 +957,7 @@ def test_ambiguous_date_spans_fail_closed_without_truncation_or_event_guessing()
     )
 
     assert not any(
-        claim.field
-        in {OpeningField.PUBLICATION_DATE, OpeningField.DATE_EVENT}
+        claim.field in {OpeningField.PUBLICATION_DATE, OpeningField.DATE_EVENT}
         for claim in report.claims
     )
 
@@ -904,8 +977,7 @@ def test_ambiguous_date_spans_fail_closed_without_truncation_or_event_guessing()
     assert [
         (claim.normalized_value, claim.date_event)
         for claim in independent.claims
-        if claim.field
-        in {OpeningField.PUBLICATION_DATE, OpeningField.DATE_EVENT}
+        if claim.field in {OpeningField.PUBLICATION_DATE, OpeningField.DATE_EVENT}
     ] == [
         ("1998", DateEvent.WORK_FIRST_PUBLICATION),
         ("2024", DateEvent.MANIFESTATION_PUBLICATION),
@@ -913,8 +985,7 @@ def test_ambiguous_date_spans_fail_closed_without_truncation_or_event_guessing()
     assert "ambiguous_date_event" not in independent.warnings
     assert [
         (lexical, event)
-        for lexical, event, _precision
-        in opening._indicia_dates("First published 1998")
+        for lexical, event, _precision in opening._indicia_dates("First published 1998")
     ] == [("1998", DateEvent.WORK_FIRST_PUBLICATION)]
     assert opening._mixed_edition_date_spans("This ebook edition") == ()
 
@@ -925,14 +996,9 @@ def test_ambiguous_date_spans_fail_closed_without_truncation_or_event_guessing()
     ids=("period", "semicolon", "pipe", "newline"),
 )
 def test_independent_date_spans_survive_each_separator(separator: str) -> None:
-    text = (
-        f"First published 1998{separator}"
-        "This ebook edition published 2024"
-    )
+    text = f"First published 1998{separator}This ebook edition published 2024"
     assert [
-        (lexical, event)
-        for lexical, event, _precision
-        in opening._indicia_dates(text)
+        (lexical, event) for lexical, event, _precision in opening._indicia_dates(text)
     ] == [
         ("1998", DateEvent.WORK_FIRST_PUBLICATION),
         ("2024", DateEvent.MANIFESTATION_PUBLICATION),
@@ -941,10 +1007,7 @@ def test_independent_date_spans_survive_each_separator(separator: str) -> None:
 
 
 def test_indicia_dates_require_whole_tokens_and_exact_offset_boundary() -> None:
-    valid = (
-        "EPUB publication date: 2024-03-05T10:30:00+14:00. "
-        "Copyright 2023"
-    )
+    valid = "EPUB publication date: 2024-03-05T10:30:00+14:00. Copyright 2023"
     assert [
         (value, event, precision)
         for value, event, precision in opening._indicia_dates(valid)
@@ -969,9 +1032,7 @@ def test_indicia_dates_require_whole_tokens_and_exact_offset_boundary() -> None:
     ),
 )
 def test_indicia_dates_reject_malformed_tokens(malformed: str) -> None:
-    assert opening._indicia_dates(
-        f"EPUB publication date: {malformed}"
-    ) == ()
+    assert opening._indicia_dates(f"EPUB publication date: {malformed}") == ()
     assert opening._date_precision(malformed) is None
 
 
@@ -1046,8 +1107,7 @@ def test_one_date_occurrence_has_one_event_and_repeated_literals_cite_exactly() 
     dated = [
         claim
         for claim in report.claims
-        if claim.date_event
-        in {DateEvent.WORK_FIRST_PUBLICATION, DateEvent.COPYRIGHT}
+        if claim.date_event in {DateEvent.WORK_FIRST_PUBLICATION, DateEvent.COPYRIGHT}
     ]
     assert [
         (
@@ -1062,11 +1122,11 @@ def test_one_date_occurrence_has_one_event_and_repeated_literals_cite_exactly() 
     ]
     assert dated[0].citation.projection_start != dated[1].citation.projection_start
     copyright_shadow = next(
-        claim
-        for claim in report.claims
-        if claim.field is OpeningField.COPYRIGHT_DATE
+        claim for claim in report.claims if claim.field is OpeningField.COPYRIGHT_DATE
     )
-    assert copyright_shadow.citation.projection_start == dated[1].citation.projection_start
+    assert (
+        copyright_shadow.citation.projection_start == dated[1].citation.projection_start
+    )
 
 
 def test_promotion_word_inside_semantic_title_does_not_suppress_claim() -> None:
@@ -1080,7 +1140,9 @@ def test_promotion_word_inside_semantic_title_does_not_suppress_claim() -> None:
             )
         )
     )
-    assert (OpeningField.TITLE, "A Sample of Life") in {(claim.field, claim.normalized_value) for claim in report.claims}
+    assert (OpeningField.TITLE, "A Sample of Life") in {
+        (claim.field, claim.normalized_value) for claim in report.claims
+    }
 
 
 def test_promotion_notice_suppresses_only_later_claims_in_its_front_scope() -> None:
@@ -1118,7 +1180,9 @@ def test_promotion_notice_suppresses_only_later_claims_in_its_front_scope() -> N
         for claim in report.claims
         if claim.date_event is DateEvent.COPYRIGHT
     } == {"2023"}
-    assert (OpeningField.TITLE, "A Sample of Life") in {(claim.field, claim.normalized_value) for claim in report.claims}
+    assert (OpeningField.TITLE, "A Sample of Life") in {
+        (claim.field, claim.normalized_value) for claim in report.claims
+    }
 
 
 def test_uncontained_promotion_run_stops_at_later_target_section() -> None:
@@ -1150,7 +1214,9 @@ def test_uncontained_promotion_run_stops_at_later_target_section() -> None:
         for claim in report.claims
         if claim.date_event is DateEvent.COPYRIGHT
     } == {"2023"}
-    assert (OpeningField.TITLE, "A Sample of Life") in {(claim.field, claim.normalized_value) for claim in report.claims}
+    assert (OpeningField.TITLE, "A Sample of Life") in {
+        (claim.field, claim.normalized_value) for claim in report.claims
+    }
 
 
 def test_promotion_descendant_suppresses_its_claim_ancestor_only() -> None:
@@ -1247,9 +1313,7 @@ def test_synthetic_indicia_aggregate_has_exact_role_and_date_recovery() -> None:
         role_cases,
         lambda text: {
             (name, role)
-            for field, name, role, _applicability in opening._indicia_credits(
-                text
-            )
+            for field, name, role, _applicability in opening._indicia_credits(text)
             if field is OpeningField.CONTRIBUTOR
         },
     )
@@ -1261,7 +1325,10 @@ def test_synthetic_indicia_aggregate_has_exact_role_and_date_recovery() -> None:
             if event is DateEvent.MANIFESTATION_PUBLICATION
         },
     )
-    assert {"contributor_role": role_aggregate, "manifestation_date": date_aggregate} == {
+    assert {
+        "contributor_role": role_aggregate,
+        "manifestation_date": date_aggregate,
+    } == {
         "contributor_role": {
             "explicit_negative_precision": 1.0,
             "false_positive": 0,
@@ -1312,9 +1379,7 @@ def test_fact_limit_marker_is_reserved_inside_a_full_warning_budget() -> None:
 
 
 def test_trailing_series_cue_without_positive_structure_is_rejected() -> None:
-    report = _extract(
-        _single(_xhtml("<p>Book 2.5 of the Clockwork Archive</p>"))
-    )
+    report = _extract(_single(_xhtml("<p>Book 2.5 of the Clockwork Archive</p>")))
     assert [
         (claim.field, claim.normalized_value)
         for claim in report.claims
@@ -1353,32 +1418,55 @@ def test_trailing_series_cue_without_positive_structure_is_rejected() -> None:
 def test_trailing_series_cue_variants_are_rejected(markup: str) -> None:
     claims = _extract(_single(_xhtml(markup))).claims
     assert not (
-        {
-            claim.field
-            for claim in claims
-        }
+        {claim.field for claim in claims}
         & {OpeningField.SERIES, OpeningField.SERIES_ORDER}
     )
 
 
 def test_byline_is_a_creator_with_author_role_and_source_values_are_redacted() -> None:
-    report = _extract(_single(_xhtml('<p epub:type="creator">By Ada Example</p><p epub:type="contributor">Bea Editor</p>')))
+    report = _extract(
+        _single(
+            _xhtml(
+                '<p epub:type="creator">By Ada Example</p><p epub:type="contributor">Bea Editor</p>'
+            )
+        )
+    )
     creators = [claim for claim in report.claims if claim.field is OpeningField.CREATOR]
-    contributors = [claim for claim in report.claims if claim.field is OpeningField.CONTRIBUTOR]
-    assert [(claim.normalized_value, claim.raw_value) for claim in creators] == [("Ada Example", "Ada Example")]
+    contributors = [
+        claim for claim in report.claims if claim.field is OpeningField.CONTRIBUTOR
+    ]
+    assert [(claim.normalized_value, claim.raw_value) for claim in creators] == [
+        ("Ada Example", "Ada Example")
+    ]
     assert [claim.normalized_value for claim in contributors] == ["Bea Editor"]
-    assert [claim.normalized_value for claim in report.claims if claim.field is OpeningField.CREATOR_ROLE] == ["author"]
-    oversized = _extract(_single(_xhtml('<p epub:type="creator">' + "A" * 281 + "</p>")))
-    claim = next(claim for claim in oversized.claims if claim.field is OpeningField.CREATOR)
+    assert [
+        claim.normalized_value
+        for claim in report.claims
+        if claim.field is OpeningField.CREATOR_ROLE
+    ] == ["author"]
+    oversized = _extract(
+        _single(_xhtml('<p epub:type="creator">' + "A" * 281 + "</p>"))
+    )
+    claim = next(
+        claim for claim in oversized.claims if claim.field is OpeningField.CREATOR
+    )
     assert claim.state == "oversized"
     assert re.search(r"^oversized-source-text-sha256:[0-9a-f]{64}$", claim.raw_value)
     assert claim.raw_value == claim.citation.exact_excerpt
-    unsafe = _extract(_single(_xhtml('<p epub:type="creator">By /Users/private/Ada</p>')))
-    creator = next(claim for claim in unsafe.claims if claim.field is OpeningField.CREATOR)
+    unsafe = _extract(
+        _single(_xhtml('<p epub:type="creator">By /Users/private/Ada</p>'))
+    )
+    creator = next(
+        claim for claim in unsafe.claims if claim.field is OpeningField.CREATOR
+    )
     assert creator.state == "unsupported"
     assert re.search(r"^unsafe-source-text-sha256:[0-9a-f]{64}$", creator.raw_value)
     assert creator.raw_value == creator.citation.exact_excerpt
-    assert [claim.normalized_value for claim in unsafe.claims if claim.field is OpeningField.CREATOR_ROLE] == ["author"]
+    assert [
+        claim.normalized_value
+        for claim in unsafe.claims
+        if claim.field is OpeningField.CREATOR_ROLE
+    ] == ["author"]
 
 
 def test_strict_recovery_and_active_content_are_inert_and_visible() -> None:
@@ -1408,7 +1496,9 @@ def test_identifier_checksums_and_nearby_applicability_remain_typed() -> None:
     }
     invalid = _extract(
         _single(
-            _xhtml('<section epub:type="copyright-page"><p>ISBN 9780306406158</p></section>')
+            _xhtml(
+                '<section epub:type="copyright-page"><p>ISBN 9780306406158</p></section>'
+            )
         )
     )
     invalid_identifier = next(
@@ -1434,19 +1524,24 @@ def test_equal_precedence_conflict_no_claim_and_limit_partitions_are_distinct() 
         ),
     )
     assert "ambiguous_navigation_landmark" in conflict.warnings
-    assert len(
-        [claim for claim in conflict.claims if claim.field is OpeningField.TITLE]
-    ) == 2
+    assert (
+        len([claim for claim in conflict.claims if claim.field is OpeningField.TITLE])
+        == 2
+    )
     assert absent.outcome == EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
     assert per_resource.outcome == EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
-    assert OpeningResourceDisposition.RESOURCE_LIMIT in {resource.disposition for resource in per_resource.resources}
+    assert OpeningResourceDisposition.RESOURCE_LIMIT in {
+        resource.disposition for resource in per_resource.resources
+    }
     assert aggregate.outcome == EpubInspectionOutcome.RESOURCE_LIMIT
     assert not aggregate.claims
     assert not aggregate.resources
 
 
-def test_node_text_link_and_document_limits_cover_exact_and_rejection_boundaries() -> None:
-    minimal = b'''<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">abc</h1></body></html>'''
+def test_node_text_link_and_document_limits_cover_exact_and_rejection_boundaries() -> (
+    None
+):
+    minimal = b"""<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">abc</h1></body></html>"""
     exact_text = _extract(
         _single(minimal),
         EpubOpeningLimits(text_characters_per_selection=3),
@@ -1457,7 +1552,7 @@ def test_node_text_link_and_document_limits_cover_exact_and_rejection_boundaries
     )
     assert exact_text.outcome == EpubInspectionOutcome.SUCCESS
     assert above_text.outcome == EpubInspectionOutcome.RESOURCE_LIMIT
-    malformed = b'''<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">abc</h1></body>'''
+    malformed = b"""<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">abc</h1></body>"""
     cumulative = _extract(
         _single(malformed),
         EpubOpeningLimits(nodes_per_resource=10, nodes_per_selection=6),
@@ -1465,22 +1560,38 @@ def test_node_text_link_and_document_limits_cover_exact_and_rejection_boundaries
     assert cumulative.outcome == EpubInspectionOutcome.SUCCESS
     assert cumulative.usage.nodes == 6
     assert cumulative.usage.text_characters == 6
-    assert _extract(
-        _single(malformed),
-        EpubOpeningLimits(nodes_per_resource=10, nodes_per_selection=5),
-    ).outcome == EpubInspectionOutcome.RESOURCE_LIMIT
-    assert _extract(
-        _single(minimal),
-        EpubOpeningLimits(nodes_per_resource=3, nodes_per_selection=3),
-    ).outcome == EpubInspectionOutcome.SUCCESS
+    assert (
+        _extract(
+            _single(malformed),
+            EpubOpeningLimits(nodes_per_resource=10, nodes_per_selection=5),
+        ).outcome
+        == EpubInspectionOutcome.RESOURCE_LIMIT
+    )
+    assert (
+        _extract(
+            _single(minimal),
+            EpubOpeningLimits(nodes_per_resource=3, nodes_per_selection=3),
+        ).outcome
+        == EpubInspectionOutcome.SUCCESS
+    )
 
     package = _opening_package(
-        items=(("deep", "deep.xhtml", "application/xhtml+xml", ""), ("safe", "safe.xhtml", "application/xhtml+xml", "")),
+        items=(
+            ("deep", "deep.xhtml", "application/xhtml+xml", ""),
+            ("safe", "safe.xhtml", "application/xhtml+xml", ""),
+        ),
         spine=("deep", "safe"),
     )
     node_partition = _opening_epub(
         package=package,
-        entries=(("EPUB/deep.xhtml", b'''<html xmlns="http://www.w3.org/1999/xhtml"><body><div><p>x</p></div></body></html>''', zipfile.ZIP_DEFLATED), ("EPUB/safe.xhtml", minimal, zipfile.ZIP_DEFLATED)),
+        entries=(
+            (
+                "EPUB/deep.xhtml",
+                b"""<html xmlns="http://www.w3.org/1999/xhtml"><body><div><p>x</p></div></body></html>""",
+                zipfile.ZIP_DEFLATED,
+            ),
+            ("EPUB/safe.xhtml", minimal, zipfile.ZIP_DEFLATED),
+        ),
     )
     local_nodes = _extract(
         node_partition,
@@ -1491,7 +1602,9 @@ def test_node_text_link_and_document_limits_cover_exact_and_rejection_boundaries
         EpubOpeningLimits(nodes_per_resource=10, nodes_per_selection=2),
     )
     assert local_nodes.outcome == EpubInspectionOutcome.SUCCESS
-    assert OpeningResourceDisposition.RESOURCE_LIMIT in {item.disposition for item in local_nodes.resources}
+    assert OpeningResourceDisposition.RESOURCE_LIMIT in {
+        item.disposition for item in local_nodes.resources
+    }
     assert aggregate_nodes.outcome == EpubInspectionOutcome.RESOURCE_LIMIT
 
     navigation_nodes = _opening_epub(
@@ -1503,7 +1616,11 @@ def test_node_text_link_and_document_limits_cover_exact_and_rejection_boundaries
             spine=("safe",),
         ),
         entries=(
-            ("EPUB/nav.xhtml", _xhtml("<nav><ol><li><a href='safe.xhtml'>x</a></li></ol></nav>"), zipfile.ZIP_DEFLATED),
+            (
+                "EPUB/nav.xhtml",
+                _xhtml("<nav><ol><li><a href='safe.xhtml'>x</a></li></ol></nav>"),
+                zipfile.ZIP_DEFLATED,
+            ),
             ("EPUB/safe.xhtml", minimal, zipfile.ZIP_DEFLATED),
         ),
     )
@@ -1524,36 +1641,56 @@ def test_node_text_link_and_document_limits_cover_exact_and_rejection_boundaries
         entries=(
             (
                 "EPUB/nav.xhtml",
-                b'''<html xmlns="http://www.w3.org/1999/xhtml" xmlns:q="http://www.w3.org/2001/XInclude"><body><q:include/></body></html>''',
+                b"""<html xmlns="http://www.w3.org/1999/xhtml" xmlns:q="http://www.w3.org/2001/XInclude"><body><q:include/></body></html>""",
                 zipfile.ZIP_DEFLATED,
             ),
             ("EPUB/safe.xhtml", minimal, zipfile.ZIP_DEFLATED),
         ),
     )
-    assert _extract(
-        unsafe_navigation,
-        EpubOpeningLimits(nodes_per_resource=5, nodes_per_selection=5),
-    ).outcome == EpubInspectionOutcome.SUCCESS
-    assert _extract(
-        unsafe_navigation,
-        EpubOpeningLimits(nodes_per_resource=5, nodes_per_selection=4),
-    ).outcome == EpubInspectionOutcome.RESOURCE_LIMIT
+    assert (
+        _extract(
+            unsafe_navigation,
+            EpubOpeningLimits(nodes_per_resource=5, nodes_per_selection=5),
+        ).outcome
+        == EpubInspectionOutcome.SUCCESS
+    )
+    assert (
+        _extract(
+            unsafe_navigation,
+            EpubOpeningLimits(nodes_per_resource=5, nodes_per_selection=4),
+        ).outcome
+        == EpubInspectionOutcome.RESOURCE_LIMIT
+    )
 
     nav_package = _opening_package(
-        items=(("nav", "nav.xhtml", "application/xhtml+xml", ' properties="nav"'), ("safe", "safe.xhtml", "application/xhtml+xml", "")),
+        items=(
+            ("nav", "nav.xhtml", "application/xhtml+xml", ' properties="nav"'),
+            ("safe", "safe.xhtml", "application/xhtml+xml", ""),
+        ),
         spine=("safe",),
     )
-    nav = _xhtml('<nav epub:type="landmarks"><a epub:type="titlepage" href="safe.xhtml">one</a><a epub:type="copyright-page" href="safe.xhtml">two</a></nav>')
+    nav = _xhtml(
+        '<nav epub:type="landmarks"><a epub:type="titlepage" href="safe.xhtml">one</a><a epub:type="copyright-page" href="safe.xhtml">two</a></nav>'
+    )
     nav_value = _opening_epub(
         package=nav_package,
-        entries=(("EPUB/nav.xhtml", nav, zipfile.ZIP_DEFLATED), ("EPUB/safe.xhtml", minimal, zipfile.ZIP_DEFLATED)),
+        entries=(
+            ("EPUB/nav.xhtml", nav, zipfile.ZIP_DEFLATED),
+            ("EPUB/safe.xhtml", minimal, zipfile.ZIP_DEFLATED),
+        ),
     )
-    assert _extract(nav_value, EpubOpeningLimits(navigation_links=2)).outcome == EpubInspectionOutcome.SUCCESS
-    assert _extract(nav_value, EpubOpeningLimits(navigation_links=1)).outcome == EpubInspectionOutcome.RESOURCE_LIMIT
+    assert (
+        _extract(nav_value, EpubOpeningLimits(navigation_links=2)).outcome
+        == EpubInspectionOutcome.SUCCESS
+    )
+    assert (
+        _extract(nav_value, EpubOpeningLimits(navigation_links=1)).outcome
+        == EpubInspectionOutcome.RESOURCE_LIMIT
+    )
 
 
 def test_navigation_only_and_unknown_encoding_preserve_typed_outcomes() -> None:
-    public_doctype = b'''<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">Recovered Doctype</h1></body></html>'''
+    public_doctype = b"""<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN" "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd"><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">Recovered Doctype</h1></body></html>"""
     recovered_doctype = _extract(_single(public_doctype))
     assert recovered_doctype.outcome == EpubInspectionOutcome.SUCCESS
     assert recovered_doctype.claims[0].raw_value == "Recovered Doctype"
@@ -1581,19 +1718,26 @@ def test_navigation_only_and_unknown_encoding_preserve_typed_outcomes() -> None:
     nav_in_spine = _extract(
         _opening_epub(
             package=_opening_package(
-                items=(("nav", "nav.xhtml", "application/xhtml+xml", ' properties="nav"'),),
+                items=(
+                    ("nav", "nav.xhtml", "application/xhtml+xml", ' properties="nav"'),
+                ),
                 spine=("nav",),
             ),
-            entries=(("EPUB/nav.xhtml", _xhtml("<nav><ol/></nav>"), zipfile.ZIP_DEFLATED),),
+            entries=(
+                ("EPUB/nav.xhtml", _xhtml("<nav><ol/></nav>"), zipfile.ZIP_DEFLATED),
+            ),
         )
     )
     assert nav_in_spine.outcome == EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
 
     assert nav_in_spine.usage.selected_documents == 1
-    assert [resource.selection_path for resource in nav_in_spine.resources] == [("epub3_navigation",), ("linear_spine_fallback",)]
+    assert [resource.selection_path for resource in nav_in_spine.resources] == [
+        ("epub3_navigation",),
+        ("linear_spine_fallback",),
+    ]
     assert len({resource.resource_identity for resource in nav_in_spine.resources}) == 1
 
-    unsupported = b'''<?xml version="1.0" encoding="x-unsupported"?><html xmlns="http://www.w3.org/1999/xhtml"><body><p>x</p></body></html>'''
+    unsupported = b"""<?xml version="1.0" encoding="x-unsupported"?><html xmlns="http://www.w3.org/1999/xhtml"><body><p>x</p></body></html>"""
     package = _opening_package(
         items=(
             ("bad", "bad.xhtml", "application/xhtml+xml", ""),
@@ -1606,12 +1750,18 @@ def test_navigation_only_and_unknown_encoding_preserve_typed_outcomes() -> None:
             package=package,
             entries=(
                 ("EPUB/bad.xhtml", unsupported, zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Safe</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Safe</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
     assert content.outcome == EpubInspectionOutcome.SUCCESS
-    assert OpeningResourceDisposition.UNSUPPORTED_ENCODING in {resource.disposition for resource in content.resources}
+    assert OpeningResourceDisposition.UNSUPPORTED_ENCODING in {
+        resource.disposition for resource in content.resources
+    }
     navigation = _extract(
         _opening_epub(
             package=_opening_package(
@@ -1623,18 +1773,32 @@ def test_navigation_only_and_unknown_encoding_preserve_typed_outcomes() -> None:
             ),
             entries=(
                 ("EPUB/nav.xhtml", unsupported, zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Safe</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Safe</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
     assert navigation.outcome == EpubInspectionOutcome.SUCCESS
     assert "unusable_navigation_document" in navigation.warnings
 
-    minimal = b'''<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">abc</h1></body></html>'''
-    items = tuple((f"item{index}", f"item{index}.xhtml", "application/xhtml+xml", "") for index in range(6))
+    minimal = b"""<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">abc</h1></body></html>"""
+    items = tuple(
+        (f"item{index}", f"item{index}.xhtml", "application/xhtml+xml", "")
+        for index in range(6)
+    )
     documents = _opening_epub(
         package=_opening_package(items=items, spine=tuple(item[0] for item in items)),
-        entries=tuple((f"EPUB/item{index}.xhtml", minimal.replace(b">abc<", f">title{index}<".encode()), zipfile.ZIP_DEFLATED) for index in range(6)),
+        entries=tuple(
+            (
+                f"EPUB/item{index}.xhtml",
+                minimal.replace(b">abc<", f">title{index}<".encode()),
+                zipfile.ZIP_DEFLATED,
+            )
+            for index in range(6)
+        ),
     )
     selected = _extract(documents)
     assert selected.usage.selected_documents == 5
@@ -1653,7 +1817,7 @@ def test_navigation_only_and_unknown_encoding_preserve_typed_outcomes() -> None:
     ids=("xhtml", "html"),
 )
 def test_quoted_bracket_doctype_is_inert(media_type: str) -> None:
-    quoted_bracket_doctype = b'''<!DOCTYPE html SYSTEM "https://example.invalid/a[b].dtd"><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">Quoted Bracket Safe</h1></body></html>'''
+    quoted_bracket_doctype = b"""<!DOCTYPE html SYSTEM "https://example.invalid/a[b].dtd"><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">Quoted Bracket Safe</h1></body></html>"""
     inert_doctype = _extract(
         _single(
             quoted_bracket_doctype,
@@ -1672,13 +1836,13 @@ def test_quoted_bracket_doctype_is_inert(media_type: str) -> None:
 @pytest.mark.parametrize(
     "unsafe",
     (
-        b'''<!ENTITY injected "unsafe"><html><body><h1 epub:type="fulltitle">Injected</h1></body></html>''',
-        b'''<!DOCTYPE html SYSTEM "x>y" [<!ELEMENT html ANY>]><html><body><h1 epub:type="fulltitle">Injected</h1></body></html>''',
-        b'''<?bogus><!ENTITY injected "unsafe"><html><body><h1 epub:type="fulltitle">Injected</h1></body></html>''',
-        b'''<?bogus><!DOCTYPE html [<!ELEMENT html ANY>]><html><body><h1 epub:type="fulltitle">Injected</h1></body></html>''',
-        b'''<!-- inert --!><!ENTITY injected "unsafe"><html><body><h1 epub:type="fulltitle">Injected</h1></body></html>''',
-        b'''<!--><!ENTITY injected "unsafe"><html><body><h1 epub:type="fulltitle">Injected</h1></body></html>''',
-        b'''<!---><!ENTITY injected "unsafe"><html><body><h1 epub:type="fulltitle">Injected</h1></body></html>''',
+        b"""<!ENTITY injected "unsafe"><html><body><h1 epub:type="fulltitle">Injected</h1></body></html>""",
+        b"""<!DOCTYPE html SYSTEM "x>y" [<!ELEMENT html ANY>]><html><body><h1 epub:type="fulltitle">Injected</h1></body></html>""",
+        b"""<?bogus><!ENTITY injected "unsafe"><html><body><h1 epub:type="fulltitle">Injected</h1></body></html>""",
+        b"""<?bogus><!DOCTYPE html [<!ELEMENT html ANY>]><html><body><h1 epub:type="fulltitle">Injected</h1></body></html>""",
+        b"""<!-- inert --!><!ENTITY injected "unsafe"><html><body><h1 epub:type="fulltitle">Injected</h1></body></html>""",
+        b"""<!--><!ENTITY injected "unsafe"><html><body><h1 epub:type="fulltitle">Injected</h1></body></html>""",
+        b"""<!---><!ENTITY injected "unsafe"><html><body><h1 epub:type="fulltitle">Injected</h1></body></html>""",
     ),
     ids=(
         "bare_entity",
@@ -1691,9 +1855,7 @@ def test_quoted_bracket_doctype_is_inert(media_type: str) -> None:
     ),
 )
 def test_unsafe_declarations_are_rejected(unsafe: bytes, media_type: str) -> None:
-    rejected = _extract(
-        _single(unsafe, media_type=media_type)
-    )
+    rejected = _extract(_single(unsafe, media_type=media_type))
     assert rejected.outcome == EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE
     assert rejected.resources[0].disposition == OpeningResourceDisposition.MALFORMED
     assert "unsafe_construct" in rejected.resources[0].warnings
@@ -1706,10 +1868,8 @@ def test_unsafe_declarations_are_rejected(unsafe: bytes, media_type: str) -> Non
     ids=("xhtml", "html"),
 )
 def test_declaration_inside_a_comment_is_inert(media_type: str) -> None:
-    comment = b'''<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><!-- <!ENTITY inert "text"> --><h1 epub:type="fulltitle">Comment Safe</h1></body></html>'''
-    inert_comment = _extract(
-        _single(comment, media_type=media_type)
-    )
+    comment = b"""<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><!-- <!ENTITY inert "text"> --><h1 epub:type="fulltitle">Comment Safe</h1></body></html>"""
+    inert_comment = _extract(_single(comment, media_type=media_type))
     assert inert_comment.outcome == EpubInspectionOutcome.SUCCESS
     assert inert_comment.resources[0].parse_mode == (
         OpeningParseMode.STRICT
@@ -1726,20 +1886,18 @@ def test_declaration_inside_a_comment_is_inert(media_type: str) -> None:
 @pytest.mark.parametrize(
     "body",
     (
-        b'''<![CDATA[<!DOCTYPE unsafe [<!ENTITY inert "text">]>]]><h1 epub:type="fulltitle">CDATA Safe</h1>''',
-        b'''<svg xmlns="http://www.w3.org/2000/svg"><![CDATA[<!ENTITY inert "text">]]></svg><h1 epub:type="fulltitle">Foreign CDATA Safe</h1>''',
+        b"""<![CDATA[<!DOCTYPE unsafe [<!ENTITY inert "text">]>]]><h1 epub:type="fulltitle">CDATA Safe</h1>""",
+        b"""<svg xmlns="http://www.w3.org/2000/svg"><![CDATA[<!ENTITY inert "text">]]></svg><h1 epub:type="fulltitle">Foreign CDATA Safe</h1>""",
     ),
     ids=("html_cdata", "foreign_cdata"),
 )
 def test_declaration_inside_cdata_is_inert(body: bytes, media_type: str) -> None:
     cdata = (
-        b'''<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>'''
+        b"""<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>"""
         + body
         + b"</body></html>"
     )
-    inert_cdata = _extract(
-        _single(cdata, media_type=media_type)
-    )
+    inert_cdata = _extract(_single(cdata, media_type=media_type))
     assert inert_cdata.outcome == EpubInspectionOutcome.SUCCESS
     assert inert_cdata.resources[0].parse_mode == (
         OpeningParseMode.STRICT
@@ -1767,9 +1925,7 @@ def test_declaration_inside_raw_text_is_inert(
         f'inert</{prefix}><!ENTITY inert "text"></{tag}>'
         '<h1 epub:type="fulltitle">Raw Text Safe</h1></body></html>'
     ).encode()
-    inert_raw_text = _extract(
-        _single(raw_text, media_type=media_type)
-    )
+    inert_raw_text = _extract(_single(raw_text, media_type=media_type))
     assert inert_raw_text.outcome == EpubInspectionOutcome.SUCCESS
     assert inert_raw_text.resources[0].parse_mode == OpeningParseMode.RECOVERED
 
@@ -1800,9 +1956,7 @@ def test_same_resource_fragment_boundaries_preserve_epub3_landmark_order(
     )
     if order == "boundaries-first":
         links = links[1:] + links[:1]
-    nav = _xhtml(
-        '<nav epub:type="landmarks">' + "".join(links) + "</nav>"
-    )
+    nav = _xhtml('<nav epub:type="landmarks">' + "".join(links) + "</nav>")
     report = _extract(
         _opening_epub(
             package=package,
@@ -1861,6 +2015,7 @@ def test_same_resource_fragment_boundaries_preserve_safe_opening_roles() -> None
     assert not excluded.claims
     assert "explicitly_excluded_resource" in excluded.warnings
 
+
 _FRAGMENT_TARGET_PACKAGE = _opening_package(
     items=(
         ("nav", "nav.xhtml", "application/xhtml+xml", ' properties="nav"'),
@@ -1903,12 +2058,7 @@ def test_fragment_targets_resolve_uniquely_in_strict_and_recovered_content(
     assert {claim.field for claim in report.claims} == {OpeningField.TITLE}
     assert report.resources[1].selection_path == ("epub3_landmark", "titlepage")
     assert report.usage.selected_documents == 1
-    assert len(
-        {
-            resource.resource_identity
-            for resource in report.resources[1:]
-        }
-    ) == 1
+    assert len({resource.resource_identity for resource in report.resources[1:]}) == 1
 
 
 @pytest.mark.parametrize(
@@ -1935,7 +2085,9 @@ def test_empty_fragment_hrefs_are_equivalent_to_no_fragment(href: str) -> None:
             ),
         )
     )
-    assert "Empty Fragment Equivalent" in {claim.raw_value for claim in equivalent.claims}
+    assert "Empty Fragment Equivalent" in {
+        claim.raw_value for claim in equivalent.claims
+    }
 
 
 @pytest.mark.parametrize(
@@ -1970,11 +2122,17 @@ def test_invalid_fragment_roles_are_omitted_and_safe_siblings_continue(
             entries=(
                 ("EPUB/nav.xhtml", nav, zipfile.ZIP_DEFLATED),
                 ("EPUB/invalid.xhtml", invalid, zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Safe Sibling</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Safe Sibling</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Safe Sibling"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Safe Sibling"]
     assert "invalid_fragment_target" in report.warnings
 
 
@@ -2010,7 +2168,9 @@ def test_body_target_removes_title_role_but_preserves_same_tier_dedication() -> 
         )
     )
     assert report.resources[1].selection_path == ("epub3_landmark", "dedication")
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Surviving Front Title"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Surviving Front Title"]
 
 
 @pytest.mark.parametrize(
@@ -2049,7 +2209,9 @@ def test_invalid_high_tier_fragments_fall_back_to_the_guide(
         )
     )
     assert report.resources[1].selection_path == ("epub2_guide", "title_page")
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Guide Fallback"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Guide Fallback"]
     assert "invalid_fragment_target" in report.warnings
 
 
@@ -2068,15 +2230,23 @@ def test_invalid_high_tier_fragments_fall_back_with_canonical_provenance() -> No
             entries=(
                 (
                     "EPUB/nav.xhtml",
-                    _xhtml('<nav epub:type="landmarks"><a epub:type="titlepage" href="opening.xhtml#missing">Invalid</a></nav>'),
+                    _xhtml(
+                        '<nav epub:type="landmarks"><a epub:type="titlepage" href="opening.xhtml#missing">Invalid</a></nav>'
+                    ),
                     zipfile.ZIP_DEFLATED,
                 ),
-                ("EPUB/opening.xhtml", _xhtml('<h1 epub:type="fulltitle">Spine Semantic Fallback</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/opening.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Spine Semantic Fallback</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
     assert invalid_both.resources[1].selection_path == ("linear_spine_fallback",)
-    assert "Spine Semantic Fallback" in {claim.raw_value for claim in invalid_both.claims}
+    assert "Spine Semantic Fallback" in {
+        claim.raw_value for claim in invalid_both.claims
+    }
 
     legacy_package = _opening_package(
         version=2,
@@ -2088,7 +2258,13 @@ def test_invalid_high_tier_fragments_fall_back_with_canonical_provenance() -> No
         _opening_epub(
             version=2,
             package=legacy_package,
-            entries=(("EPUB/opening.xhtml", _xhtml('<h1 epub:type="fulltitle">Legacy Spine Fallback</h1>'), zipfile.ZIP_DEFLATED),),
+            entries=(
+                (
+                    "EPUB/opening.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Legacy Spine Fallback</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+            ),
         )
     )
     assert legacy.resources[0].selection_path == ("linear_spine_fallback",)
@@ -2116,7 +2292,9 @@ def test_valid_high_tier_role_behind_body_never_falls_through() -> None:
                 ("EPUB/nav.xhtml", nav, zipfile.ZIP_DEFLATED),
                 (
                     "EPUB/opening.xhtml",
-                    _xhtml('<section id="front"><h1>Lower Guide Must Not Authorize</h1></section><main id="body"><p>Body</p></main>'),
+                    _xhtml(
+                        '<section id="front"><h1>Lower Guide Must Not Authorize</h1></section><main id="body"><p>Body</p></main>'
+                    ),
                     zipfile.ZIP_DEFLATED,
                 ),
             ),
@@ -2261,7 +2439,9 @@ def test_same_resource_role_dedup_prefers_the_epub3_landmark_over_the_guide() ->
                 ),
                 (
                     "EPUB/opening.xhtml",
-                    _xhtml('<section id="front"><h1>Cross Precedence Title</h1></section>'),
+                    _xhtml(
+                        '<section id="front"><h1>Cross Precedence Title</h1></section>'
+                    ),
                     zipfile.ZIP_DEFLATED,
                 ),
             ),
@@ -2296,7 +2476,10 @@ def test_recovery_encoding_ignores_declaration_lookalikes(body: bytes) -> None:
 )
 def test_recovery_encoding_rejects_unusable_declarations(body: bytes) -> None:
     report = _extract(_single(body, media_type="text/html"))
-    assert report.resources[0].disposition == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    assert (
+        report.resources[0].disposition
+        == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    )
 
 
 def test_recovery_encoding_uses_only_real_supported_declarations() -> None:
@@ -2308,9 +2491,13 @@ def test_recovery_encoding_uses_only_real_supported_declarations() -> None:
     assert recovered.outcome == EpubInspectionOutcome.SUCCESS
     assert "Publisher’s Clock" in {claim.raw_value for claim in recovered.claims}
 
-    xml_declared = b'''<?xml version="1.0" encoding="shift_jis"?><html xmlns="http://www.w3.org/1999/xhtml"><body><p>x</p></body>'''
+    xml_declared = b"""<?xml version="1.0" encoding="shift_jis"?><html xmlns="http://www.w3.org/1999/xhtml"><body><p>x</p></body>"""
     xml_report = _extract(_single(xml_declared))
-    assert xml_report.resources[0].disposition == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    assert (
+        xml_report.resources[0].disposition
+        == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    )
+
 
 _WIDE_TAIL = "<html><body><h1>Late wide</h1></body></html>".encode("utf-16-le")
 
@@ -2340,11 +2527,12 @@ def test_inactive_encoding_declarations_are_inert(body: bytes) -> None:
     ids=("duplicate_charset", "duplicate_http_equiv", "duplicate_xml"),
 )
 def test_duplicate_encoding_declarations_are_unsupported(body: bytes) -> None:
-    media_type = (
-        "application/xhtml+xml" if body.startswith(b"<?xml") else "text/html"
-    )
+    media_type = "application/xhtml+xml" if body.startswith(b"<?xml") else "text/html"
     report = _extract(_single(body, media_type=media_type))
-    assert report.resources[0].disposition == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    assert (
+        report.resources[0].disposition
+        == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    )
 
 
 @pytest.mark.parametrize(
@@ -2380,21 +2568,26 @@ def test_duplicate_encoding_declarations_are_unsupported(body: bytes) -> None:
 )
 def test_wide_signatures_are_unsupported(body: bytes) -> None:
     report = _extract(_single(body, media_type="text/html"))
-    assert report.resources[0].disposition == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    assert (
+        report.resources[0].disposition
+        == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    )
 
 
 @pytest.mark.parametrize(
     "body",
     (
         b"A" * 2_100 + _WIDE_TAIL,
-        b"\xc3\xa9" * 1_100
-        + "<html><body>Late BE</body></html>".encode("utf-16-be"),
+        b"\xc3\xa9" * 1_100 + "<html><body>Late BE</body></html>".encode("utf-16-be"),
     ),
     ids=("late_le", "late_be"),
 )
 def test_late_wide_signatures_are_unsupported(body: bytes) -> None:
     report = _extract(_single(body, media_type="text/html"))
-    assert report.resources[0].disposition == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    assert (
+        report.resources[0].disposition
+        == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    )
 
 
 def test_encoding_declaration_activity_duplicates_and_wide_signatures() -> None:
@@ -2425,7 +2618,10 @@ def test_encoding_declaration_activity_duplicates_and_wide_signatures() -> None:
             )
         )
     )
-    assert strict_wide.resources[0].disposition == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    assert (
+        strict_wide.resources[0].disposition
+        == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    )
 
     near_limit = b"x" * (1_048_000 - len(_WIDE_TAIL)) + _WIDE_TAIL
     near_package = _opening_package(
@@ -2441,7 +2637,10 @@ def test_encoding_declaration_activity_duplicates_and_wide_signatures() -> None:
             entries=(("EPUB/opening.html", near_limit, zipfile.ZIP_STORED),),
         )
     )
-    assert near_report.resources[0].disposition == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    assert (
+        near_report.resources[0].disposition
+        == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    )
 
     supported_without_nul = (
         b'<meta charset="utf-8"><h1>UTF-8 \xc3\xa9</h1>',
@@ -2471,8 +2670,8 @@ def test_encoding_declaration_activity_duplicates_and_wide_signatures() -> None:
 @pytest.mark.parametrize(
     "body",
     (
-        b'''<?xml version="1.0" encoding="utf-8" standalone="yes"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">Double Quote Actual</h1></body>''',
-        b'''<?xml version='1.1' encoding='utf8' standalone='no'?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">Single Quote Actual</h1></body>''',
+        b"""<?xml version="1.0" encoding="utf-8" standalone="yes"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">Double Quote Actual</h1></body>""",
+        b"""<?xml version='1.1' encoding='utf8' standalone='no'?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><h1 epub:type="fulltitle">Single Quote Actual</h1></body>""",
     ),
     ids=("double_quoted", "single_quoted"),
 )
@@ -2484,17 +2683,17 @@ def test_xml_declaration_lexer_accepts_real_declarations(body: bytes) -> None:
 @pytest.mark.parametrize(
     "body",
     (
-        b'''<?xml note="encoding='shift_jis'" version="1.0"?><html><body>x</body>''',
-        b'''<?xml encoding="utf-8" version="1.0"?><html><body>x</body>''',
-        b'''<?xml version="2.0" encoding="utf-8"?><html><body>x</body>''',
-        b'''<?xml version="1.0" standalone="encoding='shift_jis'"?><html><body>x</body>''',
-        b'''<?xml version="1.0" standalone="maybe"?><html><body>x</body>''',
-        b'''<?xml version="1.0" encoding="utf-8" note="x"?><html><body>x</body>''',
-        b'''<?xml encoding="utf-8"?><html><body>x</body>''',
-        b'''<?xml version="1.0" encoding="utf-8"encoding="utf-8"?><html><body>x</body>''',
-        b'''<?xml version="1.0" encoding=utf-8?><html><body>x</body>''',
-        b'''<?xml version="1.0" encoding="utf-8?><html><body>x</body>''',
-        b'''<?xml version="1.0" encoding="utf-8" encoding='windows-1252'?><html><body>x</body>''',
+        b"""<?xml note="encoding='shift_jis'" version="1.0"?><html><body>x</body>""",
+        b"""<?xml encoding="utf-8" version="1.0"?><html><body>x</body>""",
+        b"""<?xml version="2.0" encoding="utf-8"?><html><body>x</body>""",
+        b"""<?xml version="1.0" standalone="encoding='shift_jis'"?><html><body>x</body>""",
+        b"""<?xml version="1.0" standalone="maybe"?><html><body>x</body>""",
+        b"""<?xml version="1.0" encoding="utf-8" note="x"?><html><body>x</body>""",
+        b"""<?xml encoding="utf-8"?><html><body>x</body>""",
+        b"""<?xml version="1.0" encoding="utf-8"encoding="utf-8"?><html><body>x</body>""",
+        b"""<?xml version="1.0" encoding=utf-8?><html><body>x</body>""",
+        b"""<?xml version="1.0" encoding="utf-8?><html><body>x</body>""",
+        b"""<?xml version="1.0" encoding="utf-8" encoding='windows-1252'?><html><body>x</body>""",
     ),
     ids=(
         "quoted_lookalike_note",
@@ -2512,38 +2711,57 @@ def test_xml_declaration_lexer_accepts_real_declarations(body: bytes) -> None:
 )
 def test_xml_declaration_lexer_ignores_quoted_lookalikes(body: bytes) -> None:
     report = _extract(_single(body))
-    assert report.resources[0].disposition == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    assert (
+        report.resources[0].disposition
+        == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    )
 
 
 def test_xml_declaration_lexer_rejects_unsupported_declared_encodings() -> None:
     unsupported = _extract(
-        _single(
-            b'''<?xml version='1.0' encoding='shift_jis'?><html><body>x</body>'''
-        )
+        _single(b"""<?xml version='1.0' encoding='shift_jis'?><html><body>x</body>""")
     )
-    assert unsupported.resources[0].disposition == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    assert (
+        unsupported.resources[0].disposition
+        == OpeningResourceDisposition.UNSUPPORTED_ENCODING
+    )
 
 
 def test_raw_spine_annotations_are_partitioned_by_f06_acceptance() -> None:
-    package = b'''<?xml version="1.0" encoding="UTF-8"?>
+    package = b"""<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" xmlns:bad="urn:bad" unique-identifier="id" version="3.0">
 <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:uuid:00000000-0000-4000-8000-000000000009</dc:identifier><dc:title>Spine Partition</dc:title><dc:language>en</dc:language><meta property="dcterms:modified">2026-01-13T00:00:00Z</meta><itemref idref="trap"/></metadata>
 <manifest><item id="skip" href="skip.xhtml" media-type="application/xhtml+xml"/><item id="trap" href="trap.xhtml" media-type="application/xhtml+xml"/><item id="safe" href="safe.xhtml" media-type="application/xhtml+xml"/></manifest>
 <spine><itemref idref="skip" linear="no"/><itemref idref="skip"/><itemref idref="trap"><meta/></itemref><bad:itemref idref="trap"/><itemref idref="missing"/><itemref idref="safe"/></spine>
-</package>'''
+</package>"""
     report = _extract(
         _opening_epub(
             package=package,
             entries=(
-                ("EPUB/skip.xhtml", _xhtml('<h1 epub:type="fulltitle">Skipped</h1>'), zipfile.ZIP_DEFLATED),
-                ("EPUB/trap.xhtml", _xhtml('<h1 epub:type="fulltitle">Trap</h1>'), zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Accepted Safe</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/skip.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Skipped</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+                (
+                    "EPUB/trap.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Trap</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Accepted Safe</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Accepted Safe"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Accepted Safe"]
     assert report.usage.selected_documents == 1
     assert "invalid_spine_item" in report.warnings
+
 
 _LINEAR_BASE_PACKAGE = _opening_package(
     items=(
@@ -2553,8 +2771,16 @@ _LINEAR_BASE_PACKAGE = _opening_package(
     spine=("first", "safe"),
 )
 _LINEAR_ENTRIES = (
-    ("EPUB/first.xhtml", _xhtml('<h1 epub:type="fulltitle">First</h1>'), zipfile.ZIP_DEFLATED),
-    ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Safe</h1>'), zipfile.ZIP_DEFLATED),
+    (
+        "EPUB/first.xhtml",
+        _xhtml('<h1 epub:type="fulltitle">First</h1>'),
+        zipfile.ZIP_DEFLATED,
+    ),
+    (
+        "EPUB/safe.xhtml",
+        _xhtml('<h1 epub:type="fulltitle">Safe</h1>'),
+        zipfile.ZIP_DEFLATED,
+    ),
 )
 
 
@@ -2589,11 +2815,11 @@ def test_raw_linear_values_are_exact_and_all_no_stays_empty(
         else f'<itemref idref="first" linear="{linear}"/>'.encode()
     )
     report = _extract(
-        _opening_epub(
-            package=base.replace(first, replacement), entries=entries
-        )
+        _opening_epub(package=base.replace(first, replacement), entries=entries)
     )
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == expected
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == expected
     assert ("unusable_spine_relationship" in report.warnings) == warned
 
 
@@ -2649,8 +2875,8 @@ def test_post_open_reports_require_the_complete_bound_provenance_set() -> None:
     assert EpubOpeningReport.from_json(pristine.to_json()) == pristine
 
 
-_FOREIGN_COLLISION_STRICT = b'''<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:f="urn:foreign" xmlns:s="http://www.w3.org/2000/svg"><body><f:h1 epub:type="fulltitle">Foreign Title</f:h1><f:section epub:type="bodymatter"><f:p epub:type="preview">Foreign Boundary</f:p></f:section><s:text>Renderable SVG Text</s:text><h1 epub:type="fulltitle">Safe HTML Title</h1></body></html>'''
-_FOREIGN_COLLISION_NAV = b'''<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:f="urn:foreign"><body><f:nav epub:type="landmarks"><f:a epub:type="titlepage" href="fake.xhtml">Fake</f:a></f:nav></body></html>'''
+_FOREIGN_COLLISION_STRICT = b"""<?xml version="1.0"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:f="urn:foreign" xmlns:s="http://www.w3.org/2000/svg"><body><f:h1 epub:type="fulltitle">Foreign Title</f:h1><f:section epub:type="bodymatter"><f:p epub:type="preview">Foreign Boundary</f:p></f:section><s:text>Renderable SVG Text</s:text><h1 epub:type="fulltitle">Safe HTML Title</h1></body></html>"""
+_FOREIGN_COLLISION_NAV = b"""<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:f="urn:foreign"><body><f:nav epub:type="landmarks"><f:a epub:type="titlepage" href="fake.xhtml">Fake</f:a></f:nav></body></html>"""
 
 
 @pytest.mark.parametrize(
@@ -2666,9 +2892,7 @@ def test_foreign_local_name_collisions_are_semantically_inert(
 ) -> None:
     report = _extract(_single(body, media_type=media_type))
     titles = {
-        claim.raw_value
-        for claim in report.claims
-        if claim.field is OpeningField.TITLE
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
     }
     assert titles == {"Safe HTML Title"}
     assert "explicitly_excluded_resource" not in report.warnings
@@ -2699,18 +2923,32 @@ def test_foreign_local_name_collisions_never_authorize_navigation(
             package=package,
             entries=(
                 ("EPUB/nav.xhtml", nav_body, zipfile.ZIP_DEFLATED),
-                ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">Foreign Selected</h1>'), zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Spine Safe</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/fake.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Foreign Selected</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Spine Safe</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
-    assert [claim.raw_value for claim in nav_report.claims if claim.field is OpeningField.TITLE] == ["Spine Safe"]
+    assert [
+        claim.raw_value
+        for claim in nav_report.claims
+        if claim.field is OpeningField.TITLE
+    ] == ["Spine Safe"]
 
 
 def test_recovery_undeclared_qnames_never_fall_back_to_html_identity() -> None:
-    content = b'''<!doctype html><html xmlns:epub="http://www.idpf.org/2007/ops"><body><f:h1 epub:type="fulltitle">Undeclared Foreign Title</f:h1><f:section epub:type="bodymatter"><f:p epub:type="preview">Foreign Boundary</f:p></f:section><h1>Recovered HTML Safe</h1></body></html>'''
+    content = b"""<!doctype html><html xmlns:epub="http://www.idpf.org/2007/ops"><body><f:h1 epub:type="fulltitle">Undeclared Foreign Title</f:h1><f:section epub:type="bodymatter"><f:p epub:type="preview">Foreign Boundary</f:p></f:section><h1>Recovered HTML Safe</h1></body></html>"""
     report = _extract(_single(content, media_type="text/html"))
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Recovered HTML Safe"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Recovered HTML Safe"]
     assert "body_transition_reached" not in report.warnings
     assert "explicitly_excluded_resource" not in report.warnings
 
@@ -2722,30 +2960,42 @@ def test_recovery_undeclared_qnames_never_fall_back_to_html_identity() -> None:
         ),
         spine=("safe",),
     )
-    navigation = b'''<!doctype html><html xmlns:epub="http://www.idpf.org/2007/ops"><body><f:nav epub:type="landmarks"><f:a epub:type="titlepage" href="fake.xhtml">Fake</f:a></f:nav></body></html>'''
+    navigation = b"""<!doctype html><html xmlns:epub="http://www.idpf.org/2007/ops"><body><f:nav epub:type="landmarks"><f:a epub:type="titlepage" href="fake.xhtml">Fake</f:a></f:nav></body></html>"""
     nav_report = _extract(
         _opening_epub(
             package=package,
             entries=(
                 ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
-                ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">QName Fake</h1>'), zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">QName Safe</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/fake.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">QName Fake</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">QName Safe</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
-    assert [claim.raw_value for claim in nav_report.claims if claim.field is OpeningField.TITLE] == ["QName Safe"]
+    assert [
+        claim.raw_value
+        for claim in nav_report.claims
+        if claim.field is OpeningField.TITLE
+    ] == ["QName Safe"]
 
-    declared_alias = b'''<!doctype html><html xmlns:x="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><x:h1 epub:type="fulltitle">Declared Alias Title</x:h1></body></html>'''
-    alias_report = _extract(
-        _single(declared_alias, media_type="text/html")
-    )
+    declared_alias = b"""<!doctype html><html xmlns:x="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><x:h1 epub:type="fulltitle">Declared Alias Title</x:h1></body></html>"""
+    alias_report = _extract(_single(declared_alias, media_type="text/html"))
     assert "Declared Alias Title" in {claim.raw_value for claim in alias_report.claims}
 
 
 def test_empty_prefix_bindings_are_unknown_across_recovery_consumers() -> None:
-    body = b'''<!doctype html><html xmlns:f="" xmlns:epub="" xmlns:e="http://www.idpf.org/2007/ops"><body><f:h1 e:type="fulltitle">Empty Element Prefix</f:h1><h1 epub:type="fulltitle">Empty Attribute Prefix</h1><f:section e:type="bodymatter"><f:p e:type="preview">False Boundary</f:p></f:section><f:meta charset="shift_jis"></f:meta><h1 e:type="fulltitle">Empty Binding Safe</h1></body></html>'''
+    body = b"""<!doctype html><html xmlns:f="" xmlns:epub="" xmlns:e="http://www.idpf.org/2007/ops"><body><f:h1 e:type="fulltitle">Empty Element Prefix</f:h1><h1 epub:type="fulltitle">Empty Attribute Prefix</h1><f:section e:type="bodymatter"><f:p e:type="preview">False Boundary</f:p></f:section><f:meta charset="shift_jis"></f:meta><h1 e:type="fulltitle">Empty Binding Safe</h1></body></html>"""
     report = _extract(_single(body))
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Empty Binding Safe"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Empty Binding Safe"]
     assert "body_transition_reached" not in report.warnings
     assert "explicitly_excluded_resource" not in report.warnings
 
@@ -2757,22 +3007,34 @@ def test_empty_prefix_bindings_are_unknown_across_recovery_consumers() -> None:
         ),
         spine=("safe",),
     )
-    navigation = b'''<!doctype html><html xmlns:f="" xmlns:epub="" xmlns:e="http://www.idpf.org/2007/ops"><body><f:nav e:type="landmarks"><f:a e:type="titlepage" href="fake.xhtml">Fake</f:a></f:nav><nav epub:type="landmarks"><a epub:type="titlepage" href="fake.xhtml">Also fake</a></nav></body></html>'''
+    navigation = b"""<!doctype html><html xmlns:f="" xmlns:epub="" xmlns:e="http://www.idpf.org/2007/ops"><body><f:nav e:type="landmarks"><f:a e:type="titlepage" href="fake.xhtml">Fake</f:a></f:nav><nav epub:type="landmarks"><a epub:type="titlepage" href="fake.xhtml">Also fake</a></nav></body></html>"""
     nav_report = _extract(
         _opening_epub(
             package=package,
             entries=(
                 ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
-                ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">Empty Nav Fake</h1>'), zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Empty Nav Safe</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/fake.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Empty Nav Fake</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Empty Nav Safe</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
-    assert [claim.raw_value for claim in nav_report.claims if claim.field is OpeningField.TITLE] == ["Empty Nav Safe"]
+    assert [
+        claim.raw_value
+        for claim in nav_report.claims
+        if claim.field is OpeningField.TITLE
+    ] == ["Empty Nav Safe"]
 
 
 def test_empty_default_namespace_resets_reenter_recovery_html() -> None:
-    root = b'''<!doctype html><html xmlns="" xmlns:e="http://www.idpf.org/2007/ops"><head><meta charset="windows-1252"></head><body><p e:type="publisher">Root Reset Publisher\x92s</p><h1 e:type="fulltitle">Root Reset Title</h1><section e:type="bodymatter"><h1 e:type="fulltitle">Root Body Fake</h1></section></body></html>'''
+    root = b"""<!doctype html><html xmlns="" xmlns:e="http://www.idpf.org/2007/ops"><head><meta charset="windows-1252"></head><body><p e:type="publisher">Root Reset Publisher\x92s</p><h1 e:type="fulltitle">Root Reset Title</h1><section e:type="bodymatter"><h1 e:type="fulltitle">Root Body Fake</h1></section></body></html>"""
     root_report = _extract(_single(root))
     assert root_report.outcome == EpubInspectionOutcome.SUCCESS
     assert [(claim.field, claim.raw_value) for claim in root_report.claims] == [
@@ -2781,7 +3043,7 @@ def test_empty_default_namespace_resets_reenter_recovery_html() -> None:
     ]
     assert "body_transition_reached" in root_report.warnings
 
-    subtree = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg xmlns="urn:outer-foreign"><section xmlns=""><meta charset="iso-8859-1"><p e:type="publisher">Subtree Caf\xe9 Publisher</p><svg><h1 e:type="fulltitle">Reset SVG Fake</h1></svg><math><h1 e:type="fulltitle">Reset Math Fake</h1></math><h1 e:type="fulltitle">Subtree Reset Title</h1></section><h1 e:type="fulltitle">Later Foreign Fake</h1></svg><h1 e:type="fulltitle">Later Safe Sibling</h1></body></html>'''
+    subtree = b"""<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg xmlns="urn:outer-foreign"><section xmlns=""><meta charset="iso-8859-1"><p e:type="publisher">Subtree Caf\xe9 Publisher</p><svg><h1 e:type="fulltitle">Reset SVG Fake</h1></svg><math><h1 e:type="fulltitle">Reset Math Fake</h1></math><h1 e:type="fulltitle">Subtree Reset Title</h1></section><h1 e:type="fulltitle">Later Foreign Fake</h1></svg><h1 e:type="fulltitle">Later Safe Sibling</h1></body></html>"""
     subtree_report = _extract(_single(subtree))
     assert subtree_report.outcome == EpubInspectionOutcome.SUCCESS
     assert [(claim.field, claim.raw_value) for claim in subtree_report.claims] == [
@@ -2794,8 +3056,8 @@ def test_empty_default_namespace_resets_reenter_recovery_html() -> None:
 @pytest.mark.parametrize(
     "navigation",
     (
-        b'''<!doctype html><html xmlns="" xmlns:e="http://www.idpf.org/2007/ops"><body><nav e:type="landmarks"><a e:type="titlepage" href="safe.xhtml">Root reset</a></nav></body></html>''',
-        b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg xmlns="urn:outer-foreign"><nav xmlns="" e:type="landmarks"><a e:type="titlepage" href="safe.xhtml">Subtree reset</a></nav><nav e:type="landmarks"><a e:type="titlepage" href="fake.xhtml">Later foreign</a></nav></svg></body></html>''',
+        b"""<!doctype html><html xmlns="" xmlns:e="http://www.idpf.org/2007/ops"><body><nav e:type="landmarks"><a e:type="titlepage" href="safe.xhtml">Root reset</a></nav></body></html>""",
+        b"""<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg xmlns="urn:outer-foreign"><nav xmlns="" e:type="landmarks"><a e:type="titlepage" href="safe.xhtml">Subtree reset</a></nav><nav e:type="landmarks"><a e:type="titlepage" href="fake.xhtml">Later foreign</a></nav></svg></body></html>""",
     ),
     ids=("root_reset", "subtree_reset"),
 )
@@ -2815,12 +3077,22 @@ def test_empty_default_namespace_resets_authorize_navigation(
             package=package,
             entries=(
                 ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
-                ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">Empty Reset Nav Fake</h1>'), zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Empty Reset Nav Safe</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/fake.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Empty Reset Nav Fake</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Empty Reset Nav Safe</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Empty Reset Nav Safe"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Empty Reset Nav Safe"]
     assert report.usage.navigation_links == 1
     assert report.resources[1].selection_path == ("epub3_landmark", "titlepage")
 
@@ -2828,12 +3100,12 @@ def test_empty_default_namespace_resets_authorize_navigation(
 @pytest.mark.parametrize(
     "body",
     (
-        b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns=""><head><meta charset="windows-1252"></head><body><h1>Duplicate Default \x92</h1></html>''',
-        b'''<!doctype html><html xmlns="" xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="iso-8859-1"></head><body><h1>Duplicate Default Reverse \xe9</h1></html>''',
-        b'''<!doctype html><meta charset="windows-1252"><html xmlns:e="http://www.idpf.org/2007/ops" xmlns:e="urn:wrong"><body><h1>Duplicate Prefix \x92</h1></html>''',
-        b'''<!doctype html><html xmlns:e="urn:wrong" xmlns:e="http://www.idpf.org/2007/ops"><head><f:meta xmlns:f="urn:foreign" charset="shift_jis"></f:meta><meta charset="iso-8859-1"></head><body><h1>Duplicate Prefix Reverse \xe9</h1></html>''',
-        b'''<!doctype html><meta charset="windows-1252"><html xmlns="urn:unique-foreign" xmlns:e="http://www.idpf.org/2007/ops" xmlns:e="urn:wrong" xmlns:f="urn:other"><f:meta charset="shift_jis"></f:meta><meta charset="shift_jis"><h1>Mixed Unique Foreign \x92</h1></html><meta charset="cp1252">''',
-        b'''<!doctype html><meta charset="iso-8859-1"><html xmlns="urn:unique-foreign" xmlns:e="urn:wrong" xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="urn:other"><meta charset="shift_jis"><f:meta charset="shift_jis"></f:meta><h1>Mixed Reverse \xe9</h1></html><meta charset="latin-1">''',
+        b"""<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns=""><head><meta charset="windows-1252"></head><body><h1>Duplicate Default \x92</h1></html>""",
+        b"""<!doctype html><html xmlns="" xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="iso-8859-1"></head><body><h1>Duplicate Default Reverse \xe9</h1></html>""",
+        b"""<!doctype html><meta charset="windows-1252"><html xmlns:e="http://www.idpf.org/2007/ops" xmlns:e="urn:wrong"><body><h1>Duplicate Prefix \x92</h1></html>""",
+        b"""<!doctype html><html xmlns:e="urn:wrong" xmlns:e="http://www.idpf.org/2007/ops"><head><f:meta xmlns:f="urn:foreign" charset="shift_jis"></f:meta><meta charset="iso-8859-1"></head><body><h1>Duplicate Prefix Reverse \xe9</h1></html>""",
+        b"""<!doctype html><meta charset="windows-1252"><html xmlns="urn:unique-foreign" xmlns:e="http://www.idpf.org/2007/ops" xmlns:e="urn:wrong" xmlns:f="urn:other"><f:meta charset="shift_jis"></f:meta><meta charset="shift_jis"><h1>Mixed Unique Foreign \x92</h1></html><meta charset="cp1252">""",
+        b"""<!doctype html><meta charset="iso-8859-1"><html xmlns="urn:unique-foreign" xmlns:e="urn:wrong" xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="urn:other"><meta charset="shift_jis"><f:meta charset="shift_jis"></f:meta><h1>Mixed Reverse \xe9</h1></html><meta charset="latin-1">""",
     ),
     ids=(
         "duplicate_default",
@@ -2870,7 +3142,7 @@ def test_duplicate_prefix_bindings_never_authorize_navigation(bindings: str) -> 
         spine=("safe",),
     )
     navigation = (
-        '<!doctype html><html ' + bindings + '><body><nav e:type="landmarks">'
+        "<!doctype html><html " + bindings + '><body><nav e:type="landmarks">'
         '<a e:type="titlepage" href="fake.xhtml">bad</a></nav></html>'
     ).encode()
     report = _extract(
@@ -2878,21 +3150,31 @@ def test_duplicate_prefix_bindings_never_authorize_navigation(bindings: str) -> 
             package=package,
             entries=(
                 ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
-                ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">Namespace Nav Fake</h1>'), zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Namespace Nav Safe</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/fake.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Namespace Nav Fake</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Namespace Nav Safe</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
     assert report.resources[0].disposition == OpeningResourceDisposition.MALFORMED
     assert "unusable_navigation_document" in report.warnings
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Namespace Nav Safe"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Namespace Nav Safe"]
 
 
 @pytest.mark.parametrize(
     "body",
     (
-        b'''<!doctype html><html xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="http://www.idpf.org/2007/ops"><body><p e:type="publisher" f:type="publisher">Forged Publisher</p><section hidden hidden><h1 e:type="fulltitle">Hidden Forged</h1></section><h1 e:type="fulltitle">Duplicate Authority Safe</h1></html>''',
-        b'''<!doctype html><html xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="http://www.idpf.org/2007/ops"><body><p f:type="publisher" e:type="publisher">Forged Publisher</p><section aria-hidden="false" aria-hidden="true"><h1 e:type="fulltitle">ARIA Forged</h1></section><h1 e:type="fulltitle">Duplicate Authority Safe</h1></html>''',
+        b"""<!doctype html><html xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="http://www.idpf.org/2007/ops"><body><p e:type="publisher" f:type="publisher">Forged Publisher</p><section hidden hidden><h1 e:type="fulltitle">Hidden Forged</h1></section><h1 e:type="fulltitle">Duplicate Authority Safe</h1></html>""",
+        b"""<!doctype html><html xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="http://www.idpf.org/2007/ops"><body><p f:type="publisher" e:type="publisher">Forged Publisher</p><section aria-hidden="false" aria-hidden="true"><h1 e:type="fulltitle">ARIA Forged</h1></section><h1 e:type="fulltitle">Duplicate Authority Safe</h1></html>""",
     ),
     ids=("hidden_attribute", "aria_hidden_attribute"),
 )
@@ -2925,19 +3207,29 @@ def test_duplicate_recovery_relationship_and_identity_use_safe_fallback(
         '<!doctype html><html xmlns:e="http://www.idpf.org/2007/ops"><body>'
         '<nav e:type="landmarks"><a e:type="titlepage" '
         + hrefs
-        + '>Duplicate href</a></nav></html>'
+        + ">Duplicate href</a></nav></html>"
     ).encode()
     report = _extract(
         _opening_epub(
             package=package,
             entries=(
                 ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
-                ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">Forged Target</h1>'), zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Relationship Fallback Safe</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/fake.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Forged Target</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Relationship Fallback Safe</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Relationship Fallback Safe"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Relationship Fallback Safe"]
     assert "invalid_navigation_target" in report.warnings
     assert report.resources[1].selection_path == ("linear_spine_fallback",)
 
@@ -2978,7 +3270,10 @@ def test_duplicate_recovery_identities_use_safe_fallback(identities: str) -> Non
     )
     assert "invalid_fragment_target" in report.warnings
     assert report.resources[1].selection_path == ("linear_spine_fallback",)
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Identity Fallback Safe"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Identity Fallback Safe"]
+
 
 _DUPLICATE_MANIFEST_NAV = _xhtml(
     '<nav epub:type="landmarks"><a epub:type="titlepage" '
@@ -3021,9 +3316,7 @@ def test_duplicate_manifest_media_is_order_independent(
     )
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert [
-        claim.raw_value
-        for claim in report.claims
-        if claim.field is OpeningField.TITLE
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
     ] == ["Duplicate Manifest Safe"]
     assert report.resources[-1].selection_path == ("linear_spine_fallback",)
 
@@ -3075,18 +3368,23 @@ def _duplicate_href_publication(count: int, reverse: bool = False) -> bytes:
         else 'href="fake.xhtml" href="safe.xhtml"'
     )
     links = "".join(
-        '<a epub:type="titlepage" ' + duplicate + '>bad</a>'
-        for _index in range(count)
+        '<a epub:type="titlepage" ' + duplicate + ">bad</a>" for _index in range(count)
     )
-    navigation = _xhtml(
-        '<nav epub:type="landmarks">' + links + "</nav>"
-    )
+    navigation = _xhtml('<nav epub:type="landmarks">' + links + "</nav>")
     return _opening_epub(
         package=package,
         entries=(
             ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
-            ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">Budget Fake</h1>'), zipfile.ZIP_DEFLATED),
-            ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Budget Safe</h1>'), zipfile.ZIP_DEFLATED),
+            (
+                "EPUB/fake.xhtml",
+                _xhtml('<h1 epub:type="fulltitle">Budget Fake</h1>'),
+                zipfile.ZIP_DEFLATED,
+            ),
+            (
+                "EPUB/safe.xhtml",
+                _xhtml('<h1 epub:type="fulltitle">Budget Safe</h1>'),
+                zipfile.ZIP_DEFLATED,
+            ),
         ),
     )
 
@@ -3106,7 +3404,9 @@ def test_duplicate_navigation_hrefs_count_before_validation(
     assert report.outcome == EpubInspectionOutcome.SUCCESS
     assert report.usage.navigation_links == count
     assert "invalid_navigation_target" in report.warnings
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Budget Safe"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Budget Safe"]
 
 
 def test_duplicate_navigation_hrefs_above_the_link_budget_are_refused() -> None:
@@ -3119,9 +3419,11 @@ def test_duplicate_navigation_hrefs_above_the_link_budget_are_refused() -> None:
 
 
 def test_implicit_svg_and_math_subtrees_remain_foreign_in_recovery() -> None:
-    body = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg><meta charset="shift_jis"><h1 id="fake" e:type="fulltitle">SVG Fake</h1><section e:type="bodymatter"><p e:type="preview"><math><span e:type="publisher">Math Publisher Fake</span></math></p></section></svg><math><svg><h1 e:type="fulltitle">Nested Foreign Fake</h1></svg></math><h1 id="safe" e:type="fulltitle">Foreign Content Safe</h1></html>'''
+    body = b"""<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg><meta charset="shift_jis"><h1 id="fake" e:type="fulltitle">SVG Fake</h1><section e:type="bodymatter"><p e:type="preview"><math><span e:type="publisher">Math Publisher Fake</span></math></p></section></svg><math><svg><h1 e:type="fulltitle">Nested Foreign Fake</h1></svg></math><h1 id="safe" e:type="fulltitle">Foreign Content Safe</h1></html>"""
     report = _extract(_single(body))
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Foreign Content Safe"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Foreign Content Safe"]
     assert "body_transition_reached" not in report.warnings
     assert "explicitly_excluded_resource" not in report.warnings
 
@@ -3133,23 +3435,35 @@ def test_implicit_svg_and_math_subtrees_remain_foreign_in_recovery() -> None:
         ),
         spine=("safe",),
     )
-    navigation = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg><nav e:type="landmarks"><a e:type="titlepage" href="fake.xhtml">SVG nav</a></nav><math><nav e:type="landmarks"><a e:type="titlepage" href="fake.xhtml">Nested nav</a></nav></math></svg><nav e:type="landmarks"><a e:type="titlepage" href="safe.xhtml#safe">Safe nav sibling</a></nav></html>'''
+    navigation = b"""<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg><nav e:type="landmarks"><a e:type="titlepage" href="fake.xhtml">SVG nav</a></nav><math><nav e:type="landmarks"><a e:type="titlepage" href="fake.xhtml">Nested nav</a></nav></math></svg><nav e:type="landmarks"><a e:type="titlepage" href="safe.xhtml#safe">Safe nav sibling</a></nav></html>"""
     nav_report = _extract(
         _opening_epub(
             package=package,
             entries=(
                 ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
-                ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">Foreign Nav Fake</h1>'), zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 id="safe" epub:type="fulltitle">Foreign Nav Safe</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/fake.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Foreign Nav Fake</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 id="safe" epub:type="fulltitle">Foreign Nav Safe</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
-    assert [claim.raw_value for claim in nav_report.claims if claim.field is OpeningField.TITLE] == ["Foreign Nav Safe"]
+    assert [
+        claim.raw_value
+        for claim in nav_report.claims
+        if claim.field is OpeningField.TITLE
+    ] == ["Foreign Nav Safe"]
     assert nav_report.resources[1].selection_path == ("epub3_landmark", "titlepage")
 
 
 def test_recovery_stack_never_applies_html_closing_rules_to_foreign_nodes() -> None:
-    body = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg><p><li><h1 e:type="fulltitle">Foreign P LI Fake</h1></li></p><math><p><span e:type="publisher">Nested Math Fake</span></p></math></svg></svg></math><h1 e:type="fulltitle">Stack Safe Title</h1><p e:type="publisher">Stack Safe Publisher</p><section e:type="bodymatter">Body</section></html>'''
+    body = b"""<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg><p><li><h1 e:type="fulltitle">Foreign P LI Fake</h1></li></p><math><p><span e:type="publisher">Nested Math Fake</span></p></math></svg></svg></math><h1 e:type="fulltitle">Stack Safe Title</h1><p e:type="publisher">Stack Safe Publisher</p><section e:type="bodymatter">Body</section></html>"""
     report = _extract(_single(body))
     values = {(claim.field, claim.raw_value) for claim in report.claims}
     assert (OpeningField.TITLE, "Stack Safe Title") in values
@@ -3166,30 +3480,48 @@ def test_recovery_stack_never_applies_html_closing_rules_to_foreign_nodes() -> N
         ),
         spine=("safe",),
     )
-    navigation = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg><p><nav e:type="landmarks"><a e:type="titlepage" href="fake.xhtml">Foreign</a></nav></p><math><li><meta charset="shift_jis"></li></math></svg></math></svg><nav e:type="landmarks"><a e:type="titlepage" href="safe.xhtml">Safe</a></nav></html>'''
+    navigation = b"""<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg><p><nav e:type="landmarks"><a e:type="titlepage" href="fake.xhtml">Foreign</a></nav></p><math><li><meta charset="shift_jis"></li></math></svg></math></svg><nav e:type="landmarks"><a e:type="titlepage" href="safe.xhtml">Safe</a></nav></html>"""
     nav_report = _extract(
         _opening_epub(
             package=package,
             entries=(
                 ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
-                ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">Stack Nav Fake</h1>'), zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Stack Nav Safe</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/fake.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Stack Nav Fake</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Stack Nav Safe</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
-    assert [claim.raw_value for claim in nav_report.claims if claim.field is OpeningField.TITLE] == ["Stack Nav Safe"]
+    assert [
+        claim.raw_value
+        for claim in nav_report.claims
+        if claim.field is OpeningField.TITLE
+    ] == ["Stack Nav Safe"]
     assert nav_report.usage.navigation_links == 1
 
 
 def test_unqualified_foreign_end_tags_use_the_open_element_identity() -> None:
-    body = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg xmlns="urn:explicit-svg"><meta charset="shift_jis"><h1 e:type="fulltitle">Explicit SVG Fake</h1></svg><math xmlns="urn:explicit-math"><h1 e:type="fulltitle">Explicit Math Fake</h1></math><meta charset="windows-1252"><h1 e:type="fulltitle">Publisher\x92s Explicit Close Safe</h1></html>'''
+    body = b"""<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg xmlns="urn:explicit-svg"><meta charset="shift_jis"><h1 e:type="fulltitle">Explicit SVG Fake</h1></svg><math xmlns="urn:explicit-math"><h1 e:type="fulltitle">Explicit Math Fake</h1></math><meta charset="windows-1252"><h1 e:type="fulltitle">Publisher\x92s Explicit Close Safe</h1></html>"""
     report = _extract(_single(body))
     assert report.outcome == EpubInspectionOutcome.SUCCESS
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Publisher’s Explicit Close Safe"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Publisher’s Explicit Close Safe"]
 
-    qualified = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="urn:qualified"><body><f:svg><f:h1 e:type="fulltitle">Qualified Fake</f:h1></f:svg><h1 e:type="fulltitle">Qualified Close Safe</h1></html>'''
+    qualified = b"""<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="urn:qualified"><body><f:svg><f:h1 e:type="fulltitle">Qualified Fake</f:h1></f:svg><h1 e:type="fulltitle">Qualified Close Safe</h1></html>"""
     qualified_report = _extract(_single(qualified))
-    assert [claim.raw_value for claim in qualified_report.claims if claim.field is OpeningField.TITLE] == ["Qualified Close Safe"]
+    assert [
+        claim.raw_value
+        for claim in qualified_report.claims
+        if claim.field is OpeningField.TITLE
+    ] == ["Qualified Close Safe"]
 
     package = _opening_package(
         items=(
@@ -3199,26 +3531,40 @@ def test_unqualified_foreign_end_tags_use_the_open_element_identity() -> None:
         ),
         spine=("safe",),
     )
-    navigation = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg xmlns="urn:explicit-svg"><meta charset="shift_jis"><nav e:type="landmarks"><a e:type="titlepage" href="fake.xhtml">Fake</a></nav></svg><math xmlns="urn:explicit-math"><nav e:type="landmarks"><a e:type="titlepage" href="fake.xhtml">Fake</a></nav></math><meta charset="windows-1252"><nav e:type="landmarks"><a e:type="titlepage" href="safe.xhtml">Publisher\x92s Safe</a></nav></html>'''
+    navigation = b"""<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><svg xmlns="urn:explicit-svg"><meta charset="shift_jis"><nav e:type="landmarks"><a e:type="titlepage" href="fake.xhtml">Fake</a></nav></svg><math xmlns="urn:explicit-math"><nav e:type="landmarks"><a e:type="titlepage" href="fake.xhtml">Fake</a></nav></math><meta charset="windows-1252"><nav e:type="landmarks"><a e:type="titlepage" href="safe.xhtml">Publisher\x92s Safe</a></nav></html>"""
     nav_report = _extract(
         _opening_epub(
             package=package,
             entries=(
                 ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
-                ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">Explicit Nav Fake</h1>'), zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Explicit Nav Safe</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/fake.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Explicit Nav Fake</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Explicit Nav Safe</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
-    assert [claim.raw_value for claim in nav_report.claims if claim.field is OpeningField.TITLE] == ["Explicit Nav Safe"]
+    assert [
+        claim.raw_value
+        for claim in nav_report.claims
+        if claim.field is OpeningField.TITLE
+    ] == ["Explicit Nav Safe"]
     assert nav_report.resources[1].selection_path == ("epub3_landmark", "titlepage")
 
 
 def test_unqualified_end_tags_resolve_the_current_default_namespace() -> None:
-    body = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops" xmlns:s="urn:foreign"><body><s:template><meta charset="shift_jis"></template><meta charset="shift_jis"><h1 e:type="fulltitle">Wrong Default Fake</h1></s:template><meta charset="windows-1252"><h1 e:type="fulltitle">Publisher\x92s Default Safe</h1></html>'''
+    body = b"""<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops" xmlns:s="urn:foreign"><body><s:template><meta charset="shift_jis"></template><meta charset="shift_jis"><h1 e:type="fulltitle">Wrong Default Fake</h1></s:template><meta charset="windows-1252"><h1 e:type="fulltitle">Publisher\x92s Default Safe</h1></html>"""
     report = _extract(_single(body))
     assert report.outcome == EpubInspectionOutcome.SUCCESS
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Publisher’s Default Safe"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Publisher’s Default Safe"]
 
     package = _opening_package(
         items=(
@@ -3228,18 +3574,30 @@ def test_unqualified_end_tags_resolve_the_current_default_namespace() -> None:
         ),
         spine=("safe",),
     )
-    navigation = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops" xmlns:s="urn:foreign"><body><nav e:type="landmarks"><s:nav></nav><a e:type="titlepage" href="fake.xhtml">Wrong default</a></s:nav><a e:type="titlepage" href="safe.xhtml">Safe default</a></nav></html>'''
+    navigation = b"""<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops" xmlns:s="urn:foreign"><body><nav e:type="landmarks"><s:nav></nav><a e:type="titlepage" href="fake.xhtml">Wrong default</a></s:nav><a e:type="titlepage" href="safe.xhtml">Safe default</a></nav></html>"""
     nav_report = _extract(
         _opening_epub(
             package=package,
             entries=(
                 ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
-                ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">Default Namespace Fake</h1>'), zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Default Namespace Safe</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/fake.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Default Namespace Fake</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Default Namespace Safe</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
-    assert [claim.raw_value for claim in nav_report.claims if claim.field is OpeningField.TITLE] == ["Default Namespace Safe"]
+    assert [
+        claim.raw_value
+        for claim in nav_report.claims
+        if claim.field is OpeningField.TITLE
+    ] == ["Default Namespace Safe"]
     assert nav_report.usage.navigation_links == 1
 
 
@@ -3247,15 +3605,15 @@ def test_unqualified_end_tags_resolve_the_current_default_namespace() -> None:
     ("body", "expected"),
     (
         (
-            b'''<!doctype html><meta charset="windows-1252"><html xmlns:e="http://www.idpf.org/2007/ops"><body><opaquealpha:template></opaquebeta:template><meta charset="shift_jis"><h1 e:type="fulltitle">Missing Prefix Fake</h1></opaquealpha:template><h1 e:type="fulltitle">Missing Prefix Safe</h1></body></html>''',
+            b"""<!doctype html><meta charset="windows-1252"><html xmlns:e="http://www.idpf.org/2007/ops"><body><opaquealpha:template></opaquebeta:template><meta charset="shift_jis"><h1 e:type="fulltitle">Missing Prefix Fake</h1></opaquealpha:template><h1 e:type="fulltitle">Missing Prefix Safe</h1></body></html>""",
             "Missing Prefix Safe",
         ),
         (
-            b'''<!doctype html><meta charset="windows-1252"><html xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="" xmlns:g=""><body><f:template></g:template><meta charset="shift_jis"><h1 e:type="fulltitle">Empty Prefix Fake</h1></f:template><h1 e:type="fulltitle">Empty Prefix Safe</h1></body></html>''',
+            b"""<!doctype html><meta charset="windows-1252"><html xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="" xmlns:g=""><body><f:template></g:template><meta charset="shift_jis"><h1 e:type="fulltitle">Empty Prefix Fake</h1></f:template><h1 e:type="fulltitle">Empty Prefix Safe</h1></body></html>""",
             "Empty Prefix Safe",
         ),
         (
-            b'''<!doctype html><meta charset="windows-1252"><html xmlns:e="http://www.idpf.org/2007/ops" xmlns:f=""><body><f:template></g:template><meta charset="shift_jis"><h1 e:type="fulltitle">Mixed Prefix Fake</h1></f:template><h1 e:type="fulltitle">Mixed Prefix Safe</h1></body></html>''',
+            b"""<!doctype html><meta charset="windows-1252"><html xmlns:e="http://www.idpf.org/2007/ops" xmlns:f=""><body><f:template></g:template><meta charset="shift_jis"><h1 e:type="fulltitle">Mixed Prefix Fake</h1></f:template><h1 e:type="fulltitle">Mixed Prefix Safe</h1></body></html>""",
             "Mixed Prefix Safe",
         ),
     ),
@@ -3266,23 +3624,40 @@ def test_unknown_prefix_identities_are_prefix_specific(
 ) -> None:
     report = _extract(_single(body))
     assert report.outcome == EpubInspectionOutcome.SUCCESS
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == [expected]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == [expected]
     assert "opaquealpha" not in report.to_json()
     assert "opaquebeta" not in report.to_json()
 
 
 def test_duplicate_prefix_bindings_are_malformed() -> None:
-    duplicate = b'''<!doctype html><meta charset="windows-1252"><html xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="urn:first" xmlns:f="urn:second"><body><f:template><f:meta charset="shift_jis"></f:meta></g:template><meta charset="shift_jis"></f:template><h1 e:type="fulltitle">Duplicate Prefix Content</h1></body></html>'''
+    duplicate = b"""<!doctype html><meta charset="windows-1252"><html xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="urn:first" xmlns:f="urn:second"><body><f:template><f:meta charset="shift_jis"></f:meta></g:template><meta charset="shift_jis"></f:template><h1 e:type="fulltitle">Duplicate Prefix Content</h1></body></html>"""
     duplicate_report = _extract(_single(duplicate))
-    assert duplicate_report.resources[0].disposition == OpeningResourceDisposition.MALFORMED
+    assert (
+        duplicate_report.resources[0].disposition
+        == OpeningResourceDisposition.MALFORMED
+    )
     assert "malformed_selected_resource" in duplicate_report.warnings
 
 
 @pytest.mark.parametrize(
     "name",
     (
-        "area", "base", "br", "col", "embed", "hr", "img", "input",
-        "link", "meta", "param", "source", "track", "wbr",
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
     ),
 )
 def test_self_closing_recovery_tags_only_close_the_start_they_pushed(
@@ -3296,13 +3671,19 @@ def test_self_closing_recovery_tags_only_close_the_start_they_pushed(
         f'</{name}><h1 e:type="fulltitle">Void {name} Safe</h1></body></html>'
     ).encode()
     report = _extract(_single(body))
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == [f"Void {name} Safe"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == [f"Void {name} Safe"]
 
 
 def test_nonvoid_self_closing_recovery_tags_close_their_own_start() -> None:
-    nonvoid = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="urn:foreign"><body><template/><f:template/><section xmlns="urn:foreign"/><h1 e:type="fulltitle">Nonvoid Self Close Safe</h1></body></html>'''
+    nonvoid = b"""<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops" xmlns:f="urn:foreign"><body><template/><f:template/><section xmlns="urn:foreign"/><h1 e:type="fulltitle">Nonvoid Self Close Safe</h1></body></html>"""
     nonvoid_report = _extract(_single(nonvoid))
-    assert [claim.raw_value for claim in nonvoid_report.claims if claim.field is OpeningField.TITLE] == ["Nonvoid Self Close Safe"]
+    assert [
+        claim.raw_value
+        for claim in nonvoid_report.claims
+        if claim.field is OpeningField.TITLE
+    ] == ["Nonvoid Self Close Safe"]
 
 
 @pytest.mark.parametrize(
@@ -3318,7 +3699,7 @@ def test_html_implied_closes_stop_at_each_foreign_boundary(
         'xmlns:e="http://www.idpf.org/2007/ops"><body>'
         f'<{outer} e:type="publisher">Outer Before '
         '<svg><math><div xmlns="http://www.w3.org/1999/xhtml">'
-        f'</{outer}><{inner}>Inner Reentry</{inner}></div></math></svg> Outer Tail'
+        f"</{outer}><{inner}>Inner Reentry</{inner}></div></math></svg> Outer Tail"
         f'</{outer}><h1 e:type="fulltitle">Boundary Safe Title</h1></html>'
     ).encode()
     report = _extract(_single(body))
@@ -3341,18 +3722,28 @@ def test_cross_foreign_misnested_end_cannot_authorize_navigation() -> None:
         ),
         spine=("safe",),
     )
-    navigation = b'''<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><nav e:type="landmarks"><svg><math><div xmlns="http://www.w3.org/1999/xhtml"></nav><a e:type="titlepage" href="fake.xhtml">False cross-boundary authority</a></div></math></svg><a e:type="titlepage" href="safe.xhtml">Safe contiguous authority</a></nav></html>'''
+    navigation = b"""<!doctype html><html xmlns="http://www.w3.org/1999/xhtml" xmlns:e="http://www.idpf.org/2007/ops"><body><nav e:type="landmarks"><svg><math><div xmlns="http://www.w3.org/1999/xhtml"></nav><a e:type="titlepage" href="fake.xhtml">False cross-boundary authority</a></div></math></svg><a e:type="titlepage" href="safe.xhtml">Safe contiguous authority</a></nav></html>"""
     report = _extract(
         _opening_epub(
             package=package,
             entries=(
                 ("EPUB/nav.xhtml", navigation, zipfile.ZIP_DEFLATED),
-                ("EPUB/fake.xhtml", _xhtml('<h1 epub:type="fulltitle">Cross Boundary Fake</h1>'), zipfile.ZIP_DEFLATED),
-                ("EPUB/safe.xhtml", _xhtml('<h1 epub:type="fulltitle">Cross Boundary Safe</h1>'), zipfile.ZIP_DEFLATED),
+                (
+                    "EPUB/fake.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Cross Boundary Fake</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
+                (
+                    "EPUB/safe.xhtml",
+                    _xhtml('<h1 epub:type="fulltitle">Cross Boundary Safe</h1>'),
+                    zipfile.ZIP_DEFLATED,
+                ),
             ),
         )
     )
-    assert [claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE] == ["Cross Boundary Safe"]
+    assert [
+        claim.raw_value for claim in report.claims if claim.field is OpeningField.TITLE
+    ] == ["Cross Boundary Safe"]
     assert report.resources[1].selection_path == ("epub3_landmark", "titlepage")
     assert report.usage.navigation_links == 1
 
@@ -3366,5 +3757,8 @@ def test_recovered_html_text_is_bounded_inert_data(value: str) -> None:
         + "</h1><script>fetch('https://example.invalid')</script></body></html>"
     ).encode("utf-8")
     report = _extract(_single(content, media_type="text/html"))
-    assert report.outcome in {EpubInspectionOutcome.SUCCESS, EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE}
+    assert report.outcome in {
+        EpubInspectionOutcome.SUCCESS,
+        EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
+    }
     assert "example.invalid" not in report.to_json()

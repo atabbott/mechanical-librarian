@@ -5,7 +5,6 @@ observations by importing these out of another module's tests.
 Their names are unchanged so relocating them touches no test body.
 """
 
-
 from mechanical_librarian.application.metadata_report import (
     ProviderLaneResult,
     TargetSnapshot,
@@ -46,14 +45,10 @@ def _fields(
     **overrides: TargetField,
 ) -> tuple[TargetField, ...]:
     values = {
-        value.destination: value
-        for value in default_target_fields(current_title)
+        value.destination: value for value in default_target_fields(current_title)
     }
     values.update(
-        {
-            TargetDestination[key.upper()]: value
-            for key, value in overrides.items()
-        }
+        {TargetDestination[key.upper()]: value for key, value in overrides.items()}
     )
     return tuple(values[destination] for destination in TargetDestination)
 
@@ -247,9 +242,7 @@ def _report(
         file=FileFacts(0, "a" * 64, "b" * 64),
         local_claims=local_claims,
         local_reasons=(
-            ("opening_matter_creator",)
-            if local_claims
-            else ("no_opening_claims",)
+            ("opening_matter_creator",) if local_claims else ("no_opening_claims",)
         ),
         providers=tuple(sorted(providers, key=lambda value: value.provider)),
         cover_sources=covers,
@@ -294,9 +287,7 @@ def _local_creator(
     )
 
 
-def _identity_bound_alias_report(
-    *, include_title: bool = False
-) -> MetadataReport:
+def _identity_bound_alias_report(*, include_title: bool = False) -> MetadataReport:
     local_claims = tuple(
         _local_creator(value, occurrence=index)
         for index, value in enumerate(("Ada Example", "Bob Example"))
@@ -311,9 +302,7 @@ def _identity_bound_alias_report(
             role="author",
             order=index,
         )
-        for index, value in enumerate(
-            ("A. Example", "Ada Example", "Bob Example")
-        )
+        for index, value in enumerate(("A. Example", "Ada Example", "Bob Example"))
     )
     title_claims = (
         (
@@ -447,9 +436,7 @@ def _partially_bound_direct_author_report(
 
 def _result(proposal_set: ProposalSet, destination: TargetDestination):
     return next(
-        value
-        for value in proposal_set.results
-        if value.destination is destination
+        value for value in proposal_set.results if value.destination is destination
     )
 
 
@@ -473,25 +460,72 @@ def _real_tigers_corroboration_report() -> MetadataReport:
     )
     isbn = _publication_local_isbn()
     lane = metadata_discovery_plan(
-        TargetSnapshot("ebook", "Real Tigers", (), fields=fields), (isbn,),
+        TargetSnapshot("ebook", "Real Tigers", (), fields=fields),
+        (isbn,),
     ).lanes[0]
     author_claim = _claim(
-        "open-library", "author-edition", ClaimKind.CREATOR, "Mick Herron",
-        scope=ClaimScope.WORK, role="author", order=1,
+        "open-library",
+        "author-edition",
+        ClaimKind.CREATOR,
+        "Mick Herron",
+        scope=ClaimScope.WORK,
+        role="author",
+        order=1,
     )
     neutral_claim = _claim(
-        "hardcover", "neutral-edition", ClaimKind.CREATOR, "Mick Herron",
-        scope=ClaimScope.WORK, role=None, order=1,
+        "hardcover",
+        "neutral-edition",
+        ClaimKind.CREATOR,
+        "Mick Herron",
+        scope=ClaimScope.WORK,
+        role=None,
+        order=1,
     )
     author_candidate = ProviderCandidate(
-        "author-edition", "open-library-work",
-        (_claim("open-library", "author-edition", ClaimKind.TITLE, "Real Tigers", scope=ClaimScope.WORK), author_claim), (),
-        (ProviderIdentityBinding(author_claim.reference, "open-library-author-OL1", ClaimScope.WORK, "author"),),
+        "author-edition",
+        "open-library-work",
+        (
+            _claim(
+                "open-library",
+                "author-edition",
+                ClaimKind.TITLE,
+                "Real Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            author_claim,
+        ),
+        (),
+        (
+            ProviderIdentityBinding(
+                author_claim.reference,
+                "open-library-author-OL1",
+                ClaimScope.WORK,
+                "author",
+            ),
+        ),
     )
     neutral_candidate = ProviderCandidate(
-        "neutral-edition", "hardcover-work",
-        (_claim("hardcover", "neutral-edition", ClaimKind.TITLE, "Real Tigers", scope=ClaimScope.WORK), neutral_claim), (),
-        (ProviderIdentityBinding(neutral_claim.reference, "hardcover-author-0000000001", ClaimScope.WORK, None),),
+        "neutral-edition",
+        "hardcover-work",
+        (
+            _claim(
+                "hardcover",
+                "neutral-edition",
+                ClaimKind.TITLE,
+                "Real Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            neutral_claim,
+        ),
+        (),
+        (
+            ProviderIdentityBinding(
+                neutral_claim.reference,
+                "hardcover-author-0000000001",
+                ClaimScope.WORK,
+                None,
+            ),
+        ),
     )
     return _report(
         title="Real Tigers",
@@ -499,6 +533,8 @@ def _real_tigers_corroboration_report() -> MetadataReport:
         local_claims=(isbn,),
         providers=(
             _isbn_lane_observation("hardcover", neutral_candidate, "hardcover", lane),
-            _isbn_lane_observation("open-library", author_candidate, "open_library", lane),
+            _isbn_lane_observation(
+                "open-library", author_candidate, "open_library", lane
+            ),
         ),
     )

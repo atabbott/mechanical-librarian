@@ -44,9 +44,11 @@ def test_runtime_probe_requires_packaged_react_assets_for_product() -> None:
         subprocess.CompletedProcess(("python", "-I"), 0, b"", b""),
         subprocess.CompletedProcess(("python", "-I"), 0, b"", b""),
     )
-    with tempfile.TemporaryDirectory() as directory, patch.object(
-        qualifier_module, "_run", side_effect=completed
-    ) as run, patch.object(qualifier_module, "_qualify_guarded_effect_lifecycle"):
+    with (
+        tempfile.TemporaryDirectory() as directory,
+        patch.object(qualifier_module, "_run", side_effect=completed) as run,
+        patch.object(qualifier_module, "_qualify_guarded_effect_lifecycle"),
+    ):
         _qualify_runtime_console(
             Path(directory) / "bin" / "mechanical-librarian",
             Path(directory),
@@ -72,9 +74,11 @@ def test_runtime_probe_decodes_help_and_requires_workbench_absence() -> None:
         subprocess.CompletedProcess(("console", "--help"), 0, help_output, b""),
         subprocess.CompletedProcess(("python", "-I"), 0, b"", b""),
     )
-    with tempfile.TemporaryDirectory() as directory, patch.object(
-        qualifier_module, "_run", side_effect=completed
-    ), patch.object(qualifier_module, "_qualify_guarded_effect_lifecycle"):
+    with (
+        tempfile.TemporaryDirectory() as directory,
+        patch.object(qualifier_module, "_run", side_effect=completed),
+        patch.object(qualifier_module, "_qualify_guarded_effect_lifecycle"),
+    ):
         result = _qualify_runtime_console(
             Path(directory) / "bin" / "mechanical-librarian",
             Path(directory),
@@ -252,10 +256,10 @@ def test_qualification_environment_discards_inherited_uv_controls() -> None:
     assert "1" == environment["UV_NO_CACHE"]
     assert "1" == environment["PYTHONNOUSERSITE"]
     assert Path(sys.executable).parent.resolve() not in {
-            Path(entry).resolve()
-            for entry in environment["PATH"].split(os.pathsep)
-            if entry
-        }
+        Path(entry).resolve()
+        for entry in environment["PATH"].split(os.pathsep)
+        if entry
+    }
     assert not set(inherited).intersection(environment), environment
 
 
@@ -336,14 +340,10 @@ def test_installed_payload_difference_fails_closed() -> None:
         members = {
             "cache_probe.py": b"print('wheel')\n",
             "cache_probe-0.0.0.dist-info/METADATA": (
-                b"Metadata-Version: 2.4\n"
-                b"Name: cache-probe\n"
-                b"Version: 0.0.0\n\n"
+                b"Metadata-Version: 2.4\nName: cache-probe\nVersion: 0.0.0\n\n"
             ),
             "cache_probe-0.0.0.dist-info/WHEEL": (
-                b"Wheel-Version: 1.0\n"
-                b"Root-Is-Purelib: true\n"
-                b"Tag: py3-none-any\n"
+                b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
             ),
         }
         members = _with_record(members)
@@ -371,14 +371,10 @@ def test_invalid_wheel_record_fails_before_install() -> None:
             {
                 "cache_probe.py": b"print('wheel')\n",
                 "cache_probe-0.0.0.dist-info/METADATA": (
-                    b"Metadata-Version: 2.4\n"
-                    b"Name: cache-probe\n"
-                    b"Version: 0.0.0\n\n"
+                    b"Metadata-Version: 2.4\nName: cache-probe\nVersion: 0.0.0\n\n"
                 ),
                 "cache_probe-0.0.0.dist-info/WHEEL": (
-                    b"Wheel-Version: 1.0\n"
-                    b"Root-Is-Purelib: true\n"
-                    b"Tag: py3-none-any\n"
+                    b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
                 ),
             }
         )
@@ -558,9 +554,7 @@ def _with_record(members: dict[str, bytes]) -> dict[str, bytes]:
     record_name = "cache_probe-0.0.0.dist-info/RECORD"
     rows = []
     for name, content in sorted(values.items()):
-        digest = base64.urlsafe_b64encode(
-            hashlib.sha256(content).digest()
-        ).rstrip(b"=")
+        digest = base64.urlsafe_b64encode(hashlib.sha256(content).digest()).rstrip(b"=")
         rows.append(
             name.encode("utf-8")
             + b",sha256="

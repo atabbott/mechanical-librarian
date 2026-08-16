@@ -64,25 +64,37 @@ Do not install project tools globally or add unrecorded dependencies. Update
 `pyproject.toml` and regenerate `uv.lock` together when the dependency graph
 changes.
 
-## Python linting and typing
+## Python formatting, linting and typing
 
-The backend is linted by ruff and type-checked by mypy in strict mode. Both are
-exact-pinned in the `dev` dependency group and configured entirely in
-`pyproject.toml`; there is no separate tool configuration file. From a clean
-checkout, these are the exact commands the `fast-source` gate job runs, and
-both must pass before a pull request is ready:
+The backend is formatted and linted by ruff and type-checked by mypy in strict
+mode. Both tools are exact-pinned in the `dev` dependency group and configured
+entirely in `pyproject.toml`; there is no separate tool configuration file.
+From a clean checkout, these are the exact commands the `fast-source` gate job
+runs, and all three must pass before a pull request is ready:
 
 ```text
+uv run ruff format --check src tests scripts
 uv run ruff check src tests scripts
 uv run mypy src tests scripts
 ```
 
-`uv run ruff check --fix src tests scripts` applies the automatic fixes.
+`uv run ruff format src tests scripts` rewrites the source and
+`uv run ruff check --fix src tests scripts` applies the automatic lint fixes.
+Keep formatting-only changes in their own commit so behaviour diffs stay
+reviewable, the same rule the frontend follows under Prettier.
+
+`ruff format` is the backend's line-width contract at `line-length = 88`. Four
+sources are excluded from it, for the reason given below.
 
 ruff selects pyflakes (`F`), pycodestyle (`E`, `W`), bugbear (`B`), and import
-ordering (`I`). `E501` (line length) is deliberately not enforced: the backend
-has never been width-formatted, so enforcing it would mean a whole-tree
-reformat rather than a lint fix. Backend formatting is separate future work.
+ordering (`I`). `E501` (line length) is not enforced on top of the formatter.
+Every line still wider than 88 after formatting is content the formatter
+deliberately did not touch -- DDL that `sqlite_master` stores verbatim, EPUB
+and XML fixture documents, Python modules embedded as string literals, and
+single-token dotted import paths -- so E501 would measure data rather than
+formatting, and no threshold or exemption list makes it pass without making it
+meaningless. `pyproject.toml` records the measurement. Enforcing it for real
+means moving those literals out of Python source.
 
 mypy runs in strict mode over `src/`, which is what ships with `py.typed`.
 `tests/` and `scripts/` are checked too, but without strict's annotation

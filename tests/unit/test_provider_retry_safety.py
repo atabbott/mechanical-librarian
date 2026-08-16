@@ -15,9 +15,7 @@ from mechanical_librarian.adapters.providers.retry_safety import (
 )
 
 
-def _caused(
-    error: httpx.HTTPError, cause: BaseException
-) -> httpx.HTTPError:
+def _caused(error: httpx.HTTPError, cause: BaseException) -> httpx.HTTPError:
     error.__cause__ = cause
     return error
 
@@ -66,8 +64,11 @@ def test_discovery_ledger_coalesces_only_identical_redacted_semantics() -> None:
 def test_discovery_ledger_reserves_registered_initials_before_retry() -> None:
     ledger = _DiscoveryRequestLedger("provider", "revision")
     ledger.register(
-        kind="isbn", matched_family="9780000000000", title=None,
-        authors=(), projection="fixed",
+        kind="isbn",
+        matched_family="9780000000000",
+        title=None,
+        authors=(),
+        projection="fixed",
     )
     ledger.register_detail("/books/OL1M")
     assert not ledger.allows_retry(47, 49)

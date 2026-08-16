@@ -70,7 +70,9 @@ def test_rejects_oversized_input_with_typed_state() -> None:
     "build",
     (
         pytest.param(lambda: _image("PNG", (4097, 4096)), id="pixel_bomb"),
-        pytest.param(lambda: _huge_png_header(100_000, 100_000), id="decompression_bomb"),
+        pytest.param(
+            lambda: _huge_png_header(100_000, 100_000), id="decompression_bomb"
+        ),
     ),
 )
 def test_real_decoder_child_rejects_pixel_and_decompression_bombs(

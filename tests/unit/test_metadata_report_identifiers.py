@@ -110,9 +110,7 @@ def candidate(
 
 
 @pytest.fixture
-def local(
-    local_isbn: LocalClaim, local_date: LocalClaim
-) -> tuple[LocalClaim, ...]:
+def local(local_isbn: LocalClaim, local_date: LocalClaim) -> tuple[LocalClaim, ...]:
     return (local_isbn, local_date)
 
 
@@ -183,9 +181,7 @@ def test_candidate_finalization_promotes_only_safe_manifestation_dates(
     assert manifestation_publication_compatible(candidate, local)
     safe = finalize_candidate_comparisons(candidate, local, "catalogue")
     publication = next(
-        claim
-        for claim in safe.claims
-        if claim.kind is ClaimKind.PUBLICATION_DATE
+        claim for claim in safe.claims if claim.kind is ClaimKind.PUBLICATION_DATE
     )
     assert "2021-09-14" == publication.date_lexical
     assert (
@@ -210,12 +206,8 @@ def test_candidate_finalization_promotes_only_safe_manifestation_dates(
             date_text,
         ),
     )
-    unsafe = finalize_candidate_comparisons(
-        print_candidate, local, "catalogue"
-    )
-    assert not any(
-        claim.kind is ClaimKind.PUBLICATION_DATE for claim in unsafe.claims
-    )
+    unsafe = finalize_candidate_comparisons(print_candidate, local, "catalogue")
+    assert not any(claim.kind is ClaimKind.PUBLICATION_DATE for claim in unsafe.claims)
     retained = next(
         evidence
         for evidence in unsafe.evidence
@@ -291,9 +283,7 @@ def test_title_only_local_claims_keep_manifestation_dates_unpromoted(
     )
     assert title_report == MetadataReport.from_json(title_report.to_json())
     tampered_title_report = title_report.to_data()
-    tampered_title_report["providers"][0]["candidates"][0]["evidence"][0][
-        "links"
-    ] = []
+    tampered_title_report["providers"][0]["candidates"][0]["evidence"][0]["links"] = []
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(canonical_json(tampered_title_report))
 
@@ -365,9 +355,7 @@ def test_unlinkable_evidence_rejects_the_unbound_manifestation_link(
                 ProviderObservation(
                     "catalogue",
                     ProviderStatus.CANDIDATES,
-                    candidates=(
-                        replace(candidate, evidence=(evidence,)),
-                    ),
+                    candidates=(replace(candidate, evidence=(evidence,)),),
                     query_kind=ProviderQueryKind.WORK,
                 ),
             ),
@@ -380,9 +368,7 @@ def test_unlinkable_evidence_rejects_the_unbound_manifestation_link(
     forged_report = unbound_report.to_data()
     forged_evidence = evidence.to_data()
     forged_evidence["links"] = [unbound_link.to_data()]
-    forged_report["providers"][0]["candidates"][0]["evidence"] = [
-        forged_evidence
-    ]
+    forged_report["providers"][0]["candidates"][0]["evidence"] = [forged_evidence]
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(canonical_json(forged_report))
 
@@ -390,9 +376,7 @@ def test_unlinkable_evidence_rejects_the_unbound_manifestation_link(
 def test_unbound_manifestation_evidence_rejects_contradiction_and_tampering(
     unbound_report: MetadataReport,
 ) -> None:
-    valid_unbound_evidence = unbound_report.providers[0].candidates[
-        0
-    ].evidence[0]
+    valid_unbound_evidence = unbound_report.providers[0].candidates[0].evidence[0]
     with pytest.raises(ReportValueError):
         replace(
             valid_unbound_evidence,
@@ -421,9 +405,7 @@ def test_unbound_manifestation_evidence_rejects_contradiction_and_tampering(
         ComparisonLink(
             None,
             Comparison.NOT_COMPARABLE,
-            publication_date_relation=(
-                PublicationDateRelation.EVENT_INCOMPATIBLE
-            ),
+            publication_date_relation=(PublicationDateRelation.EVENT_INCOMPATIBLE),
         )
 
 
@@ -457,15 +439,12 @@ def test_edition_work_relation_contradiction_keeps_dates_unpromoted(
     local: tuple[LocalClaim, ...],
     provider_isbn: ProviderClaim,
 ) -> None:
-    assert not manifestation_publication_compatible(
-        contradictory_candidate, local
-    )
+    assert not manifestation_publication_compatible(contradictory_candidate, local)
     contradictory = finalize_candidate_comparisons(
         contradictory_candidate, local, "catalogue"
     )
     assert any(
-        evidence.kind
-        is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+        evidence.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
         for evidence in contradictory.evidence
     )
     retained = next(
@@ -755,20 +734,14 @@ def test_identifier_evidence_classifies_provider_local_work_relations() -> None:
         alternate.reference,
         unrelated.reference,
     }
-    assert (
-        by_reference[package.reference].relation
-        == IdentifierRelation.ASSOCIATED
-    )
-    assert (
-        by_reference[opening.reference].relation == IdentifierRelation.ACCEPTED
-    )
+    assert by_reference[package.reference].relation == IdentifierRelation.ASSOCIATED
+    assert by_reference[opening.reference].relation == IdentifierRelation.ACCEPTED
     assert (
         by_reference[package.reference].basis
         == IdentifierEvidenceBasis.PROVIDER_WORK_IDENTITY
     )
     assert (
-        by_reference[opening.reference].basis
-        == IdentifierEvidenceBasis.EXPLICIT_EBOOK
+        by_reference[opening.reference].basis == IdentifierEvidenceBasis.EXPLICIT_EBOOK
     )
     assert (
         by_reference[same_work_print.reference].relation
@@ -778,32 +751,14 @@ def test_identifier_evidence_classifies_provider_local_work_relations() -> None:
         by_reference[same_work_print.reference].basis
         == IdentifierEvidenceBasis.PROVIDER_WORK_IDENTITY
     )
-    assert (
-        by_reference[other_work.reference].relation
-        == IdentifierRelation.UNRELATED
-    )
-    assert (
-        by_reference[unresolved.reference].relation
-        == IdentifierRelation.UNRESOLVED
-    )
-    assert (
-        by_reference[malformed.reference].relation
-        == IdentifierRelation.INVALID
-    )
+    assert by_reference[other_work.reference].relation == IdentifierRelation.UNRELATED
+    assert by_reference[unresolved.reference].relation == IdentifierRelation.UNRESOLVED
+    assert by_reference[malformed.reference].relation == IdentifierRelation.INVALID
     assert by_reference[seed.reference].relation == IdentifierRelation.ACCEPTED
-    assert (
-        by_reference[alternate.reference].relation
-        == IdentifierRelation.ASSOCIATED
-    )
-    assert (
-        by_reference[unrelated.reference].relation
-        == IdentifierRelation.UNRELATED
-    )
+    assert by_reference[alternate.reference].relation == IdentifierRelation.ASSOCIATED
+    assert by_reference[unrelated.reference].relation == IdentifierRelation.UNRELATED
     assert by_reference[alternate.reference].provider == "catalogue"
-    assert (
-        by_reference[alternate.reference].candidate_identity
-        == "edition-alternate"
-    )
+    assert by_reference[alternate.reference].candidate_identity == "edition-alternate"
     assert by_reference[alternate.reference].work_identity == "work-one"
     assert set(by_reference[alternate.reference].to_data()) == {
         "basis",
@@ -822,7 +777,9 @@ def test_identifier_evidence_classifies_provider_local_work_relations() -> None:
     }.isdisjoint(by_reference[alternate.reference].to_data())
 
     report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
         file=FileFacts(0, "a" * 64, "b" * 64),
         local_claims=local_claims,
         local_reasons=("opening_matter_isbn",),
@@ -876,18 +833,10 @@ def test_identifier_evidence_keeps_provider_work_collisions_unresolved() -> None
             raw_order=raw_order,
         )
 
-    collision_seed_a = provider_claim(
-        "collision", "edition-a", "9780306406157", 0
-    )
-    collision_alternate_a = provider_claim(
-        "collision", "edition-a", "9780140328721", 1
-    )
-    collision_seed_b = provider_claim(
-        "collision", "edition-b", "9780306406157", 0
-    )
-    collision_alternate_b = provider_claim(
-        "collision", "edition-b", "9783161484100", 1
-    )
+    collision_seed_a = provider_claim("collision", "edition-a", "9780306406157", 0)
+    collision_alternate_a = provider_claim("collision", "edition-a", "9780140328721", 1)
+    collision_seed_b = provider_claim("collision", "edition-b", "9780306406157", 0)
+    collision_alternate_b = provider_claim("collision", "edition-b", "9783161484100", 1)
     collision = ProviderObservation(
         "collision",
         ProviderStatus.CANDIDATES,
@@ -926,9 +875,7 @@ def test_identifier_evidence_keeps_provider_work_collisions_unresolved() -> None
         == IdentifierRelation.UNRESOLVED
     )
 
-    independent_seed = provider_claim(
-        "independent", "edition-c", "9780306406157", 0
-    )
+    independent_seed = provider_claim("independent", "edition-c", "9780306406157", 0)
     independent_alternate = provider_claim(
         "independent", "edition-c", "9780140328721", 1
     )
@@ -956,12 +903,13 @@ def test_identifier_evidence_keeps_provider_work_collisions_unresolved() -> None
         == IdentifierRelation.ASSOCIATED
     )
     assert (
-        combined_evidence[alternate.reference].relation
-        == IdentifierRelation.ASSOCIATED
+        combined_evidence[alternate.reference].relation == IdentifierRelation.ASSOCIATED
     )
 
 
-def test_identifier_evidence_preserves_repeats_conflicts_and_rejects_tampering() -> None:
+def test_identifier_evidence_preserves_repeats_conflicts_and_rejects_tampering() -> (
+    None
+):
     provenance = RearClaimProvenance(
         "a" * 64,
         12,
@@ -1059,7 +1007,9 @@ def test_identifier_evidence_preserves_repeats_conflicts_and_rejects_tampering()
         IdentifierEvidenceBasis.INSUFFICIENT_CONTEXT,
     )
     report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
         file=FileFacts(0, "a" * 64, "b" * 64),
         local_claims=claims,
         local_reasons=("opening_matter_isbn",),

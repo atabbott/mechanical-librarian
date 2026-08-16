@@ -140,21 +140,29 @@ def test_html_description_is_rendered_and_bound_to_versioned_evidence() -> None:
     info = volume["volumeInfo"]
     assert type(info) is dict
     info["description"] = (
-        "<p>One &amp; <em>two</em></p><br/><span>Three</span>"
-        "<hr>2 &lt; 3"
+        "<p>One &amp; <em>two</em></p><br/><span>Three</span><hr>2 &lt; 3"
     )
     observation = GoogleBooksMetadataProvider(
-        "google_books", httpx.Client(transport=httpx.MockTransport(
-            lambda _: httpx.Response(200, headers={"content-type": "application/json"}, json={"totalItems": 1, "items": [volume]})
-        )), 65_536,
+        "google_books",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={"totalItems": 1, "items": [volume]},
+                )
+            )
+        ),
+        65_536,
     ).observe(_lookup())
     candidate = observation.candidates[0]
     assert "One & two • Three • 2 < 3" == next(
-            c.value
-            for c in candidate.claims
-            if c.kind is ClaimKind.DESCRIPTION
-        )
-    assert (ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION, "google-books-html-visible-text-v1") in {(e.kind, e.value) for e in candidate.evidence}
+        c.value for c in candidate.claims if c.kind is ClaimKind.DESCRIPTION
+    )
+    assert (
+        ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION,
+        "google-books-html-visible-text-v1",
+    ) in {(e.kind, e.value) for e in candidate.evidence}
     qualified = qualify_provider_observation(
         observation,
         MetadataLookup(
@@ -164,12 +172,18 @@ def test_html_description_is_rendered_and_bound_to_versioned_evidence() -> None:
             authors=("Ada Example",),
         ),
     )
-    assert ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION in {value.kind for value in qualified.candidates[0].evidence}
+    assert ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION in {
+        value.kind for value in qualified.candidates[0].evidence
+    }
 
 
 def test_html_description_abstains_on_hostile_ambiguous_or_oversized_input() -> None:
     cases = (
-        ("active content", "<p>Safe</p><script>unsafe()</script>", FieldState.MALFORMED),
+        (
+            "active content",
+            "<p>Safe</p><script>unsafe()</script>",
+            FieldState.MALFORMED,
+        ),
         ("event attribute", '<p onclick="unsafe()">Text</p>', FieldState.MALFORMED),
         ("unclosed markup", "<p>Text", FieldState.MALFORMED),
         ("incomplete opening tag", "Summary <em", FieldState.MALFORMED),
@@ -211,9 +225,8 @@ def test_html_description_abstains_on_hostile_ambiguous_or_oversized_input() -> 
         assert expected is claim.state, label
         assert claim.value is None, label
         assert ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION not in {
-                value.kind
-                for value in observation.candidates[0].evidence
-            }
+            value.kind for value in observation.candidates[0].evidence
+        }
 
 
 def test_optional_occurrences_keep_source_order_duplicates_and_replay() -> None:
@@ -243,7 +256,8 @@ def test_optional_occurrences_keep_source_order_duplicates_and_replay() -> None:
     assert ["Zulu", "Alpha", "Zulu"] == authors
     assert 1 == observation.diagnostics[0].count
     assert "Zulu" not in observation.diagnostics[0].to_json()
-    assert MetadataReport.from_json(
+    assert (
+        MetadataReport.from_json(
             MetadataReport.create(
                 target=TargetFacts(
                     "primary", "ebooks", "item-1", default_target_fields("Example Book")
@@ -253,7 +267,9 @@ def test_optional_occurrences_keep_source_order_duplicates_and_replay() -> None:
                 local_reasons=("opening_matter_isbn",),
                 providers=(observation,),
             ).to_json()
-        ).providers[0] == observation
+        ).providers[0]
+        == observation
+    )
 
 
 def test_access_time_is_captured_only_at_first_actual_dispatch() -> None:
@@ -341,9 +357,7 @@ def test_retry_after_deadline_and_cancellation_are_fail_closed() -> None:
     delays: list[float] = []
     provider = GoogleBooksMetadataProvider(
         "google_books",
-        httpx.Client(
-            transport=httpx.MockTransport(lambda _: responses.pop(0))
-        ),
+        httpx.Client(transport=httpx.MockTransport(lambda _: responses.pop(0))),
         65_536,
         sleep=delays.append,
         jitter=lambda: 0.5,
@@ -372,7 +386,10 @@ def test_retry_after_deadline_and_cancellation_are_fail_closed() -> None:
         clock=lambda: 0.0,
         sleep=lambda _: pytest.fail("deadline must refuse sleep"),
     )
-    assert ProviderStatus.UNAVAILABLE == deadline_provider.observe(_lookup(), deadline=3.0).status
+    assert (
+        ProviderStatus.UNAVAILABLE
+        == deadline_provider.observe(_lookup(), deadline=3.0).status
+    )
     assert 1 == dispatches
     assert "exhausted" == deadline_provider.attempt_records[-1].outcome
     assert 3.0 == deadline_provider.attempt_records[-1].delay_seconds
@@ -516,9 +533,7 @@ def test_encoded_error_bodies_are_raw_charged_or_fail_preloaded() -> None:
             "google_books",
             httpx.Client(transport=httpx.MockTransport(handler)),
             1_024,
-            sleep=lambda _: pytest.fail(
-                "non-identity encoding must not retry"
-            ),
+            sleep=lambda _: pytest.fail("non-identity encoding must not retry"),
         )
         assert ProviderStatus.MALFORMED == provider.observe(_lookup()).status
         assert 1 == calls
@@ -563,9 +578,7 @@ def test_retries_503_with_fresh_backoff_and_records_each_dispatch() -> None:
     jitters = iter((0.25, 0.75))
     provider = GoogleBooksMetadataProvider(
         "google_books",
-        httpx.Client(
-            transport=httpx.MockTransport(lambda _: responses.pop(0))
-        ),
+        httpx.Client(transport=httpx.MockTransport(lambda _: responses.pop(0))),
         65_536,
         sleep=delays.append,
         jitter=lambda: next(jitters),
@@ -576,8 +589,12 @@ def test_retries_503_with_fresh_backoff_and_records_each_dispatch() -> None:
     assert ProviderStatus.CANDIDATES == observation.status
     assert [1.25, 2.75] == delays
     assert 3 == len(provider.attempt_records)
-    assert ["retry", "retry", "response_received"] == [record.outcome for record in provider.attempt_records]
-    assert ["http_503", "http_503", "none"] == [record.category for record in provider.attempt_records]
+    assert ["retry", "retry", "response_received"] == [
+        record.outcome for record in provider.attempt_records
+    ]
+    assert ["http_503", "http_503", "none"] == [
+        record.category for record in provider.attempt_records
+    ]
 
 
 @pytest.mark.parametrize(
@@ -606,9 +623,7 @@ def test_recovers_at_every_permitted_503_retry_ordinal(
     provider = GoogleBooksMetadataProvider(
         "google_books",
         httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _, values=responses: values.pop(0)
-            )
+            transport=httpx.MockTransport(lambda _, values=responses: values.pop(0))
         ),
         65_536,
         sleep=lambda _: None,
@@ -616,7 +631,9 @@ def test_recovers_at_every_permitted_503_retry_ordinal(
     )
     assert ProviderStatus.CANDIDATES == provider.observe(_lookup()).status
     assert prior_failures + 1 == len(provider.attempt_records)
-    assert ["retry"] * prior_failures + ["response_received"] == [record.outcome for record in provider.attempt_records]
+    assert ["retry"] * prior_failures + ["response_received"] == [
+        record.outcome for record in provider.attempt_records
+    ]
 
 
 def test_503_retry_authority_is_capped_at_six_dispatches() -> None:
@@ -675,21 +692,22 @@ def test_keyless_and_keyed_requests_are_fixed_and_credentials_never_persist() ->
         candidate = observation.candidates[0]
         assert "google-books-volume-volume_1" == candidate.identity
         assert "unresolved" == candidate.work_identity
-        assert ProviderEvidence(
+        assert (
+            ProviderEvidence(
                 ProviderEvidenceKind.EDITION_WORK_RELATION,
                 "unresolved",
                 ClaimScope.EDITION,
-            ) in candidate.evidence
-        assert "2026-Spring" in {
-                evidence.value
-                for evidence in candidate.evidence
-                if evidence.kind
-                is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
-            }
-        assert not any(
-                claim.kind is ClaimKind.PUBLICATION_DATE
-                for claim in candidate.claims
             )
+            in candidate.evidence
+        )
+        assert "2026-Spring" in {
+            evidence.value
+            for evidence in candidate.evidence
+            if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        }
+        assert not any(
+            claim.kind is ClaimKind.PUBLICATION_DATE for claim in candidate.claims
+        )
         report = MetadataReport.create(
             target=TargetFacts(
                 "primary",
@@ -731,15 +749,16 @@ def test_work_query_requires_exact_complete_title_and_author_order() -> None:
     ).observe(lookup)
     observation = qualify_provider_observation(observation, lookup)
     assert ProviderStatus.CANDIDATES == observation.status
-    assert 'intitle:"Example Book" inauthor:"Ada Example"' == requests[0].url.params["q"]
+    assert (
+        'intitle:"Example Book" inauthor:"Ada Example"' == requests[0].url.params["q"]
+    )
     assert all(
-            claim.scope is ClaimScope.WORK
-            for claim in observation.candidates[0].claims
-        )
+        claim.scope is ClaimScope.WORK for claim in observation.candidates[0].claims
+    )
     assert not any(
-            claim.kind is ClaimKind.PUBLICATION_DATE
-            for claim in observation.candidates[0].claims
-        )
+        claim.kind is ClaimKind.PUBLICATION_DATE
+        for claim in observation.candidates[0].claims
+    )
     retained = next(
         value
         for value in observation.candidates[0].evidence
@@ -747,10 +766,9 @@ def test_work_query_requires_exact_complete_title_and_author_order() -> None:
     )
     assert () == retained.links
     assert all(
-            value.scope is ClaimScope.WORK
-            or value is retained
-            for value in observation.candidates[0].evidence
-        )
+        value.scope is ClaimScope.WORK or value is retained
+        for value in observation.candidates[0].evidence
+    )
 
 
 def test_exact_isbn_lane_promotes_standard_publication_date() -> None:
@@ -777,10 +795,9 @@ def test_exact_isbn_lane_promotes_standard_publication_date() -> None:
     assert "2026-04-03" == publication.value
     assert "2026-04-03" == publication.date_lexical
     assert not any(
-            evidence.kind
-            is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
-            for evidence in observation.candidates[0].evidence
-        )
+        evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        for evidence in observation.candidates[0].evidence
+    )
 
 
 def test_work_query_does_not_choose_between_unlinked_matching_volumes() -> None:
@@ -824,9 +841,7 @@ def test_no_match_malformed_and_candidate_bound_are_distinct() -> None:
         (
             {
                 "totalItems": 6,
-                "items": [
-                    _volume(f"volume_{index}") for index in range(6)
-                ],
+                "items": [_volume(f"volume_{index}") for index in range(6)],
             },
             ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
         ),
@@ -853,20 +868,12 @@ def test_declared_quota_and_http_errors_are_typed() -> None:
     cases = (
         (
             403,
-            {
-                "error": {
-                    "errors": [{"reason": "dailyLimitExceeded"}]
-                }
-            },
+            {"error": {"errors": [{"reason": "dailyLimitExceeded"}]}},
             ProviderStatus.RATE_LIMITED,
         ),
         (
             403,
-            {
-                "error": {
-                    "errors": [{"reason": "dailyLimitExceededUnreg"}]
-                }
-            },
+            {"error": {"errors": [{"reason": "dailyLimitExceededUnreg"}]}},
             ProviderStatus.RATE_LIMITED,
         ),
         (
@@ -933,21 +940,22 @@ def test_invalid_scalar_claims_are_field_local_and_keep_valid_evidence() -> None
         if claim.kind in {ClaimKind.SUBTITLE, ClaimKind.DESCRIPTION}
     }
     assert {
-            ClaimKind.SUBTITLE: FieldState.MALFORMED,
-            ClaimKind.DESCRIPTION: FieldState.OVERSIZED,
-        } == states
+        ClaimKind.SUBTITLE: FieldState.MALFORMED,
+        ClaimKind.DESCRIPTION: FieldState.OVERSIZED,
+    } == states
     assert any(
-            claim.kind is ClaimKind.ISBN
-            and claim.state is FieldState.VALID
-            for claim in candidate.claims
-        )
+        claim.kind is ClaimKind.ISBN and claim.state is FieldState.VALID
+        for claim in candidate.claims
+    )
     assert any(
-            claim.kind is ClaimKind.TITLE
-            and claim.state is FieldState.VALID
-            and claim.value == "Example Book"
-            for claim in candidate.claims
-        )
-    assert ProviderEvidenceKind.PUBLICATION_DATE_TEXT in {evidence.kind for evidence in candidate.evidence}
+        claim.kind is ClaimKind.TITLE
+        and claim.state is FieldState.VALID
+        and claim.value == "Example Book"
+        for claim in candidate.claims
+    )
+    assert ProviderEvidenceKind.PUBLICATION_DATE_TEXT in {
+        evidence.kind for evidence in candidate.evidence
+    }
 
 
 def test_malformed_identifier_entries_fail_but_unsupported_types_are_ignored() -> None:
@@ -1039,8 +1047,10 @@ def test_oversized_timeout_and_expired_deadline_fail_closed() -> None:
         "google_books",
         httpx.Client(
             transport=httpx.MockTransport(
-                lambda request: requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
-                or httpx.Response(200, json={})
+                lambda request: (
+                    requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
+                    or httpx.Response(200, json={})
+                )
             )
         ),
         65_536,
@@ -1081,21 +1091,29 @@ def test_malformed_and_duplicate_json_never_escape_as_raw_artifacts(
 def test_undispatched_causes_are_once_per_physical_lookup_and_closed() -> None:
     def provider() -> GoogleBooksMetadataProvider:
         return GoogleBooksMetadataProvider(
-            "google_books", httpx.Client(transport=httpx.MockTransport(
-                lambda _: pytest.fail("undispatched request")
-            )), 65_536,
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: pytest.fail("undispatched request")
+                )
+            ),
+            65_536,
         )
 
     aggregate_bytes = provider()
     aggregate_bytes._remaining_response_bytes = 0
     observation = aggregate_bytes.observe(_lookup())
     assert ProviderStatus.INCOMPLETE == observation.status
-    assert ["aggregate_bytes"] == [record.cause.value for record in aggregate_bytes.incomplete_causes]
+    assert ["aggregate_bytes"] == [
+        record.cause.value for record in aggregate_bytes.incomplete_causes
+    ]
 
     dispatch_count = provider()
     dispatch_count._attempt_count = 999
     dispatch_count.observe(_lookup())
-    assert ["dispatch_count"] == [record.cause.value for record in dispatch_count.incomplete_causes]
+    assert ["dispatch_count"] == [
+        record.cause.value for record in dispatch_count.incomplete_causes
+    ]
 
     deadline = provider()
     deadline.observe(_lookup(), deadline=0.0)
@@ -1156,16 +1174,16 @@ def test_report_proposal_admission_and_review_packet_replay_google_evidence() ->
     assert "Example Press" in serialized
     assert "2026-Spring" in serialized
     assert not any(
-            value["destination"] in {"publishedYear", "publishedDate"}
-            for value in packet.proposals
-        )
+        value["destination"] in {"publishedYear", "publishedDate"}
+        for value in packet.proposals
+    )
     assert "private-api-key" not in serialized
 
 
 def test_over_cap_optional_collection_rejects_once_without_member_traversal() -> None:
     counts: list[int] = []
     assert () == __import__(
-            "mechanical_librarian.adapters.providers.google_books_metadata",
-            fromlist=["_optional_string_list"],
-        )._optional_string_list([object()] * 9, 8, counts.append)
+        "mechanical_librarian.adapters.providers.google_books_metadata",
+        fromlist=["_optional_string_list"],
+    )._optional_string_list([object()] * 9, 8, counts.append)
     assert [1] == counts

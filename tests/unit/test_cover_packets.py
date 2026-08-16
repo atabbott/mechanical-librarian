@@ -135,8 +135,7 @@ def _preview(
     # one stream across a small consecutive IDAT run. This reaches exact byte
     # boundaries without ancillary chunks or bytes after the zlib stream.
     extra_idat_chunks = next(
-        value for value in range(5)
-        if (73 + 12 * value) % 5 == size % 5
+        value for value in range(5) if (73 + 12 * value) % 5 == size % 5
     )
     fixed_bytes = 73 + 12 * extra_idat_chunks
     empty_blocks, remainder = divmod(size - fixed_bytes, 5)
@@ -154,16 +153,20 @@ def _preview(
 
     def chunk(chunk_type: bytes, data: bytes) -> bytes:
         return (
-            struct.pack(">I", len(data)) + chunk_type + data
+            struct.pack(">I", len(data))
+            + chunk_type
+            + data
             + struct.pack(">I", zlib.crc32(chunk_type + data))
         )
 
     idat_count = extra_idat_chunks + 1
-    boundaries = [len(compressed) * value // idat_count for value in range(idat_count + 1)]
+    boundaries = [
+        len(compressed) * value // idat_count for value in range(idat_count + 1)
+    ]
     ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
     result = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
     result += b"".join(
-        chunk(b"IDAT", compressed[boundaries[value]:boundaries[value + 1]])
+        chunk(b"IDAT", compressed[boundaries[value] : boundaries[value + 1]])
         for value in range(idat_count)
     )
     result += chunk(b"IEND", b"")
@@ -197,14 +200,22 @@ def _source(
     artifact = CoverArtifact.create(
         f"original-{index}".encode(), payload, "image/png", 300 + index, 450 + index
     )
-    kind = CoverSourceKind.ABS if incumbent else CoverSourceKind.EPUB if embedded else (
-        CoverSourceKind.HARDCOVER if index % 2 else CoverSourceKind.OPEN_LIBRARY
+    kind = (
+        CoverSourceKind.ABS
+        if incumbent
+        else CoverSourceKind.EPUB
+        if embedded
+        else (CoverSourceKind.HARDCOVER if index % 2 else CoverSourceKind.OPEN_LIBRARY)
     )
-    provenance = None if incumbent or embedded else CoverProvenance(
-        kind.value,
-        CoverDesignation.EXACT_EDITION if index % 3 == 0 else CoverDesignation.WORK,
-        f"work-{index}",
-        f"edition-{index}" if index % 3 == 0 else None,
+    provenance = (
+        None
+        if incumbent or embedded
+        else CoverProvenance(
+            kind.value,
+            CoverDesignation.EXACT_EDITION if index % 3 == 0 else CoverDesignation.WORK,
+            f"work-{index}",
+            f"edition-{index}" if index % 3 == 0 else None,
+        )
     )
     return CoverSource(
         cover_source_id(kind, f"source-{index}"),
@@ -228,9 +239,13 @@ def _report(sources: tuple[CoverSource, ...]) -> MetadataReport:
     )
 
 
-def _packet_case(count: int = 2) -> tuple[PreparedCoverPacket, tuple[tuple[str, str, bytes], ...]]:
+def _packet_case(
+    count: int = 2,
+) -> tuple[PreparedCoverPacket, tuple[tuple[str, str, bytes], ...]]:
     payloads = tuple(_preview(index) for index in range(1, count + 1))
-    sources = tuple(_source(index, payload) for index, payload in enumerate(payloads, 1))
+    sources = tuple(
+        _source(index, payload) for index, payload in enumerate(payloads, 1)
+    )
     report = _report(sources)
     by_artifact = {
         source.artifact.artifact_id: payload
@@ -266,14 +281,15 @@ def _rebind_packet(value: dict[str, object]) -> str:
         "omissions": value["omissions"],
         "schema_version": value["schema_version"],
     }
-    value["packet_reference"] = "cover_packet_" + hashlib.sha256(
-        json.dumps(
-            body, ensure_ascii=False, separators=(",", ":"), sort_keys=True
-        ).encode()
-    ).hexdigest()
-    return json.dumps(
-        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    value["packet_reference"] = (
+        "cover_packet_"
+        + hashlib.sha256(
+            json.dumps(
+                body, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+            ).encode()
+        ).hexdigest()
     )
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def _expanded_packet(packet: str, count: int, *, size: int | None = None):
@@ -288,23 +304,27 @@ def _expanded_packet(packet: str, count: int, *, size: int | None = None):
             payload, source_sha256=source_digest
         )
         reference = "cover_ref_" + f"{index:064x}"
-        source_bindings = [{
-            "preview_sha256": source_digest,
-            "reference": reference,
-        }]
+        source_bindings = [
+            {
+                "preview_sha256": source_digest,
+                "reference": reference,
+            }
+        ]
         transport_reference = packet_builder.cover_transport_reference(
             reference, source_bindings, normalized.digest
         )
         candidate = json.loads(json.dumps(template))
-        candidate.update({
-            "incumbent": False,
-            "preview_bytes": len(normalized.payload),
-            "preview_sha256": source_digest,
-            "reference": reference,
-            "source_bindings": source_bindings,
-            "transport_reference": transport_reference,
-            "transport_sha256": normalized.digest,
-        })
+        candidate.update(
+            {
+                "incumbent": False,
+                "preview_bytes": len(normalized.payload),
+                "preview_sha256": source_digest,
+                "reference": reference,
+                "source_bindings": source_bindings,
+                "transport_reference": transport_reference,
+                "transport_sha256": normalized.digest,
+            }
+        )
         candidates.append(candidate)
         images.append((transport_reference, normalized.digest, normalized.payload))
     value["candidates"] = candidates
@@ -335,12 +355,14 @@ def _group_candidate(
     sources = [first]
     references = ["cover_ref_" + f"{index * 10:064x}"]
     for member in range(1, duplicates):
-        sources.append(CoverSource(
-            cover_source_id(CoverSourceKind.EPUB, f"group-{index}-member-{member}"),
-            CoverSourceKind.EPUB,
-            CoverSourceState.RETRIEVED,
-            first.artifact,
-        ))
+        sources.append(
+            CoverSource(
+                cover_source_id(CoverSourceKind.EPUB, f"group-{index}-member-{member}"),
+                CoverSourceKind.EPUB,
+                CoverSourceState.RETRIEVED,
+                first.artifact,
+            )
+        )
         references.append("cover_ref_" + f"{index * 10 + member:064x}")
     return packet_builder._Candidate(
         reference=references[0],
@@ -363,8 +385,7 @@ def _admit_produced(packet) -> object:
         packet.document,
         '{"additionalProperties":false,"properties":{},"type":"object"}',
         tuple(
-            (value.reference, value.digest, value.payload)
-            for value in packet.images
+            (value.reference, value.digest, value.payload) for value in packet.images
         ),
     )
 
@@ -419,7 +440,9 @@ def _observer_result(
             "input_sha256": hashlib.sha256(packet).hexdigest(),
             "request_sha256": admitted.digest,
             "result": result,
-            "result_sha256": hashlib.sha256(canonical_json(result).encode()).hexdigest(),
+            "result_sha256": hashlib.sha256(
+                canonical_json(result).encode()
+            ).hexdigest(),
             "schema_version": "cover-contained-reviewer-result-v1",
             "status": "completed",
         }
@@ -468,19 +491,17 @@ def test_normalized_transport_uses_fixed_stored_blocks_across_rows() -> None:
     )
     idat_length = struct.unpack(">I", normalized.payload[33:37])[0]
     assert normalized.payload[37:41] == b"IDAT"
-    compressed = normalized.payload[41:41 + idat_length]
+    compressed = normalized.payload[41 : 41 + idat_length]
     assert compressed[:7] == b"\x78\x01\x00\xff\xff\x00\x00"
-    assert compressed[2 + 5 + 65_535:2 + 5 + 65_535 + 5] == b"\x01\x49\x39\xb6\xc6"
+    assert compressed[2 + 5 + 65_535 : 2 + 5 + 65_535 + 5] == b"\x01\x49\x39\xb6\xc6"
     scanlines = zlib.decompress(compressed)
     assert len(scanlines) == 80_200
     for offset in range(0, len(scanlines), 401):
         assert scanlines[offset] == 0
-        assert scanlines[offset + 1:offset + 401] == bytes((5, 10, 15, 20)) * 100
+        assert scanlines[offset + 1 : offset + 401] == bytes((5, 10, 15, 20)) * 100
 
     largest_source = io.BytesIO()
-    Image.new("RGBA", (320, 480), (5, 10, 15, 20)).save(
-        largest_source, "PNG"
-    )
+    Image.new("RGBA", (320, 480), (5, 10, 15, 20)).save(largest_source, "PNG")
     largest_payload = largest_source.getvalue()
     largest = packet_builder.normalize_cover_preview(
         largest_payload,
@@ -494,12 +515,8 @@ def test_normalized_transport_uses_fixed_stored_blocks_across_rows() -> None:
 
 
 def test_iccp_preview_is_normalized_for_transport() -> None:
-    profile = ImageCms.ImageCmsProfile(
-        ImageCms.createProfile("sRGB")
-    ).tobytes()
-    source_payload = _preview(
-        17, width=7, height=9, icc_profile=profile
-    )
+    profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    source_payload = _preview(17, width=7, height=9, icc_profile=profile)
     source = _source(17, source_payload)
     assert source.artifact is not None
 
@@ -514,9 +531,10 @@ def test_iccp_preview_is_normalized_for_transport() -> None:
     assert candidate["transport_sha256"] == image.digest
     assert candidate["transport_reference"] == image.reference
     assert image.payload != source_payload
-    with Image.open(io.BytesIO(source_payload)) as original, Image.open(
-        io.BytesIO(image.payload)
-    ) as normalized:
+    with (
+        Image.open(io.BytesIO(source_payload)) as original,
+        Image.open(io.BytesIO(image.payload)) as normalized,
+    ):
         assert normalized.mode == "RGBA"
         assert normalized.size == original.size
         assert normalized.tobytes() == original.tobytes()
@@ -524,8 +542,8 @@ def test_iccp_preview_is_normalized_for_transport() -> None:
     chunk_types: list[bytes] = []
     offset = 8
     while offset < len(image.payload):
-        length = struct.unpack(">I", image.payload[offset:offset + 4])[0]
-        chunk_types.append(image.payload[offset + 4:offset + 8])
+        length = struct.unpack(">I", image.payload[offset : offset + 4])[0]
+        chunk_types.append(image.payload[offset + 4 : offset + 8])
         offset += 12 + length
     assert chunk_types == [b"IHDR", b"IDAT", b"IEND"]
     _admit_produced(packet)
@@ -539,37 +557,32 @@ def test_iccp_preview_is_normalized_for_transport() -> None:
 
 
 def test_normalized_transport_rejects_binding_and_source_substitution() -> None:
-    profile = ImageCms.ImageCmsProfile(
-        ImageCms.createProfile("sRGB")
-    ).tobytes()
+    profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
     first_payload = _preview(21, width=5, height=6, icc_profile=profile)
     second_payload = _preview(22, width=5, height=6, icc_profile=profile)
     first_source = _source(21, first_payload)
     second_source = _source(22, second_payload)
     first_report = _report((first_source,))
-    packet = prepare_cover_packet(
-        first_report.to_json(), lambda *_: first_payload
-    )
+    packet = prepare_cover_packet(first_report.to_json(), lambda *_: first_payload)
     schema = '{"additionalProperties":false,"properties":{},"type":"object"}'
     images = tuple(
-        (value.reference, value.digest, value.payload)
-        for value in packet.images
+        (value.reference, value.digest, value.payload) for value in packet.images
     )
 
     changed = json.loads(packet.document)
-    changed["candidates"][0]["source_bindings"][0]["preview_sha256"] = (
-        hashlib.sha256(second_payload).hexdigest()
-    )
+    changed["candidates"][0]["source_bindings"][0]["preview_sha256"] = hashlib.sha256(
+        second_payload
+    ).hexdigest()
     with pytest.raises(Exception, match="response_format"):
-        admit_cover_review_request(
-            "Inspect.", _rebind_packet(changed), schema, images
-        )
+        admit_cover_review_request("Inspect.", _rebind_packet(changed), schema, images)
 
     foreign = bytearray(images[0][2])
     foreign[-13] ^= 1
     with pytest.raises(Exception, match="response_format"):
         admit_cover_review_request(
-            "Inspect.", packet.document, schema,
+            "Inspect.",
+            packet.document,
+            schema,
             ((images[0][0], images[0][1], bytes(foreign)),),
         )
 
@@ -586,9 +599,7 @@ def test_normalized_transport_rejects_binding_and_source_substitution() -> None:
 def hostile_source_payloads() -> dict[str, bytes]:
     """One hostile source payload per malformed PNG shape, keyed by shape."""
 
-    profile = ImageCms.ImageCmsProfile(
-        ImageCms.createProfile("sRGB")
-    ).tobytes()
+    profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
     valid = _preview(25, width=4, height=4, icc_profile=profile)
     return {
         "animated": _animated_preview(),
@@ -636,8 +647,12 @@ def test_five_candidate_scenario_binds_packet_attempt_and_image_order() -> None:
     operations = replace(
         operations,
         reopen_metadata_report=lambda *_: report.to_json(),
-        reopen_cover_preview=lambda _db, _artifacts, _report, artifact, _variant: by_artifact[artifact],
-        run_cover_packet_reviewer=lambda *args: observed.append(args) or '{"status":"completed"}',  # type: ignore[func-returns-value]  # reason: the `or` deliberately records the call and yields the document; append's None is discarded.
+        reopen_cover_preview=lambda _db, _artifacts, _report, artifact, _variant: (
+            by_artifact[artifact]
+        ),
+        run_cover_packet_reviewer=lambda *args: (
+            observed.append(args) or '{"status":"completed"}'  # type: ignore[func-returns-value]  # reason: the `or` deliberately records the call and yields the document; append's None is discarded.
+        ),
     )
     with WorkbenchContext.temporary() as context:
         files = {
@@ -651,11 +666,20 @@ def test_five_candidate_scenario_binds_packet_attempt_and_image_order() -> None:
             if name.endswith("profile.json"):
                 path.chmod(0o600)
         context.network = IsolatedNetworkProfile(
-            "isolated-test", True, True,
-            tuple(sorted({
-                *(hashlib.sha256(value).hexdigest() for value in files.values()),
-                packet.packet_digest,
-            })),
+            "isolated-test",
+            True,
+            True,
+            tuple(
+                sorted(
+                    {
+                        *(
+                            hashlib.sha256(value).hexdigest()
+                            for value in files.values()
+                        ),
+                        packet.packet_digest,
+                    }
+                )
+            ),
         )
         result = execute(context, CoverPacketRequest(report.report_id), operations)
         assert result.name == "cover-packet-review"
@@ -665,10 +689,9 @@ def test_five_candidate_scenario_binds_packet_attempt_and_image_order() -> None:
     image_arguments = observed[0][4]
     assert isinstance(image_arguments, tuple)
     assert isinstance(image_arguments, tuple)
-    assert (
-        [(value[0], value[1]) for value in image_arguments]
-        == [(value.reference, value.digest) for value in packet.images]
-    )
+    assert [(value[0], value[1]) for value in image_arguments] == [
+        (value.reference, value.digest) for value in packet.images
+    ]
     assert len(image_arguments) == 5
 
 
@@ -677,14 +700,14 @@ def test_only_cover_entry_accepts_exact_packet_bound_images() -> None:
 
     assert not hasattr(reviewer_binding, "run_contained_reviewer")
     admitted = admit_cover_review_request(
-        "Inspect.", packet.document,
+        "Inspect.",
+        packet.document,
         '{"additionalProperties":false,"properties":{},"type":"object"}',
         exact,
     )
-    assert (
-        [(value.reference, value.digest) for value in admitted.images]
-        == [(value.reference, value.digest) for value in packet.images]
-    )
+    assert [(value.reference, value.digest) for value in admitted.images] == [
+        (value.reference, value.digest) for value in packet.images
+    ]
 
 
 @pytest.mark.parametrize(
@@ -693,7 +716,16 @@ def test_only_cover_entry_accepts_exact_packet_bound_images() -> None:
         lambda exact: exact[:-1],
         lambda exact: tuple(reversed(exact)),
         lambda exact: ((exact[0][0], exact[1][1], exact[0][2]), exact[1]),
-        lambda exact: exact + (("cover_ref_" + "f" * 64, hashlib.sha256(_preview(3)).hexdigest(), _preview(3)),),
+        lambda exact: (
+            exact
+            + (
+                (
+                    "cover_ref_" + "f" * 64,
+                    hashlib.sha256(_preview(3)).hexdigest(),
+                    _preview(3),
+                ),
+            )
+        ),
     ),
     ids=("dropped", "reordered", "swapped_digest", "appended"),
 )
@@ -706,7 +738,9 @@ def test_only_cover_entry_rejects_images_unbound_to_the_packet(mismatch) -> None
         )
 
 
-def test_cover_retries_only_one_proven_local_cli_abort_with_bound_attempt_evidence() -> None:
+def test_cover_retries_only_one_proven_local_cli_abort_with_bound_attempt_evidence() -> (
+    None
+):
     packet, images = _packet_case()
     schema = '{"additionalProperties":false,"properties":{"summary":{"type":"string"}},"required":["summary"],"type":"object"}'
     request_digests: list[str] = []
@@ -727,12 +761,22 @@ def test_cover_retries_only_one_proven_local_cli_abort_with_bound_attempt_eviden
             )
 
     with (
-        mock.patch.object(reviewer_binding, "load_contained_reviewer_profile_bytes", return_value=object()),
+        mock.patch.object(
+            reviewer_binding,
+            "load_contained_reviewer_profile_bytes",
+            return_value=object(),
+        ),
         mock.patch.object(reviewer_binding, "ContainedReviewerAdapter", FakeReviewer),
     ):
-        envelope = json.loads(reviewer_binding.run_cover_packet_reviewer(
-            b"profile", b"Inspect.", packet.document.encode(), schema.encode(), images
-        ))
+        envelope = json.loads(
+            reviewer_binding.run_cover_packet_reviewer(
+                b"profile",
+                b"Inspect.",
+                packet.document.encode(),
+                schema.encode(),
+                images,
+            )
+        )
     assert len(instances) == 1
     assert request_digests == [request_digests[0]]
     assert envelope["attempt_evidence"] == []
@@ -740,8 +784,15 @@ def test_cover_retries_only_one_proven_local_cli_abort_with_bound_attempt_eviden
 
 @pytest.mark.parametrize(
     "code",
-    ("local_cli_abort", "runtime", "response_format", "auth",
-     "setup", "malformed_output", "timeout"),
+    (
+        "local_cli_abort",
+        "runtime",
+        "response_format",
+        "auth",
+        "setup",
+        "malformed_output",
+        "timeout",
+    ),
 )
 def test_cover_retry_is_hard_capped_and_rejects_other_failures(code: str) -> None:
     packet, images = _packet_case()
@@ -759,8 +810,14 @@ def test_cover_retry_is_hard_capped_and_rejects_other_failures(code: str) -> Non
             )
 
     with (
-        mock.patch.object(reviewer_binding, "load_contained_reviewer_profile_bytes", return_value=object()),
-        mock.patch.object(reviewer_binding, "ContainedReviewerAdapter", FailingReviewer),
+        mock.patch.object(
+            reviewer_binding,
+            "load_contained_reviewer_profile_bytes",
+            return_value=object(),
+        ),
+        mock.patch.object(
+            reviewer_binding, "ContainedReviewerAdapter", FailingReviewer
+        ),
         pytest.raises(reviewer_adapter.ContainedReviewerProcessError),
     ):
         reviewer_binding.run_cover_packet_reviewer(
@@ -773,7 +830,9 @@ def test_cover_retry_is_hard_capped_and_rejects_other_failures(code: str) -> Non
 
 
 @pytest.fixture(scope="module")
-def exact_preview_packet() -> tuple[PreparedCoverPacket, tuple[tuple[str, str, bytes], ...]]:
+def exact_preview_packet() -> tuple[
+    PreparedCoverPacket, tuple[tuple[str, str, bytes], ...]
+]:
     """One single-candidate cover packet and its exactly bound transport image."""
 
     return _packet_case(1)
@@ -781,7 +840,9 @@ def exact_preview_packet() -> tuple[PreparedCoverPacket, tuple[tuple[str, str, b
 
 @pytest.fixture(scope="module")
 def malformed_preview_bindings(
-    exact_preview_packet: tuple[PreparedCoverPacket, tuple[tuple[str, str, bytes], ...]],
+    exact_preview_packet: tuple[
+        PreparedCoverPacket, tuple[tuple[str, str, bytes], ...]
+    ],
 ) -> dict[str, tuple[str, tuple[tuple[str, str, bytes], ...]]]:
     """A rebound `(document, images)` pair per malformed preview case name."""
 
@@ -799,26 +860,28 @@ def malformed_preview_bindings(
         transport_reference = packet_builder.cover_transport_reference(
             reference, source_bindings, digest
         )
-        value["candidates"][0].update({
-            "preview_bytes": len(payload),
-            "preview_height": preview_height,
-            "preview_width": preview_width,
-            "transport_reference": transport_reference,
-            "transport_sha256": digest,
-        })
+        value["candidates"][0].update(
+            {
+                "preview_bytes": len(payload),
+                "preview_height": preview_height,
+                "preview_width": preview_width,
+                "transport_reference": transport_reference,
+                "transport_sha256": digest,
+            }
+        )
         return _rebind_packet(value), ((transport_reference, digest, payload),)
 
     def corrupt_idat(payload: bytes) -> bytes:
         changed = bytearray(payload)
         offset = 8
         while offset < len(changed):
-            length = struct.unpack(">I", changed[offset:offset + 4])[0]
-            chunk_type = bytes(changed[offset + 4:offset + 8])
+            length = struct.unpack(">I", changed[offset : offset + 4])[0]
+            chunk_type = bytes(changed[offset + 4 : offset + 8])
             data_start = offset + 8
             data_end = data_start + length
             if chunk_type == b"IDAT":
                 changed[data_start] ^= 0xFF
-                changed[data_end:data_end + 4] = struct.pack(
+                changed[data_end : data_end + 4] = struct.pack(
                     ">I", zlib.crc32(chunk_type + changed[data_start:data_end])
                 )
                 return bytes(changed)
@@ -835,8 +898,8 @@ def malformed_preview_bindings(
         values: list[tuple[bytes, bytes]] = []
         offset = 8
         while offset < len(payload):
-            length = struct.unpack(">I", payload[offset:offset + 4])[0]
-            chunk_type = payload[offset + 4:offset + 8]
+            length = struct.unpack(">I", payload[offset : offset + 4])[0]
+            chunk_type = payload[offset + 4 : offset + 8]
             data_start = offset + 8
             data_end = data_start + length
             values.append((chunk_type, payload[data_start:data_end]))
@@ -854,67 +917,96 @@ def malformed_preview_bindings(
 
     canonical_chunks = chunks(valid)
     idat_index = next(
-        index for index, value in enumerate(canonical_chunks)
-        if value[0] == b"IDAT"
+        index for index, value in enumerate(canonical_chunks) if value[0] == b"IDAT"
     )
     idat_data = canonical_chunks[idat_index][1]
     split = max(1, len(idat_data) // 2)
-    nonconsecutive_idat = render([
-        *canonical_chunks[:idat_index],
-        (b"IDAT", idat_data[:split]),
-        (b"vpAg", b"bounded"),
-        (b"IDAT", idat_data[split:]),
-        *canonical_chunks[idat_index + 1:],
-    ])
-    consecutive_idat = render([
-        *canonical_chunks[:idat_index],
-        (b"IDAT", idat_data[:split]),
-        (b"IDAT", idat_data[split:]),
-        *canonical_chunks[idat_index + 1:],
-    ])
-    trailing_idat_stream = render([
-        *canonical_chunks[:idat_index],
-        (b"IDAT", idat_data + b"trailing"),
-        *canonical_chunks[idat_index + 1:],
-    ])
-    concatenated_idat_streams = render([
-        *canonical_chunks[:idat_index],
-        (b"IDAT", idat_data + idat_data),
-        *canonical_chunks[idat_index + 1:],
-    ])
+    nonconsecutive_idat = render(
+        [
+            *canonical_chunks[:idat_index],
+            (b"IDAT", idat_data[:split]),
+            (b"vpAg", b"bounded"),
+            (b"IDAT", idat_data[split:]),
+            *canonical_chunks[idat_index + 1 :],
+        ]
+    )
+    consecutive_idat = render(
+        [
+            *canonical_chunks[:idat_index],
+            (b"IDAT", idat_data[:split]),
+            (b"IDAT", idat_data[split:]),
+            *canonical_chunks[idat_index + 1 :],
+        ]
+    )
+    trailing_idat_stream = render(
+        [
+            *canonical_chunks[:idat_index],
+            (b"IDAT", idat_data + b"trailing"),
+            *canonical_chunks[idat_index + 1 :],
+        ]
+    )
+    concatenated_idat_streams = render(
+        [
+            *canonical_chunks[:idat_index],
+            (b"IDAT", idat_data + idat_data),
+            *canonical_chunks[idat_index + 1 :],
+        ]
+    )
     plte = (b"PLTE", b"\x00\x00\x00")
     plte_after_idat = render([*canonical_chunks[:-1], plte, canonical_chunks[-1]])
-    duplicate_plte = render([
-        *canonical_chunks[:idat_index], plte, plte,
-        *canonical_chunks[idat_index:],
-    ])
-    lowercase_reserved = render([
-        *canonical_chunks[:idat_index], (b"vpag", b"bounded"),
-        *canonical_chunks[idat_index:],
-    ])
-    unknown_critical = render([
-        *canonical_chunks[:idat_index], (b"ABCD", b"bounded"),
-        *canonical_chunks[idat_index:],
-    ])
+    duplicate_plte = render(
+        [
+            *canonical_chunks[:idat_index],
+            plte,
+            plte,
+            *canonical_chunks[idat_index:],
+        ]
+    )
+    lowercase_reserved = render(
+        [
+            *canonical_chunks[:idat_index],
+            (b"vpag", b"bounded"),
+            *canonical_chunks[idat_index:],
+        ]
+    )
+    unknown_critical = render(
+        [
+            *canonical_chunks[:idat_index],
+            (b"ABCD", b"bounded"),
+            *canonical_chunks[idat_index:],
+        ]
+    )
     ihdr_not_first = render([(b"vpAg", b"bounded"), *canonical_chunks])
-    duplicate_ihdr = render([
-        canonical_chunks[0], canonical_chunks[0], *canonical_chunks[1:],
-    ])
-    iend_before_data = render([
-        canonical_chunks[0], canonical_chunks[-1], *canonical_chunks[1:-1],
-    ])
-    trns_before_idat = render([
-        *canonical_chunks[:idat_index], (b"tRNS", b"\x00"),
-        *canonical_chunks[idat_index:],
-    ])
-    gamma_after_idat = render([
-        *canonical_chunks[:-1], (b"gAMA", struct.pack(">I", 45_455)),
-        canonical_chunks[-1],
-    ])
+    duplicate_ihdr = render(
+        [
+            canonical_chunks[0],
+            canonical_chunks[0],
+            *canonical_chunks[1:],
+        ]
+    )
+    iend_before_data = render(
+        [
+            canonical_chunks[0],
+            canonical_chunks[-1],
+            *canonical_chunks[1:-1],
+        ]
+    )
+    trns_before_idat = render(
+        [
+            *canonical_chunks[:idat_index],
+            (b"tRNS", b"\x00"),
+            *canonical_chunks[idat_index:],
+        ]
+    )
+    gamma_after_idat = render(
+        [
+            *canonical_chunks[:-1],
+            (b"gAMA", struct.pack(">I", 45_455)),
+            canonical_chunks[-1],
+        ]
+    )
 
-    icc_profile = ImageCms.ImageCmsProfile(
-        ImageCms.createProfile("sRGB")
-    ).tobytes()
+    icc_profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
     valid_icc = _preview(1, icc_profile=icc_profile)
 
     malformed = {
@@ -975,7 +1067,9 @@ def malformed_preview_bindings(
     ),
 )
 def test_admission_rejects_every_malformed_rgba_png_preview(
-    malformed_preview_bindings: dict[str, tuple[str, tuple[tuple[str, str, bytes], ...]]],
+    malformed_preview_bindings: dict[
+        str, tuple[str, tuple[tuple[str, str, bytes], ...]]
+    ],
     case: str,
 ) -> None:
     document, images = malformed_preview_bindings[case]
@@ -985,24 +1079,20 @@ def test_admission_rejects_every_malformed_rgba_png_preview(
 
 
 def test_admission_fully_decodes_exact_rgba_png_preview(
-    exact_preview_packet: tuple[PreparedCoverPacket, tuple[tuple[str, str, bytes], ...]],
+    exact_preview_packet: tuple[
+        PreparedCoverPacket, tuple[tuple[str, str, bytes], ...]
+    ],
 ) -> None:
     packet, _packet_images = exact_preview_packet
     admitted_document = json.loads(packet.document)
     assert (
-        (
-            admitted_document["candidates"][0]["width"],
-            admitted_document["candidates"][0]["height"],
-        )
-        == (301, 451)
-    )
+        admitted_document["candidates"][0]["width"],
+        admitted_document["candidates"][0]["height"],
+    ) == (301, 451)
     assert (
-        (
-            admitted_document["candidates"][0]["preview_width"],
-            admitted_document["candidates"][0]["preview_height"],
-        )
-        == (1, 1)
-    )
+        admitted_document["candidates"][0]["preview_width"],
+        admitted_document["candidates"][0]["preview_height"],
+    ) == (1, 1)
 
 
 def test_original_dimensions_retain_technical_quality_order() -> None:
@@ -1016,17 +1106,14 @@ def test_original_dimensions_retain_technical_quality_order() -> None:
     admitted = _admit_produced(packet)
     document = json.loads(packet.document)
 
-    assert (
-        [(value["width"], value["height"]) for value in document["candidates"]]
-        == [(1000, 1000), (100, 100)]
-    )
-    assert (
-        [
-            (value["preview_width"], value["preview_height"])
-            for value in document["candidates"]
-        ]
-        == [(1, 1), (1, 1)]
-    )
+    assert [(value["width"], value["height"]) for value in document["candidates"]] == [
+        (1000, 1000),
+        (100, 100),
+    ]
+    assert [
+        (value["preview_width"], value["preview_height"])
+        for value in document["candidates"]
+    ] == [(1, 1), (1, 1)]
     assert len(admitted.images) == 2
 
 
@@ -1057,16 +1144,25 @@ def test_duplicate_group_aggregates_best_original_dimensions_canonically() -> No
         )
 
     low = embedded(
-        "duplicate-low", CoverSourceKind.HARDCOVER,
-        duplicate_payload, 600, 900,
+        "duplicate-low",
+        CoverSourceKind.HARDCOVER,
+        duplicate_payload,
+        600,
+        900,
     )
     high = embedded(
-        "duplicate-high", CoverSourceKind.OPEN_LIBRARY,
-        duplicate_payload, 2000, 3000,
+        "duplicate-high",
+        CoverSourceKind.OPEN_LIBRARY,
+        duplicate_payload,
+        2000,
+        3000,
     )
     other = embedded(
-        "separate", CoverSourceKind.HARDCOVER,
-        other_payload, 1500, 3000,
+        "separate",
+        CoverSourceKind.HARDCOVER,
+        other_payload,
+        1500,
+        3000,
     )
     by_artifact = {
         low.artifact.artifact_id: duplicate_payload,  # type: ignore[union-attr]
@@ -1085,13 +1181,13 @@ def test_duplicate_group_aggregates_best_original_dimensions_canonically() -> No
 
     document = json.loads(documents[0])
     assert (
-        (document["candidates"][0]["width"], document["candidates"][0]["height"])
-        == (2000, 3000)
-    )
+        document["candidates"][0]["width"],
+        document["candidates"][0]["height"],
+    ) == (2000, 3000)
     assert (
-        (document["candidates"][1]["width"], document["candidates"][1]["height"])
-        == (1500, 3000)
-    )
+        document["candidates"][1]["width"],
+        document["candidates"][1]["height"],
+    ) == (1500, 3000)
 
 
 def test_digest_group_counts_every_source_kind_for_diversity() -> None:
@@ -1126,13 +1222,15 @@ def test_digest_group_counts_every_source_kind_for_diversity() -> None:
                         else None
                     ),
                 )
-            sources.append(CoverSource(
-                cover_source_id(kind, f"diversity-source-{index}-{member}"),
-                kind,
-                CoverSourceState.RETRIEVED,
-                artifact,
-                provenance=provenance,
-            ))
+            sources.append(
+                CoverSource(
+                    cover_source_id(kind, f"diversity-source-{index}-{member}"),
+                    kind,
+                    CoverSourceState.RETRIEVED,
+                    artifact,
+                    provenance=provenance,
+                )
+            )
             references.append("cover_ref_" + f"{index * 10 + member:064x}")
         return packet_builder._Candidate(
             reference=references[0],
@@ -1149,22 +1247,33 @@ def test_digest_group_counts_every_source_kind_for_diversity() -> None:
         )
 
     def candidates() -> list[packet_builder._Candidate]:
-        values = [candidate(1, (
-            (CoverSourceKind.ABS, None),
-            (CoverSourceKind.OPEN_LIBRARY, CoverDesignation.WORK),
-        ))]
+        values = [
+            candidate(
+                1,
+                (
+                    (CoverSourceKind.ABS, None),
+                    (CoverSourceKind.OPEN_LIBRARY, CoverDesignation.WORK),
+                ),
+            )
+        ]
         values.extend(
-            candidate(index, ((CoverSourceKind.HARDCOVER, CoverDesignation.EXACT_EDITION),))
+            candidate(
+                index, ((CoverSourceKind.HARDCOVER, CoverDesignation.EXACT_EDITION),)
+            )
             for index in range(2, 5)
         )
         values.extend(
-            candidate(index, ((CoverSourceKind.OPEN_LIBRARY, CoverDesignation.EXACT_EDITION),))
+            candidate(
+                index, ((CoverSourceKind.OPEN_LIBRARY, CoverDesignation.EXACT_EDITION),)
+            )
             for index in range(5, 8)
         )
-        values.extend((
-            candidate(8, ((CoverSourceKind.HARDCOVER, CoverDesignation.DEFAULT),)),
-            candidate(9, ((CoverSourceKind.OPEN_LIBRARY, CoverDesignation.WORK),)),
-        ))
+        values.extend(
+            (
+                candidate(8, ((CoverSourceKind.HARDCOVER, CoverDesignation.DEFAULT),)),
+                candidate(9, ((CoverSourceKind.OPEN_LIBRARY, CoverDesignation.WORK),)),
+            )
+        )
         return values
 
     documents = []
@@ -1180,8 +1289,7 @@ def test_digest_group_counts_every_source_kind_for_diversity() -> None:
 
     document = json.loads(documents[0])
     incumbent_kinds = {
-        value["source_kind"]
-        for value in document["candidates"][0]["provenance"]
+        value["source_kind"] for value in document["candidates"][0]["provenance"]
     }
     assert incumbent_kinds == {"abs", "open_library"}
     assert len(document["candidates"]) == 9
@@ -1195,14 +1303,17 @@ def test_digest_group_counts_every_source_kind_for_diversity() -> None:
 
 def test_cover_entry_rejects_images_bound_to_non_packet_input() -> None:
     payload = _preview(1)
-    binding = ((
-        "cover_ref_" + "a" * 64,
-        hashlib.sha256(payload).hexdigest(),
-        payload,
-    ),)
+    binding = (
+        (
+            "cover_ref_" + "a" * 64,
+            hashlib.sha256(payload).hexdigest(),
+            payload,
+        ),
+    )
     forged = json.dumps(
         {"schema_version": "some-other-input-v1"},
-        separators=(",", ":"), sort_keys=True,
+        separators=(",", ":"),
+        sort_keys=True,
     ).encode()
     with pytest.raises(Exception, match="response_format"):
         reviewer_binding.run_cover_packet_reviewer(
@@ -1210,7 +1321,9 @@ def test_cover_entry_rejects_images_bound_to_non_packet_input() -> None:
         )
 
 
-def test_packet_retains_incumbent_deduplicates_and_shortlists_deterministically() -> None:
+def test_packet_retains_incumbent_deduplicates_and_shortlists_deterministically() -> (
+    None
+):
     payloads = [_preview(index) for index in range(10)]
     sources = [_source(0, payloads[0], incumbent=True)]
     sources.extend(_source(index, payloads[index]) for index in range(1, 9))
@@ -1221,23 +1334,31 @@ def test_packet_retains_incumbent_deduplicates_and_shortlists_deterministically(
     for source in sources:
         artifact = source.artifact
         assert artifact is not None
-        by_artifact[artifact.artifact_id] = payloads[1] if source is duplicate else next(
-            value for value in payloads
-            if hashlib.sha256(value).hexdigest() == artifact.preview_digest
+        by_artifact[artifact.artifact_id] = (
+            payloads[1]
+            if source is duplicate
+            else next(
+                value
+                for value in payloads
+                if hashlib.sha256(value).hexdigest() == artifact.preview_digest
+            )
         )
 
-    first = prepare_cover_packet(report.to_json(), lambda artifact, _variant: by_artifact[artifact])
-    second = prepare_cover_packet(report.to_json(), lambda artifact, _variant: by_artifact[artifact])
+    first = prepare_cover_packet(
+        report.to_json(), lambda artifact, _variant: by_artifact[artifact]
+    )
+    second = prepare_cover_packet(
+        report.to_json(), lambda artifact, _variant: by_artifact[artifact]
+    )
     packet = json.loads(first.document)
 
     assert first.document == second.document
     assert len(first.images) == 9
     assert len(first.images) <= MAX_COVER_PREVIEWS
     assert packet["candidates"][0]["incumbent"]
-    assert (
-        [value["transport_reference"] for value in packet["candidates"]]
-        == [value.reference for value in first.images]
-    )
+    assert [value["transport_reference"] for value in packet["candidates"]] == [
+        value.reference for value in first.images
+    ]
     assert "duplicate_preview" in {value["reason"] for value in packet["omissions"]}
     assert "Synthetic title" not in first.document
 
@@ -1251,7 +1372,8 @@ def test_changed_preview_and_overbound_incumbent_fail_closed() -> None:
     overbound = _source(0, _preview(0, size=1_048_577), incumbent=True)
     with pytest.raises(ValueError, match="incumbent exceeds"):
         prepare_cover_packet(
-            _report((overbound,)).to_json(), lambda *_: overbound.artifact and _preview(0, size=1_048_577)
+            _report((overbound,)).to_json(),
+            lambda *_: overbound.artifact and _preview(0, size=1_048_577),
         )
 
 
@@ -1260,7 +1382,8 @@ def test_image_order_and_digests_bind_the_request_identity() -> None:
     second_packet, second_images = _packet_case(3)
     schema = json.dumps(
         {"additionalProperties": False, "properties": {}, "type": "object"},
-        separators=(",", ":"), sort_keys=True,
+        separators=(",", ":"),
+        sort_keys=True,
     )
     request = admit_cover_review_request(
         "Inspect.", first_packet.document, schema, first_images
@@ -1274,7 +1397,8 @@ def test_image_order_and_digests_bind_the_request_identity() -> None:
 def test_image_count_and_aggregate_byte_limits_are_absolute() -> None:
     schema = json.dumps(
         {"additionalProperties": False, "properties": {}, "type": "object"},
-        separators=(",", ":"), sort_keys=True,
+        separators=(",", ":"),
+        sort_keys=True,
     )
 
     packet, _ = _packet_case()
@@ -1303,14 +1427,51 @@ def test_image_count_and_aggregate_byte_limits_are_absolute() -> None:
 @pytest.mark.parametrize(
     ("field", "mutate"),
     (
-        ("packet_reference", lambda value: value.__setitem__("packet_reference", "cover_packet_bad")),
-        ("packet_binding", lambda value: value.__setitem__("packet_reference", "cover_packet_" + "0" * 64)),
-        ("omission", lambda value: value.__setitem__("omissions", [{"reason": "invented", "reference": "cover_ref_" + "f" * 64}])),
-        ("omission_schema", lambda value: value.__setitem__("omissions", [{"extra": True, "reason": "shortlist_limit", "reference": "cover_ref_" + "f" * 64}])),
+        (
+            "packet_reference",
+            lambda value: value.__setitem__("packet_reference", "cover_packet_bad"),
+        ),
+        (
+            "packet_binding",
+            lambda value: value.__setitem__(
+                "packet_reference", "cover_packet_" + "0" * 64
+            ),
+        ),
+        (
+            "omission",
+            lambda value: value.__setitem__(
+                "omissions",
+                [{"reason": "invented", "reference": "cover_ref_" + "f" * 64}],
+            ),
+        ),
+        (
+            "omission_schema",
+            lambda value: value.__setitem__(
+                "omissions",
+                [
+                    {
+                        "extra": True,
+                        "reason": "shortlist_limit",
+                        "reference": "cover_ref_" + "f" * 64,
+                    }
+                ],
+            ),
+        ),
         ("dimension", lambda value: value["candidates"][0].__setitem__("width", 0)),
-        ("incumbent", lambda value: value["candidates"][0].__setitem__("incumbent", True)),
-        ("provenance", lambda value: value["candidates"][0]["provenance"][0].__setitem__("provider", " invalid")),
-        ("byte_fact", lambda value: value["candidates"][0].__setitem__("preview_bytes", 31)),
+        (
+            "incumbent",
+            lambda value: value["candidates"][0].__setitem__("incumbent", True),
+        ),
+        (
+            "provenance",
+            lambda value: value["candidates"][0]["provenance"][0].__setitem__(
+                "provider", " invalid"
+            ),
+        ),
+        (
+            "byte_fact",
+            lambda value: value["candidates"][0].__setitem__("preview_bytes", 31),
+        ),
     ),
     ids=(
         "packet_reference",
@@ -1323,14 +1484,17 @@ def test_image_count_and_aggregate_byte_limits_are_absolute() -> None:
         "byte_fact",
     ),
 )
-def test_full_packet_parser_rejects_malformed_fields_and_invariants(field, mutate) -> None:
+def test_full_packet_parser_rejects_malformed_fields_and_invariants(
+    field, mutate
+) -> None:
     packet, images = _packet_case()
     schema = '{"additionalProperties":false,"properties":{},"type":"object"}'
     value = json.loads(packet.document)
     mutate(value)
     document = (
         json.dumps(value, separators=(",", ":"), sort_keys=True)
-        if field in {"packet_reference", "packet_binding"} else _rebind_packet(value)
+        if field in {"packet_reference", "packet_binding"}
+        else _rebind_packet(value)
     )
     with pytest.raises(Exception, match="response_format"):
         admit_cover_review_request("Inspect.", document, schema, images)
@@ -1378,9 +1542,7 @@ def test_context_projection_rejects_private_and_forbidden_unicode(value: str) ->
         {"field": "publisher", "value": value}
     ]
     with pytest.raises(Exception, match="response_format"):
-        admit_cover_review_request(
-            "Inspect.", _rebind_packet(document), schema, images
-        )
+        admit_cover_review_request("Inspect.", _rebind_packet(document), schema, images)
 
 
 def test_conjoint_candidate_and_image_reorder_is_rejected() -> None:
@@ -1390,7 +1552,8 @@ def test_conjoint_candidate_and_image_reorder_is_rejected() -> None:
     reordered = tuple(reversed(images))
     with pytest.raises(Exception, match="response_format"):
         admit_cover_review_request(
-            "Inspect.", _rebind_packet(document),
+            "Inspect.",
+            _rebind_packet(document),
             '{"additionalProperties":false,"properties":{},"type":"object"}',
             reordered,
         )
@@ -1408,10 +1571,18 @@ def _document_with(base: str, omission: dict[str, object]) -> str:
 @pytest.mark.parametrize(
     "reason",
     (
-        "source_absent", "source_animated_or_multiframe", "source_decode_failed",
-        "source_invalid_declaration", "source_oversized", "source_rejected",
-        "source_source_changed", "source_timeout", "source_truncated",
-        "source_unavailable", "source_unsafe_remote", "source_unsupported_format",
+        "source_absent",
+        "source_animated_or_multiframe",
+        "source_decode_failed",
+        "source_invalid_declaration",
+        "source_oversized",
+        "source_rejected",
+        "source_source_changed",
+        "source_timeout",
+        "source_truncated",
+        "source_unavailable",
+        "source_unsafe_remote",
+        "source_unsupported_format",
     ),
 )
 def test_source_omission_reasons_are_admitted_with_bound_images(reason: str) -> None:
@@ -1419,9 +1590,13 @@ def test_source_omission_reasons_are_admitted_with_bound_images(reason: str) -> 
     packet, images = _packet_case()
     admitted = admit_cover_review_request(
         "Inspect.",
-        _document_with(packet.document, {
-            "reason": reason, "reference": _OMITTED_REFERENCE,
-        }),
+        _document_with(
+            packet.document,
+            {
+                "reason": reason,
+                "reference": _OMITTED_REFERENCE,
+            },
+        ),
         schema,
         images,
     )
@@ -1432,11 +1607,17 @@ def test_omission_reasons_require_and_accept_reachable_preconditions() -> None:
     schema = '{"additionalProperties":false,"properties":{},"type":"object"}'
     packet, images = _packet_case()
 
-    reachable = ((packet.document, images, {
-            "preview_bytes": 1_048_577,
-            "reason": "preview_byte_limit",
-            "reference": _OMITTED_REFERENCE,
-        }),)
+    reachable = (
+        (
+            packet.document,
+            images,
+            {
+                "preview_bytes": 1_048_577,
+                "reason": "preview_byte_limit",
+                "reference": _OMITTED_REFERENCE,
+            },
+        ),
+    )
     for base, bound_images, omission in reachable:
         admit_cover_review_request(
             "Inspect.", _document_with(base, omission), schema, bound_images
@@ -1449,11 +1630,14 @@ def test_omission_reasons_require_and_accept_reachable_preconditions() -> None:
     capped_document, capped_images = _expanded_packet(packet.document, 12)
     admit_cover_review_request(
         "Inspect.",
-        _document_with(capped_document, {
-            "preview_bytes": 32,
-            "reason": "shortlist_limit",
-            "reference": _OMITTED_REFERENCE,
-        }),
+        _document_with(
+            capped_document,
+            {
+                "preview_bytes": 32,
+                "reason": "shortlist_limit",
+                "reference": _OMITTED_REFERENCE,
+            },
+        ),
         schema,
         capped_images,
     )
@@ -1462,9 +1646,21 @@ def test_omission_reasons_require_and_accept_reachable_preconditions() -> None:
 @pytest.mark.parametrize(
     "omission",
     (
-        lambda _retained: {"preview_bytes": 32, "reason": "shortlist_limit", "reference": _OMITTED_REFERENCE},
-        lambda _retained: {"preview_bytes": 32, "reason": "aggregate_byte_limit", "reference": _OMITTED_REFERENCE},
-        lambda _retained: {"preview_bytes": 32, "reason": "preview_byte_limit", "reference": _OMITTED_REFERENCE},
+        lambda _retained: {
+            "preview_bytes": 32,
+            "reason": "shortlist_limit",
+            "reference": _OMITTED_REFERENCE,
+        },
+        lambda _retained: {
+            "preview_bytes": 32,
+            "reason": "aggregate_byte_limit",
+            "reference": _OMITTED_REFERENCE,
+        },
+        lambda _retained: {
+            "preview_bytes": 32,
+            "reason": "preview_byte_limit",
+            "reference": _OMITTED_REFERENCE,
+        },
         lambda retained: {
             "preview_sha256": "0" * 64,
             "reason": "duplicate_preview",
@@ -1485,7 +1681,10 @@ def test_unreachable_omission_reasons_are_rejected(omission) -> None:
     retained = json.loads(packet.document)["candidates"][0]
     with pytest.raises(Exception, match="response_format"):
         admit_cover_review_request(
-            "Inspect.", _document_with(packet.document, omission(retained)), schema, images
+            "Inspect.",
+            _document_with(packet.document, omission(retained)),
+            schema,
+            images,
         )
 
 
@@ -1501,9 +1700,7 @@ def test_digest_equal_indistinguishable_provenance_is_emitted_once() -> None:
     )
     report = _report((first, second))
     assert first.artifact is not None
-    packet = prepare_cover_packet(
-        report.to_json(), lambda *_: payload
-    )
+    packet = prepare_cover_packet(report.to_json(), lambda *_: payload)
     document = json.loads(packet.document)
     assert len(document["candidates"]) == 1
     assert len(document["candidates"][0]["provenance"]) == 1
@@ -1513,8 +1710,7 @@ def test_digest_equal_indistinguishable_provenance_is_emitted_once() -> None:
         packet.document,
         '{"additionalProperties":false,"properties":{},"type":"object"}',
         tuple(
-            (value.reference, value.digest, value.payload)
-            for value in packet.images
+            (value.reference, value.digest, value.payload) for value in packet.images
         ),
     )
     assert len(admitted.images) == 1
@@ -1527,12 +1723,14 @@ def test_duplicate_group_retained_representative_binds_after_selection() -> None
     admitted = _admit_produced(packet)
     document = json.loads(packet.document)
     assert len(admitted.images) == 1
-    assert document["omissions"] == [{
-        "preview_sha256": document["candidates"][0]["preview_sha256"],
-        "reason": "duplicate_preview",
-        "reference": "cover_ref_" + f"{11:064x}",
-        "retained_reference": document["candidates"][0]["reference"],
-    }]
+    assert document["omissions"] == [
+        {
+            "preview_sha256": document["candidates"][0]["preview_sha256"],
+            "reason": "duplicate_preview",
+            "reference": "cover_ref_" + f"{11:064x}",
+            "retained_reference": document["candidates"][0]["reference"],
+        }
+    ]
 
 
 def test_duplicate_source_bindings_require_a_complete_omission_audit() -> None:
@@ -1542,8 +1740,7 @@ def test_duplicate_source_bindings_require_a_complete_omission_audit() -> None:
     document = json.loads(packet.document)
     document["omissions"] = []
     images = tuple(
-        (value.reference, value.digest, value.payload)
-        for value in packet.images
+        (value.reference, value.digest, value.payload) for value in packet.images
     )
 
     with pytest.raises(Exception, match="response_format"):
@@ -1555,7 +1752,9 @@ def test_duplicate_source_bindings_require_a_complete_omission_audit() -> None:
         )
 
 
-def test_duplicate_group_excluded_by_preview_limit_has_no_unbound_representative() -> None:
+def test_duplicate_group_excluded_by_preview_limit_has_no_unbound_representative() -> (
+    None
+):
     packet = packet_builder._finalize_cover_packet(
         [
             _group_candidate(1),
@@ -1565,14 +1764,16 @@ def test_duplicate_group_excluded_by_preview_limit_has_no_unbound_representative
     )
     _admit_produced(packet)
     document = json.loads(packet.document)
-    assert (
-        [value["reason"] for value in document["omissions"]]
-        == ["preview_byte_limit", "preview_byte_limit"]
-    )
+    assert [value["reason"] for value in document["omissions"]] == [
+        "preview_byte_limit",
+        "preview_byte_limit",
+    ]
     assert "duplicate_preview" not in packet.document
 
 
-def test_duplicate_group_excluded_by_aggregate_limit_has_no_unbound_representative() -> None:
+def test_duplicate_group_excluded_by_aggregate_limit_has_no_unbound_representative() -> (
+    None
+):
     retained = [_group_candidate(index) for index in range(1, 9)]
     packet = packet_builder._finalize_cover_packet(
         [*retained, _group_candidate(20, duplicates=2, width=1, height=1)],
@@ -1594,10 +1795,10 @@ def test_duplicate_group_excluded_by_shortlist_has_no_unbound_representative() -
     _admit_produced(packet)
     document = json.loads(packet.document)
     assert len(document["candidates"]) == 12
-    assert (
-        [value["reason"] for value in document["omissions"]]
-        == ["shortlist_limit", "shortlist_limit"]
-    )
+    assert [value["reason"] for value in document["omissions"]] == [
+        "shortlist_limit",
+        "shortlist_limit",
+    ]
     assert "duplicate_preview" not in packet.document
 
 
@@ -1611,7 +1812,9 @@ def test_every_closed_value_is_admitted_without_policy_projection() -> None:
         for index, observation in enumerate(observations):
             observation["medium"] = media[index]
             observation["composition"] = ("minimal", "dense", "unknown")[index % 3]
-            observation["promotional_text"] = ("present", "absent", "unknown")[index % 3]
+            observation["promotional_text"] = ("present", "absent", "unknown")[
+                index % 3
+            ]
             observation["tie_in_branding"] = ("absent", "unknown", "present")[index % 3]
 
     report = observe_cover_packet(
@@ -1621,24 +1824,25 @@ def test_every_closed_value_is_admitted_without_policy_projection() -> None:
         lambda *args: _observer_result(*args, mutate=all_values),
     )
     observations = json.loads(report.document)["observations"]
-    assert (
-        {value["medium"] for value in observations}
-        == {"photographic", "illustrated", "typographic", "mixed", "unknown"}
-    )
-    assert (
-        all(
-            set(value)
-            == {
-                "candidate_reference",
-                "composition",
-                "medium",
-                "preview_sha256",
-                "preview_variant",
-                "promotional_text",
-                "tie_in_branding",
-            }
-            for value in observations
-        )
+    assert {value["medium"] for value in observations} == {
+        "photographic",
+        "illustrated",
+        "typographic",
+        "mixed",
+        "unknown",
+    }
+    assert all(
+        set(value)
+        == {
+            "candidate_reference",
+            "composition",
+            "medium",
+            "preview_sha256",
+            "preview_variant",
+            "promotional_text",
+            "tie_in_branding",
+        }
+        for value in observations
     )
 
 
@@ -1661,13 +1865,9 @@ def test_closed_observations_bind_every_exact_preview_and_hide_source_values() -
         "a single dominant image or figure with a simple supporting layout is minimal"
         in instructions[0]
     )
-    assert (
-        isinstance(TAXONOMY, tuple)
-        and all(
-            isinstance(values, tuple)
-            and all(isinstance(item, tuple) for item in values)
-            for _name, values in TAXONOMY
-        )
+    assert isinstance(TAXONOMY, tuple) and all(
+        isinstance(values, tuple) and all(isinstance(item, tuple) for item in values)
+        for _name, values in TAXONOMY
     )
     assert value["schema_version"] == OBSERVATION_SCHEMA_VERSION
     assert value["taxonomy_reference"] == TAXONOMY_REFERENCE
@@ -1759,9 +1959,11 @@ def test_observation_report_persists_only_bound_retry_evidence() -> None:
         ]
         return canonical_json(envelope)
 
-    report = json.loads(observe_cover_packet(
-        b"synthetic-profile", packet.document.encode(), images, retried
-    ).document)
+    report = json.loads(
+        observe_cover_packet(
+            b"synthetic-profile", packet.document.encode(), images, retried
+        ).document
+    )
     assert report["attempt_evidence"] == [
         {
             "diagnostic_bytes": 17,
@@ -1798,8 +2000,7 @@ def test_typed_scenario_uses_only_closed_inputs_and_redacts_failure() -> None:
         operations,
         reopen_metadata_report=lambda *_: report.to_json(),
         reopen_cover_preview=(
-            lambda _db, _artifacts, _report, artifact, _variant:
-            by_artifact[artifact]
+            lambda _db, _artifacts, _report, artifact, _variant: by_artifact[artifact]
         ),
         run_cover_packet_reviewer=_observer_result,
     )
@@ -1820,13 +2021,9 @@ def test_typed_scenario_uses_only_closed_inputs_and_redacts_failure() -> None:
                 )
             ),
         )
-        result = execute(
-            context, CoverObservationRequest(report.report_id), operations
-        )
+        result = execute(context, CoverObservationRequest(report.report_id), operations)
         document = json.loads(
-            context.path("artifacts/" + result.artifacts[0]).read_text(
-                encoding="utf-8"
-            )
+            context.path("artifacts/" + result.artifacts[0]).read_text(encoding="utf-8")
         )
         assert result.name == "cover-observation-report"
         assert len(document["observations"]) == 2
@@ -1844,9 +2041,7 @@ def test_typed_scenario_uses_only_closed_inputs_and_redacts_failure() -> None:
 
 
 def test_identity_reauthenticates_every_source_to_the_normalized_transport() -> None:
-    profile = ImageCms.ImageCmsProfile(
-        ImageCms.createProfile("sRGB")
-    ).tobytes()
+    profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
     plain = _preview(40, width=7, height=9)
     profiled = _preview(40, width=7, height=9, icc_profile=profile)
     sources = (
@@ -1864,8 +2059,7 @@ def test_identity_reauthenticates_every_source_to_the_normalized_transport() -> 
         lambda artifact, _variant: payload_by_artifact[artifact],
     )
     images = tuple(
-        (value.reference, value.digest, value.payload)
-        for value in packet.images
+        (value.reference, value.digest, value.payload) for value in packet.images
     )
     result = json.loads(
         classify_cover_identity(
@@ -1886,9 +2080,7 @@ def test_identity_reauthenticates_every_source_to_the_normalized_transport() -> 
     different_report = _report(different_sources)
     different_by_artifact = {
         source.artifact.artifact_id: payload
-        for source, payload in zip(
-            different_sources, different_payloads, strict=True
-        )
+        for source, payload in zip(different_sources, different_payloads, strict=True)
         if source.artifact is not None
     }
     separate = prepare_cover_packet(
@@ -1910,13 +2102,16 @@ def test_identity_reauthenticates_every_source_to_the_normalized_transport() -> 
     other_reference = packet_builder.cover_source_reference(
         different_report.report_id, other_source.source_id
     )
-    representative["source_bindings"] = sorted([
-        *representative["source_bindings"],
-        {
-            "preview_sha256": other_source.artifact.preview_digest,
-            "reference": other_reference,
-        },
-    ], key=lambda value: (value["reference"], value["preview_sha256"]))
+    representative["source_bindings"] = sorted(
+        [
+            *representative["source_bindings"],
+            {
+                "preview_sha256": other_source.artifact.preview_digest,
+                "reference": other_reference,
+            },
+        ],
+        key=lambda value: (value["reference"], value["preview_sha256"]),
+    )
     representative["width"] = max(
         source.artifact.width
         for source in ordered_sources
@@ -1927,39 +2122,39 @@ def test_identity_reauthenticates_every_source_to_the_normalized_transport() -> 
         for source in ordered_sources
         if source.artifact is not None
     )
-    representative["transport_reference"] = (
-        packet_builder.cover_transport_reference(
-            representative["reference"],
-            representative["source_bindings"],
-            representative["transport_sha256"],
-        )
+    representative["transport_reference"] = packet_builder.cover_transport_reference(
+        representative["reference"],
+        representative["source_bindings"],
+        representative["transport_sha256"],
     )
     separate_document["candidates"] = [representative]
-    separate_document["omissions"] = [{
-        "preview_sha256": other_source.artifact.preview_digest,
-        "reason": "duplicate_preview",
-        "reference": other_reference,
-        "retained_reference": representative_reference,
-    }]
+    separate_document["omissions"] = [
+        {
+            "preview_sha256": other_source.artifact.preview_digest,
+            "reason": "duplicate_preview",
+            "reference": other_reference,
+            "retained_reference": representative_reference,
+        }
+    ]
     original_image = next(
         value
         for value in separate.images
         if value.digest == representative["transport_sha256"]
     )
-    forged_images = ((
-        representative["transport_reference"],
-        original_image.digest,
-        original_image.payload,
-    ),)
+    forged_images = (
+        (
+            representative["transport_reference"],
+            original_image.digest,
+            original_image.payload,
+        ),
+    )
 
     with pytest.raises(ValueError, match="transport binding"):
         classify_cover_identity(
             different_report.to_json(),
             _rebind_packet(separate_document),
             forged_images,
-            read_preview=(
-                lambda artifact, _variant: different_by_artifact[artifact]
-            ),
+            read_preview=(lambda artifact, _variant: different_by_artifact[artifact]),
         )
 
 
@@ -2057,6 +2252,7 @@ def _typed_discovery_identity_case(
             else None
         )
         work_candidate = candidate if lane_kind is ProviderQueryKind.WORK else None
+
         def lane(
             identity: str,
             kind: ProviderQueryKind,
@@ -2066,10 +2262,14 @@ def _typed_discovery_identity_case(
             return ProviderLaneObservation(
                 identity,
                 kind,
-                ProviderStatus.CANDIDATES if item is not None else ProviderStatus.NO_MATCH,
+                ProviderStatus.CANDIDATES
+                if item is not None
+                else ProviderStatus.NO_MATCH,
                 inputs,
                 "9780306406157" if kind is ProviderQueryKind.ISBN else None,
-                () if item is None else (
+                ()
+                if item is None
+                else (
                     ProviderLaneCandidate(
                         provider_lane_candidate_reference(
                             "hardcover", identity, item.identity, item.work_identity
@@ -2079,11 +2279,30 @@ def _typed_discovery_identity_case(
                     ),
                 ),
             )
+
         lanes = (
-            lane(isbn_identity, ProviderQueryKind.ISBN, isbn_candidate, (local_claims[-1].reference,)),
-            lane(work_identity, ProviderQueryKind.WORK, work_candidate, (local_claims[0].reference,)),
+            lane(
+                isbn_identity,
+                ProviderQueryKind.ISBN,
+                isbn_candidate,
+                (local_claims[-1].reference,),
+            ),
+            lane(
+                work_identity,
+                ProviderQueryKind.WORK,
+                work_candidate,
+                (local_claims[0].reference,),
+            ),
         )
-        input_references = tuple(sorted({reference for lane_value in lanes for reference in lane_value.input_references}))
+        input_references = tuple(
+            sorted(
+                {
+                    reference
+                    for lane_value in lanes
+                    for reference in lane_value.input_references
+                }
+            )
+        )
     report = MetadataReport.create(
         target=TargetFacts(
             "synthetic", "books", "item", default_target_fields("Synthetic title")
@@ -2165,25 +2384,21 @@ def test_typed_lane_mapping_requires_the_matched_candidate_in_an_isbn_lane(
 
 def test_source_bound_epub_cover_is_verified_manifestation() -> None:
     source = _source(3, _preview(3), embedded=True)
-    assert (
-        _classify_sources(
-            SimpleNamespace(providers=(), identifier_evidence=(), local_claims=()),
-            (source,),
-        )
-        == ("verified_manifestation_match", ["source_bound_epub_cover"], [])
-    )
+    assert _classify_sources(
+        SimpleNamespace(providers=(), identifier_evidence=(), local_claims=()),
+        (source,),
+    ) == ("verified_manifestation_match", ["source_bound_epub_cover"], [])
 
     incumbent = _source(4, _preview(4), incumbent=True)
-    assert (
-        _classify_sources(
-            SimpleNamespace(providers=(), identifier_evidence=(), local_claims=()),
-            (incumbent,),
-        )
-        == ("unknown", ["no_provider_identity"], [])
-    )
+    assert _classify_sources(
+        SimpleNamespace(providers=(), identifier_evidence=(), local_claims=()),
+        (incumbent,),
+    ) == ("unknown", ["no_provider_identity"], [])
 
 
-def test_title_supported_provider_discovery_is_plausible_despite_edition_noise() -> None:
+def test_title_supported_provider_discovery_is_plausible_despite_edition_noise() -> (
+    None
+):
     source = _source(3, _preview(3))
     assert source.provenance is not None
     agreement = SimpleNamespace(outcome=Comparison.AGREEMENT)
@@ -2214,16 +2429,13 @@ def test_title_supported_provider_discovery_is_plausible_despite_edition_noise()
         identifier_evidence=(),
         local_claims=(),
     )
-    assert (
-        _classify_sources(report, (source,))
-        == (
-            "plausible_match",
-            [
-                "provider_identity_without_explicit_identifier",
-                "retained_title_agreement",
-            ],
-            [],
-        )
+    assert _classify_sources(report, (source,)) == (
+        "plausible_match",
+        [
+            "provider_identity_without_explicit_identifier",
+            "retained_title_agreement",
+        ],
+        [],
     )
     work_report = SimpleNamespace(
         providers=(
@@ -2236,9 +2448,10 @@ def test_title_supported_provider_discovery_is_plausible_despite_edition_noise()
         identifier_evidence=(),
         local_claims=(),
     )
-    assert (
-        _classify_sources(work_report, (source,))
-        == ("unknown", ["retained_title_evidence_insufficient"], [])
+    assert _classify_sources(work_report, (source,)) == (
+        "unknown",
+        ["retained_title_evidence_insufficient"],
+        [],
     )
 
 
@@ -2273,9 +2486,10 @@ def test_explicit_creator_disagreement_vetoes_title_supported_plausible_match() 
         identifier_evidence=(),
         local_claims=(),
     )
-    assert (
-        _classify_sources(report, (source,))
-        == ("unknown", ["retained_creator_or_contributor_disagreement"], [])
+    assert _classify_sources(report, (source,)) == (
+        "unknown",
+        ["retained_creator_or_contributor_disagreement"],
+        [],
     )
 
 
@@ -2355,7 +2569,11 @@ def test_every_outcome_is_closed_and_does_not_project_hostile_values() -> None:
         reference="provider_" + "a" * 64,
     )
     report = SimpleNamespace(
-        providers=(SimpleNamespace(provider=source.provenance.provider, candidates=(candidate,)),),
+        providers=(
+            SimpleNamespace(
+                provider=source.provenance.provider, candidates=(candidate,)
+            ),
+        ),
         identifier_evidence=(accepted,),
         local_claims=(),
     )
@@ -2366,17 +2584,27 @@ def test_every_outcome_is_closed_and_does_not_project_hostile_values() -> None:
         assert _classify_sources(report, (source,))[0] == "verified_manifestation_match"
     work_source = replace(
         source,
-        provenance=replace(source.provenance, designation=CoverDesignation.WORK, edition_identity=None),
+        provenance=replace(
+            source.provenance, designation=CoverDesignation.WORK, edition_identity=None
+        ),
     )
-    associated = SimpleNamespace(**{**accepted.__dict__, "relation": IdentifierRelation.ASSOCIATED})
+    associated = SimpleNamespace(
+        **{**accepted.__dict__, "relation": IdentifierRelation.ASSOCIATED}
+    )
     assert (
-        _classify_sources(SimpleNamespace(providers=report.providers, identifier_evidence=(associated,)), (work_source,))[0]
+        _classify_sources(
+            SimpleNamespace(
+                providers=report.providers, identifier_evidence=(associated,)
+            ),
+            (work_source,),
+        )[0]
         == "verified_work_match"
     )
     default_source = replace(
         work_source,
         provenance=replace(
-            cast(CoverProvenance, work_source.provenance), designation=CoverDesignation.DEFAULT
+            cast(CoverProvenance, work_source.provenance),
+            designation=CoverDesignation.DEFAULT,
         ),
     )
     assert (
@@ -2390,17 +2618,36 @@ def test_every_outcome_is_closed_and_does_not_project_hostile_values() -> None:
         == "verified_work_match"
     )
     assert (
-        _classify_sources(SimpleNamespace(providers=report.providers, identifier_evidence=()), (source,))[0]
+        _classify_sources(
+            SimpleNamespace(providers=report.providers, identifier_evidence=()),
+            (source,),
+        )[0]
         == "unknown"
     )
     assert (
-        _classify_sources(SimpleNamespace(providers=(), identifier_evidence=()), (source,))[0]
+        _classify_sources(
+            SimpleNamespace(providers=(), identifier_evidence=()), (source,)
+        )[0]
         == "unknown"
     )
-    contradiction = SimpleNamespace(kind=ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION)
-    conflicting = SimpleNamespace(**{**candidate.__dict__, "evidence": (contradiction,)})
+    contradiction = SimpleNamespace(
+        kind=ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+    )
+    conflicting = SimpleNamespace(
+        **{**candidate.__dict__, "evidence": (contradiction,)}
+    )
     assert (
-        _classify_sources(SimpleNamespace(providers=(SimpleNamespace(provider=source.provenance.provider, candidates=(conflicting,)),), identifier_evidence=()), (source,))[0]
+        _classify_sources(
+            SimpleNamespace(
+                providers=(
+                    SimpleNamespace(
+                        provider=source.provenance.provider, candidates=(conflicting,)
+                    ),
+                ),
+                identifier_evidence=(),
+            ),
+            (source,),
+        )[0]
         == "conflict"
     )
 
@@ -2428,9 +2675,10 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
     report = SimpleNamespace(
         providers=(provider,), identifier_evidence=(identifier,), local_claims=()
     )
-    assert (
-        _classify_sources(report, (source,))
-        == ("conflict", ["unrelated_identifier"], [identifier.reference])
+    assert _classify_sources(report, (source,)) == (
+        "conflict",
+        ["unrelated_identifier"],
+        [identifier.reference],
     )
 
     disagreement = SimpleNamespace(
@@ -2446,9 +2694,7 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
         links=(disagreement, mixed_agreement),
         reference="provider_" + "c" * 64,
     )
-    conflicting = SimpleNamespace(
-        **{**candidate.__dict__, "claims": (title,)}
-    )
+    conflicting = SimpleNamespace(**{**candidate.__dict__, "claims": (title,)})
     report = SimpleNamespace(
         providers=(
             SimpleNamespace(
@@ -2459,16 +2705,13 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
         identifier_evidence=(),
         local_claims=(),
     )
-    assert (
-        _classify_sources(report, (source,))
-        == (
-            "plausible_match",
-            [
-                "provider_identity_without_explicit_identifier",
-                "retained_title_agreement",
-            ],
-            [],
-        )
+    assert _classify_sources(report, (source,)) == (
+        "plausible_match",
+        [
+            "provider_identity_without_explicit_identifier",
+            "retained_title_agreement",
+        ],
+        [],
     )
 
     date_disagreement = SimpleNamespace(
@@ -2502,16 +2745,13 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
         identifier_evidence=(),
         local_claims=(),
     )
-    assert (
-        _classify_sources(report, (source,))
-        == (
-            "plausible_match",
-            [
-                "provider_identity_without_explicit_identifier",
-                "retained_title_agreement",
-            ],
-            [],
-        )
+    assert _classify_sources(report, (source,)) == (
+        "plausible_match",
+        [
+            "provider_identity_without_explicit_identifier",
+            "retained_title_agreement",
+        ],
+        [],
     )
 
     agreement = SimpleNamespace(
@@ -2540,16 +2780,13 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
         identifier_evidence=(),
         local_claims=(),
     )
-    assert (
-        _classify_sources(report, (source,))
-        == (
-            "plausible_match",
-            [
-                "provider_identity_without_explicit_identifier",
-                "retained_title_agreement",
-            ],
-            [],
-        )
+    assert _classify_sources(report, (source,)) == (
+        "plausible_match",
+        [
+            "provider_identity_without_explicit_identifier",
+            "retained_title_agreement",
+        ],
+        [],
     )
 
     accepted = SimpleNamespace(
@@ -2562,21 +2799,19 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
         "mechanical_librarian.application.cover_identity.manifestation_publication_compatible",
         return_value=False,
     ):
-        assert (
-            _classify_sources(report, (source,))
-            == (
-                "conflict",
-                ["manifestation_publication_incompatible"],
-                [accepted.reference],
-            )
+        assert _classify_sources(report, (source,)) == (
+            "conflict",
+            ["manifestation_publication_incompatible"],
+            [accepted.reference],
         )
 
 
-def test_report_binds_exact_packet_candidates_and_emits_only_opaque_references() -> None:
+def test_report_binds_exact_packet_candidates_and_emits_only_opaque_references() -> (
+    None
+):
     payloads = tuple(_preview(index) for index in range(1, 3))
     sources = tuple(
-        _source(index, payload)
-        for index, payload in enumerate(payloads, start=1)
+        _source(index, payload) for index, payload in enumerate(payloads, start=1)
     )
     report_document = _report(sources).to_json()
     report = MetadataReport.from_json(report_document)
@@ -2589,10 +2824,12 @@ def test_report_binds_exact_packet_candidates_and_emits_only_opaque_references()
         report_document, lambda artifact, _variant: by_artifact[artifact]
     )
     images = tuple(
-        (item.reference, item.digest, item.payload)
-        for item in packet.images
+        (item.reference, item.digest, item.payload) for item in packet.images
     )
-    with mock.patch("mechanical_librarian.application.cover_identity.MetadataReport.from_json", return_value=report):
+    with mock.patch(
+        "mechanical_librarian.application.cover_identity.MetadataReport.from_json",
+        return_value=report,
+    ):
         document = _classify_identity(
             report_document,
             packet.document,
@@ -2608,11 +2845,9 @@ def test_report_binds_exact_packet_candidates_and_emits_only_opaque_references()
     assert value["work_target_reference"].startswith("work_target_ref_")
     assert len(value["candidates"]) == 2
     assert all(row["outcome"] == "unknown" for row in value["candidates"])
-    assert (
-        all(
-            row["preview_reference"].startswith("cover_preview_ref_")
-            for row in value["candidates"]
-        )
+    assert all(
+        row["preview_reference"].startswith("cover_preview_ref_")
+        for row in value["candidates"]
     )
     assert "Synthetic title" not in document
     assert "source-" not in document
@@ -2620,12 +2855,9 @@ def test_report_binds_exact_packet_candidates_and_emits_only_opaque_references()
     epub_payload = _preview(8)
     epub_source = _source(8, epub_payload, embedded=True)
     epub_report = _report((epub_source,))
-    epub_packet = prepare_cover_packet(
-        epub_report.to_json(), lambda *_: epub_payload
-    )
+    epub_packet = prepare_cover_packet(epub_report.to_json(), lambda *_: epub_payload)
     epub_images = tuple(
-        (item.reference, item.digest, item.payload)
-        for item in epub_packet.images
+        (item.reference, item.digest, item.payload) for item in epub_packet.images
     )
     epub_document = json.loads(
         _classify_identity(
@@ -2648,8 +2880,7 @@ def test_report_binds_exact_packet_candidates_and_emits_only_opaque_references()
         foreign_report.to_json(), lambda *_: shared_payload
     )
     foreign_images = tuple(
-        (item.reference, item.digest, item.payload)
-        for item in foreign_packet.images
+        (item.reference, item.digest, item.payload) for item in foreign_packet.images
     )
     with pytest.raises(ValueError, match="report binding"):
         classify_cover_identity(
@@ -2663,8 +2894,7 @@ def test_report_binds_exact_packet_candidates_and_emits_only_opaque_references()
 def test_typed_scenario_executes_and_redacts_invalid_report() -> None:
     payloads = tuple(_preview(index) for index in range(1, 3))
     sources = tuple(
-        _source(index, payload)
-        for index, payload in enumerate(payloads, start=1)
+        _source(index, payload) for index, payload in enumerate(payloads, start=1)
     )
     report = _report(sources)
     by_artifact = {
@@ -2683,18 +2913,13 @@ def test_typed_scenario_executes_and_redacts_invalid_report() -> None:
         operations,
         reopen_metadata_report=lambda *_: report.to_json(),
         reopen_cover_preview=(
-            lambda _db, _artifacts, _report, artifact, _variant:
-            by_artifact[artifact]
+            lambda _db, _artifacts, _report, artifact, _variant: by_artifact[artifact]
         ),
     )
     with WorkbenchContext.temporary() as context:
-        result = execute(
-            context, CoverIdentityRequest(report.report_id), operations
-        )
+        result = execute(context, CoverIdentityRequest(report.report_id), operations)
         document = json.loads(
-            context.path("artifacts/" + result.artifacts[0]).read_text(
-                encoding="utf-8"
-            )
+            context.path("artifacts/" + result.artifacts[0]).read_text(encoding="utf-8")
         )
         assert result.name == "cover-identity-report"
         assert len(document["candidates"]) == 2
@@ -2714,7 +2939,9 @@ def test_typed_scenario_executes_and_redacts_invalid_report() -> None:
 def _policy_documents(count: int = 3):
     profile_payload = b'{"profile":"synthetic"}'
     payloads = tuple(_preview(index) for index in range(1, count + 1))
-    sources = tuple(_source(index, payload) for index, payload in enumerate(payloads, 1))
+    sources = tuple(
+        _source(index, payload) for index, payload in enumerate(payloads, 1)
+    )
     report = _report(sources)
     by_artifact = {
         source.artifact.artifact_id: payload
@@ -2803,9 +3030,7 @@ def _adjudicate(
         observation,
         _references,
         read_preview,
-    ) = (
-        _policy_documents()
-    )
+    ) = _policy_documents()
     if identity_mutation is not None:
         assert callable(identity_mutation)
         identity_mutation(identity)
@@ -2822,9 +3047,7 @@ def _adjudicate(
             images,
             canonical_json(observation) if observation_available else None,
             policy,
-            profile_payload=(
-                profile_payload if observation_available else None
-            ),
+            profile_payload=(profile_payload if observation_available else None),
             read_preview=read_preview,
         )
     return json.loads(result.document)
@@ -2845,7 +3068,9 @@ def test_closed_policy_is_content_bound_and_plain_policy_uses_packet_order() -> 
         CoverPolicy(avoid_promotional_text=1)
 
 
-def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence() -> None:
+def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence() -> (
+    None
+):
     legacy = _adjudicate(
         observation_mutation=lambda value: (
             value.pop("attempt_evidence"),
@@ -2871,9 +3096,7 @@ def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence
             )
         )
     with pytest.raises(ValueError):
-        _adjudicate(
-            observation_mutation=lambda value: value.pop("attempt_evidence")
-        )
+        _adjudicate(observation_mutation=lambda value: value.pop("attempt_evidence"))
     with pytest.raises(ValueError):
         _adjudicate(
             observation_mutation=lambda value: value.update(
@@ -2896,9 +3119,7 @@ def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence
         (
             "promotional present",
             CoverPolicy(avoid_promotional_text=True),
-            lambda value: value["observations"][0].update(
-                promotional_text="present"
-            ),
+            lambda value: value["observations"][0].update(promotional_text="present"),
             "recommended",
             "promotional_text_excluded",
             2,
@@ -2906,9 +3127,7 @@ def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence
         (
             "promotional unknown",
             CoverPolicy(avoid_promotional_text=True),
-            lambda value: value["observations"][0].update(
-                promotional_text="unknown"
-            ),
+            lambda value: value["observations"][0].update(promotional_text="unknown"),
             "abstained",
             "observations_ambiguous",
             0,
@@ -2916,9 +3135,7 @@ def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence
         (
             "tie-in present",
             CoverPolicy(avoid_tie_in_branding=True),
-            lambda value: value["observations"][0].update(
-                tie_in_branding="present"
-            ),
+            lambda value: value["observations"][0].update(tie_in_branding="present"),
             "recommended",
             "tie_in_branding_excluded",
             2,
@@ -2926,9 +3143,7 @@ def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence
         (
             "tie-in unknown",
             CoverPolicy(avoid_tie_in_branding=True),
-            lambda value: value["observations"][0].update(
-                tie_in_branding="unknown"
-            ),
+            lambda value: value["observations"][0].update(tie_in_branding="unknown"),
             "abstained",
             "observations_ambiguous",
             0,
@@ -2936,9 +3151,7 @@ def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence
         (
             "minimal preferred",
             CoverPolicy(prefer_minimal_composition=True),
-            lambda value: value["observations"][2].update(
-                composition="minimal"
-            ),
+            lambda value: value["observations"][2].update(composition="minimal"),
             "recommended",
             "preferred_minimal",
             3,
@@ -2946,9 +3159,7 @@ def test_legacy_v1_observation_remains_admitted_but_v2_requires_attempt_evidence
         (
             "composition unknown",
             CoverPolicy(prefer_minimal_composition=True),
-            lambda value: value["observations"][0].update(
-                composition="unknown"
-            ),
+            lambda value: value["observations"][0].update(composition="unknown"),
             "abstained",
             "observations_ambiguous",
             0,
@@ -2987,9 +3198,7 @@ def test_identity_and_empty_policy_sets_fail_closed() -> None:
     assert "conflict_excluded" in conflict["reasons"]
 
     unknown_excluded = _adjudicate(
-        identity_mutation=lambda value: value["candidates"][0].update(
-            outcome="unknown"
-        )
+        identity_mutation=lambda value: value["candidates"][0].update(outcome="unknown")
     )
     assert unknown_excluded["status"] == "recommended"
     assert len(unknown_excluded["acceptable_candidate_references"]) == 2
@@ -2997,12 +3206,14 @@ def test_identity_and_empty_policy_sets_fail_closed() -> None:
 
     none_known = _adjudicate(
         identity_mutation=lambda value: [
-            candidate.update(outcome="unknown")
-            for candidate in value["candidates"]
+            candidate.update(outcome="unknown") for candidate in value["candidates"]
         ]
     )
     assert none_known["status"] == "abstained"
-    assert none_known["reasons"] == ["identity_unknown_excluded", "no_eligible_candidates"]
+    assert none_known["reasons"] == [
+        "identity_unknown_excluded",
+        "no_eligible_candidates",
+    ]
 
     mixed_exclusions = _adjudicate(
         identity_mutation=lambda value: (
@@ -3017,8 +3228,7 @@ def test_identity_and_empty_policy_sets_fail_closed() -> None:
 
     none_eligible = _adjudicate(
         identity_mutation=lambda value: [
-            candidate.update(outcome="conflict")
-            for candidate in value["candidates"]
+            candidate.update(outcome="conflict") for candidate in value["candidates"]
         ]
     )
     assert none_eligible["status"] == "abstained"
@@ -3080,9 +3290,7 @@ def test_identity_is_recomputed_from_exact_report_evidence() -> None:
         observation,
         _references,
         read_preview,
-    ) = (
-        _policy_documents()
-    )
+    ) = _policy_documents()
     report = json.loads(
         adjudicate_cover_policy(
             report_document,
@@ -3150,9 +3358,7 @@ def test_unknown_invented_duplicate_or_mismatched_inputs_fail_closed(mutation) -
         observation,
         _references,
         read_preview,
-    ) = (
-        _policy_documents()
-    )
+    ) = _policy_documents()
     mutation(observation)
     with mock.patch(
         "mechanical_librarian.application.cover_policy.classify_cover_identity",
@@ -3168,4 +3374,3 @@ def test_unknown_invented_duplicate_or_mismatched_inputs_fail_closed(mutation) -
                 profile_payload=b'{"profile":"synthetic"}',
                 read_preview=read_preview,
             )
-

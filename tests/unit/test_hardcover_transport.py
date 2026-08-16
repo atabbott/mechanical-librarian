@@ -61,37 +61,104 @@ def test_hardcover_publication_field_preserves_supported_precision(
     lexical: str,
 ) -> None:
     assert (FieldState.VALID, lexical) == hardcover_metadata._field(
-            ClaimKind.PUBLICATION_DATE,
-            lexical,
-        )
+        ClaimKind.PUBLICATION_DATE,
+        lexical,
+    )
 
 
 def test_rich_schema_query_and_field_order_are_closed() -> None:
     captured: list[dict[str, object]] = []
     payload = hardcover_envelope(
-        [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": "b012345678", "title": "Edition title", "subtitle": "Edition subtitle", "release_date": "2026-01-01", "publisher": {"id": 2, "name": "Example Press", "parent_id": 9}, "language": {"id": 3, "code2": "en", "code3": "eng", "language": "English"}, "contributions": [{"id": 7, "contribution": "Author", "author": {"id": 4, "name": "Ada Example"}}]}],
-        [{"id": 1, "title": "Work title", "description": "Description", "contributions": [{"id": 8, "contribution": "Translator", "author": {"id": 4, "name": "Ada Example"}}], "book_series": [{"id": 9, "position": "1", "series": {"id": 5, "name": "Series"}}], "taggings": [{"id": 10, "tag": {"id": 6, "tag": "Speculative"}}]}],
+        [
+            {
+                "id": 1,
+                "book_id": 1,
+                "isbn_10": None,
+                "isbn_13": "9780306406157",
+                "asin": "b012345678",
+                "title": "Edition title",
+                "subtitle": "Edition subtitle",
+                "release_date": "2026-01-01",
+                "publisher": {"id": 2, "name": "Example Press", "parent_id": 9},
+                "language": {
+                    "id": 3,
+                    "code2": "en",
+                    "code3": "eng",
+                    "language": "English",
+                },
+                "contributions": [
+                    {
+                        "id": 7,
+                        "contribution": "Author",
+                        "author": {"id": 4, "name": "Ada Example"},
+                    }
+                ],
+            }
+        ],
+        [
+            {
+                "id": 1,
+                "title": "Work title",
+                "description": "Description",
+                "contributions": [
+                    {
+                        "id": 8,
+                        "contribution": "Translator",
+                        "author": {"id": 4, "name": "Ada Example"},
+                    }
+                ],
+                "book_series": [
+                    {"id": 9, "position": "1", "series": {"id": 5, "name": "Series"}}
+                ],
+                "taggings": [{"id": 10, "tag": {"id": 6, "tag": "Speculative"}}],
+            }
+        ],
     )
+
     def handler(request: httpx.Request) -> httpx.Response:
         captured.append(json.loads(request.content))
-        return httpx.Response(200, headers={"content-type": "application/json"}, json=payload)
-    observation = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536).observe(isbn_lookup((isbn_claim(), title_claim())))
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json=payload
+        )
+
+    observation = HardcoverMetadataProvider(
+        "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+    ).observe(isbn_lookup((isbn_claim(), title_claim())))
     assert observation.status == ProviderStatus.CANDIDATES
     claims = observation.candidates[0].claims
     assert "B012345678" == next(
-            claim.value
-            for claim in claims
-            if claim.kind is ClaimKind.ASIN
-        )
+        claim.value for claim in claims if claim.kind is ClaimKind.ASIN
+    )
     assert {"ebook"} == {
-            claim.applicability
-            for claim in claims
-            if claim.kind in {ClaimKind.ASIN, ClaimKind.SUBTITLE}
-        }
+        claim.applicability
+        for claim in claims
+        if claim.kind in {ClaimKind.ASIN, ClaimKind.SUBTITLE}
+    }
     assert [claim.raw_order for claim in claims] == list(range(len(claims)))
-    assert {claim.kind for claim in claims} == {ClaimKind.TITLE, ClaimKind.SUBTITLE, ClaimKind.ISBN, ClaimKind.ASIN, ClaimKind.PUBLICATION_DATE, ClaimKind.PUBLISHER, ClaimKind.IMPRINT, ClaimKind.LANGUAGE, ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR, ClaimKind.DESCRIPTION, ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE, ClaimKind.TAG, ClaimKind.GENRE}
-    assert next(claim.scope for claim in claims if claim.kind is ClaimKind.PUBLISHER) == ClaimScope.EDITION
-    assert "parent_id" not in {claim.value for claim in claims if claim.value is not None}
+    assert {claim.kind for claim in claims} == {
+        ClaimKind.TITLE,
+        ClaimKind.SUBTITLE,
+        ClaimKind.ISBN,
+        ClaimKind.ASIN,
+        ClaimKind.PUBLICATION_DATE,
+        ClaimKind.PUBLISHER,
+        ClaimKind.IMPRINT,
+        ClaimKind.LANGUAGE,
+        ClaimKind.CREATOR,
+        ClaimKind.CONTRIBUTOR,
+        ClaimKind.DESCRIPTION,
+        ClaimKind.SERIES,
+        ClaimKind.SERIES_SEQUENCE,
+        ClaimKind.TAG,
+        ClaimKind.GENRE,
+    }
+    assert (
+        next(claim.scope for claim in claims if claim.kind is ClaimKind.PUBLISHER)
+        == ClaimScope.EDITION
+    )
+    assert "parent_id" not in {
+        claim.value for claim in claims if claim.value is not None
+    }
     query = cast("str", captured[0]["query"])
     assert "contributions(order_by:{id:asc},limit:17)" in query
     assert "taggings(order_by:{id:asc},limit:33)" in query
@@ -124,8 +191,9 @@ def test_hardcover_operations_keep_relationship_selections_within_depth_three(
     assert ProviderStatus.NO_MATCH == observation.status
     operation = captured[0]
     query = cast("str", operation["query"])
-    assert ("taggings(order_by:{id:asc},limit:33)"
-        "{id tag{id tag tag_category") not in query
+    assert (
+        "taggings(order_by:{id:asc},limit:33){id tag{id tag tag_category"
+    ) not in query
     assert "taggings(order_by:{id:asc},limit:33){id tag_id}" in query
     assert "tags:tags(" in query
     assert "{id tag tag_category{id category}}" in query
@@ -133,9 +201,9 @@ def test_hardcover_operations_keep_relationship_selections_within_depth_three(
         assert {"isbns": ["9780306406157"]} == operation["variables"]
     else:
         assert {
-                "authors": ["Ada Example"],
-                "title": "Current title",
-            } == operation["variables"]
+            "authors": ["Ada Example"],
+            "title": "Current title",
+        } == operation["variables"]
 
 
 _DEPTH_LIMIT_ERROR = {
@@ -184,9 +252,7 @@ def test_http_success_graphql_errors_are_typed_before_data(
         ),
         65_536,
     )
-    observation = provider.observe(
-        isbn_lookup((isbn_claim(), title_claim()))
-    )
+    observation = provider.observe(isbn_lookup((isbn_claim(), title_claim())))
     assert ProviderStatus.UNAVAILABLE == observation.status
     assert () == observation.candidates
     assert () == provider.cover_descriptors
@@ -272,8 +338,10 @@ def test_graphql_error_transport_timeout_and_expired_deadline_are_unavailable() 
         "catalogue",
         httpx.Client(
             transport=httpx.MockTransport(
-                lambda request: requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
-                or httpx.Response(500)
+                lambda request: (
+                    requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
+                    or httpx.Response(500)
+                )
             )
         ),
         65_536,
@@ -299,15 +367,16 @@ def test_hardcover_retries_declared_transients_with_exact_authority() -> None:
         provider = HardcoverMetadataProvider(
             "catalogue",
             httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda _, values=responses: values.pop(0)
-                )
+                transport=httpx.MockTransport(lambda _, values=responses: values.pop(0))
             ),
             65_536,
             sleep=delays.append,
             jitter=lambda: 0.0,
         )
-        assert ProviderStatus.NO_MATCH == provider.observe(isbn_lookup((isbn_claim(),))).status
+        assert (
+            ProviderStatus.NO_MATCH
+            == provider.observe(isbn_lookup((isbn_claim(),))).status
+        )
         assert ([60.0] if status_code == 503 else [1.0]) == delays
         assert 2 == len(provider.attempt_records)
 
@@ -325,21 +394,20 @@ def test_hardcover_retries_declared_transients_with_exact_authority() -> None:
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    assert ProviderStatus.UNAVAILABLE == exhausted.observe(isbn_lookup((isbn_claim(),))).status
+    assert (
+        ProviderStatus.UNAVAILABLE
+        == exhausted.observe(isbn_lookup((isbn_claim(),))).status
+    )
     assert 3 == dispatches
     assert "exhausted" == exhausted.attempt_records[-1].outcome
     assert 7.0 == exhausted.attempt_records[-1].delay_seconds
 
 
-@pytest.mark.parametrize(
-    "prior_failures", range(3), ids=("none", "one", "two")
-)
+@pytest.mark.parametrize("prior_failures", range(3), ids=("none", "one", "two"))
 def test_hardcover_recovers_at_every_permitted_retry_ordinal(
     prior_failures: int,
 ) -> None:
-    responses = [
-        httpx.Response(503) for _ in range(prior_failures)
-    ]
+    responses = [httpx.Response(503) for _ in range(prior_failures)]
     responses.append(
         httpx.Response(
             200,
@@ -350,19 +418,19 @@ def test_hardcover_recovers_at_every_permitted_retry_ordinal(
     provider = HardcoverMetadataProvider(
         "catalogue",
         httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _, values=responses: values.pop(0)
-            )
+            transport=httpx.MockTransport(lambda _, values=responses: values.pop(0))
         ),
         65_536,
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    assert ProviderStatus.NO_MATCH == provider.observe(
-            isbn_lookup((isbn_claim(),))
-        ).status
+    assert (
+        ProviderStatus.NO_MATCH == provider.observe(isbn_lookup((isbn_claim(),))).status
+    )
     assert prior_failures + 1 == len(provider.attempt_records)
-    assert ["retry"] * prior_failures + ["response_received"] == [record.outcome for record in provider.attempt_records]
+    assert ["retry"] * prior_failures + ["response_received"] == [
+        record.outcome for record in provider.attempt_records
+    ]
 
 
 def test_hardcover_charges_error_bodies_before_status_retry() -> None:
@@ -379,9 +447,10 @@ def test_hardcover_charges_error_bodies_before_status_retry() -> None:
         1_024,
         sleep=lambda _: pytest.fail("oversized body must not retry"),
     )
-    assert ProviderStatus.OVERSIZED == oversized_provider.observe(
-            isbn_lookup((isbn_claim(),))
-        ).status
+    assert (
+        ProviderStatus.OVERSIZED
+        == oversized_provider.observe(isbn_lookup((isbn_claim(),))).status
+    )
     assert 1 == oversized_calls
     assert 0 == oversized_provider._remaining_response_bytes
 
@@ -392,12 +461,12 @@ def test_hardcover_charges_error_bodies_before_status_retry() -> None:
     )
     control = HardcoverMetadataProvider(
         "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(lambda _: success)
-        ),
+        httpx.Client(transport=httpx.MockTransport(lambda _: success)),
         1_024,
     )
-    assert ProviderStatus.NO_MATCH == control.observe(isbn_lookup((isbn_claim(),))).status
+    assert (
+        ProviderStatus.NO_MATCH == control.observe(isbn_lookup((isbn_claim(),))).status
+    )
     responses = [
         httpx.Response(503, stream=InterruptedProviderStream()),
         httpx.Response(
@@ -408,15 +477,18 @@ def test_hardcover_charges_error_bodies_before_status_retry() -> None:
     ]
     interrupted = HardcoverMetadataProvider(
         "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(lambda _: responses.pop(0))
-        ),
+        httpx.Client(transport=httpx.MockTransport(lambda _: responses.pop(0))),
         1_024,
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    assert ProviderStatus.NO_MATCH == interrupted.observe(isbn_lookup((isbn_claim(),))).status
-    assert control._remaining_response_bytes - 1 == interrupted._remaining_response_bytes
+    assert (
+        ProviderStatus.NO_MATCH
+        == interrupted.observe(isbn_lookup((isbn_claim(),))).status
+    )
+    assert (
+        control._remaining_response_bytes - 1 == interrupted._remaining_response_bytes
+    )
     for raw_body in (gzip.compress(b"error"), b"not-gzip"):
         calls = 0
 
@@ -431,17 +503,14 @@ def test_hardcover_charges_error_bodies_before_status_retry() -> None:
 
         encoded = HardcoverMetadataProvider(
             "catalogue",
-            httpx.Client(
-                transport=httpx.MockTransport(encoded_error)
-            ),
+            httpx.Client(transport=httpx.MockTransport(encoded_error)),
             1_024,
-            sleep=lambda _: pytest.fail(
-                "non-identity encoding must not retry"
-            ),
+            sleep=lambda _: pytest.fail("non-identity encoding must not retry"),
         )
-        assert ProviderStatus.MALFORMED == encoded.observe(
-                isbn_lookup((isbn_claim(),))
-            ).status
+        assert (
+            ProviderStatus.MALFORMED
+            == encoded.observe(isbn_lookup((isbn_claim(),))).status
+        )
         assert 1 == calls
         assert 1_024 * 9 - len(raw_body) == encoded._remaining_response_bytes
 
@@ -458,9 +527,10 @@ def test_hardcover_charges_error_bodies_before_status_retry() -> None:
                 "preloaded non-identity response must not retry"
             ),
         )
-        assert ProviderStatus.MALFORMED == encoded.observe(
-                isbn_lookup((isbn_claim(),))
-            ).status
+        assert (
+            ProviderStatus.MALFORMED
+            == encoded.observe(isbn_lookup((isbn_claim(),))).status
+        )
         assert 1_024 * 9 == encoded._remaining_response_bytes
 
 
@@ -476,13 +546,14 @@ def test_hardcover_429_retries_only_valid_retry_after_and_graphql_never() -> Non
     delays: list[float] = []
     recovered = HardcoverMetadataProvider(
         "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(lambda _: responses.pop(0))
-        ),
+        httpx.Client(transport=httpx.MockTransport(lambda _: responses.pop(0))),
         65_536,
         sleep=delays.append,
     )
-    assert ProviderStatus.NO_MATCH == recovered.observe(isbn_lookup((isbn_claim(),))).status
+    assert (
+        ProviderStatus.NO_MATCH
+        == recovered.observe(isbn_lookup((isbn_claim(),))).status
+    )
     assert [2.0] == delays
 
     for retry_after in (None, "61", "2, 3"):
@@ -500,15 +571,14 @@ def test_hardcover_429_retries_only_valid_retry_after_and_graphql_never() -> Non
 
         provider = HardcoverMetadataProvider(
             "catalogue",
-            httpx.Client(
-                transport=httpx.MockTransport(rate_limited)
-            ),
+            httpx.Client(transport=httpx.MockTransport(rate_limited)),
             65_536,
             sleep=lambda _: pytest.fail("invalid 429 must not retry"),
         )
-        assert ProviderStatus.RATE_LIMITED == provider.observe(
-                isbn_lookup((isbn_claim(),))
-            ).status
+        assert (
+            ProviderStatus.RATE_LIMITED
+            == provider.observe(isbn_lookup((isbn_claim(),))).status
+        )
         assert 1 == calls
 
     graphql_calls = 0
@@ -528,7 +598,10 @@ def test_hardcover_429_retries_only_valid_retry_after_and_graphql_never() -> Non
         65_536,
         sleep=lambda _: pytest.fail("GraphQL errors must not retry"),
     )
-    assert ProviderStatus.UNAVAILABLE == graphql.observe(isbn_lookup((isbn_claim(),))).status
+    assert (
+        ProviderStatus.UNAVAILABLE
+        == graphql.observe(isbn_lookup((isbn_claim(),))).status
+    )
     assert 1 == graphql_calls
     assert "provider_declared_error" == graphql.attempt_records[0].category
     assert "terminal" == graphql.attempt_records[0].outcome
@@ -622,11 +695,13 @@ def test_hardcover_requests_retries_and_instances_share_pacing() -> None:
         "catalogue",
         httpx.Client(
             transport=httpx.MockTransport(
-                lambda _: dispatch_times.append(now[0])  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the dispatch time and still yields the response.
-                or httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=hardcover_envelope([], []),
+                lambda _: (
+                    dispatch_times.append(now[0])  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the dispatch time and still yields the response.
+                    or httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=hardcover_envelope([], []),
+                    )
                 )
             )
         ),
@@ -635,7 +710,9 @@ def test_hardcover_requests_retries_and_instances_share_pacing() -> None:
         clock=lambda: now[0],
         sleep=sleep,
     )
-    assert ProviderStatus.NO_MATCH == second.observe(isbn_lookup((isbn_claim(),))).status
+    assert (
+        ProviderStatus.NO_MATCH == second.observe(isbn_lookup((isbn_claim(),))).status
+    )
     assert [0.0, 1.0, 2.0] == dispatch_times
     assert [1.0, 1.0] == sleeps
 
@@ -655,9 +732,10 @@ def test_hardcover_deadline_and_aggregate_attempt_bounds_are_exact() -> None:
         clock=lambda: 0.0,
         sleep=lambda _: pytest.fail("deadline must reject Retry-After"),
     )
-    assert ProviderStatus.RATE_LIMITED == deadline_provider.observe(
-            isbn_lookup((isbn_claim(),)), deadline=2.0
-        ).status
+    assert (
+        ProviderStatus.RATE_LIMITED
+        == deadline_provider.observe(isbn_lookup((isbn_claim(),)), deadline=2.0).status
+    )
     assert 1 == rate_limit_calls
 
     values = (

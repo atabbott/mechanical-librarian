@@ -33,4 +33,8 @@ def preview_shadow_decision(
         raise DecisionPreviewError("currentness") from error
 
 
-__all__ = ["DecisionPreviewError", "DecisionPreviewRepository", "preview_shadow_decision"]
+__all__ = [
+    "DecisionPreviewError",
+    "DecisionPreviewRepository",
+    "preview_shadow_decision",
+]

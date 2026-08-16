@@ -13,37 +13,54 @@ F20_QUALIFICATION_CANDIDATE_SHA256: Final = (
     "aba7b436d88bb4e884cda0c4b247aa871063dce459e0f5fbea298227a1e9b06c"
 )
 F20_RICH_FIELDS: Final = (
-    "subtitle", "series", "genres", "tags", "description_fill",
-    "isbn_form", "asin", "explicit",
+    "subtitle",
+    "series",
+    "genres",
+    "tags",
+    "description_fill",
+    "isbn_form",
+    "asin",
+    "explicit",
 )
-F20_OPTION_DISPOSITIONS: Final[Mapping[str, str]] = MappingProxyType({
-    "subtitle:fill_empty": "not_qualified",
-    "subtitle:corroborated_split": "not_qualified",
-    "series:primary_narrative": "passing_automatic",
-    "series:source_order": "passing_automatic",
-    "series:all_qualified": "passing_automatic",
-    "genres:fill_empty": "passing_automatic",
-    "genres:add": "passing_automatic",
-    "genres:replace": "passing_automatic",
-    "tags:off": "policy_only",
-    "tags:fill_empty": "passing_automatic",
-    "tags:add": "passing_automatic",
-    "tags:replace": "passing_automatic",
-    "description_fill:safe_plain_text": "passing_automatic",
-    "description_fill:google_visible_text": "not_qualified",
-    "isbn_form:preserve_exact": "passing_automatic",
-    "isbn_form:prefer_isbn13": "passing_automatic",
-    "asin:preserve_exact": "insufficient_coverage",
-    "asin:ebook_manifestation": "insufficient_coverage",
-    "explicit:unsupported": "passing_human_only",
-})
-F20_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset({
-    "series:primary_narrative", "series:source_order", "series:all_qualified",
-    "genres:fill_empty", "genres:add", "genres:replace",
-    "tags:fill_empty", "tags:add", "tags:replace",
-    "description_fill:safe_plain_text",
-    "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
-})
+F20_OPTION_DISPOSITIONS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "subtitle:fill_empty": "not_qualified",
+        "subtitle:corroborated_split": "not_qualified",
+        "series:primary_narrative": "passing_automatic",
+        "series:source_order": "passing_automatic",
+        "series:all_qualified": "passing_automatic",
+        "genres:fill_empty": "passing_automatic",
+        "genres:add": "passing_automatic",
+        "genres:replace": "passing_automatic",
+        "tags:off": "policy_only",
+        "tags:fill_empty": "passing_automatic",
+        "tags:add": "passing_automatic",
+        "tags:replace": "passing_automatic",
+        "description_fill:safe_plain_text": "passing_automatic",
+        "description_fill:google_visible_text": "not_qualified",
+        "isbn_form:preserve_exact": "passing_automatic",
+        "isbn_form:prefer_isbn13": "passing_automatic",
+        "asin:preserve_exact": "insufficient_coverage",
+        "asin:ebook_manifestation": "insufficient_coverage",
+        "explicit:unsupported": "passing_human_only",
+    }
+)
+F20_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "series:primary_narrative",
+        "series:source_order",
+        "series:all_qualified",
+        "genres:fill_empty",
+        "genres:add",
+        "genres:replace",
+        "tags:fill_empty",
+        "tags:add",
+        "tags:replace",
+        "description_fill:safe_plain_text",
+        "isbn_form:preserve_exact",
+        "isbn_form:prefer_isbn13",
+    }
+)
 
 
 def disposition(field: object, option: object) -> str:
@@ -72,7 +89,10 @@ def public_summary() -> tuple[dict[str, object], ...]:
 
 
 __all__ = [
-    "F20_OPTION_DISPOSITIONS", "F20_PASSING_AUTOMATIC_OPTIONS",
-    "F20_QUALIFICATION_CANDIDATE_SHA256", "F20_RICH_FIELDS", "disposition",
+    "F20_OPTION_DISPOSITIONS",
+    "F20_PASSING_AUTOMATIC_OPTIONS",
+    "F20_QUALIFICATION_CANDIDATE_SHA256",
+    "F20_RICH_FIELDS",
+    "disposition",
     "public_summary",
 ]

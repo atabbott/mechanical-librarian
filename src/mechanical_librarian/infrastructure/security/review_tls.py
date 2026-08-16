@@ -76,9 +76,7 @@ def open_review_tls_identity(
             snapshot.close()
 
 
-def _read_tls_file(
-    path_value: str, maximum: int, *, private: bool
-) -> bytes:
+def _read_tls_file(path_value: str, maximum: int, *, private: bool) -> bytes:
     path = Path(path_value)
     if not path.is_absolute() or path.name in {"", ".", ".."}:
         raise ConfigurationError("review TLS configuration is unavailable")
@@ -133,9 +131,7 @@ def _read_tls_file(
 
 def _require_unencrypted_private_key(payload: bytes) -> None:
     lines = payload.splitlines()
-    closing = (
-        None if not lines else _UNENCRYPTED_PRIVATE_KEY_ENVELOPES.get(lines[0])
-    )
+    closing = None if not lines else _UNENCRYPTED_PRIVATE_KEY_ENVELOPES.get(lines[0])
     if closing is None or len(lines) < 3 or lines[-1] != closing:
         raise ConfigurationError("review TLS configuration is unavailable")
     try:

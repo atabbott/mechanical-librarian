@@ -125,27 +125,39 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                     (row[0],),
                 ).fetchone()
                 if active_document is None or type(active_document[0]) is not str:
-                    raise MetadataReportError("shadow posture reconciliation is unavailable")
-                active_profile = MetadataPolicyProfile.from_data(json.loads(active_document[0]))
+                    raise MetadataReportError(
+                        "shadow posture reconciliation is unavailable"
+                    )
+                active_profile = MetadataPolicyProfile.from_data(
+                    json.loads(active_document[0])
+                )
                 # A policy with no automatic destination has no affected
                 # automatic cohort.  Preserve the ordinary Preview workflow.
                 affected = (
-                    self._connection.execute("SELECT 1 FROM automatic_decisions LIMIT 1").fetchone()
-                    if any(value == "automatic" for _, value in active_profile.destinations)
+                    self._connection.execute(
+                        "SELECT 1 FROM automatic_decisions LIMIT 1"
+                    ).fetchone()
+                    if any(
+                        value == "automatic" for _, value in active_profile.destinations
+                    )
                     else None
                 )
                 # There is no prior automatic authority to reconcile until a
                 # current cohort has actually received an automatic decision.
                 # Initial Preview remains a harmless report-only entry.
                 if affected is not None:
-                    resolutions = tuple(self._connection.execute(
-                        "SELECT library_name,resolved_policy_id,document FROM metadata_policy_resolutions WHERE generation=? ORDER BY library_name",
-                        (row[1],),
-                    ).fetchall())
+                    resolutions = tuple(
+                        self._connection.execute(
+                            "SELECT library_name,resolved_policy_id,document FROM metadata_policy_resolutions WHERE generation=? ORDER BY library_name",
+                            (row[1],),
+                        ).fetchall()
+                    )
                     if not resolutions:
                         profile = active_profile
                         libraries = self._connection.execute(
-                            "SELECT DISTINCT c.library_name " + _CURRENT_REVIEW_FROM_SQL + " ORDER BY c.library_name"
+                            "SELECT DISTINCT c.library_name "
+                            + _CURRENT_REVIEW_FROM_SQL
+                            + " ORDER BY c.library_name"
                         ).fetchall()
                         resolutions = tuple(
                             (library[0], resolved.resolved_id, resolved.canonical_json)
@@ -177,26 +189,45 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 "SELECT s.posture,d.document FROM metadata_policy_state s JOIN metadata_policy_drafts d ON d.policy_id=s.active_policy_id WHERE s.singleton=1"
             ).fetchone()
             if row is None or row[0] != "preview":
-                raise MetadataReportError("automatic posture confirmation is unavailable")
+                raise MetadataReportError(
+                    "automatic posture confirmation is unavailable"
+                )
             policy = MetadataPolicyProfile.from_data(json.loads(row[1]))
-            requested = {f"{field}:{option}" for field, option in policy.options if dict(policy.destinations)[field] == "automatic"}
+            requested = {
+                f"{field}:{option}"
+                for field, option in policy.options
+                if dict(policy.destinations)[field] == "automatic"
+            }
             if not requested or not requested.issubset(QUALIFIED_POLICY_OPTIONS):
-                raise MetadataReportError("automatic posture qualification is unavailable")
+                raise MetadataReportError(
+                    "automatic posture qualification is unavailable"
+                )
             transition = self.metadata_policy_transition()
             if (
                 transition is None
-                or transition.generation != self._connection.execute(
+                or transition.generation
+                != self._connection.execute(
                     "SELECT generation FROM metadata_policy_state WHERE singleton=1"
                 ).fetchone()[0]
                 or transition.state != "completed"
                 or transition.completed != transition.total
                 or transition.failed != 0
             ):
-                raise MetadataReportError("automatic posture confirmation is unavailable")
-            self._connection.execute("UPDATE metadata_policy_state SET posture='automatic' WHERE singleton=1")
+                raise MetadataReportError(
+                    "automatic posture confirmation is unavailable"
+                )
+            self._connection.execute(
+                "UPDATE metadata_policy_state SET posture='automatic' WHERE singleton=1"
+            )
             transaction.commit()
             return "automatic"
-        except (sqlite3.Error, MetadataReportError, MetadataPolicyError, ValueError, TypeError) as error:
+        except (
+            sqlite3.Error,
+            MetadataReportError,
+            MetadataPolicyError,
+            ValueError,
+            TypeError,
+        ) as error:
             transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
@@ -251,7 +282,8 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
     def get_metadata_policy_draft(self, policy_id: str) -> str:
         try:
             row = self._connection.execute(
-                "SELECT document FROM metadata_policy_drafts WHERE policy_id=?", (policy_id,)
+                "SELECT document FROM metadata_policy_drafts WHERE policy_id=?",
+                (policy_id,),
             ).fetchone()
             if row is None or type(row[0]) is not str:
                 raise MetadataReportError("metadata policy draft is unavailable")
@@ -275,7 +307,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 raise MetadataReportError("active metadata policy is unavailable")
             return row[0]
         except (MetadataPolicyError, ValueError, TypeError, sqlite3.Error) as error:
-            raise MetadataReportError("active metadata policy is unavailable") from error
+            raise MetadataReportError(
+                "active metadata policy is unavailable"
+            ) from error
 
     def current_resolved_policy_id(self, library: str) -> str:
         if type(library) is not str or not library:
@@ -293,14 +327,20 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             if row[1] is not None:
                 resolved = self.current_resolved_metadata_policy(library)
                 if resolved is None:
-                    raise MetadataReportError("active metadata policy resolution is unavailable")
+                    raise MetadataReportError(
+                        "active metadata policy resolution is unavailable"
+                    )
                 return resolved.resolved_id
             if row[0] != 1:
-                raise MetadataReportError("active metadata policy resolution is unavailable")
+                raise MetadataReportError(
+                    "active metadata policy resolution is unavailable"
+                )
             profile = MetadataPolicyProfile.from_data(json.loads(row[2]))
             return resolve_policy(profile, library).resolved_id
         except (MetadataPolicyError, ValueError, TypeError, sqlite3.Error) as error:
-            raise MetadataReportError("active metadata policy is unavailable") from error
+            raise MetadataReportError(
+                "active metadata policy is unavailable"
+            ) from error
 
     def current_resolved_metadata_policy(
         self, library: str
@@ -325,7 +365,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             join_filter = "0"
             parameters: tuple[str, ...] = ()
             if libraries:
-                join_filter = "r.library_name IN (" + ",".join("?" for _ in libraries) + ")"
+                join_filter = (
+                    "r.library_name IN (" + ",".join("?" for _ in libraries) + ")"
+                )
                 parameters = libraries
             rows = self._connection.execute(
                 "SELECT s.active_policy_id,d.document,r.library_name,r.resolved_policy_id,r.document "
@@ -366,7 +408,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         except MetadataReportError:
             raise
         except (MetadataPolicyError, ValueError, TypeError, sqlite3.Error) as error:
-            raise MetadataReportError("active metadata policy is unavailable") from error
+            raise MetadataReportError(
+                "active metadata policy is unavailable"
+            ) from error
 
     def _metadata_policy_resolution(
         self, library: str, *, allow_missing: bool
@@ -385,19 +429,25 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             if row[1] is None:
                 if row[0] == 1 or allow_missing:
                     return None
-                raise MetadataReportError("active metadata policy resolution is unavailable")
+                raise MetadataReportError(
+                    "active metadata policy resolution is unavailable"
+                )
             resolved = ResolvedMetadataPolicy.from_data(json.loads(row[2]))
             if (
                 resolved.library != library
                 or resolved.resolved_id != row[1]
                 or resolved.canonical_json != row[2]
             ):
-                raise MetadataReportError("active metadata policy resolution is unavailable")
+                raise MetadataReportError(
+                    "active metadata policy resolution is unavailable"
+                )
             return resolved
         except MetadataReportError:
             raise
         except (MetadataPolicyError, ValueError, TypeError, sqlite3.Error) as error:
-            raise MetadataReportError("active metadata policy is unavailable") from error
+            raise MetadataReportError(
+                "active metadata policy is unavailable"
+            ) from error
 
     def bind_initial_metadata_policy_resolution(self, document: str) -> str:
         """Bind one exact configured resolution while generation one is active."""
@@ -426,8 +476,15 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 for category, destination in resolved.destinations
                 if destination == "automatic"
             }
-            if state[0] == 1 and state[1] == profile.policy_id and requested and not requested.issubset(QUALIFIED_POLICY_OPTIONS):
-                raise MetadataReportError("active metadata policy resolution is unqualified")
+            if (
+                state[0] == 1
+                and state[1] == profile.policy_id
+                and requested
+                and not requested.issubset(QUALIFIED_POLICY_OPTIONS)
+            ):
+                raise MetadataReportError(
+                    "active metadata policy resolution is unqualified"
+                )
             self._connection.execute(
                 "INSERT OR IGNORE INTO metadata_policy_resolutions("
                 "generation,library_name,resolved_policy_id,document) VALUES(1,?,?,?)",
@@ -444,7 +501,13 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 )
             transaction.commit()
             return resolved.resolved_id
-        except (MetadataReportError, MetadataPolicyError, sqlite3.Error, TypeError, ValueError) as error:
+        except (
+            MetadataReportError,
+            MetadataPolicyError,
+            sqlite3.Error,
+            TypeError,
+            ValueError,
+        ) as error:
             transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
@@ -487,7 +550,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 "SELECT active_policy_id,generation,posture FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
             if state is None or state[2] not in {"review", "preview", "automatic"}:
-                raise PolicyContentionError("stale", "metadata policy activation is stale")
+                raise PolicyContentionError(
+                    "stale", "metadata policy activation is stale"
+                )
             if state[0] != expected_active_policy_id:
                 replay = self._connection.execute(
                     "SELECT transition_id,from_policy_id,to_policy_id,generation,state,total,acknowledged "
@@ -507,7 +572,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                         )
                     transaction.commit()
                     return result
-                raise PolicyContentionError("stale", "metadata policy activation is stale")
+                raise PolicyContentionError(
+                    "stale", "metadata policy activation is stale"
+                )
             if policy_id == state[0] and not reconcile_current:
                 transaction.commit()
                 return None
@@ -526,7 +593,8 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                     "processing", "metadata policy transition is processing"
                 )
             draft = self._connection.execute(
-                "SELECT document FROM metadata_policy_drafts WHERE policy_id=?", (policy_id,)
+                "SELECT document FROM metadata_policy_drafts WHERE policy_id=?",
+                (policy_id,),
             ).fetchone()
             if draft is None:
                 raise MetadataReportError("metadata policy draft is unavailable")
@@ -547,8 +615,12 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                     "metadata policy automatic intent is unqualified outside preview",
                 )
             generation = state[1] + 1
-            material = f"metadata-policy-transition-v1\0{state[0]}\0{policy_id}\0{generation}"
-            transition_id = "policy_transition_" + hashlib.sha256(material.encode()).hexdigest()
+            material = (
+                f"metadata-policy-transition-v1\0{state[0]}\0{policy_id}\0{generation}"
+            )
+            transition_id = (
+                "policy_transition_" + hashlib.sha256(material.encode()).hexdigest()
+            )
             cohort = self._connection.execute(
                 "SELECT c.connection_name,c.library_name,c.item_id,c.proposal_set_id,c.report_id,"
                 "c.review_case_id,c.checkpoint "
@@ -564,10 +636,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                     or resolved.resolved_id != resolved_id
                     or resolved.canonical_json != document
                     or (
-                        any(
-                            value == "automatic"
-                            for _, value in resolved.destinations
-                        )
+                        any(value == "automatic" for _, value in resolved.destinations)
                         and (
                             state[2] not in {"preview", "automatic"}
                             or not {
@@ -586,7 +655,17 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             self._connection.execute(
                 "INSERT INTO metadata_policy_transitions(transition_id,from_policy_id,to_policy_id,generation,state,total,acknowledged,created_at,updated_at) "
                 "VALUES(?,?,?,?,?,?,?,?,?)",
-                (transition_id, state[0], policy_id, generation, "processing", len(cohort), 0, activated_at, activated_at),
+                (
+                    transition_id,
+                    state[0],
+                    policy_id,
+                    generation,
+                    "processing",
+                    len(cohort),
+                    0,
+                    activated_at,
+                    activated_at,
+                ),
             )
             self._connection.executemany(
                 "INSERT INTO metadata_policy_resolutions(generation,library_name,resolved_policy_id,document) VALUES(?,?,?,?)",
@@ -595,19 +674,57 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                     for library, resolved_id, document in parsed_resolutions
                 ),
             )
-            for connection, library, item, proposal_id, report_id, case_id, checkpoint in cohort:
+            for (
+                connection,
+                library,
+                item,
+                proposal_id,
+                report_id,
+                case_id,
+                checkpoint,
+            ) in cohort:
                 transition = ReviewTransition(
-                    connection, library, item, checkpoint + 1, proposal_id, report_id,
-                    "retired", case_id, None, "policy_changed", "policy-activation-v1",
+                    connection,
+                    library,
+                    item,
+                    checkpoint + 1,
+                    proposal_id,
+                    report_id,
+                    "retired",
+                    case_id,
+                    None,
+                    "policy_changed",
+                    "policy-activation-v1",
                 )
                 self._connection.execute(
                     "INSERT INTO review_case_transitions(transition_id,connection_name,library_name,item_id,checkpoint,actor,from_review_case_id,to_review_case_id,proposal_set_id,report_id,kind,reason) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (transition.transition_id, connection, library, item, checkpoint + 1, transition.actor, case_id, None, proposal_id, report_id, "retired", "policy_changed"),
+                    (
+                        transition.transition_id,
+                        connection,
+                        library,
+                        item,
+                        checkpoint + 1,
+                        transition.actor,
+                        case_id,
+                        None,
+                        proposal_id,
+                        report_id,
+                        "retired",
+                        "policy_changed",
+                    ),
                 )
                 updated = self._connection.execute(
                     "UPDATE current_review_case_lineages SET review_case_id=NULL,transition_id=?,checkpoint=?,outcome='retired' "
                     "WHERE connection_name=? AND library_name=? AND item_id=? AND review_case_id=? AND checkpoint=?",
-                    (transition.transition_id, checkpoint + 1, connection, library, item, case_id, checkpoint),
+                    (
+                        transition.transition_id,
+                        checkpoint + 1,
+                        connection,
+                        library,
+                        item,
+                        case_id,
+                        checkpoint,
+                    ),
                 ).rowcount
                 if updated != 1:
                     raise MetadataReportError("metadata policy cohort changed")
@@ -641,32 +758,59 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                     )
                 self._connection.execute(
                     "INSERT INTO metadata_policy_transition_items(transition_id,connection_name,library_name,item_id,report_id,work_id,state,failure_code,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
-                    (transition_id, connection, library, item, report_id, work_id, item_state, failure, activated_at),
+                    (
+                        transition_id,
+                        connection,
+                        library,
+                        item,
+                        report_id,
+                        work_id,
+                        item_state,
+                        failure,
+                        activated_at,
+                    ),
                 )
             changed = self._connection.execute(
                 "UPDATE metadata_policy_state SET active_policy_id=?,generation=?,activated_at=? WHERE singleton=1 AND active_policy_id=? AND generation=?",
                 (policy_id, generation, activated_at, state[0], state[1]),
             ).rowcount
             if changed != 1:
-                raise PolicyContentionError("stale", "metadata policy activation is stale")
+                raise PolicyContentionError(
+                    "stale", "metadata policy activation is stale"
+                )
             self._refresh_metadata_policy_transition(transition_id, activated_at)
             result = self.metadata_policy_transition()
             if result is None or result.transition_id != transition_id:
                 raise MetadataReportError("metadata policy transition is unavailable")
             transaction.commit()
             return result
-        except (MetadataReportError, MetadataPolicyError, ReviewCaseValueError, sqlite3.Error, ValueError, TypeError) as error:
+        except (
+            MetadataReportError,
+            MetadataPolicyError,
+            ReviewCaseValueError,
+            sqlite3.Error,
+            ValueError,
+            TypeError,
+        ) as error:
             transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError("metadata policy activation is unavailable") from error
+            raise MetadataReportError(
+                "metadata policy activation is unavailable"
+            ) from error
 
-    def _refresh_metadata_policy_transition(self, transition_id: str, updated_at: int) -> None:
+    def _refresh_metadata_policy_transition(
+        self, transition_id: str, updated_at: int
+    ) -> None:
         counts = self._connection.execute(
             "SELECT COUNT(*),COALESCE(SUM(state='complete'),0),COALESCE(SUM(state='failed'),0) FROM metadata_policy_transition_items WHERE transition_id=?",
             (transition_id,),
         ).fetchone()
-        state = "processing" if counts[1] + counts[2] < counts[0] else ("completed_with_failures" if counts[2] else "completed")
+        state = (
+            "processing"
+            if counts[1] + counts[2] < counts[0]
+            else ("completed_with_failures" if counts[2] else "completed")
+        )
         self._connection.execute(
             "UPDATE metadata_policy_transitions SET state=?,updated_at=? WHERE transition_id=?",
             (state, updated_at, transition_id),
@@ -682,20 +826,39 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             ).fetchone()
             if row is None:
                 return None
-            return PolicyTransition(row[0], row[1], row[2], row[3], row[4], row[7], row[5], row[8], bool(row[6]))
+            return PolicyTransition(
+                row[0],
+                row[1],
+                row[2],
+                row[3],
+                row[4],
+                row[7],
+                row[5],
+                row[8],
+                bool(row[6]),
+            )
         except sqlite3.Error as error:
-            raise MetadataReportError("metadata policy transition is unavailable") from error
+            raise MetadataReportError(
+                "metadata policy transition is unavailable"
+            ) from error
 
-    def retry_metadata_policy_transition(self, transition_id: str, retried_at: int) -> PolicyTransition:
+    def retry_metadata_policy_transition(
+        self, transition_id: str, retried_at: int
+    ) -> PolicyTransition:
         transaction = self._transaction("retry_metadata_policy_transition")
         try:
             transaction.begin()
             row = self._connection.execute(
-                "SELECT generation,state FROM metadata_policy_transitions WHERE transition_id=?", (transition_id,)
+                "SELECT generation,state FROM metadata_policy_transitions WHERE transition_id=?",
+                (transition_id,),
             ).fetchone()
-            current = self._connection.execute("SELECT generation FROM metadata_policy_state WHERE singleton=1").fetchone()
+            current = self._connection.execute(
+                "SELECT generation FROM metadata_policy_state WHERE singleton=1"
+            ).fetchone()
             if row is None or current != (row[0],):
-                raise PolicyContentionError("stale", "metadata policy transition is stale")
+                raise PolicyContentionError(
+                    "stale", "metadata policy transition is stale"
+                )
             failed = self._connection.execute(
                 "SELECT connection_name,library_name,item_id,report_id,work_id FROM metadata_policy_transition_items WHERE transition_id=? AND state='failed'",
                 (transition_id,),
@@ -732,7 +895,10 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                     self._restart_metadata_policy_work(
                         # Reaching here with work_id set means work_stage was
                         # read from review_preparation_work.stage (NOT NULL).
-                        work_id, cast(str, work_stage), report_id, retried_at
+                        work_id,
+                        cast(str, work_stage),
+                        report_id,
+                        retried_at,
                     )
                 self._connection.execute(
                     "UPDATE metadata_policy_transition_items SET work_id=?,state='pending',failure_code=NULL,updated_at=? WHERE transition_id=? AND connection_name=? AND library_name=? AND item_id=?",
@@ -748,9 +914,13 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError("metadata policy transition is unavailable") from error
+            raise MetadataReportError(
+                "metadata policy transition is unavailable"
+            ) from error
 
-    def acknowledge_metadata_policy_transition(self, transition_id: str, acknowledged_at: int) -> PolicyTransition:
+    def acknowledge_metadata_policy_transition(
+        self, transition_id: str, acknowledged_at: int
+    ) -> PolicyTransition:
         transaction = self._transaction("acknowledge_metadata_policy_transition")
         try:
             transaction.begin()
@@ -759,7 +929,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 (acknowledged_at, transition_id),
             ).rowcount
             if updated != 1:
-                raise MetadataReportError("metadata policy transition acknowledgement is unavailable")
+                raise MetadataReportError(
+                    "metadata policy transition acknowledgement is unavailable"
+                )
             result = self.metadata_policy_transition()
             if result is None or result.transition_id != transition_id:
                 raise MetadataReportError("metadata policy transition is unavailable")
@@ -769,7 +941,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError("metadata policy transition is unavailable") from error
+            raise MetadataReportError(
+                "metadata policy transition is unavailable"
+            ) from error
 
     def current_unapplied_count(self, library: str) -> int:
         """Count only current, undecided review cases for one configured library."""
@@ -777,8 +951,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             raise MetadataReportError("policy preview is unavailable")
         try:
             row = self._connection.execute(
-                "SELECT count(*) " + _CURRENT_REVIEW_FROM_SQL +
-                " WHERE c.library_name=?",
+                "SELECT count(*) "
+                + _CURRENT_REVIEW_FROM_SQL
+                + " WHERE c.library_name=?",
                 (library,),
             ).fetchone()
             if row is None or type(row[0]) is not int or row[0] < 0:
@@ -791,13 +966,19 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         self, library: str, limit: int
     ) -> tuple[int, tuple[tuple[MetadataReport, ProposalSet], ...]]:
         """Return bounded exact current review pairs for a no-effect policy preview."""
-        if type(library) is not str or not library or type(limit) is not int or not 1 <= limit <= 20:
+        if (
+            type(library) is not str
+            or not library
+            or type(limit) is not int
+            or not 1 <= limit <= 20
+        ):
             raise MetadataReportError("policy preview is unavailable")
         transaction = self._transaction("current_policy_impact_pairs", deferred=True)
         try:
             transaction.begin()
             total_row = self._connection.execute(
-                "SELECT count(*) " + _CURRENT_REVIEW_FROM_SQL
+                "SELECT count(*) "
+                + _CURRENT_REVIEW_FROM_SQL
                 + " WHERE c.library_name=?",
                 (library,),
             ).fetchone()
@@ -805,10 +986,10 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 raise MetadataReportError("policy preview is unavailable")
             rows = self._connection.execute(
                 "SELECT rc.document,mr.document,p.proposal_set_id,p.report_id,"
-                "p.policy_version,p.document " + _CURRENT_REVIEW_FROM_SQL
+                "p.policy_version,p.document "
+                + _CURRENT_REVIEW_FROM_SQL
                 + " JOIN proposal_sets p ON p.proposal_set_id=rc.proposal_set_id "
-                "AND p.report_id=rc.report_id"
-                + " WHERE c.library_name=? "
+                "AND p.report_id=rc.report_id" + " WHERE c.library_name=? "
                 "ORDER BY c.connection_name,c.item_id,c.review_case_id LIMIT ?",
                 (library, limit),
             ).fetchall()

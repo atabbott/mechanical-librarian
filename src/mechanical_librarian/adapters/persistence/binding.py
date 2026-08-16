@@ -70,9 +70,7 @@ class _LinuxDirectoryChain:
                 descriptors.append(descriptor)
                 information = os.fstat(descriptor)
                 if not stat.S_ISDIR(information.st_mode):
-                    raise MetadataReportError(
-                        "database parent path is invalid"
-                    )
+                    raise MetadataReportError("database parent path is invalid")
                 _require_protected_directory_entry(
                     os.fstat(descriptors[-2]), information
                 )
@@ -81,9 +79,7 @@ class _LinuxDirectoryChain:
         except MetadataReportError:
             raise
         except (OSError, ValueError) as error:
-            raise MetadataReportError(
-                "database parent path is unavailable"
-            ) from error
+            raise MetadataReportError("database parent path is unavailable") from error
         finally:
             if len(identities) != len(descriptors):
                 for descriptor in reversed(descriptors):
@@ -98,9 +94,7 @@ class _LinuxDirectoryChain:
 
     def open_current_parent(self) -> int:
         if self.closed:
-            raise MetadataReportError(
-                "database parent path is unavailable"
-            )
+            raise MetadataReportError("database parent path is unavailable")
         current = -1
         try:
             current = os.open(
@@ -130,12 +124,8 @@ class _LinuxDirectoryChain:
                         or (information.st_dev, information.st_ino)
                         != self.identities[index + 1]
                     ):
-                        raise MetadataReportError(
-                            "database parent path changed"
-                        )
-                    _require_protected_directory_entry(
-                        os.fstat(current), information
-                    )
+                        raise MetadataReportError("database parent path changed")
+                    _require_protected_directory_entry(os.fstat(current), information)
                     os.close(current)
                     current = descriptor
                     descriptor = -1
@@ -148,9 +138,7 @@ class _LinuxDirectoryChain:
         except MetadataReportError:
             raise
         except OSError as error:
-            raise MetadataReportError(
-                "database parent path changed"
-            ) from error
+            raise MetadataReportError("database parent path changed") from error
         finally:
             if current >= 0:
                 os.close(current)
@@ -190,9 +178,7 @@ class _LinuxDatabaseBinding:
         self.expected_identity = expected_identity
         self.owns_lock = owns_lock
         self.authority = authority
-        self.alias_path = Path(
-            f"/proc/self/fd/{self.parent_descriptor}/{alias_name}"
-        )
+        self.alias_path = Path(f"/proc/self/fd/{self.parent_descriptor}/{alias_name}")
         self.closed = False
 
     @classmethod
@@ -214,9 +200,7 @@ class _LinuxDatabaseBinding:
         try:
             directory_chain = _LinuxDirectoryChain.open(absolute.parent)
             parent_descriptor = directory_chain.parent_descriptor
-            _require_owner_only_database_parent(
-                os.fstat(parent_descriptor)
-            )
+            _require_owner_only_database_parent(os.fstat(parent_descriptor))
             expected = os.fstat(descriptor)
             expected_identity = (expected.st_dev, expected.st_ino)
             if authority is None:
@@ -234,16 +218,10 @@ class _LinuxDatabaseBinding:
                     != directory_chain.identities[-1]
                 ):
                     raise MetadataReportError("database authority changed")
-            _require_named_identity(
-                parent_descriptor, absolute.name, expected_identity
-            )
-            _reject_database_sidecars_in_directory(
-                parent_descriptor, absolute.name
-            )
+            _require_named_identity(parent_descriptor, absolute.name, expected_identity)
+            _reject_database_sidecars_in_directory(parent_descriptor, absolute.name)
             for _ in range(8):
-                candidate = (
-                    f".metadata-report-binding-{secrets.token_hex(16)}.sqlite"
-                )
+                candidate = f".metadata-report-binding-{secrets.token_hex(16)}.sqlite"
                 try:
                     os.link(
                         absolute.name,
@@ -257,12 +235,8 @@ class _LinuxDatabaseBinding:
                 alias_name = candidate
                 break
             if alias_name is None:
-                raise MetadataReportError(
-                    "database private binding is unavailable"
-                )
-            _require_named_identity(
-                parent_descriptor, alias_name, expected_identity
-            )
+                raise MetadataReportError("database private binding is unavailable")
+            _require_named_identity(parent_descriptor, alias_name, expected_identity)
             binding = cls(
                 absolute.name,
                 descriptor,
@@ -281,11 +255,7 @@ class _LinuxDatabaseBinding:
                 "database private binding is unavailable"
             ) from error
         finally:
-            if (
-                alias_name is not None
-                and directory_chain is not None
-                and not succeeded
-            ):
+            if alias_name is not None and directory_chain is not None and not succeeded:
                 try:
                     os.unlink(
                         alias_name,
@@ -312,17 +282,13 @@ class _LinuxDatabaseBinding:
             self.authority.require_current()
         current_parent = self.directory_chain.open_current_parent()
         try:
-            _require_owner_only_database_parent(
-                os.fstat(current_parent)
-            )
+            _require_owner_only_database_parent(os.fstat(current_parent))
             _require_named_identity(
                 current_parent,
                 self.configured_name,
                 self.expected_identity,
             )
-            _reject_database_sidecars_in_directory(
-                current_parent, self.configured_name
-            )
+            _reject_database_sidecars_in_directory(current_parent, self.configured_name)
         finally:
             os.close(current_parent)
 
@@ -453,13 +419,15 @@ def _require_named_identity(
             follow_symlinks=False,
         )
     except OSError as error:
-        raise MetadataReportError(
-            "database pathname changed while opening"
-        ) from error
-    if not stat.S_ISREG(information.st_mode) or (
-        information.st_dev,
-        information.st_ino,
-    ) != expected_identity:
+        raise MetadataReportError("database pathname changed while opening") from error
+    if (
+        not stat.S_ISREG(information.st_mode)
+        or (
+            information.st_dev,
+            information.st_ino,
+        )
+        != expected_identity
+    ):
         raise MetadataReportError("database pathname changed while opening")
 
 
@@ -468,17 +436,11 @@ def _require_protected_directory_entry(
 ) -> None:
     effective_user = os.geteuid()
     if parent.st_uid not in (0, effective_user):
-        raise MetadataReportError(
-            "database parent path is not protected"
-        )
+        raise MetadataReportError("database parent path is not protected")
     writable_by_others = parent.st_mode & 0o022
     sticky = parent.st_mode & stat.S_ISVTX
-    if writable_by_others and (
-        not sticky or entry.st_uid != effective_user
-    ):
-        raise MetadataReportError(
-            "database parent path is not protected"
-        )
+    if writable_by_others and (not sticky or entry.st_uid != effective_user):
+        raise MetadataReportError("database parent path is not protected")
 
 
 def _require_owner_only_database_parent(
@@ -489,9 +451,7 @@ def _require_owner_only_database_parent(
         or information.st_uid != os.geteuid()
         or information.st_mode & 0o077
     ):
-        raise MetadataReportError(
-            "database parent directory is not owner-only"
-        )
+        raise MetadataReportError("database parent directory is not owner-only")
 
 
 def _validate_delete_mode_header(descriptor: int) -> None:
@@ -529,15 +489,17 @@ def _validate_connection_binding(
     try:
         verification = os.open(
             rows[0][2],
-            os.O_RDONLY
-            | getattr(os, "O_CLOEXEC", 0)
-            | getattr(os, "O_NOFOLLOW", 0),
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
         )
         connected = os.fstat(verification)
-        if not stat.S_ISREG(connected.st_mode) or (
-            connected.st_dev,
-            connected.st_ino,
-        ) != expected_identity:
+        if (
+            not stat.S_ISREG(connected.st_mode)
+            or (
+                connected.st_dev,
+                connected.st_ino,
+            )
+            != expected_identity
+        ):
             raise MetadataReportError("database pathname changed while opening")
     except OSError as error:
         raise MetadataReportError("database pathname changed while opening") from error
@@ -548,18 +510,28 @@ def _validate_connection_binding(
         requested = path.lstat()
     except OSError as error:
         raise MetadataReportError("database pathname changed while opening") from error
-    if not stat.S_ISREG(requested.st_mode) or (
-        requested.st_dev,
-        requested.st_ino,
-    ) != expected_identity:
+    if (
+        not stat.S_ISREG(requested.st_mode)
+        or (
+            requested.st_dev,
+            requested.st_ino,
+        )
+        != expected_identity
+    ):
         raise MetadataReportError("database pathname changed while opening")
+
+
 def _unlink_created(path: Path, expected: tuple[int, int]) -> None:
     try:
         information = path.lstat()
-        if stat.S_ISREG(information.st_mode) and (
-            information.st_dev,
-            information.st_ino,
-        ) == expected:
+        if (
+            stat.S_ISREG(information.st_mode)
+            and (
+                information.st_dev,
+                information.st_ino,
+            )
+            == expected
+        ):
             path.unlink()
     except OSError:
         pass

@@ -57,7 +57,9 @@ def _packet(data: dict[str, object]) -> ShadowReviewPacket:
 
 
 def test_destination_policy_is_exhaustive() -> None:
-    assert {destination.value for destination in TargetDestination} == set(_DESTINATION_POLICIES)
+    assert {destination.value for destination in TargetDestination} == set(
+        _DESTINATION_POLICIES
+    )
 
 
 @settings(max_examples=30, deadline=None)
@@ -73,18 +75,22 @@ def test_action_and_exclusion_ids_ignore_opaque_case_digest(
     first_catalogue = compile_shadow_review_actions(_packet(first))
     second_catalogue = compile_shadow_review_actions(_packet(second))
 
-    assert [value.action_id for value in first_catalogue.actions] == [value.action_id for value in second_catalogue.actions]
-    assert [value.exclusion_id for value in first_catalogue.exclusions] == [value.exclusion_id for value in second_catalogue.exclusions]
+    assert [value.action_id for value in first_catalogue.actions] == [
+        value.action_id for value in second_catalogue.actions
+    ]
+    assert [value.exclusion_id for value in first_catalogue.exclusions] == [
+        value.exclusion_id for value in second_catalogue.exclusions
+    ]
 
 
 def test_compiler_boundary_accepts_only_the_packet() -> None:
-    assert ["packet"] == list(inspect.signature(compile_shadow_review_actions).parameters)
+    assert ["packet"] == list(
+        inspect.signature(compile_shadow_review_actions).parameters
+    )
 
 
 def test_catalogue_rejects_forged_contract_versions() -> None:
-    catalogue = compile_shadow_review_actions(
-        synthetic_packet()
-    )
+    catalogue = compile_shadow_review_actions(synthetic_packet())
 
     with pytest.raises(PolicyActionCompilationError):
         PolicyActionCatalogue(
@@ -101,14 +107,13 @@ def test_manual_proposal_compiles_candidate_and_explicit_manual_independently() 
     catalogue = compile_shadow_review_actions(packet)
 
     actions = {
-        (value.recommendation, value.candidate_id)
-        for value in catalogue.actions
+        (value.recommendation, value.candidate_id) for value in catalogue.actions
     }
     candidate_id = packet.proposals[0]["candidates"][0]["candidate_id"]
     assert {
-            ("manual", None),
-            ("recommend_candidate", candidate_id),
-        } == actions
+        ("manual", None),
+        ("recommend_candidate", candidate_id),
+    } == actions
     assert "manual" == packet.proposals[0]["decision_summary"]["evidence_sufficiency"]
 
 
@@ -146,11 +151,14 @@ def test_cover_candidate_uses_cover_scope_and_not_applicable_binding() -> None:
 
     catalogue = compile_shadow_review_actions(packet)
 
-    assert catalogue.action_for(
+    assert (
+        catalogue.action_for(
             cover_proposal["proposal_id"],
             "recommend_candidate",
             cover_proposal["candidates"][0]["candidate_id"],
-        ) is not None
+        )
+        is not None
+    )
 
 
 def test_keep_current_rejects_unbound_preservation_evidence() -> None:
@@ -167,11 +175,14 @@ def test_keep_current_rejects_unbound_preservation_evidence() -> None:
 
     catalogue = compile_shadow_review_actions(_packet(data))
 
-    assert catalogue.action_for(
+    assert (
+        catalogue.action_for(
             proposal["proposal_id"],
             "recommend_keep_current",
             None,
-        ) is None
+        )
+        is None
+    )
     keep_exclusion = next(
         exclusion
         for exclusion in catalogue.exclusions
@@ -222,9 +233,7 @@ def test_language_keep_current_uses_compatible_cited_source_evidence() -> None:
     candidate["scope"] = "edition"
     candidate["value"] = {"kind": "text", "value": "EN-US"}
     candidate["decision_summary"]["evidence_scope"] = "edition"
-    candidate["decision_summary"]["selected_manifestation_binding"] = (
-        "established"
-    )
+    candidate["decision_summary"]["selected_manifestation_binding"] = "established"
 
     catalogue = compile_shadow_review_actions(_packet(data))
 
@@ -263,7 +272,9 @@ def test_preserving_candidate_binds_to_preserve_combination() -> None:
         if value.destination == "title"
         and value.recommendation == "recommend_candidate"
     )
-    assert (packet.bibliographic_combinations[0]["combination_id"],) == candidate_action.combination_ids
+    assert (
+        packet.bibliographic_combinations[0]["combination_id"],
+    ) == candidate_action.combination_ids
 
 
 def test_catalogue_is_stable_under_equivalent_packet_ordering() -> None:
@@ -297,7 +308,10 @@ def test_catalogue_is_stable_under_equivalent_packet_ordering() -> None:
             tuple(reversed(getattr(reordered, attribute))),
         )
 
-    assert compile_shadow_review_actions(packet).to_json() == compile_shadow_review_actions(reordered).to_json()
+    assert (
+        compile_shadow_review_actions(packet).to_json()
+        == compile_shadow_review_actions(reordered).to_json()
+    )
 
 
 def test_excluded_candidate_compiles_only_manual_action() -> None:
@@ -308,9 +322,12 @@ def test_excluded_candidate_compiles_only_manual_action() -> None:
     catalogue = compile_shadow_review_actions(_packet(data))
 
     proposal_id = data["proposals"][0]["proposal_id"]
-    assert catalogue.action_for(
+    assert (
+        catalogue.action_for(
             proposal_id, "recommend_candidate", candidate["candidate_id"]
-        ) is None
+        )
+        is None
+    )
     assert catalogue.action_for(proposal_id, "manual", None) is not None
     assert any(value.proposal_id == proposal_id for value in catalogue.exclusions)
 
@@ -319,9 +336,7 @@ def test_candidate_action_binds_complete_citation_closure() -> None:
     data = _packet_data()
     candidate = data["proposals"][0]["candidates"][0]
     second_citation = "synthetic_citation_" + ("9" * 64)
-    data["citations"].append(
-        {**data["citations"][0], "citation_id": second_citation}
-    )
+    data["citations"].append({**data["citations"][0], "citation_id": second_citation})
     candidate["evidence_references"].append(second_citation)
 
     action = compile_shadow_review_actions(_packet(data)).action_for(
@@ -371,8 +386,7 @@ def test_admission_is_crossed_with_destination_not_historical_frequency(
     catalogue = compile_shadow_review_actions(_packet(data))
 
     assert any(
-        value.recommendation == "recommend_candidate"
-        for value in catalogue.actions
+        value.recommendation == "recommend_candidate" for value in catalogue.actions
     )
 
 
@@ -389,9 +403,7 @@ def _absent_support_control() -> dict[str, object]:
     isbn_candidate = isbn_proposal["candidates"][0]
     isbn_candidate["scope"] = "edition"
     isbn_candidate["decision_summary"]["evidence_scope"] = "edition"
-    isbn_candidate["decision_summary"][
-        "selected_manifestation_binding"
-    ] = "established"
+    isbn_candidate["decision_summary"]["selected_manifestation_binding"] = "established"
     isbn_candidate["decision_summary"]["support"]["local_evidence"] = 0
     return isbn
 
@@ -407,9 +419,9 @@ def _missing_correlation_control() -> dict[str, object]:
     publication_candidate["date_precision"] = "day"
     publication_candidate["correlations"] = []
     publication_candidate["decision_summary"]["evidence_scope"] = "edition"
-    publication_candidate["decision_summary"][
-        "selected_manifestation_binding"
-    ] = "established"
+    publication_candidate["decision_summary"]["selected_manifestation_binding"] = (
+        "established"
+    )
     publication_candidate["decision_summary"]["publication"] = {
         "destination": "publishedDate",
         "event": "manifestation_publication",
@@ -436,7 +448,6 @@ def test_negative_controls_fail_closed_in_structurally_feasible_fields(
 ) -> None:
     catalogue = compile_shadow_review_actions(_packet(control()))
     assert not any(
-        value.recommendation == "recommend_candidate"
-        for value in catalogue.actions
+        value.recommendation == "recommend_candidate" for value in catalogue.actions
     )
     assert any(reason in value.reasons for value in catalogue.exclusions)

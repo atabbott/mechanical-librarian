@@ -19,8 +19,7 @@ ARTIFACTS = DATA / "artifacts"
 
 def main() -> None:
     information = DATA.lstat()
-    if (not stat.S_ISDIR(information.st_mode)
-            or information.st_uid != os.geteuid()):
+    if not stat.S_ISDIR(information.st_mode) or information.st_uid != os.geteuid():
         raise RuntimeError("container data volume is unavailable")
     os.chmod(DATA, 0o700)
     ARTIFACTS.mkdir(mode=0o700, exist_ok=True)

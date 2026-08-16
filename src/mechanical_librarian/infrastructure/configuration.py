@@ -170,9 +170,13 @@ class LibraryInput(_Closed):
 
 
 class LimitsInput(_Closed):
-    target_response_bytes: Annotated[StrictInt, Field(ge=1024, le=4_194_304)] = 1_048_576
+    target_response_bytes: Annotated[StrictInt, Field(ge=1024, le=4_194_304)] = (
+        1_048_576
+    )
     provider_response_bytes: Annotated[StrictInt, Field(ge=1024, le=262_144)] = 65_536
-    source_archive_bytes: Annotated[StrictInt, Field(ge=1024, le=268_435_456)] = 268_435_456
+    source_archive_bytes: Annotated[StrictInt, Field(ge=1024, le=268_435_456)] = (
+        268_435_456
+    )
     timeout_seconds: Annotated[StrictInt, Field(ge=1, le=60)] = 30
 
 
@@ -181,19 +185,15 @@ class ReviewInput(_Closed):
     owner_password_hash_file: BoundedAbsolutePath
     tls_certificate_file: BoundedAbsolutePath | None = None
     tls_private_key_file: BoundedAbsolutePath | None = None
-    session_lifetime_seconds: Annotated[
-        StrictInt, Field(ge=300, le=86_400)
-    ] = 3600
+    session_lifetime_seconds: Annotated[StrictInt, Field(ge=300, le=86_400)] = 3600
     trusted_proxy_ips: Annotated[
         list[Annotated[StrictStr, Field(min_length=1, max_length=64)]],
         Field(max_length=16),
     ] = []
-    library_polling_interval_seconds: Annotated[
-        StrictInt, Field(ge=60, le=86_400)
-    ] = 900
-    graceful_shutdown_seconds: Annotated[
-        StrictInt, Field(ge=1, le=300)
-    ] = 30
+    library_polling_interval_seconds: Annotated[StrictInt, Field(ge=60, le=86_400)] = (
+        900
+    )
+    graceful_shutdown_seconds: Annotated[StrictInt, Field(ge=1, le=300)] = 30
     diagnostic_timings_enabled: StrictBool = False
     cover_reviewer_profile_file: BoundedAbsolutePath | None = None
     cover_avoid_promotional_text: StrictBool = False
@@ -222,10 +222,50 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
         )
         value = ConfigurationInput.model_validate(source)
         return ApplicationConfiguration(
-            tuple(sorted((TargetConnectionConfiguration(**item.model_dump()) for item in value.connections), key=lambda item: item.name)),
-            tuple(sorted((LibraryConfiguration(**{**item.model_dump(), "media_kind": "book", "provider_connections": tuple(sorted(item.provider_connections))}) for item in value.libraries), key=lambda item: item.name)),
-            tuple(sorted((MediaMountConfiguration(**item.model_dump()) for item in value.mounts), key=lambda item: item.name)),
-            tuple(sorted((ProviderConnectionConfiguration(**item.model_dump()) for item in value.providers), key=lambda item: item.name)),
+            tuple(
+                sorted(
+                    (
+                        TargetConnectionConfiguration(**item.model_dump())
+                        for item in value.connections
+                    ),
+                    key=lambda item: item.name,
+                )
+            ),
+            tuple(
+                sorted(
+                    (
+                        LibraryConfiguration(
+                            **{
+                                **item.model_dump(),
+                                "media_kind": "book",
+                                "provider_connections": tuple(
+                                    sorted(item.provider_connections)
+                                ),
+                            }
+                        )
+                        for item in value.libraries
+                    ),
+                    key=lambda item: item.name,
+                )
+            ),
+            tuple(
+                sorted(
+                    (
+                        MediaMountConfiguration(**item.model_dump())
+                        for item in value.mounts
+                    ),
+                    key=lambda item: item.name,
+                )
+            ),
+            tuple(
+                sorted(
+                    (
+                        ProviderConnectionConfiguration(**item.model_dump())
+                        for item in value.providers
+                    ),
+                    key=lambda item: item.name,
+                )
+            ),
             ReportLimits(**value.limits.model_dump()),
             value.schema_version,
             value.provider_recovery_generation,
@@ -254,14 +294,31 @@ def load_configuration_file(path: Path) -> ApplicationConfiguration:
 
 
 def configuration_schema_json() -> str:
-    return json.dumps(ConfigurationInput.model_json_schema(), ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    return (
+        json.dumps(
+            ConfigurationInput.model_json_schema(),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
 
 
 def _read_regular(path: Path) -> bytes:
-    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0))
+    descriptor = os.open(
+        path,
+        os.O_RDONLY
+        | os.O_NONBLOCK
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
     try:
         information = os.fstat(descriptor)
-        if not stat.S_ISREG(information.st_mode) or not 1 <= information.st_size <= _MAX_CONFIG_BYTES:
+        if (
+            not stat.S_ISREG(information.st_mode)
+            or not 1 <= information.st_size <= _MAX_CONFIG_BYTES
+        ):
             raise ConfigurationError("configuration document is invalid")
         payload = os.read(descriptor, information.st_size + 1)
         if len(payload) != information.st_size:
@@ -275,7 +332,9 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:
-            raise ConfigurationError("configuration document contains a duplicate field")
+            raise ConfigurationError(
+                "configuration document contains a duplicate field"
+            )
         result[key] = value
     return result
 

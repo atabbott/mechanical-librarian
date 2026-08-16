@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from typing import Any, ClassVar, Self
 
 _IDENTIFIER = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-_LIBRARY = re.compile(r"^(?:[a-z][a-z0-9_-]{0,63}|[0-9][0-9a-f]{7}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$")
+_LIBRARY = re.compile(
+    r"^(?:[a-z][a-z0-9_-]{0,63}|[0-9][0-9a-f]{7}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$"
+)
 _VERSION = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
@@ -55,7 +57,12 @@ class ExternalItemId:
     value: str
 
     def __post_init__(self) -> None:
-        if type(self.value) is not str or not 1 <= len(self.value) <= 512 or self.value.strip() != self.value or "\x00" in self.value:
+        if (
+            type(self.value) is not str
+            or not 1 <= len(self.value) <= 512
+            or self.value.strip() != self.value
+            or "\x00" in self.value
+        ):
             raise DomainValueError("external item ID is invalid")
 
 
@@ -99,12 +106,20 @@ class Fingerprint:
     digest: str
 
     def __post_init__(self) -> None:
-        if self.algorithm != "sha256" or type(self.schema) is not SchemaVersion or _DIGEST.fullmatch(self.digest) is None:
+        if (
+            self.algorithm != "sha256"
+            or type(self.schema) is not SchemaVersion
+            or _DIGEST.fullmatch(self.digest) is None
+        ):
             raise DomainValueError("fingerprint is invalid")
 
     @classmethod
     def from_canonical_value(cls, value: Any, *, schema: SchemaVersion) -> Self:
-        return cls("sha256", schema, hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest())
+        return cls(
+            "sha256",
+            schema,
+            hashlib.sha256(canonical_json(value).encode("utf-8")).hexdigest(),
+        )
 
 
 def canonical_json(value: Any) -> str:
@@ -112,7 +127,15 @@ def canonical_json(value: Any) -> str:
 
 
 __all__ = [
-    "AdapterId", "CompatibilityVersion", "ConnectionId", "DomainValueError",
-    "ExternalItemId", "ExtractorVersion", "Fingerprint", "LibraryId", "SchemaVersion",
-    "TargetId", "canonical_json",
+    "AdapterId",
+    "CompatibilityVersion",
+    "ConnectionId",
+    "DomainValueError",
+    "ExternalItemId",
+    "ExtractorVersion",
+    "Fingerprint",
+    "LibraryId",
+    "SchemaVersion",
+    "TargetId",
+    "canonical_json",
 ]

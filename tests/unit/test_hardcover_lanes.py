@@ -59,7 +59,20 @@ def test_one_request_retains_all_candidates_in_identity_order() -> None:
             200,
             headers={"content-type": "application/json"},
             json=hardcover_envelope(
-                [{"id": 2, "book_id": 20, "isbn_10": None, "isbn_13": "9780306406157"}, {"id": 1, "book_id": 10, "isbn_10": None, "isbn_13": "9780306406157"}],
+                [
+                    {
+                        "id": 2,
+                        "book_id": 20,
+                        "isbn_10": None,
+                        "isbn_13": "9780306406157",
+                    },
+                    {
+                        "id": 1,
+                        "book_id": 10,
+                        "isbn_10": None,
+                        "isbn_13": "9780306406157",
+                    },
+                ],
                 [{"id": 20, "title": "Other title"}, {"id": 10, "title": None}],
             ),
         )
@@ -74,7 +87,10 @@ def test_one_request_retains_all_candidates_in_identity_order() -> None:
     observation = provider.observe(isbn_lookup((isbn_claim(), title_claim())))
     assert observation.status == ProviderStatus.CANDIDATES
     assert "2023-11-14T22:13:20.125000Z" == observation.accessed_at
-    assert [item.identity for item in observation.candidates] == ["hardcover-edition-0000000001", "hardcover-edition-0000000002"]
+    assert [item.identity for item in observation.candidates] == [
+        "hardcover-edition-0000000001",
+        "hardcover-edition-0000000002",
+    ]
     claims = {claim.kind: claim for claim in observation.candidates[1].claims}
     assert claims[ClaimKind.ISBN].links[0].outcome == Comparison.AGREEMENT
     assert claims[ClaimKind.TITLE].links[0].outcome == Comparison.DISAGREEMENT
@@ -84,7 +100,10 @@ def test_one_request_retains_all_candidates_in_identity_order() -> None:
     assert all(descriptor.url is None for descriptor in provider.cover_descriptors)
     assert str(requests[0].url) == HARDCOVER_URL
     assert "limit:6" in json.loads(requests[0].content)["query"]
-    assert provider.observe(isbn_lookup((isbn_claim(), title_claim()))).status == ProviderStatus.UNAVAILABLE
+    assert (
+        provider.observe(isbn_lookup((isbn_claim(), title_claim()))).status
+        == ProviderStatus.UNAVAILABLE
+    )
     assert len(requests) == 1
 
 
@@ -96,7 +115,13 @@ def test_malformed_optional_cover_descriptor_does_not_discard_metadata() -> None
     payload["data"]["editions"][0]["image"] = {"url": "x" * 2049}
     provider = HardcoverMetadataProvider(
         "catalogue",
-        httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json=payload))),
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200, headers={"content-type": "application/json"}, json=payload
+                )
+            )
+        ),
         65_536,
     )
     observation = provider.observe(isbn_lookup((isbn_claim(), title_claim())))
@@ -149,20 +174,24 @@ def test_agreement_references_only_matching_title_and_isbn_claims() -> None:
         ),
         65_536,
     ).observe(isbn_lookup((isbn_claim(), other_isbn, title_claim(), other_title)))
-    claims = {
-        claim.kind: claim for claim in observation.candidates[0].claims
-    }
-    assert {link.local_reference: link.outcome for link in claims[ClaimKind.TITLE].links} == {
+    claims = {claim.kind: claim for claim in observation.candidates[0].claims}
+    assert {
+        link.local_reference: link.outcome for link in claims[ClaimKind.TITLE].links
+    } == {
         title_claim().reference: Comparison.AGREEMENT,
         other_title.reference: Comparison.DISAGREEMENT,
     }
-    assert {link.local_reference: link.outcome for link in claims[ClaimKind.ISBN].links} == {
+    assert {
+        link.local_reference: link.outcome for link in claims[ClaimKind.ISBN].links
+    } == {
         isbn_claim().reference: Comparison.AGREEMENT,
         other_isbn.reference: Comparison.NOT_COMPARABLE,
     }
 
 
-def test_multiple_inputs_are_selected_deterministically_and_statuses_do_not_retry() -> None:
+def test_multiple_inputs_are_selected_deterministically_and_statuses_do_not_retry() -> (
+    None
+):
     second = LocalClaim.create(
         kind=ClaimKind.ISBN,
         observed="0306406152",
@@ -185,14 +214,20 @@ def test_multiple_inputs_are_selected_deterministically_and_statuses_do_not_retr
 
     def success(request: httpx.Request) -> httpx.Response:
         observed_bodies.append(json.loads(request.content))
-        return httpx.Response(200, headers={"content-type": "application/json"}, json=hardcover_envelope([], []))
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=hardcover_envelope([], []),
+        )
 
     observation = HardcoverMetadataProvider(
         "catalogue", httpx.Client(transport=httpx.MockTransport(success)), 65_536
     ).observe(isbn_lookup((print_only, second, isbn_claim())))
     assert observation.status == ProviderStatus.NO_MATCH
     assert observed_bodies[0]["variables"] == {"isbns": ["0306406152", "9780306406157"]}
-    assert observation.input_references == tuple(sorted((second.reference, isbn_claim().reference)))
+    assert observation.input_references == tuple(
+        sorted((second.reference, isbn_claim().reference))
+    )
 
 
 def test_hardcover_executes_every_family_and_work_lane_in_one_aggregate() -> None:
@@ -245,7 +280,11 @@ def test_hardcover_executes_every_family_and_work_lane_in_one_aggregate() -> Non
         httpx.Client(transport=httpx.MockTransport(handler)),
         65_536,
     ).observe(plan)
-    assert ["MetadataEvidenceByIsbn", "MetadataEvidenceByIsbn", "MetadataEvidenceByWork"] == sorted(operations)
+    assert [
+        "MetadataEvidenceByIsbn",
+        "MetadataEvidenceByIsbn",
+        "MetadataEvidenceByWork",
+    ] == sorted(operations)
     assert 3 == len(observation.lanes)
     assert {ProviderStatus.NO_MATCH} == {lane.status for lane in observation.lanes}
 
@@ -266,9 +305,7 @@ def test_hardcover_oversized_lane_stops_remaining_requests_at_exact_bound(
             applicability_basis="print",
         ),
     )
-    plan = metadata_discovery_plan(
-        TargetSnapshot("ebook", None, ()), claims
-    )
+    plan = metadata_discovery_plan(TargetSnapshot("ebook", None, ()), claims)
     payload = json.dumps(
         hardcover_envelope([], []),
         separators=(",", ":"),
@@ -310,9 +347,7 @@ def test_hardcover_conflicting_lane_contributes_no_cover_descriptors() -> None:
             applicability_basis="print",
         ),
     )
-    plan = metadata_discovery_plan(
-        TargetSnapshot("ebook", None, ()), claims
-    )
+    plan = metadata_discovery_plan(TargetSnapshot("ebook", None, ()), claims)
     shared = {
         "id": 1,
         "book_id": 10,
@@ -374,14 +409,12 @@ def test_hardcover_conflicting_lane_contributes_no_cover_descriptors() -> None:
 
     observation = provider.observe(plan)
 
-    assert {ProviderStatus.CANDIDATES, ProviderStatus.MALFORMED} == {lane.status for lane in observation.lanes}
+    assert {ProviderStatus.CANDIDATES, ProviderStatus.MALFORMED} == {
+        lane.status for lane in observation.lanes
+    }
     assert {
-        cover_source_id(
-            CoverSourceKind.HARDCOVER, "catalogue:edition:1"
-        ),
-        cover_source_id(
-            CoverSourceKind.HARDCOVER, "catalogue:work:10:default"
-        ),
+        cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:edition:1"),
+        cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:work:10:default"),
     } == {descriptor.source_id for descriptor in provider.cover_descriptors}
 
 
@@ -464,7 +497,10 @@ def test_hardcover_converges_differing_isbn_applicability_and_shared_cover() -> 
     assert ProviderStatus.CANDIDATES == observation.status
     assert 1 == len(observation.candidates)
     assert {ProviderStatus.CANDIDATES} == {lane.status for lane in observation.lanes}
-    assert tuple(sorted(lane.identity for lane in plan.lanes)) == observation.convergence[0].lane_identities
+    assert (
+        tuple(sorted(lane.identity for lane in plan.lanes))
+        == observation.convergence[0].lane_identities
+    )
     lanes = {lane.matched_family: lane for lane in observation.lanes}
     assert (ebook.reference,) == lanes["9780306406157"].input_references
     assert (print_only.reference,) == lanes["9780140328721"].input_references
@@ -524,7 +560,10 @@ def test_hardcover_converges_differing_isbn_applicability_and_shared_cover() -> 
         if value.provenance is not None
         and value.provenance.edition_identity is not None
     )
-    assert CoverDesignation.EXACT_EDITION == cast(CoverProvenance, edition_cover.provenance).designation
+    assert (
+        CoverDesignation.EXACT_EDITION
+        == cast(CoverProvenance, edition_cover.provenance).designation
+    )
 
 
 @pytest.mark.parametrize(
@@ -554,7 +593,10 @@ def test_hardcover_transport_status_is_terminal_and_not_retried(
         jitter=lambda: 0.0,
     )
     assert provider.observe(isbn_lookup((isbn_claim(),))).status == expected
-    assert provider.observe(isbn_lookup((isbn_claim(),))).status == ProviderStatus.UNAVAILABLE
+    assert (
+        provider.observe(isbn_lookup((isbn_claim(),))).status
+        == ProviderStatus.UNAVAILABLE
+    )
     assert calls == ([1, 1, 1] if status_code == 503 else [1])
 
 
@@ -562,38 +604,65 @@ def test_hardcover_transport_status_is_terminal_and_not_retried(
     ("rows", "expected"),
     (
         ([], ProviderStatus.NO_MATCH),
-        ([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], ProviderStatus.CANDIDATES),
-        ([
-            {"id": 2, "book_id": 2, "isbn_10": None, "isbn_13": None},
-            {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None},
-        ], ProviderStatus.CANDIDATES),
+        (
+            [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
+            ProviderStatus.CANDIDATES,
+        ),
+        (
+            [
+                {"id": 2, "book_id": 2, "isbn_10": None, "isbn_13": None},
+                {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None},
+            ],
+            ProviderStatus.CANDIDATES,
+        ),
     ),
     ids=("zero", "one", "multiple"),
 )
 def test_zero_one_and_multiple_candidates_are_neutral(
     rows: list[dict[str, object]], expected: ProviderStatus
 ) -> None:
-    client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json=hardcover_envelope(rows, [{"id": row["book_id"], "title": None} for row in rows]))))
-    observation = HardcoverMetadataProvider("catalogue", client, 65_536).observe(isbn_lookup((isbn_claim(),)))
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=hardcover_envelope(
+                    rows, [{"id": row["book_id"], "title": None} for row in rows]
+                ),
+            )
+        )
+    )
+    observation = HardcoverMetadataProvider("catalogue", client, 65_536).observe(
+        isbn_lookup((isbn_claim(),))
+    )
     assert observation.status == expected
     assert len(observation.candidates) == len(rows)
-    assert [candidate.identity for candidate in observation.candidates] == sorted(candidate.identity for candidate in observation.candidates)
+    assert [candidate.identity for candidate in observation.candidates] == sorted(
+        candidate.identity for candidate in observation.candidates
+    )
 
 
 def test_candidate_work_identity_is_joined_bounded_and_provider_local() -> None:
     same_work = hardcover_metadata._parse_candidates(
-        json.dumps(hardcover_envelope(
-            [
-                {"id": 2, "book_id": 10, "isbn_10": None, "isbn_13": None},
-                {"id": 1, "book_id": 10, "isbn_10": None, "isbn_13": None},
-            ],
-            [{"id": 10, "title": None}],
-        )).encode(),
+        json.dumps(
+            hardcover_envelope(
+                [
+                    {"id": 2, "book_id": 10, "isbn_10": None, "isbn_13": None},
+                    {"id": 1, "book_id": 10, "isbn_10": None, "isbn_13": None},
+                ],
+                [{"id": 10, "title": None}],
+            )
+        ).encode(),
         "catalogue",
         (),
     )
-    assert [candidate.identity for candidate in same_work] == ["hardcover-edition-0000000001", "hardcover-edition-0000000002"]
-    assert {candidate.work_identity for candidate in same_work} == {"hardcover-work-0000000010"}
+    assert [candidate.identity for candidate in same_work] == [
+        "hardcover-edition-0000000001",
+        "hardcover-edition-0000000002",
+    ]
+    assert {candidate.work_identity for candidate in same_work} == {
+        "hardcover-work-0000000010"
+    }
     structurally_bound = hardcover_metadata._parse_candidates(
         json.dumps(
             hardcover_envelope(
@@ -644,17 +713,22 @@ def test_candidate_work_identity_is_joined_bounded_and_provider_local() -> None:
         "Ada Example",
     )
     different_works = hardcover_metadata._parse_candidates(
-        json.dumps(hardcover_envelope(
-            [
-                {"id": 1, "book_id": 10, "isbn_10": None, "isbn_13": None},
-                {"id": 2, "book_id": 20, "isbn_10": None, "isbn_13": None},
-            ],
-            [{"id": 10, "title": None}, {"id": 20, "title": None}],
-        )).encode(),
+        json.dumps(
+            hardcover_envelope(
+                [
+                    {"id": 1, "book_id": 10, "isbn_10": None, "isbn_13": None},
+                    {"id": 2, "book_id": 20, "isbn_10": None, "isbn_13": None},
+                ],
+                [{"id": 10, "title": None}, {"id": 20, "title": None}],
+            )
+        ).encode(),
         "catalogue",
         (),
     )
-    assert {candidate.work_identity for candidate in different_works} == {"hardcover-work-0000000010", "hardcover-work-0000000020"}
+    assert {candidate.work_identity for candidate in different_works} == {
+        "hardcover-work-0000000010",
+        "hardcover-work-0000000020",
+    }
 
 
 @pytest.mark.parametrize(
@@ -668,24 +742,59 @@ def test_candidate_work_identity_rejects_malformed_book_ids(malformed: object) -
         [{"id": 1, "title": None}],
     )
     with pytest.raises(ValueError):
-        hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())
+        hardcover_metadata._parse_candidates(
+            json.dumps(payload).encode(), "catalogue", ()
+        )
 
 
 def test_sparse_candidate_is_valid_but_result_cap_overflow_is_malformed() -> None:
-    sparse = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json=hardcover_envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], [{"id": 1, "title": None}]))))
-    observation = HardcoverMetadataProvider("catalogue", sparse, 65_536).observe(isbn_lookup((isbn_claim(),)))
+    sparse = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=hardcover_envelope(
+                    [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
+                    [{"id": 1, "title": None}],
+                ),
+            )
+        )
+    )
+    observation = HardcoverMetadataProvider("catalogue", sparse, 65_536).observe(
+        isbn_lookup((isbn_claim(),))
+    )
     assert observation.status == ProviderStatus.CANDIDATES
     assert observation.candidates[0].claims
 
-    rows = [{"id": index, "book_id": index, "isbn_10": None, "isbn_13": None} for index in range(1, 7)]
-    overflow = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json=hardcover_envelope(rows, [{"id": index, "title": None} for index in range(1, 7)]))))
-    observation = HardcoverMetadataProvider("catalogue", overflow, 65_536).observe(isbn_lookup((isbn_claim(),)))
+    rows = [
+        {"id": index, "book_id": index, "isbn_10": None, "isbn_13": None}
+        for index in range(1, 7)
+    ]
+    overflow = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json=hardcover_envelope(
+                    rows, [{"id": index, "title": None} for index in range(1, 7)]
+                ),
+            )
+        )
+    )
+    observation = HardcoverMetadataProvider("catalogue", overflow, 65_536).observe(
+        isbn_lookup((isbn_claim(),))
+    )
     assert observation.status == ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
     assert observation.candidates == ()
 
 
-def test_same_candidate_from_two_provider_connections_has_globally_unique_refs() -> None:
-    payload = hardcover_envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}], [{"id": 1, "title": "Current title"}])
+def test_same_candidate_from_two_provider_connections_has_globally_unique_refs() -> (
+    None
+):
+    payload = hardcover_envelope(
+        [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}],
+        [{"id": 1, "title": "Current title"}],
+    )
 
     def observation(
         name: str,
@@ -700,22 +809,16 @@ def test_same_candidate_from_two_provider_connections_has_globally_unique_refs()
             )
         )
         provider = HardcoverMetadataProvider(name, client, 65_536)
-        result = provider.observe(
-            isbn_lookup((isbn_claim(), title_claim()))
-        )
+        result = provider.observe(isbn_lookup((isbn_claim(), title_claim())))
         return provider, result
 
     first_provider, first = observation("catalogue")
     second_provider, second = observation("secondary")
     first_references = {
-        claim.reference
-        for candidate in first.candidates
-        for claim in candidate.claims
+        claim.reference for candidate in first.candidates for claim in candidate.claims
     }
     second_references = {
-        claim.reference
-        for candidate in second.candidates
-        for claim in candidate.claims
+        claim.reference for candidate in second.candidates for claim in candidate.claims
     }
     assert first_references
     assert first_references.isdisjoint(second_references)
@@ -723,7 +826,9 @@ def test_same_candidate_from_two_provider_connections_has_globally_unique_refs()
         {value.source_id for value in second_provider.cover_descriptors}
     )
     report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")),
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
         file=FileFacts(0, "a" * 64, "b" * 64),
         local_claims=(isbn_claim(), title_claim()),
         local_reasons=("opening_isbn",),
@@ -749,14 +854,23 @@ def test_credential_and_private_path_provider_titles_are_malformed_without_leaka
                 200,
                 headers={"content-type": "application/json"},
                 json={
-                    "data": {"editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}], "books": [{"id": 1, "title": hostile}]}
+                    "data": {
+                        "editions": [
+                            {
+                                "id": 1,
+                                "book_id": 1,
+                                "isbn_10": None,
+                                "isbn_13": "9780306406157",
+                            }
+                        ],
+                        "books": [{"id": 1, "title": hostile}],
+                    }
                 },
             )
         )
     )
-    observation = HardcoverMetadataProvider(
-        "catalogue", client, 65_536
-    ).observe(isbn_lookup((isbn_claim(),)))
+    observation = HardcoverMetadataProvider("catalogue", client, 65_536).observe(
+        isbn_lookup((isbn_claim(),))
+    )
     assert observation.status == ProviderStatus.MALFORMED
     assert hostile not in repr(observation)
-

@@ -57,9 +57,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             operation.plan.authority.decision_id,
         )
 
-    def retire_stale_cover_decision(
-        self, decision_id: str, changed_at: int
-    ) -> bool:
+    def retire_stale_cover_decision(self, decision_id: str, changed_at: int) -> bool:
         """Retire a selected cover whose case ceased to be current before planning."""
         with self._connection:
             row = self._connection.execute(
@@ -96,9 +94,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         ).fetchone()
         return None if row is None else str(row[0])
 
-    def current_cover_consideration_document(
-        self, review_case_id: str
-    ) -> str | None:
+    def current_cover_consideration_document(self, review_case_id: str) -> str | None:
         row = self._connection.execute(
             "SELECT consideration.document FROM current_cover_considerations current "
             "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
@@ -111,9 +107,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         ).fetchone()
         return None if row is None else str(row[0])
 
-    def latest_cover_consideration_document(
-        self, review_case_id: str
-    ) -> str | None:
+    def latest_cover_consideration_document(self, review_case_id: str) -> str | None:
         row = self._connection.execute(
             "SELECT consideration.document FROM current_cover_considerations current "
             "JOIN cover_considerations consideration "
@@ -148,9 +142,10 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 "schema_version": "cover-consideration-event-v1",
             }
         )
-        event_id = "cover_consideration_event_" + hashlib.sha256(
-            document.encode("utf-8")
-        ).hexdigest()
+        event_id = (
+            "cover_consideration_event_"
+            + hashlib.sha256(document.encode("utf-8")).hexdigest()
+        )
         self._connection.execute(
             "INSERT OR IGNORE INTO cover_consideration_events(event_id,consideration_id,review_case_id,kind,decision_id,occurred_at,document) VALUES(?,?,?,?,?,?,?)",
             (

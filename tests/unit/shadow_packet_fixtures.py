@@ -11,56 +11,64 @@ def synthetic_packet() -> ShadowReviewPacket:
     correlation_id = "correlation_" + "4" * 64
     return ShadowReviewPacket(
         case_id,
-        ({
-            "candidates": [{
-                "assessment": "replaces_target",
-                "candidate_id": candidate_id,
-                "correlations": [correlation_id],
-                "date_event": None,
-                "date_precision": None,
-                "decision_summary": {
-                    "bibliographic_compatibility_ids": [],
-                    "creator_roles": {"excluded": [], "included": []},
-                    "evidence_scope": "work",
-                    "publication": None,
-                    "selected_manifestation_binding": "associated_work_only",
-                    "support": {
-                        "independent_provider_correlations": 0,
-                        "local_evidence": 1,
-                        "target_only_preservation": 0,
-                    },
+        (
+            {
+                "candidates": [
+                    {
+                        "assessment": "replaces_target",
+                        "candidate_id": candidate_id,
+                        "correlations": [correlation_id],
+                        "date_event": None,
+                        "date_precision": None,
+                        "decision_summary": {
+                            "bibliographic_compatibility_ids": [],
+                            "creator_roles": {"excluded": [], "included": []},
+                            "evidence_scope": "work",
+                            "publication": None,
+                            "selected_manifestation_binding": "associated_work_only",
+                            "support": {
+                                "independent_provider_correlations": 0,
+                                "local_evidence": 1,
+                                "target_only_preservation": 0,
+                            },
+                        },
+                        "evidence_references": [citation_id],
+                        "scope": "work",
+                        "value": "Synthetic title",
+                    }
+                ],
+                "current": {
+                    "confidence": "unknown",
+                    "source": "synthetic",
+                    "value": "Current synthetic title",
                 },
-                "evidence_references": [citation_id],
-                "scope": "work",
-                "value": "Synthetic title",
-            }],
-            "current": {
-                "confidence": "unknown",
-                "source": "synthetic",
-                "value": "Current synthetic title",
+                "decision_summary": {
+                    "evidence_sufficiency": "manual",
+                    "target_only_preservation": 0,
+                },
+                "destination": "title",
+                "outcome": "unresolved_choice",
+                "proposal_id": proposal_id,
+                "reasons": ["Synthetic compatibility canary."],
             },
-            "decision_summary": {
-                "evidence_sufficiency": "manual",
-                "target_only_preservation": 0,
+        ),
+        (
+            {
+                "citation_id": citation_id,
+                "fact": {
+                    "reference": citation_id,
+                    "state": "synthetic",
+                    "value": "Synthetic title",
+                },
             },
-            "destination": "title",
-            "outcome": "unresolved_choice",
-            "proposal_id": proposal_id,
-            "reasons": ["Synthetic compatibility canary."],
-        },),
-        ({
-            "citation_id": citation_id,
-            "fact": {
-                "reference": citation_id,
-                "state": "synthetic",
-                "value": "Synthetic title",
+        ),
+        (
+            {
+                "candidate_ids": [candidate_id],
+                "correlation_id": correlation_id,
+                "proposal_ids": [proposal_id],
             },
-        },),
-        ({
-            "candidate_ids": [candidate_id],
-            "correlation_id": correlation_id,
-            "proposal_ids": [proposal_id],
-        },),
+        ),
     )
 
 

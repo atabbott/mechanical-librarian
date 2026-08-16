@@ -68,9 +68,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         binding: _LinuxDatabaseBinding | None = None,
         *,
         has_pending_field_effect_manual_return: Callable[[str], bool],
-        require_staged_shadow_projection_current: Callable[
-            [str, PipelineAction], None
-        ],
+        require_staged_shadow_projection_current: Callable[[str, PipelineAction], None],
         refresh_metadata_policy_transition: Callable[[str, int], None],
         enqueue_provider_recovery_outbox: Callable[
             [str, str, str, tuple[str | None, str, str | None, int | None, str], int],
@@ -154,33 +152,37 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 if control[0] % 4 == 0
                 else "updated_at,ordinal"
             )
-            work = None if library is None else self._connection.execute(
-                "SELECT work_id,scan_id,stage,attempt,connection_name,library_name,library_id,"
-                "producer_fingerprint,catalogue_generation,catalogue_fingerprint,"
-                "item_id,file_identity,source_revision,"
-                "report_id,proposal_set_id,review_case_id,source_fingerprint,"
-                "(SELECT checkpoint FROM current_review_case_lineages lineage "
-                "WHERE lineage.connection_name=review_preparation_work.connection_name "
-                "AND lineage.library_name=review_preparation_work.library_name "
-                "AND lineage.item_id=review_preparation_work.item_id "
-                "AND lineage.proposal_set_id=review_preparation_work.proposal_set_id "
-                "AND lineage.report_id=review_preparation_work.report_id "
-                "AND lineage.review_case_id=review_preparation_work.review_case_id) "
-                ",(SELECT generation FROM metadata_policy_state WHERE singleton=1) "
-                "FROM review_preparation_work WHERE state='queued' AND library_name=? "
-                "AND NOT EXISTS(SELECT 1 FROM review_preparation_connection_conditions c "
-                "WHERE c.connection_name=review_preparation_work.connection_name "
-                "AND c.state IN ('paused','checking')) "
-                "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
-                "WHERE s.scan_id=review_preparation_work.scan_id "
-                "AND s.state='processing') "
-                "AND retry_not_before<=? "
-                f"ORDER BY {ordering} LIMIT 1",
-                (
-                    library[0],
-                    claimed_at,
-                ),
-            ).fetchone()
+            work = (
+                None
+                if library is None
+                else self._connection.execute(
+                    "SELECT work_id,scan_id,stage,attempt,connection_name,library_name,library_id,"
+                    "producer_fingerprint,catalogue_generation,catalogue_fingerprint,"
+                    "item_id,file_identity,source_revision,"
+                    "report_id,proposal_set_id,review_case_id,source_fingerprint,"
+                    "(SELECT checkpoint FROM current_review_case_lineages lineage "
+                    "WHERE lineage.connection_name=review_preparation_work.connection_name "
+                    "AND lineage.library_name=review_preparation_work.library_name "
+                    "AND lineage.item_id=review_preparation_work.item_id "
+                    "AND lineage.proposal_set_id=review_preparation_work.proposal_set_id "
+                    "AND lineage.report_id=review_preparation_work.report_id "
+                    "AND lineage.review_case_id=review_preparation_work.review_case_id) "
+                    ",(SELECT generation FROM metadata_policy_state WHERE singleton=1) "
+                    "FROM review_preparation_work WHERE state='queued' AND library_name=? "
+                    "AND NOT EXISTS(SELECT 1 FROM review_preparation_connection_conditions c "
+                    "WHERE c.connection_name=review_preparation_work.connection_name "
+                    "AND c.state IN ('paused','checking')) "
+                    "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
+                    "WHERE s.scan_id=review_preparation_work.scan_id "
+                    "AND s.state='processing') "
+                    "AND retry_not_before<=? "
+                    f"ORDER BY {ordering} LIMIT 1",
+                    (
+                        library[0],
+                        claimed_at,
+                    ),
+                ).fetchone()
+            )
             if work is not None:
                 attempt = work[3] + 1
                 updated = self._connection.execute(
@@ -225,8 +227,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "AND w.state IN ('queued','running'))"
             ).fetchall()
             for scan_id, rescan_requested in scans:
-                pending_manual_return = (
-                    self._has_pending_field_effect_manual_return(scan_id)
+                pending_manual_return = self._has_pending_field_effect_manual_return(
+                    scan_id
                 )
                 failures = self._connection.execute(
                     "SELECT COUNT(*) FROM review_preparation_work "
@@ -319,17 +321,36 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 transaction.commit()
                 return None
             attempt = work[3] + 1
-            if self._connection.execute(
-                "UPDATE review_preparation_work SET state='running',attempt=?,updated_at=? "
-                "WHERE work_id=? AND state='queued'",
-                (attempt, claimed_at, work_id),
-            ).rowcount != 1:
+            if (
+                self._connection.execute(
+                    "UPDATE review_preparation_work SET state='running',attempt=?,updated_at=? "
+                    "WHERE work_id=? AND state='queued'",
+                    (attempt, claimed_at, work_id),
+                ).rowcount
+                != 1
+            ):
                 raise MetadataReportError("review preparation claim changed")
             transaction.commit()
             return PipelineAction(
-                work[0], work[1], work[2], attempt, work[4], work[5], work[6],
-                work[7], work[8], work[9], work[10], work[11], work[12], work[13],
-                work[14], work[15], work[16], work[17], work[18],
+                work[0],
+                work[1],
+                work[2],
+                attempt,
+                work[4],
+                work[5],
+                work[6],
+                work[7],
+                work[8],
+                work[9],
+                work[10],
+                work[11],
+                work[12],
+                work[13],
+                work[14],
+                work[15],
+                work[16],
+                work[17],
+                work[18],
             )
         except (sqlite3.Error, MetadataReportError) as error:
             transaction.rollback()
@@ -354,18 +375,26 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             "SELECT work_id,scan_id FROM review_preparation_work WHERE connection_name=? "
             "AND library_name=? AND item_id=? AND file_identity=? "
             "AND report_id=? AND state IN ('complete','failed','stale')",
-            (report.target.connection, report.target.library, report.target.item,
-             report.file.identity, source_report_id),
+            (
+                report.target.connection,
+                report.target.library,
+                report.target.item,
+                report.file.identity,
+                source_report_id,
+            ),
         ).fetchone()
         if row is None:
             raise MetadataReportError("provider retry staging is stale")
-        if self._connection.execute(
-            "UPDATE review_preparation_work SET stage='provider',state='queued',attempt=0,"
-            "recovery_attempt=0,retry_not_before=0,report_id=?,proposal_set_id=NULL,"
-            "review_case_id=NULL,recovery_source_report_id=?,failure_code=NULL,failure_root=NULL,updated_at=? "
-            "WHERE work_id=? AND state IN ('complete','failed','stale')",
-            (report.report_id, source_report_id, staged_at, row[0]),
-        ).rowcount != 1:
+        if (
+            self._connection.execute(
+                "UPDATE review_preparation_work SET stage='provider',state='queued',attempt=0,"
+                "recovery_attempt=0,retry_not_before=0,report_id=?,proposal_set_id=NULL,"
+                "review_case_id=NULL,recovery_source_report_id=?,failure_code=NULL,failure_root=NULL,updated_at=? "
+                "WHERE work_id=? AND state IN ('complete','failed','stale')",
+                (report.report_id, source_report_id, staged_at, row[0]),
+            ).rowcount
+            != 1
+        ):
             raise MetadataReportError("provider retry staging changed")
         self._connection.execute(
             "UPDATE review_preparation_scans SET state='processing',updated_at=? "
@@ -382,7 +411,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 (report_id,),
             ).fetchone()
         except sqlite3.Error as error:
-            raise MetadataReportError("provider retry staging is unavailable") from error
+            raise MetadataReportError(
+                "provider retry staging is unavailable"
+            ) from error
         if row is None:
             raise MetadataReportError("provider retry staging is stale")
         return cast(str, row[0])
@@ -397,12 +428,12 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 (report_id,),
             ).fetchone()
         except sqlite3.Error as error:
-            raise MetadataReportError("provider retry staging is unavailable") from error
+            raise MetadataReportError(
+                "provider retry staging is unavailable"
+            ) from error
         return row is not None
 
-    def completed_provider_retry_successor(
-        self, source_report_id: str
-    ) -> str | None:
+    def completed_provider_retry_successor(self, source_report_id: str) -> str | None:
         """Return only the exact staged successor that completed package cutover."""
         if type(source_report_id) is not str or not source_report_id:
             raise MetadataReportError("provider retry staging is invalid")
@@ -416,7 +447,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 (source_report_id,),
             ).fetchall()
         except sqlite3.Error as error:
-            raise MetadataReportError("provider retry staging is unavailable") from error
+            raise MetadataReportError(
+                "provider retry staging is unavailable"
+            ) from error
         if len(rows) > 1:
             raise MetadataReportError("provider retry staging conflicts")
         return None if not rows else rows[0][0]
@@ -494,7 +527,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "FROM review_preparation_absences WHERE scan_id=? ORDER BY item_id",
                 (action.scan_id,),
             ).fetchall()
-            confirmation_required = bool(staged_retirements) and not previous_retirements
+            confirmation_required = (
+                bool(staged_retirements) and not previous_retirements
+            )
             if previous_retirements:
                 confirmed = set(previous_retirements).intersection(staged_retirements)
                 for candidate in staged_retirements:
@@ -512,9 +547,10 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     f"review-preparation-work-v1\0{action.connection}\0"
                     f"{action.library}\0{entry.item_id}"
                 )
-                work_id = "review_work_" + hashlib.sha256(
-                    material.encode("utf-8")
-                ).hexdigest()
+                work_id = (
+                    "review_work_"
+                    + hashlib.sha256(material.encode("utf-8")).hexdigest()
+                )
                 existing = self._connection.execute(
                     "SELECT file_identity,source_fingerprint,producer_fingerprint,"
                     "stage,state,report_id,proposal_set_id,review_case_id "
@@ -627,7 +663,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             ).fetchall():
                 if item_id not in eligible_items:
                     self._connection.execute(
-                        "DELETE FROM review_preparation_work WHERE work_id=?", (work_id,)
+                        "DELETE FROM review_preparation_work WHERE work_id=?",
+                        (work_id,),
                     )
             self._connection.execute(
                 "UPDATE review_preparation_scans SET state='processing',"
@@ -739,10 +776,13 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 ),
             )
             if published is not None:
-                if self._connection.execute(
-                    "DELETE FROM current_review_packages WHERE connection_name=? AND library_name=? AND item_id=? AND proposal_set_id=? AND report_id=? AND review_case_id=? AND checkpoint=?",
-                    (connection, library, item_id, *published),
-                ).rowcount != 1:
+                if (
+                    self._connection.execute(
+                        "DELETE FROM current_review_packages WHERE connection_name=? AND library_name=? AND item_id=? AND proposal_set_id=? AND report_id=? AND review_case_id=? AND checkpoint=?",
+                        (connection, library, item_id, *published),
+                    ).rowcount
+                    != 1
+                ):
                     raise MetadataReportError("review preparation state changed")
         self._connection.execute(
             "DELETE FROM review_preparation_absences WHERE scan_id=?", (scan_id,)
@@ -756,7 +796,11 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         claim_next: bool = False,
         exact_next: bool = False,
     ) -> PipelineAction | None:
-        if type(claim_next) is not bool or type(exact_next) is not bool or (claim_next and exact_next):
+        if (
+            type(claim_next) is not bool
+            or type(exact_next) is not bool
+            or (claim_next and exact_next)
+        ):
             raise MetadataReportError("review preparation state is invalid")
         stages = {
             "extraction": ("provider", "report_id"),
@@ -825,8 +869,12 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     pointer is None
                     or pointer[0] != action.proposal_set_id
                     or pointer[1] != action.report_id
-                    or pointer[4] not in {"admitted", "superseded", "no_case", "retired"}
-                    or (action.stage == "projection" and pointer[2] != action.review_case_id)
+                    or pointer[4]
+                    not in {"admitted", "superseded", "no_case", "retired"}
+                    or (
+                        action.stage == "projection"
+                        and pointer[2] != action.review_case_id
+                    )
                 ):
                     raise MetadataReportError("review preparation state changed")
                 self._connection.execute(
@@ -840,8 +888,11 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     # PipelineAction.item_id is optional on the dataclass, but
                     # the pointer lookup immediately above matched a lineage
                     # row on exactly this connection/library/item triple.
-                    action.connection, action.library, cast(str, action.item_id),
-                    pointer, completed_at,
+                    action.connection,
+                    action.library,
+                    cast(str, action.item_id),
+                    pointer,
+                    completed_at,
                 )
             if target[0] == "complete":
                 transition_row = self._connection.execute(
@@ -853,7 +904,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                         "UPDATE metadata_policy_transition_items SET state='complete',failure_code=NULL,updated_at=? WHERE transition_id=? AND work_id=? AND state='pending'",
                         (completed_at, transition_row[0], action.action_id),
                     )
-                    self._refresh_metadata_policy_transition(transition_row[0], completed_at)
+                    self._refresh_metadata_policy_transition(
+                        transition_row[0], completed_at
+                    )
             if action.stage == "provider":
                 self._connection.execute(
                     "UPDATE review_preparation_control SET circuit_failures="
@@ -880,7 +933,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 raise
             if isinstance(error, ReviewAdmissionStaleError):
                 raise MetadataReportError("review preparation state changed") from error
-            raise MetadataReportError("review preparation persistence failed") from error
+            raise MetadataReportError(
+                "review preparation persistence failed"
+            ) from error
 
     def begin_review_pipeline_output(self) -> None:
         try:
@@ -888,7 +943,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 raise MetadataReportError("review preparation state is invalid")
             self._connection.execute("BEGIN IMMEDIATE")
         except sqlite3.Error as error:
-            raise MetadataReportError("review preparation persistence failed") from error
+            raise MetadataReportError(
+                "review preparation persistence failed"
+            ) from error
 
     def take_review_pipeline_claim(self) -> PipelineAction | None:
         action = self._review_pipeline_claim
@@ -900,7 +957,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             if self._connection.in_transaction:
                 self._connection.rollback()
         except sqlite3.Error as error:
-            raise MetadataReportError("review preparation persistence failed") from error
+            raise MetadataReportError(
+                "review preparation persistence failed"
+            ) from error
 
     def complete_review_extraction_publication(
         self,
@@ -926,9 +985,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 and (
                     provider_failure_code != "authentication"
                     or type(provider_failure_root) is not str
-                    or re.fullmatch(
-                        r"[a-z][a-z0-9_-]{0,63}", provider_failure_root
-                    ) is None
+                    or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", provider_failure_root)
+                    is None
                 )
             )
             or (
@@ -948,7 +1006,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "updated_at=? WHERE work_id=? AND stage='extraction' "
                 "AND state='running' AND attempt=?",
                 (
-                    completed_at + max(
+                    completed_at
+                    + max(
                         recovery_delay_seconds,
                         5 * (1 << min(3, action.attempt)),
                     ),
@@ -959,7 +1018,10 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 ),
             ).rowcount
         else:
-            terminal_failure = provider_failure_code in {"authentication", "configuration"}
+            terminal_failure = provider_failure_code in {
+                "authentication",
+                "configuration",
+            }
             updated = self._connection.execute(
                 "UPDATE review_preparation_work SET stage=?,state=?,attempt=0,"
                 "retry_not_before=0,report_id=?,failure_code=?,failure_root=?,updated_at=? WHERE work_id=? "
@@ -992,8 +1054,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 if report_id != transition_row[1]
                 else (
                     "failed"
-                    if work_state is not None
-                    and work_state[0] in {"failed", "stale"}
+                    if work_state is not None and work_state[0] in {"failed", "stale"}
                     else None
                 )
             )
@@ -1028,8 +1089,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         if action.stage == "discovery":
             try:
                 transaction.begin()
-                pending_manual_return = (
-                    self._has_pending_field_effect_manual_return(action.scan_id)
+                pending_manual_return = self._has_pending_field_effect_manual_return(
+                    action.scan_id
                 )
                 updated = self._connection.execute(
                     "UPDATE review_preparation_scans SET state="
@@ -1040,8 +1101,10 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     "rescan_requested=0,updated_at=? "
                     "WHERE scan_id=? AND state='discovering'",
                     (
-                        pending_manual_return, pending_manual_return,
-                        completed_at, action.scan_id,
+                        pending_manual_return,
+                        pending_manual_return,
+                        completed_at,
+                        action.scan_id,
                     ),
                 ).rowcount
                 if updated != 1:
@@ -1052,7 +1115,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 transaction.rollback()
                 if isinstance(error, MetadataReportError):
                     raise
-                raise MetadataReportError("review preparation persistence failed") from error
+                raise MetadataReportError(
+                    "review preparation persistence failed"
+                ) from error
         if code not in {
             "provider",
             "configuration",
@@ -1064,17 +1129,19 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             "currentness",
         }:
             code = "failed"
-        if (failure_root is not None and (
-                code != "authentication"
-                or type(failure_root) is not str
-                or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", failure_root) is None
-        )):
+        if failure_root is not None and (
+            code != "authentication"
+            or type(failure_root) is not str
+            or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", failure_root) is None
+        ):
             code = "failed"
             failure_root = None
         if code != "authentication":
             failure_root = None
-        state = "queued" if retryable and action.attempt < 3 else (
-            "stale" if code in {"stale", "currentness"} else "failed"
+        state = (
+            "queued"
+            if retryable and action.attempt < 3
+            else ("stale" if code in {"stale", "currentness"} else "failed")
         )
         try:
             transaction.begin()
@@ -1132,15 +1199,24 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 if transition_row is not None:
                     self._connection.execute(
                         "UPDATE metadata_policy_transition_items SET state='failed',failure_code=?,updated_at=? WHERE transition_id=? AND work_id=? AND state='pending'",
-                        ("stale" if state == "stale" else "failed", completed_at, transition_row[0], action.action_id),
+                        (
+                            "stale" if state == "stale" else "failed",
+                            completed_at,
+                            transition_row[0],
+                            action.action_id,
+                        ),
                     )
-                    self._refresh_metadata_policy_transition(transition_row[0], completed_at)
+                    self._refresh_metadata_policy_transition(
+                        transition_row[0], completed_at
+                    )
             transaction.commit()
         except (sqlite3.Error, MetadataReportError) as error:
             transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError("review preparation persistence failed") from error
+            raise MetadataReportError(
+                "review preparation persistence failed"
+            ) from error
 
     def review_case_ready_at(self, review_case_id: str) -> int | None:
         """Return the exact preparation-complete checkpoint for advisory timing."""
@@ -1157,13 +1233,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 raise MetadataReportError("review case readiness is unavailable")
             return row[0]
         except sqlite3.Error as error:
-            raise MetadataReportError(
-                "review case readiness is unavailable"
-            ) from error
+            raise MetadataReportError("review case readiness is unavailable") from error
 
-    def _schedule_current_shadow_work(
-        self, case: ReviewCase, updated_at: int
-    ) -> None:
+    def _schedule_current_shadow_work(self, case: ReviewCase, updated_at: int) -> None:
         """Reuse an existing current pipeline row; never create a scheduler."""
         lineage = (
             case.target["connection"],

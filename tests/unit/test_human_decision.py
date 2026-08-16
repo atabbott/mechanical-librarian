@@ -107,7 +107,9 @@ def test_owner_can_replace_an_automatic_actionable_selection(
     resolved = json.loads(json.dumps(proposal))
     resolved["result"]["outcome"] = "propose_change"
     replacement = type(
-        "ResolvedCase", (), {
+        "ResolvedCase",
+        (),
+        {
             "review_case_id": case.review_case_id,
             "target_fingerprint": case.target_fingerprint,
             "proposals": (resolved,),

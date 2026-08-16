@@ -110,13 +110,18 @@ def test_read_only_repository_success_and_attempted_write_do_not_mutate_files() 
         repository = open_shadow_preview_repository(path)
         try:
             assert packet == repository.preview_shadow_packet(case_id)
-            assert 1 == repository._connection.execute("PRAGMA query_only").fetchone()[0]
+            assert (
+                1 == repository._connection.execute("PRAGMA query_only").fetchone()[0]
+            )
             with pytest.raises(sqlite3.OperationalError):
                 repository._connection.execute("CREATE TABLE forbidden(value TEXT)")
         finally:
             repository.close()
         assert before == _snapshot(directory)
-        assert not any(path.with_name(path.name + suffix).exists() for suffix in ("-wal", "-shm", "-journal"))
+        assert not any(
+            path.with_name(path.name + suffix).exists()
+            for suffix in ("-wal", "-shm", "-journal")
+        )
 
 
 @pytest.mark.parametrize(
@@ -227,9 +232,7 @@ def test_invalid_shadow_packet_becomes_a_report_error_on_both_previews() -> None
                 writable.preview_shadow_packet(case_id)
         finally:
             writable.close()
-        assert isinstance(
-            writable_failure.value.__cause__, ShadowReviewValueError
-        )
+        assert isinstance(writable_failure.value.__cause__, ShadowReviewValueError)
 
         preview = open_shadow_preview_repository(path)
         try:
@@ -239,6 +242,4 @@ def test_invalid_shadow_packet_becomes_a_report_error_on_both_previews() -> None
             assert not preview._connection.in_transaction
         finally:
             preview.close()
-        assert isinstance(
-            preview_failure.value.__cause__, ShadowReviewValueError
-        )
+        assert isinstance(preview_failure.value.__cause__, ShadowReviewValueError)

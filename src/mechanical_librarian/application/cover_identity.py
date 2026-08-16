@@ -42,10 +42,15 @@ from mechanical_librarian.domain.metadata_report import (
 )
 
 SCHEMA_VERSION = "cover-identity-report-v1"
-_OUTCOMES = frozenset({
-    "verified_manifestation_match", "verified_work_match", "plausible_match",
-    "unknown", "conflict",
-})
+_OUTCOMES = frozenset(
+    {
+        "verified_manifestation_match",
+        "verified_work_match",
+        "plausible_match",
+        "unknown",
+        "conflict",
+    }
+)
 _CLASSIFIER_RULES = (
     "packet-candidate-reference-and-provenance:exact-report-bound",
     "packet-source-normalization:exact-transport-bound",
@@ -60,47 +65,66 @@ _CLASSIFIER_RULES = (
     "provider-isbn-lane-title-insufficient-or-unopposed-creator-disagreement:unknown",
     "legacy-discovery-without-lane-candidate-mappings:aggregate-fallback",
 )
-CLASSIFIER_REFERENCE = "cover_identity_classifier_" + hashlib.sha256(
-    canonical_packet_json(
-        {"schema_version": SCHEMA_VERSION, "rules": _CLASSIFIER_RULES}
-    ).encode("utf-8")
-).hexdigest()
+CLASSIFIER_REFERENCE = (
+    "cover_identity_classifier_"
+    + hashlib.sha256(
+        canonical_packet_json(
+            {"schema_version": SCHEMA_VERSION, "rules": _CLASSIFIER_RULES}
+        ).encode("utf-8")
+    ).hexdigest()
+)
 # Retained for the frozen 0.15.0 contract tests and persisted policy reader.
 _CLASSIFIER_REFERENCE = CLASSIFIER_REFERENCE
 
-_CREATOR_OR_CONTRIBUTOR_CLAIMS = frozenset({
-    ClaimKind.CREATOR,
-    ClaimKind.CONTRIBUTOR,
-})
-_CREATOR_OR_CONTRIBUTOR_EVIDENCE = frozenset({
-    ProviderEvidenceKind.AUTHOR_IDENTITY,
-    ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
-})
+_CREATOR_OR_CONTRIBUTOR_CLAIMS = frozenset(
+    {
+        ClaimKind.CREATOR,
+        ClaimKind.CONTRIBUTOR,
+    }
+)
+_CREATOR_OR_CONTRIBUTOR_EVIDENCE = frozenset(
+    {
+        ProviderEvidenceKind.AUTHOR_IDENTITY,
+        ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+    }
+)
+
 
 def _opaque_evidence_reference(report_id: str, reference: str) -> str:
-    return "cover_evidence_ref_" + hashlib.sha256(
-        canonical_packet_json({"report_id": report_id, "reference": reference}).encode("utf-8")
-    ).hexdigest()
+    return (
+        "cover_evidence_ref_"
+        + hashlib.sha256(
+            canonical_packet_json(
+                {"report_id": report_id, "reference": reference}
+            ).encode("utf-8")
+        ).hexdigest()
+    )
 
 
 def _work_target_reference(report: MetadataReport) -> str:
-    return "work_target_ref_" + hashlib.sha256(
-        canonical_packet_json(
-            {"report_id": report.report_id, "target": report.target.fingerprint}
-        ).encode("utf-8")
-    ).hexdigest()
+    return (
+        "work_target_ref_"
+        + hashlib.sha256(
+            canonical_packet_json(
+                {"report_id": report.report_id, "target": report.target.fingerprint}
+            ).encode("utf-8")
+        ).hexdigest()
+    )
 
 
 def _preview_reference(packet_reference: str, candidate: dict[str, object]) -> str:
-    return "cover_preview_ref_" + hashlib.sha256(
-        canonical_packet_json(
-            {
-                "candidate_reference": candidate["reference"],
-                "packet_reference": packet_reference,
-                "preview_sha256": candidate["preview_sha256"],
-            }
-        ).encode("utf-8")
-    ).hexdigest()
+    return (
+        "cover_preview_ref_"
+        + hashlib.sha256(
+            canonical_packet_json(
+                {
+                    "candidate_reference": candidate["reference"],
+                    "packet_reference": packet_reference,
+                    "preview_sha256": candidate["preview_sha256"],
+                }
+            ).encode("utf-8")
+        ).hexdigest()
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,18 +168,22 @@ def classify_cover_identity(
         outcome, reasons, evidence = _classify_sources(report, sources)
         if outcome not in _OUTCOMES:
             raise ValueError("identity outcome is invalid")
-        rows.append({
-            "candidate_reference": candidate["reference"],
-            "evidence_references": sorted({
-                _opaque_evidence_reference(report.report_id, item)
-                for item in evidence
-            }),
-            "outcome": outcome,
-            "preview_reference": _preview_reference(
-                packet["packet_reference"], candidate
-            ),
-            "reasons": sorted(set(reasons)),
-        })
+        rows.append(
+            {
+                "candidate_reference": candidate["reference"],
+                "evidence_references": sorted(
+                    {
+                        _opaque_evidence_reference(report.report_id, item)
+                        for item in evidence
+                    }
+                ),
+                "outcome": outcome,
+                "preview_reference": _preview_reference(
+                    packet["packet_reference"], candidate
+                ),
+                "reasons": sorted(set(reasons)),
+            }
+        )
     body = {
         "candidates": rows,
         "classifier_reference": CLASSIFIER_REFERENCE,
@@ -177,28 +205,28 @@ def _report_bound_candidate_sources(
     # every source retained below has a retrieved artifact.
     bindings = {
         (value["reference"], value["preview_sha256"])
-        for value in cast(
-            "list[dict[str, object]]", candidate["source_bindings"]
-        )
+        for value in cast("list[dict[str, object]]", candidate["source_bindings"])
     }
-    sources = tuple(sorted(
-        (
-            source
-            for source in report.cover_sources
-            if source.state is CoverSourceState.RETRIEVED
-            and source.artifact is not None
-            and (
-                cover_source_reference(report.report_id, source.source_id),
-                source.artifact.preview_digest,
-            ) in bindings
-        ),
-        key=lambda source: source.source_id,
-    ))
+    sources = tuple(
+        sorted(
+            (
+                source
+                for source in report.cover_sources
+                if source.state is CoverSourceState.RETRIEVED
+                and source.artifact is not None
+                and (
+                    cover_source_reference(report.report_id, source.source_id),
+                    source.artifact.preview_digest,
+                )
+                in bindings
+            ),
+            key=lambda source: source.source_id,
+        )
+    )
     if not sources:
         raise ValueError("identity candidate report binding is invalid")
     references = tuple(
-        cover_source_reference(report.report_id, source.source_id)
-        for source in sources
+        cover_source_reference(report.report_id, source.source_id) for source in sources
     )
     if bindings != {
         (reference, cast("CoverArtifact", source.artifact).preview_digest)
@@ -231,25 +259,27 @@ def _report_bound_candidate_sources(
             cast("CoverArtifact", source.artifact).height,
         ),
     )
-    expected_provenance = normalize_provenance([
-        {
-            "context": (
-                []
-                if source.provenance is None
-                else [value.to_data() for value in source.provenance.context]
-            ),
-            "designation": (
-                None
-                if source.provenance is None
-                else source.provenance.designation.value
-            ),
-            "provider": (
-                None if source.provenance is None else source.provenance.provider
-            ),
-            "source_kind": source.kind.value,
-        }
-        for source in sources
-    ])
+    expected_provenance = normalize_provenance(
+        [
+            {
+                "context": (
+                    []
+                    if source.provenance is None
+                    else [value.to_data() for value in source.provenance.context]
+                ),
+                "designation": (
+                    None
+                    if source.provenance is None
+                    else source.provenance.designation.value
+                ),
+                "provider": (
+                    None if source.provenance is None else source.provenance.provider
+                ),
+                "source_kind": source.kind.value,
+            }
+            for source in sources
+        ]
+    )
     if (
         candidate["reference"] != expected_reference
         or candidate["preview_sha256"] != dict(bindings)[expected_reference]
@@ -272,7 +302,9 @@ def _classify_sources(
 ) -> tuple[str, list[str], list[str]]:
     if any(source.kind is CoverSourceKind.EPUB for source in sources):
         return "verified_manifestation_match", ["source_bound_epub_cover"], []
-    provider_sources = tuple(source for source in sources if source.provenance is not None)
+    provider_sources = tuple(
+        source for source in sources if source.provenance is not None
+    )
     if not provider_sources:
         return "unknown", ["no_provider_identity"], []
     matches = []
@@ -308,15 +340,16 @@ def _classify_sources(
     work = False
     for source, provider, candidate, isbn_discovery_supported in matches:
         if any(
-            item.kind
-            is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+            item.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
             for item in candidate.evidence
         ):
             return "conflict", ["edition_work_contradiction"], []
 
         bound = [
-            item for item in report.identifier_evidence
-            if item.provider == provider and item.candidate_identity == candidate.identity
+            item
+            for item in report.identifier_evidence
+            if item.provider == provider
+            and item.candidate_identity == candidate.identity
             and item.work_identity == candidate.work_identity
         ]
         unrelated = [
@@ -346,8 +379,16 @@ def _classify_sources(
                 or candidate_creator_or_contributor_disagreement
             )
 
-        accepted = [item.reference for item in bound if item.relation is IdentifierRelation.ACCEPTED]
-        associated = [item.reference for item in bound if item.relation is IdentifierRelation.ASSOCIATED]
+        accepted = [
+            item.reference
+            for item in bound
+            if item.relation is IdentifierRelation.ACCEPTED
+        ]
+        associated = [
+            item.reference
+            for item in bound
+            if item.relation is IdentifierRelation.ASSOCIATED
+        ]
         evidence.extend(accepted)
         evidence.extend(associated)
         if (
@@ -355,9 +396,7 @@ def _classify_sources(
             and source.provenance.designation is CoverDesignation.EXACT_EDITION
             and accepted
         ):
-            if not manifestation_publication_compatible(
-                candidate, report.local_claims
-            ):
+            if not manifestation_publication_compatible(candidate, report.local_claims):
                 return (
                     "conflict",
                     ["manifestation_publication_incompatible"],
@@ -366,7 +405,8 @@ def _classify_sources(
             manifestation = True
         if (
             source.provenance is not None
-            and source.provenance.designation in {
+            and source.provenance.designation
+            in {
                 CoverDesignation.EXACT_EDITION,
                 CoverDesignation.DEFAULT,
                 CoverDesignation.RELATED_EDITION,
@@ -376,13 +416,18 @@ def _classify_sources(
         ):
             work = True
     if manifestation:
-        return "verified_manifestation_match", ["accepted_manifestation_identifier"], evidence
+        return (
+            "verified_manifestation_match",
+            ["accepted_manifestation_identifier"],
+            evidence,
+        )
     if work:
-        return "verified_work_match", ["accepted_or_associated_work_identifier"], evidence
-    if (
-        creator_or_contributor_disagreement
-        and not creator_or_contributor_agreement
-    ):
+        return (
+            "verified_work_match",
+            ["accepted_or_associated_work_identifier"],
+            evidence,
+        )
+    if creator_or_contributor_disagreement and not creator_or_contributor_agreement:
         return "unknown", ["retained_creator_or_contributor_disagreement"], []
     if not title_agreement:
         return "unknown", ["retained_title_evidence_insufficient"], []
@@ -407,11 +452,14 @@ def _is_isbn_discovery_candidate(
         for lane_candidate in getattr(lane, "candidates", ())
     )
     if not lane_candidates:
-        return getattr(
-            observation,
-            "query_kind",
-            ProviderQueryKind.DISCOVERY,
-        ) is ProviderQueryKind.DISCOVERY
+        return (
+            getattr(
+                observation,
+                "query_kind",
+                ProviderQueryKind.DISCOVERY,
+            )
+            is ProviderQueryKind.DISCOVERY
+        )
     return any(
         lane.kind is ProviderQueryKind.ISBN
         and lane_candidate.edition_identity == candidate.identity
@@ -434,8 +482,7 @@ def _plausible_match_evidence(
             title_agreement = title_agreement or Comparison.AGREEMENT in outcomes
         if claim.kind in _CREATOR_OR_CONTRIBUTOR_CLAIMS:
             creator_or_contributor_agreement = (
-                creator_or_contributor_agreement
-                or Comparison.AGREEMENT in outcomes
+                creator_or_contributor_agreement or Comparison.AGREEMENT in outcomes
             )
             creator_or_contributor_disagreement = (
                 creator_or_contributor_disagreement
@@ -446,12 +493,10 @@ def _plausible_match_evidence(
             continue
         outcomes = {link.outcome for link in item.links}
         creator_or_contributor_agreement = (
-            creator_or_contributor_agreement
-            or Comparison.AGREEMENT in outcomes
+            creator_or_contributor_agreement or Comparison.AGREEMENT in outcomes
         )
         creator_or_contributor_disagreement = (
-            creator_or_contributor_disagreement
-            or Comparison.DISAGREEMENT in outcomes
+            creator_or_contributor_disagreement or Comparison.DISAGREEMENT in outcomes
         )
     # Both comprehensions filter on the attribute they then read, so the
     # retained claims carry a value and the local claims are ``LocalClaim``.
@@ -471,12 +516,8 @@ def _plausible_match_evidence(
             and getattr(claim, "canonical", None) is not None
         )
     }
-    creator_or_contributor_agreement = (
-        creator_or_contributor_agreement
-        or bool(
-            retained_creator_or_contributor_values
-            & local_creator_or_contributor_values
-        )
+    creator_or_contributor_agreement = creator_or_contributor_agreement or bool(
+        retained_creator_or_contributor_values & local_creator_or_contributor_values
     )
     return (
         title_agreement,

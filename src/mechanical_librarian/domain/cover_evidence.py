@@ -107,7 +107,12 @@ class CoverProvenance:
             or len(self.context) > 16
             or any(type(value) is not CoverContext for value in self.context)
             or self.context
-            != tuple(sorted(set(self.context), key=lambda value: (value.field.value, value.value)))
+            != tuple(
+                sorted(
+                    set(self.context),
+                    key=lambda value: (value.field.value, value.value),
+                )
+            )
         ):
             raise CoverEvidenceError("cover provenance is invalid")
         for identity in (self.work_identity, self.edition_identity):
@@ -139,9 +144,7 @@ class CoverProvenance:
             "edition_identity": self.edition_identity,
             "provider": self.provider,
             "truncation_reason": (
-                None
-                if self.truncation_reason is None
-                else self.truncation_reason.value
+                None if self.truncation_reason is None else self.truncation_reason.value
             ),
             "work_identity": self.work_identity,
         }
@@ -186,7 +189,10 @@ class CoverArtifact:
         original_digest = hashlib.sha256(original).hexdigest()
         preview_digest = hashlib.sha256(preview).hexdigest()
         return cls(
-            "cover_" + original_digest, original_digest, preview_digest, PREVIEW_VARIANT,
+            "cover_" + original_digest,
+            original_digest,
+            preview_digest,
+            PREVIEW_VARIANT,
             media_type,
             width,
             height,
@@ -216,13 +222,20 @@ class CoverSource:
     provenance: CoverProvenance | None = None
 
     def __post_init__(self) -> None:
-        if _SOURCE_ID.fullmatch(self.source_id) is None or type(self.kind) is not CoverSourceKind or type(self.state) is not CoverSourceState:
+        if (
+            _SOURCE_ID.fullmatch(self.source_id) is None
+            or type(self.kind) is not CoverSourceKind
+            or type(self.state) is not CoverSourceState
+        ):
             raise CoverEvidenceError("cover source is invalid")
         if not self.source_id.startswith(f"{self.kind.value}_"):
             raise CoverEvidenceError("cover source identity is inconsistent")
         if (self.state is CoverSourceState.RETRIEVED) != (self.artifact is not None):
             raise CoverEvidenceError("cover source artifact is inconsistent")
-        if self.timeout_scope is not None and self.timeout_scope not in {"attempted", "not_started_due_to_aggregate_deadline"}:
+        if self.timeout_scope is not None and self.timeout_scope not in {
+            "attempted",
+            "not_started_due_to_aggregate_deadline",
+        }:
             raise CoverEvidenceError("cover timeout scope is invalid")
         if (self.state is CoverSourceState.TIMEOUT) != (self.timeout_scope is not None):
             raise CoverEvidenceError("cover timeout scope is inconsistent")
@@ -258,11 +271,15 @@ def cover_source_id(kind: CoverSourceKind, identity: str) -> str:
 
 def publication_ready(sources: tuple[CoverSource, ...]) -> bool:
     """Validate the closed set of published terminal source outcomes."""
-    if type(sources) is not tuple or any(type(source) is not CoverSource for source in sources):
+    if type(sources) is not tuple or any(
+        type(source) is not CoverSource for source in sources
+    ):
         raise CoverEvidenceError("cover sources are invalid")
     # Two local rows, eight admitted provider rows, and at most two explicit
     # truncation rows for each of the configuration schema's 32 providers.
-    if len(sources) > 74 or len({source.source_id for source in sources}) != len(sources):
+    if len(sources) > 74 or len({source.source_id for source in sources}) != len(
+        sources
+    ):
         raise CoverEvidenceError("cover sources are invalid")
     local = [
         source
@@ -275,9 +292,7 @@ def publication_ready(sources: tuple[CoverSource, ...]) -> bool:
         if source.kind in {CoverSourceKind.HARDCOVER, CoverSourceKind.OPEN_LIBRARY}
     ]
     admitted_provider = [
-        source
-        for source in provider
-        if source.state is not CoverSourceState.TRUNCATED
+        source for source in provider if source.state is not CoverSourceState.TRUNCATED
     ]
     if (
         len(local) > 2
@@ -319,8 +334,17 @@ def publication_ready(sources: tuple[CoverSource, ...]) -> bool:
 
 
 __all__ = [
-    "CoverArtifact", "CoverContext", "CoverContextField", "CoverDesignation",
-    "CoverEvidenceError", "CoverProvenance", "CoverSource", "CoverSourceKind",
-    "CoverSourceState", "CoverTruncationReason", "PREVIEW_VARIANT",
-    "cover_source_id", "publication_ready",
+    "CoverArtifact",
+    "CoverContext",
+    "CoverContextField",
+    "CoverDesignation",
+    "CoverEvidenceError",
+    "CoverProvenance",
+    "CoverSource",
+    "CoverSourceKind",
+    "CoverSourceState",
+    "CoverTruncationReason",
+    "PREVIEW_VARIANT",
+    "cover_source_id",
+    "publication_ready",
 ]

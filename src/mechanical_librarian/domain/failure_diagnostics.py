@@ -75,14 +75,8 @@ class FailureDiagnostic:
             type(self.category) is not FailureCategory
             or type(self.component) is not FailureComponent
             or type(self.stage) is not FailureStage
-            or (
-                self.retryable is not None
-                and type(self.retryable) is not bool
-            )
-            or (
-                self.current is not None
-                and type(self.current) is not bool
-            )
+            or (self.retryable is not None and type(self.retryable) is not bool)
+            or (self.current is not None and type(self.current) is not bool)
             or type(self.count) is not int
             or not 0 <= self.count <= MAX_DIAGNOSTIC_COUNT
         ):

@@ -54,8 +54,21 @@ _MISSING = object()
 
 
 class AudiobookshelfItemReader:
-    def __init__(self, *, client_factory: Callable[[], httpx.Client], endpoint: str, library_id: str, service_path: str, maximum_bytes: int, timeout_seconds: float = 5.0) -> None:
-        if type(timeout_seconds) not in {int, float} or isinstance(timeout_seconds, bool) or not 0 < timeout_seconds <= 60:
+    def __init__(
+        self,
+        *,
+        client_factory: Callable[[], httpx.Client],
+        endpoint: str,
+        library_id: str,
+        service_path: str,
+        maximum_bytes: int,
+        timeout_seconds: float = 5.0,
+    ) -> None:
+        if (
+            type(timeout_seconds) not in {int, float}
+            or isinstance(timeout_seconds, bool)
+            or not 0 < timeout_seconds <= 60
+        ):
             raise ValueError("target timeout is invalid")
         self._client_factory = client_factory
         self._endpoint = endpoint.rstrip("/")
@@ -65,17 +78,28 @@ class AudiobookshelfItemReader:
         self._timeout_seconds = float(timeout_seconds)
 
     def read(self, item: str, *, deadline: float | None = None) -> TargetSnapshot:
-        if type(item) is not str or not 1 <= len(item) <= 512 or item.strip() != item or any(character in item for character in "\x00/\\"):
+        if (
+            type(item) is not str
+            or not 1 <= len(item) <= 512
+            or item.strip() != item
+            or any(character in item for character in "\x00/\\")
+        ):
             raise MetadataReportError("target item is invalid")
         try:
             client = self._client_factory()
-            with client, client.stream(
-                "GET",
-                f"{self._endpoint}/api/items/{quote(item, safe='')}",
-                params={"expanded": "1"},
-                headers={"Accept": "application/json", "Accept-Encoding": "identity"},
-                timeout=_phase_timeout(deadline, self._timeout_seconds),
-            ) as response:
+            with (
+                client,
+                client.stream(
+                    "GET",
+                    f"{self._endpoint}/api/items/{quote(item, safe='')}",
+                    params={"expanded": "1"},
+                    headers={
+                        "Accept": "application/json",
+                        "Accept-Encoding": "identity",
+                    },
+                    timeout=_phase_timeout(deadline, self._timeout_seconds),
+                ) as response,
+            ):
                 if response.status_code == 404:
                     raise TargetNotFoundError("target item is absent")
                 if response.status_code == 401:
@@ -84,10 +108,17 @@ class AudiobookshelfItemReader:
                     raise TargetConnectionError("authorization")
                 if response.status_code != 200:
                     raise TargetConnectionError("unavailable")
-                content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                content_type = (
+                    response.headers.get("content-type", "")
+                    .split(";", 1)[0]
+                    .strip()
+                    .lower()
+                )
                 if content_type != "application/json":
                     raise MetadataReportError("target response is invalid")
-                payload = _bounded_body(response, self._maximum_bytes, deadline=deadline)
+                payload = _bounded_body(
+                    response, self._maximum_bytes, deadline=deadline
+                )
         except MetadataReportError:
             raise
         except (httpx.HTTPError, OSError) as error:
@@ -101,15 +132,28 @@ class AudiobookshelfItemReader:
             return _snapshot(source, item, self._library_id, self._service_path)
         except MetadataReportError:
             raise
-        except (UnicodeError, ValueError, TypeError, KeyError, RecursionError, json.JSONDecodeError) as error:
+        except (
+            UnicodeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            RecursionError,
+            json.JSONDecodeError,
+        ) as error:
             raise MetadataReportError("target response is invalid") from error
 
-    def read_cover(self, cover: TargetCover, *, deadline: float | None = None) -> bytes | None:
+    def read_cover(
+        self, cover: TargetCover, *, deadline: float | None = None
+    ) -> bytes | None:
         """One deliberately credential-free raw cover request.
 
         The caller owns the surrounding item-detail reads and drift decision.
         """
-        if type(cover) is not TargetCover or not cover.path.startswith("/") or not cover.item:
+        if (
+            type(cover) is not TargetCover
+            or not cover.path.startswith("/")
+            or not cover.item
+        ):
             raise MetadataReportError("target cover is invalid")
         if deadline is not None and time.monotonic() >= deadline:
             raise CoverTimeoutError("target cover timed out")
@@ -129,19 +173,36 @@ class AudiobookshelfItemReader:
         except (httpx.HTTPError, OSError, ValueError) as error:
             raise MetadataReportError("target cover is unavailable") from error
 
-    def _read_raw_cover(self, cover: TargetCover, deadline: float | None) -> bytes | None:
-        with httpx.Client(trust_env=False, follow_redirects=False, headers={"User-Agent": ""}) as client:
+    def _read_raw_cover(
+        self, cover: TargetCover, deadline: float | None
+    ) -> bytes | None:
+        with httpx.Client(
+            trust_env=False, follow_redirects=False, headers={"User-Agent": ""}
+        ) as client:
             host = _raw_cover_authority(self._endpoint)
-            with client.stream("GET", f"{self._endpoint}{cover.path}", headers={"Host": host, "Accept-Encoding": "identity"}, timeout=_phase_timeout(deadline, self._timeout_seconds)) as response:
+            with client.stream(
+                "GET",
+                f"{self._endpoint}{cover.path}",
+                headers={"Host": host, "Accept-Encoding": "identity"},
+                timeout=_phase_timeout(deadline, self._timeout_seconds),
+            ) as response:
                 if response.status_code == 404:
                     return None
                 if response.status_code != 200:
                     raise MetadataReportError("target cover is unavailable")
-                content_type = response.headers.get("content-type", "").split(";", 1)[0].lower().strip()
+                content_type = (
+                    response.headers.get("content-type", "")
+                    .split(";", 1)[0]
+                    .lower()
+                    .strip()
+                )
                 if content_type not in {"image/jpeg", "image/png", "image/webp"}:
                     raise CoverReadError("unsupported_format")
                 content_encoding = response.headers.get("content-encoding")
-                if content_encoding is not None and content_encoding.lower() != "identity":
+                if (
+                    content_encoding is not None
+                    and content_encoding.lower() != "identity"
+                ):
                     raise CoverReadError("unsupported_format")
                 body = _bounded_body(response, 8 * 1024 * 1024, deadline=deadline)
                 if _cover_signature_media_type(body) != content_type:
@@ -167,7 +228,9 @@ def _cover_signature_media_type(body: bytes) -> str | None:
     return None
 
 
-def _snapshot(source: object, item: str, library_id: str, service_path: str) -> TargetSnapshot:
+def _snapshot(
+    source: object, item: str, library_id: str, service_path: str
+) -> TargetSnapshot:
     root = _mapping(source)
     if (
         root.get("id") != item
@@ -192,13 +255,17 @@ def _snapshot(source: object, item: str, library_id: str, service_path: str) -> 
         raise MetadataReportError("target response is invalid")
     if len(files_source) > 128:
         raise MetadataReportError("target response is invalid")
-    files = tuple(
-        _file(value, service_path, root) for value in files_source
-    )
+    files = tuple(_file(value, service_path, root) for value in files_source)
     identities = tuple(value.identity for value in files)
     if len(set(identities)) != len(identities):
         raise MetadataReportError("target file identities are duplicated")
-    media_kind = "ebook" if files else "audiobook" if type(media.get("audioFiles")) is list else "unsupported"
+    media_kind = (
+        "ebook"
+        if files
+        else "audiobook"
+        if type(media.get("audioFiles")) is list
+        else "unsupported"
+    )
     cover_path = root.get("coverPath")
     cover = None
     if cover_path is not None:
@@ -244,8 +311,7 @@ def _target_fields(
         ]
     else:
         fields = [
-            _target_field(source, destination)
-            for destination in TargetDestination
+            _target_field(source, destination) for destination in TargetDestination
         ]
     if "tags" in media:
         fields[list(TargetDestination).index(TargetDestination.TAGS)] = _target_field(
@@ -268,9 +334,7 @@ def _target_field(
     try:
         if destination is TargetDestination.TITLE:
             if type(raw) is str and len(raw) > MAX_SCALAR_CHARACTERS:
-                _target_projection_text(
-                    raw, "target title", MAX_SCALAR_CHARACTERS
-                )
+                _target_projection_text(raw, "target title", MAX_SCALAR_CHARACTERS)
                 return TargetField(destination, TargetFieldState.OVERSIZED)
             try:
                 title = validate_observed_title(raw)
@@ -296,11 +360,9 @@ def _target_field(
                 raw, "target scalar", MAX_SCALAR_CHARACTERS
             )
             if (
-                destination is TargetDestination.ISBN
-                and isbn_family(value) is None
+                destination is TargetDestination.ISBN and isbn_family(value) is None
             ) or (
-                destination is TargetDestination.ASIN
-                and _ASIN.fullmatch(value) is None
+                destination is TargetDestination.ASIN and _ASIN.fullmatch(value) is None
             ):
                 raise ValueError("target identifier is malformed")
             if oversized:
@@ -365,7 +427,10 @@ def _target_field(
                 sequence_source = item.get("sequence")
                 sequence = None
                 if sequence_source is not None:
-                    if type(sequence_source) is int and type(sequence_source) is not bool:
+                    if (
+                        type(sequence_source) is int
+                        and type(sequence_source) is not bool
+                    ):
                         sequence_source = str(sequence_source)
                     sequence, sequence_oversized = _target_projection_text(
                         sequence_source,
@@ -379,10 +444,7 @@ def _target_field(
             return TargetField(
                 destination,
                 TargetFieldState.VALUE,
-                tuple(
-                    TargetSeries(name, sequence)
-                    for name, sequence in series_values
-                ),
+                tuple(TargetSeries(name, sequence) for name, sequence in series_values),
             )
         if destination is TargetDestination.PUBLISHED_YEAR:
             value = raw
@@ -421,17 +483,13 @@ def _target_projection_text(
     value: object, label: str, maximum: int
 ) -> tuple[str, bool]:
     validation_maximum = (
-        len(value)
-        if type(value) is str and len(value) > maximum
-        else maximum
+        len(value) if type(value) is str and len(value) > maximum else maximum
     )
     text = validate_projection_text(value, label, validation_maximum)
     return text, len(text) > maximum
 
 
-def _cover_field(
-    root: dict[str, Any], cover: TargetCover | None
-) -> TargetField:
+def _cover_field(root: dict[str, Any], cover: TargetCover | None) -> TargetField:
     destination = TargetDestination.COVER
     if "coverPath" not in root:
         return TargetField(destination, TargetFieldState.MISSING)
@@ -459,7 +517,9 @@ def _file(
     return TargetFile(location.identity, location.relative_path, location.format)
 
 
-def _bounded_body(response: httpx.Response, maximum: int, *, deadline: float | None = None) -> bytes:
+def _bounded_body(
+    response: httpx.Response, maximum: int, *, deadline: float | None = None
+) -> bytes:
     chunks: list[bytes] = []
     length = 0
     for chunk in response.iter_bytes():

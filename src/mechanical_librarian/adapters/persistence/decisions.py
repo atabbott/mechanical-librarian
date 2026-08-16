@@ -101,8 +101,10 @@ class SQLiteDecisionRepository(ConnectionScoped):
             if not safety.permits(category):
                 continue
             members = tuple(
-                field for field in outcome.outcomes
-                if field.policy_category == category and field.destination in destinations
+                field
+                for field in outcome.outcomes
+                if field.policy_category == category
+                and field.destination in destinations
             )
             all_automatic = bool(members) and all(
                 field.disposition in automatic_dispositions for field in members
@@ -126,12 +128,17 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 if len(members) == len(destinations) and all_automatic:
                     raise AutomaticDecisionError("category:" + category)
                 continue
-            bundle_ids[category] = "automatic_bundle_" + hashlib.sha256(
-                _canonical_json({
-                    "category": category,
-                    "evidence_ids": list(evidence_ids[0]),
-                }).encode("utf-8")
-            ).hexdigest()
+            bundle_ids[category] = (
+                "automatic_bundle_"
+                + hashlib.sha256(
+                    _canonical_json(
+                        {
+                            "category": category,
+                            "evidence_ids": list(evidence_ids[0]),
+                        }
+                    ).encode("utf-8")
+                ).hexdigest()
+            )
         decisions: list[AutomaticDecision] = []
         for field in outcome.outcomes:
             if (
@@ -140,7 +147,10 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 or field.policy_option is None
                 or field.policy_destination != "automatic"
                 or not safety.permits(field.policy_category)
-                or (field.policy_category in required_bundles and field.policy_category not in bundle_ids)
+                or (
+                    field.policy_category in required_bundles
+                    and field.policy_category not in bundle_ids
+                )
             ):
                 continue
             try:
@@ -179,11 +189,20 @@ class SQLiteDecisionRepository(ConnectionScoped):
             conflict = self._connection.execute(
                 "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
                 "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
-                (decision.review_case_id, decision.destination, decision.review_case_id, decision.destination),
+                (
+                    decision.review_case_id,
+                    decision.destination,
+                    decision.review_case_id,
+                    decision.destination,
+                ),
             ).fetchone()
             if conflict is not None and decision.bundle_id is not None:
                 blocked_bundles.add(decision.bundle_id)
-        decisions = [decision for decision in decisions if decision.bundle_id not in blocked_bundles]
+        decisions = [
+            decision
+            for decision in decisions
+            if decision.bundle_id not in blocked_bundles
+        ]
         # Complete validation precedes every insert: an authority defect cannot
         # leave a subset of a multi-field bundle durable.
         for decision in decisions:
@@ -199,8 +218,12 @@ class SQLiteDecisionRepository(ConnectionScoped):
             conflict = self._connection.execute(
                 "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
                 "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
-                (decision.review_case_id, decision.destination,
-                 decision.review_case_id, decision.destination),
+                (
+                    decision.review_case_id,
+                    decision.destination,
+                    decision.review_case_id,
+                    decision.destination,
+                ),
             ).fetchone()
             if conflict is not None:
                 # Human wins and independent replay are ordinary fallback, not
@@ -208,13 +231,17 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 continue
             self._connection.execute(
                 "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
-                (decision.decision_id, decision.review_case_id, decision.destination,
-                 decision.idempotency_digest, decision.occurred_at, decision.to_json()),
+                (
+                    decision.decision_id,
+                    decision.review_case_id,
+                    decision.destination,
+                    decision.idempotency_digest,
+                    decision.occurred_at,
+                    decision.to_json(),
+                ),
             )
 
-    def get_review_case_decisions(
-        self, review_case_id: str
-    ) -> tuple[str, ...]:
+    def get_review_case_decisions(self, review_case_id: str) -> tuple[str, ...]:
         try:
             envelope = json.loads(self.get_review_case(review_case_id))
             if type(envelope) is not dict or type(envelope.get("case")) is not dict:
@@ -328,9 +355,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     or stored.request_digest != replay[0]
                 ):
                     raise MetadataReportError("human decision persistence failed")
-                self._record_cover_decision_outcome(
-                    stored, cover_consideration_id
-                )
+                self._record_cover_decision_outcome(stored, cover_consideration_id)
                 transaction.commit()
                 return stored.to_json()
             case_envelope = json.loads(self.get_review_case(decision.review_case_id))
@@ -338,9 +363,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 type(case_envelope) is not dict
                 or case_envelope.get("current") is not True
                 or type(case_envelope.get("case")) is not dict
-                or not self._review_case_accepts_authority(
-                    decision.review_case_id
-                )
+                or not self._review_case_accepts_authority(decision.review_case_id)
             ):
                 raise HumanDecisionError("stale")
             case = ReviewCase.create_from_data(case_envelope["case"])
@@ -391,12 +414,13 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     decision.to_json(),
                 ),
             )
-            self._record_cover_decision_outcome(
-                decision, cover_consideration_id
+            self._record_cover_decision_outcome(decision, cover_consideration_id)
+            event_id = (
+                "human_decision_event_"
+                + hashlib.sha256(
+                    ("human-decision-event-v1:" + decision.decision_id).encode("utf-8")
+                ).hexdigest()
             )
-            event_id = "human_decision_event_" + hashlib.sha256(
-                ("human-decision-event-v1:" + decision.decision_id).encode("utf-8")
-            ).hexdigest()
             event_document = _canonical_json(
                 {
                     "actor": decision.actor,
@@ -495,31 +519,73 @@ class SQLiteDecisionRepository(ConnectionScoped):
             existing = self._connection.execute(
                 "SELECT 1 FROM human_decisions WHERE review_case_id=? AND destination=? "
                 "UNION ALL SELECT 1 FROM automatic_decisions WHERE review_case_id=? AND destination=?",
-                (decision.review_case_id, decision.destination, decision.review_case_id, decision.destination),
+                (
+                    decision.review_case_id,
+                    decision.destination,
+                    decision.review_case_id,
+                    decision.destination,
+                ),
             ).fetchone()
             if existing is not None:
                 raise AutomaticDecisionError("already_decided")
             outcome = self._connection.execute(
                 "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? AND report_id=? "
                 "AND proposal_set_id=? AND resolved_policy_id=?",
-                (decision.review_case_id, decision.report_id, decision.proposal_set_id, decision.resolved_policy_id),
+                (
+                    decision.review_case_id,
+                    decision.report_id,
+                    decision.proposal_set_id,
+                    decision.resolved_policy_id,
+                ),
             ).fetchone()
             if outcome is None:
                 raise AutomaticDecisionError("stale")
             source = ShadowOutcomeSet.from_json(outcome[0])
-            field = next((value for value in source.outcomes if value.outcome_id == decision.source_outcome_id), None)
-            if field is None or (field.disposition != decision.outcome) or any((field.proposal_id != decision.proposal_id, field.destination != decision.destination, field.rule_id != decision.rule_id, field.policy_category != decision.policy_category, field.policy_option != decision.policy_option)):
+            field = next(
+                (
+                    value
+                    for value in source.outcomes
+                    if value.outcome_id == decision.source_outcome_id
+                ),
+                None,
+            )
+            if (
+                field is None
+                or (field.disposition != decision.outcome)
+                or any(
+                    (
+                        field.proposal_id != decision.proposal_id,
+                        field.destination != decision.destination,
+                        field.rule_id != decision.rule_id,
+                        field.policy_category != decision.policy_category,
+                        field.policy_option != decision.policy_option,
+                    )
+                )
+            ):
                 raise AutomaticDecisionError("stale")
             if decision.policy_category in {"title_layout", "date_precision"}:
-                required = ("title",) if decision.policy_category == "title_layout" else ("publishedDate", "publishedYear")
+                required = (
+                    ("title",)
+                    if decision.policy_category == "title_layout"
+                    else ("publishedDate", "publishedYear")
+                )
                 members = tuple(
-                    value for value in source.outcomes
+                    value
+                    for value in source.outcomes
                     if value.policy_category == decision.policy_category
                     and value.destination in required
                 )
-                expected_bundle = "automatic_bundle_" + hashlib.sha256(
-                    _canonical_json({"category": decision.policy_category, "combination_ids": list(field.combination_ids)}).encode("utf-8")
-                ).hexdigest()
+                expected_bundle = (
+                    "automatic_bundle_"
+                    + hashlib.sha256(
+                        _canonical_json(
+                            {
+                                "category": decision.policy_category,
+                                "combination_ids": list(field.combination_ids),
+                            }
+                        ).encode("utf-8")
+                    ).hexdigest()
+                )
                 if (
                     len(members) != len(required)
                     or {value.destination for value in members} != set(required)
@@ -528,11 +594,23 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     or decision.bundle_id != expected_bundle
                 ):
                     raise AutomaticDecisionError("bundle_identity")
-            if self.current_resolved_policy_id(json.loads(case["case"])["target"]["library"]) != decision.resolved_policy_id:
+            if (
+                self.current_resolved_policy_id(
+                    json.loads(case["case"])["target"]["library"]
+                )
+                != decision.resolved_policy_id
+            ):
                 raise AutomaticDecisionError("stale")
             self._connection.execute(
                 "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
-                (decision.decision_id, decision.review_case_id, decision.destination, decision.idempotency_digest, decision.occurred_at, decision.to_json()),
+                (
+                    decision.decision_id,
+                    decision.review_case_id,
+                    decision.destination,
+                    decision.idempotency_digest,
+                    decision.occurred_at,
+                    decision.to_json(),
+                ),
             )
             if self._binding is not None:
                 self._binding.require_current()
@@ -541,22 +619,49 @@ class SQLiteDecisionRepository(ConnectionScoped):
         except AutomaticDecisionError:
             transaction.rollback()
             raise
-        except (sqlite3.Error, MetadataReportError, ShadowOutcomeError, TypeError, ValueError, json.JSONDecodeError) as error:
+        except (
+            sqlite3.Error,
+            MetadataReportError,
+            ShadowOutcomeError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as error:
             transaction.rollback()
-            raise MetadataReportError("automatic decision persistence failed") from error
+            raise MetadataReportError(
+                "automatic decision persistence failed"
+            ) from error
 
     def automatic_safety_state(self) -> AutomaticSafetyState:
         try:
-            row = self._connection.execute("SELECT paused,global_suspension,category_suspensions_document FROM automatic_safety_state WHERE singleton=1").fetchone()
+            row = self._connection.execute(
+                "SELECT paused,global_suspension,category_suspensions_document FROM automatic_safety_state WHERE singleton=1"
+            ).fetchone()
             if row is None:
                 raise MetadataReportError("automatic safety state is unavailable")
             categories = json.loads(row[2])
-            return AutomaticSafetyState(bool(row[0]), row[1], tuple(tuple(value) for value in categories))
-        except (sqlite3.Error, TypeError, ValueError, json.JSONDecodeError, AutomaticDecisionError) as error:
-            raise MetadataReportError("automatic safety state is unavailable") from error
+            return AutomaticSafetyState(
+                bool(row[0]), row[1], tuple(tuple(value) for value in categories)
+            )
+        except (
+            sqlite3.Error,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+            AutomaticDecisionError,
+        ) as error:
+            raise MetadataReportError(
+                "automatic safety state is unavailable"
+            ) from error
 
-    def set_automatic_safety_state(self, state: AutomaticSafetyState, updated_at: int) -> None:
-        if type(state) is not AutomaticSafetyState or type(updated_at) is not int or updated_at < 0:
+    def set_automatic_safety_state(
+        self, state: AutomaticSafetyState, updated_at: int
+    ) -> None:
+        if (
+            type(state) is not AutomaticSafetyState
+            or type(updated_at) is not int
+            or updated_at < 0
+        ):
             raise MetadataReportError("automatic safety state is invalid")
         transaction = self._transaction("set_automatic_safety_state")
         try:
@@ -567,21 +672,34 @@ class SQLiteDecisionRepository(ConnectionScoped):
             transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError("automatic safety state is unavailable") from error
+            raise MetadataReportError(
+                "automatic safety state is unavailable"
+            ) from error
 
-    def _set_automatic_safety_state(self, state: AutomaticSafetyState, updated_at: int) -> None:
+    def _set_automatic_safety_state(
+        self, state: AutomaticSafetyState, updated_at: int
+    ) -> None:
         """Update safety state inside a caller-owned transaction when present."""
         try:
             changed = self._connection.execute(
                 "UPDATE automatic_safety_state SET paused=?,global_suspension=?,category_suspensions_document=?,updated_at=? WHERE singleton=1",
-                (int(state.paused), state.global_suspension, _canonical_json([list(value) for value in state.category_suspensions]), updated_at),
+                (
+                    int(state.paused),
+                    state.global_suspension,
+                    _canonical_json(
+                        [list(value) for value in state.category_suspensions]
+                    ),
+                    updated_at,
+                ),
             ).rowcount
             if changed != 1:
                 raise MetadataReportError("automatic safety state is unavailable")
         except (sqlite3.Error, MetadataReportError) as error:
             if isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError("automatic safety state is unavailable") from error
+            raise MetadataReportError(
+                "automatic safety state is unavailable"
+            ) from error
 
     def get_review_case_history(
         self, review_case_id: str, limit: int
@@ -625,25 +743,32 @@ class SQLiteDecisionRepository(ConnectionScoped):
             events: list[tuple[int, str, dict[str, object]]] = []
             for row in event_rows:
                 value = json.loads(row[7])
-                if type(value) is not dict or set(value) != {
-                    "actor",
-                    "decision_id",
-                    "destination",
-                    "event_id",
-                    "kind",
-                    "occurred_at",
-                    "outcome",
-                    "review_case_id",
-                    "schema_version",
-                } or value["schema_version"] != "human-decision-event-v1" or (
-                    value["event_id"],
-                    value["decision_id"],
-                    value["review_case_id"],
-                    value["destination"],
-                    value["actor"],
-                    value["kind"],
-                    value["occurred_at"],
-                ) != row[:7]:
+                if (
+                    type(value) is not dict
+                    or set(value)
+                    != {
+                        "actor",
+                        "decision_id",
+                        "destination",
+                        "event_id",
+                        "kind",
+                        "occurred_at",
+                        "outcome",
+                        "review_case_id",
+                        "schema_version",
+                    }
+                    or value["schema_version"] != "human-decision-event-v1"
+                    or (
+                        value["event_id"],
+                        value["decision_id"],
+                        value["review_case_id"],
+                        value["destination"],
+                        value["actor"],
+                        value["kind"],
+                        value["occurred_at"],
+                    )
+                    != row[:7]
+                ):
                     raise MetadataReportError("review history is invalid")
                 events.append((row[6], row[0], value))
             for row in shadow_rows:
@@ -688,20 +813,22 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 ):
                     raise MetadataReportError("review history is invalid")
                 events.append(
-                    (occurred_at, decision_id, {
-                        "decision_id": decision_id,
-                        "destination": destination,
-                        "kind": "automatic_decision_recorded",
-                        "occurred_at": occurred_at,
-                        "origin": "automatic_policy",
-                        "outcome": value["outcome"],
-                        "review_case_id": review_case_id,
-                        "schema_version": "automatic-decision-history-event-v1",
-                    })
+                    (
+                        occurred_at,
+                        decision_id,
+                        {
+                            "decision_id": decision_id,
+                            "destination": destination,
+                            "kind": "automatic_decision_recorded",
+                            "occurred_at": occurred_at,
+                            "origin": "automatic_policy",
+                            "outcome": value["outcome"],
+                            "review_case_id": review_case_id,
+                            "schema_version": "automatic-decision-history-event-v1",
+                        },
+                    )
                 )
-            ordered_events = [
-                value for _, _, value in sorted(events, reverse=True)
-            ]
+            ordered_events = [value for _, _, value in sorted(events, reverse=True)]
             return tuple((ordered_events + transitions)[:limit])
         except (
             sqlite3.Error,

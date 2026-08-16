@@ -44,8 +44,17 @@ from mechanical_librarian.application.cover_packet_semantics import (  # noqa: E
 
 def _identity() -> ContainedReviewerIdentity:
     return ContainedReviewerIdentity(
-        "a" * 64, "codex 1", "b" * 64, "bubblewrap 1", "reviewer", "medium",
-        30, 65_536, 1_073_741_824, 32, 131_072,
+        "a" * 64,
+        "codex 1",
+        "b" * 64,
+        "bubblewrap 1",
+        "reviewer",
+        "medium",
+        30,
+        65_536,
+        1_073_741_824,
+        32,
+        131_072,
     )
 
 
@@ -65,18 +74,16 @@ def _cover_request() -> object:
     source_preview = output.getvalue()
     reference = "cover_ref_" + "a" * 64
     source_digest = hashlib.sha256(source_preview).hexdigest()
-    normalized = normalize_cover_preview(
-        source_preview, source_sha256=source_digest
-    )
+    normalized = normalize_cover_preview(source_preview, source_sha256=source_digest)
     preview = normalized.payload
     digest = normalized.digest
-    source_bindings = [{
-        "preview_sha256": source_digest,
-        "reference": reference,
-    }]
-    transport_reference = cover_transport_reference(
-        reference, source_bindings, digest
-    )
+    source_bindings = [
+        {
+            "preview_sha256": source_digest,
+            "reference": reference,
+        }
+    ]
+    transport_reference = cover_transport_reference(reference, source_bindings, digest)
     candidate = {
         "height": 1,
         "incumbent": True,
@@ -86,10 +93,14 @@ def _cover_request() -> object:
         "preview_sha256": source_digest,
         "preview_variant": "preview-320x480-rgba-png-v1",
         "preview_width": 1,
-        "provenance": [{
-            "context": [], "designation": None, "provider": None,
-            "source_kind": "abs",
-        }],
+        "provenance": [
+            {
+                "context": [],
+                "designation": None,
+                "provider": None,
+                "source_kind": "abs",
+            }
+        ],
         "reference": reference,
         "source_bindings": source_bindings,
         "transport_reference": transport_reference,
@@ -101,32 +112,44 @@ def _cover_request() -> object:
         "omissions": [],
         "schema_version": "cover-review-packet-v2",
     }
-    packet = canonical_json({
-        **body,
-        "packet_reference": "cover_packet_" + hashlib.sha256(
-            canonical_json(body).encode()
-        ).hexdigest(),
-    })
-    schema = canonical_json({
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "additionalProperties": False,
-        "properties": {"summary": {"type": "string"}},
-        "required": ["summary"],
-        "type": "object",
-    })
+    packet = canonical_json(
+        {
+            **body,
+            "packet_reference": "cover_packet_"
+            + hashlib.sha256(canonical_json(body).encode()).hexdigest(),
+        }
+    )
+    schema = canonical_json(
+        {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": False,
+            "properties": {"summary": {"type": "string"}},
+            "required": ["summary"],
+            "type": "object",
+        }
+    )
     return admit_cover_review_request(
         "Summarize.", packet, schema, ((transport_reference, digest, preview),)
     )
 
 
 def _boundary_schema() -> str:
-    return json.dumps({"$schema": "https://json-schema.org/draft/2020-12/schema",
-                       "additionalProperties": False,
-                       "properties": {"summary": {"type": "string"}},
-                       "required": ["summary"], "type": "object"}, separators=(",", ":"), sort_keys=True)
+    return json.dumps(
+        {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "additionalProperties": False,
+            "properties": {"summary": {"type": "string"}},
+            "required": ["summary"],
+            "type": "object",
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
 
 
-_TURN_STARTED = json.dumps({"type": "turn.started"}, separators=(",", ":")).encode() + b"\n"
+_TURN_STARTED = (
+    json.dumps({"type": "turn.started"}, separators=(",", ":")).encode() + b"\n"
+)
 
 
 def test_cover_rejects_nonqualified_resource_profile_before_dispatch() -> None:
@@ -181,9 +204,9 @@ def test_direct_private_request_forgery_is_readmitted_before_dispatch() -> None:
         "omissions": packet["omissions"],
         "schema_version": packet["schema_version"],
     }
-    packet["packet_reference"] = "cover_packet_" + hashlib.sha256(
-        canonical_json(body).encode()
-    ).hexdigest()
+    packet["packet_reference"] = (
+        "cover_packet_" + hashlib.sha256(canonical_json(body).encode()).hexdigest()
+    )
     base = ContainedReviewRequest(
         admitted.instruction,
         canonical_json(packet),
@@ -191,16 +214,20 @@ def test_direct_private_request_forgery_is_readmitted_before_dispatch() -> None:
     )
     forged = contract._CoverReviewRequest._admit(
         base,
-        (contract._CoverReviewImage(
-            packet["candidates"][0]["transport_reference"],
-            forged_digest,
-            forged_payload,
-        ),),
+        (
+            contract._CoverReviewImage(
+                packet["candidates"][0]["transport_reference"],
+                forged_digest,
+                forged_payload,
+            ),
+        ),
     )
     with tempfile.TemporaryDirectory() as temporary:
         reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
-        with patch.object(reviewer, "_run") as dispatch, \
-             pytest.raises(Exception, match="response_format"):
+        with (
+            patch.object(reviewer, "_run") as dispatch,
+            pytest.raises(Exception, match="response_format"),
+        ):
             reviewer.run_cover(forged, lambda *_: None)
         dispatch.assert_not_called()
 
@@ -211,7 +238,8 @@ def test_prompt_treats_hostile_provider_context_as_evidence_only() -> None:
         "Compare the covers.",
         json.dumps(
             {"candidates": [{"provider_context": provider_context}]},
-            separators=(",", ":"), sort_keys=True,
+            separators=(",", ":"),
+            sort_keys=True,
         ),
         '{"additionalProperties":false,"properties":{},"type":"object"}',
     )
@@ -236,16 +264,22 @@ def test_sandbox_binds_ordered_images_read_only_and_passes_exact_arguments() -> 
             path.mkdir()
         image_descriptors = tuple(range(20, 25))
         command = reviewer._sandbox_command(
-            job, job / "result.json", image_descriptors, provider,
-            "/proc/self/fd/10", "/proc/self/fd/11", "/proc/self/fd/12",
+            job,
+            job / "result.json",
+            image_descriptors,
+            provider,
+            "/proc/self/fd/10",
+            "/proc/self/fd/11",
+            "/proc/self/fd/12",
         )
     for index, descriptor in enumerate(image_descriptors, start=1):
         assert ["--ro-bind-data", str(descriptor), f"/images/{index:02d}.png"] in [
-            command[position:position + 3]
-            for position in range(len(command) - 2)
+            command[position : position + 3] for position in range(len(command) - 2)
         ]
     assert [
-        command[index + 1] for index, value in enumerate(command[:-1]) if value == "--image"
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "--image"
     ] == [f"/images/{index:02d}.png" for index in range(1, 6)]
 
 
@@ -254,16 +288,33 @@ def test_profile_load_is_canonical_private_and_does_not_touch_artifacts() -> Non
         root = Path(temporary)
         document = {
             "auth_store_path": str(root / "auth"),
-            "codex": {"path": str(root / "missing-codex"), "sha256": "a" * 64, "version": "codex 1"},
+            "codex": {
+                "path": str(root / "missing-codex"),
+                "sha256": "a" * 64,
+                "version": "codex 1",
+            },
             "job_root_path": str(root / "jobs"),
-            "limits": {"file_bytes": 131_072, "memory_bytes": 1_073_741_824,
-                       "output_bytes": 65_536, "processes": 32, "timeout_seconds": 30},
-            "model": "reviewer", "reasoning": "medium",
-            "sandbox": {"path": str(root / "missing-bwrap"), "sha256": "b" * 64, "version": "bubblewrap 1"},
+            "limits": {
+                "file_bytes": 131_072,
+                "memory_bytes": 1_073_741_824,
+                "output_bytes": 65_536,
+                "processes": 32,
+                "timeout_seconds": 30,
+            },
+            "model": "reviewer",
+            "reasoning": "medium",
+            "sandbox": {
+                "path": str(root / "missing-bwrap"),
+                "sha256": "b" * 64,
+                "version": "bubblewrap 1",
+            },
             "schema_version": "contained-reviewer-profile-v1",
         }
         profile = root / "profile.json"
-        profile.write_text(json.dumps(document, separators=(",", ":"), sort_keys=True), encoding="utf-8")
+        profile.write_text(
+            json.dumps(document, separators=(",", ":"), sort_keys=True),
+            encoding="utf-8",
+        )
         os.chmod(profile, 0o600)
         loaded = adapter.load_contained_reviewer_profile(profile)
         assert loaded.identity == _identity()
@@ -293,15 +344,15 @@ def test_cover_larger_than_child_file_limit_fails_before_dispatch() -> None:
         )
         reviewer = adapter.ContainedReviewerAdapter(profile)
         dispatches: list[tuple[int, int, str]] = []
-        with patch.object(adapter.sys, "platform", "linux"), \
-             patch.object(adapter.os, "fork") as fork, \
-             patch.object(adapter.subprocess, "run") as process_run:
+        with (
+            patch.object(adapter.sys, "platform", "linux"),
+            patch.object(adapter.os, "fork") as fork,
+            patch.object(adapter.subprocess, "run") as process_run,
+        ):
             with pytest.raises(Exception, match="profile"):
                 reviewer.run_cover(
                     request,
-                    lambda pid, pgid, token: dispatches.append(
-                        (pid, pgid, token)
-                    ),
+                    lambda pid, pgid, token: dispatches.append((pid, pgid, token)),
                 )
         fork.assert_not_called()
         process_run.assert_not_called()
@@ -336,7 +387,9 @@ def test_private_directories_and_bound_artifacts_fail_closed() -> None:
                 raise AssertionError("digest mismatch was accepted")
 
 
-def test_request_and_result_boundary_rejects_duplicate_malformed_and_overbound_output() -> None:
+def test_request_and_result_boundary_rejects_duplicate_malformed_and_overbound_output() -> (
+    None
+):
     schema = _boundary_schema()
     request = ContainedReviewRequest("Summarize.", '{"value":"synthetic"}', schema)
     assert re.search(r"^[0-9a-f]{64}$", request.digest)
@@ -373,16 +426,18 @@ def test_request_rejects_nonfinite_json_documents(document: str) -> None:
     ),
     ids=("duplicate_key", "not_json", "over_maximum"),
 )
-def test_validated_result_rejects_malformed_output(payload: bytes, maximum: int) -> None:
+def test_validated_result_rejects_malformed_output(
+    payload: bytes, maximum: int
+) -> None:
     parsed_schema = json.loads(_boundary_schema())
     with pytest.raises(Exception, match="malformed_output"):
-        adapter._validated_result(
-            payload, maximum=maximum, schema=parsed_schema
-        )
+        adapter._validated_result(payload, maximum=maximum, schema=parsed_schema)
 
 
 def test_failure_is_value_free_and_auth_configuration_disables_authority() -> None:
-    failure = adapter.ContainedReviewerProcessError("runtime", digest=hashlib.sha256(b"private").hexdigest())
+    failure = adapter.ContainedReviewerProcessError(
+        "runtime", digest=hashlib.sha256(b"private").hexdigest()
+    )
     assert str(failure) == "runtime"
     assert "private" not in str(failure)
     config = adapter._exact_config("medium")
@@ -407,7 +462,8 @@ def test_sandbox_version_is_bound_before_use() -> None:
 def test_root_output_schema_must_describe_an_object() -> None:
     schema = json.dumps(
         {"$schema": "https://json-schema.org/draft/2020-12/schema", "type": "string"},
-        separators=(",", ":"), sort_keys=True,
+        separators=(",", ":"),
+        sort_keys=True,
     )
     request = ContainedReviewRequest("Summarize.", '{"value":"synthetic"}', schema)
     with pytest.raises(Exception, match="response_format"):
@@ -431,7 +487,9 @@ def test_timeout_and_cancel_are_typed_without_process_output(error, code) -> Non
                 reviewer._run_auth([], artifact, artifact, 11)
 
 
-def test_fake_process_invocation_records_dispatch_before_output_and_cleans_job() -> None:
+def test_fake_process_invocation_records_dispatch_before_output_and_cleans_job() -> (
+    None
+):
     request = _cover_request()
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -467,7 +525,9 @@ def test_fake_process_invocation_records_dispatch_before_output_and_cleans_job()
             result_path.write_text('{"summary":"safe"}', encoding="utf-8")
             return ["fake-sandbox"]
 
-        def gated(_command, _codex, _sandbox, _stdin, _stdout, _stderr, dispatched, **_kwargs):
+        def gated(
+            _command, _codex, _sandbox, _stdin, _stdout, _stderr, dispatched, **_kwargs
+        ):
             assert attempt.read_text(encoding="utf-8") == '{"state":"prepared"}'
             dispatched(4321, 4321, "9876")
             assert observed == ["4321:4321:9876"]
@@ -485,13 +545,15 @@ def test_fake_process_invocation_records_dispatch_before_output_and_cleans_job()
                 for index, image in enumerate(images)
             )
 
-        with patch.object(adapter.sys, "platform", "linux"), \
-             patch.object(reviewer, "_verify_sandbox"), \
-             patch.object(reviewer, "_verify_codex"), \
-             patch.object(reviewer, "_require_chatgpt_auth"), \
-             patch.object(adapter, "_sealed_cover_images", new=fake_sealed), \
-             patch.object(reviewer, "_sandbox_command", side_effect=sandbox_command), \
-             patch.object(reviewer, "_run_gated", side_effect=gated):
+        with (
+            patch.object(adapter.sys, "platform", "linux"),
+            patch.object(reviewer, "_verify_sandbox"),
+            patch.object(reviewer, "_verify_codex"),
+            patch.object(reviewer, "_require_chatgpt_auth"),
+            patch.object(adapter, "_sealed_cover_images", new=fake_sealed),
+            patch.object(reviewer, "_sandbox_command", side_effect=sandbox_command),
+            patch.object(reviewer, "_run_gated", side_effect=gated),
+        ):
             result = reviewer.run_cover(
                 request,
                 persist_dispatch,
@@ -520,8 +582,9 @@ def test_cleanup_failure_records_trust_failure_before_returning() -> None:
             result_path.write_text('{"summary":"safe"}', encoding="utf-8")
             return ["fake-sandbox"]
 
-        def gated(_command, _codex, _sandbox, _stdin, _stdout, _stderr,
-                  dispatched, **_kwargs):
+        def gated(
+            _command, _codex, _sandbox, _stdin, _stdout, _stderr, dispatched, **_kwargs
+        ):
             dispatched(4321, 4321, "synthetic")
             return 0
 
@@ -533,9 +596,7 @@ def test_cleanup_failure_records_trust_failure_before_returning() -> None:
             patch.object(reviewer, "_sandbox_command", side_effect=sandbox_command),
             patch.object(reviewer, "_run_gated", side_effect=gated),
             patch.object(adapter.shutil, "rmtree", side_effect=OSError("synthetic")),
-            pytest.raises(
-                adapter.ContainedReviewerProcessError, match="runtime"
-            ),
+            pytest.raises(adapter.ContainedReviewerProcessError, match="runtime"),
         ):
             reviewer._run_attempt(
                 request, lambda *_: None, (), artifact, artifact, credential
@@ -558,11 +619,14 @@ def test_dispatched_failure_without_diagnostics_retains_dispatch_evidence() -> N
         credential = profile.auth_store_path / "auth.json"
         credential.write_bytes(b'{"synthetic":true}')
         os.chmod(credential, 0o600)
-        profile = replace(profile, identity=replace(
-            profile.identity,
-            executable_sha256=hashlib.sha256(b"codex").hexdigest(),
-            sandbox_sha256=hashlib.sha256(b"sandbox").hexdigest(),
-        ))
+        profile = replace(
+            profile,
+            identity=replace(
+                profile.identity,
+                executable_sha256=hashlib.sha256(b"codex").hexdigest(),
+                sandbox_sha256=hashlib.sha256(b"sandbox").hexdigest(),
+            ),
+        )
         reviewer = adapter.ContainedReviewerAdapter(profile)
 
         def timeout(_request, dispatch, *_bound):
@@ -586,7 +650,9 @@ def test_dispatched_failure_without_diagnostics_retains_dispatch_evidence() -> N
         assert caught.value.attempts == (contract.ContainedReviewerAttempt(True),)
 
 
-def test_cover_retries_inside_one_bound_credential_and_retains_terminal_attempts() -> None:
+def test_cover_retries_inside_one_bound_credential_and_retains_terminal_attempts() -> (
+    None
+):
     request = _cover_request()
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -598,11 +664,14 @@ def test_cover_retries_inside_one_bound_credential_and_retains_terminal_attempts
         credential = profile.auth_store_path / "auth.json"
         credential.write_bytes(b'{"synthetic":true}')
         os.chmod(credential, 0o600)
-        profile = replace(profile, identity=replace(
-            profile.identity,
-            executable_sha256=hashlib.sha256(b"codex").hexdigest(),
-            sandbox_sha256=hashlib.sha256(b"sandbox").hexdigest(),
-        ))
+        profile = replace(
+            profile,
+            identity=replace(
+                profile.identity,
+                executable_sha256=hashlib.sha256(b"codex").hexdigest(),
+                sandbox_sha256=hashlib.sha256(b"sandbox").hexdigest(),
+            ),
+        )
         reviewer = adapter.ContainedReviewerAdapter(profile)
         calls: list[int] = []
 
@@ -632,9 +701,7 @@ def test_cover_retries_inside_one_bound_credential_and_retains_terminal_attempts
         assert len(calls) == 1
         assert caught.value.code == "auth"
         assert caught.value.attempts == (
-            contract.ContainedReviewerAttempt(
-                True, "local_cli_abort", 17, "a" * 64
-            ),
+            contract.ContainedReviewerAttempt(True, "local_cli_abort", 17, "a" * 64),
         )
 
 
@@ -650,11 +717,14 @@ def test_cover_abort_retries_once_with_immutable_attempt_projection() -> None:
         credential = profile.auth_store_path / "auth.json"
         credential.write_bytes(b'{"synthetic":true}')
         os.chmod(credential, 0o600)
-        profile = replace(profile, identity=replace(
-            profile.identity,
-            executable_sha256=hashlib.sha256(b"codex").hexdigest(),
-            sandbox_sha256=hashlib.sha256(b"sandbox").hexdigest(),
-        ))
+        profile = replace(
+            profile,
+            identity=replace(
+                profile.identity,
+                executable_sha256=hashlib.sha256(b"codex").hexdigest(),
+                sandbox_sha256=hashlib.sha256(b"sandbox").hexdigest(),
+            ),
+        )
         reviewer = adapter.ContainedReviewerAdapter(profile)
 
         @contextmanager
@@ -662,6 +732,7 @@ def test_cover_abort_retries_once_with_immutable_attempt_projection() -> None:
             yield ()
 
         document = '{"summary":"safe"}'
+
         def succeeds_second(_request, dispatch, *_bound):
             dispatch(100, 100, "synthetic")
             if not hasattr(succeeds_second, "called"):
@@ -710,9 +781,7 @@ def test_cover_abort_retries_once_with_immutable_attempt_projection() -> None:
         assert attempts == 2
         sleep.assert_called_once_with(1)
         assert caught.value.attempts == (
-            contract.ContainedReviewerAttempt(
-                True, "local_cli_abort", 23, "b" * 64
-            ),
+            contract.ContainedReviewerAttempt(True, "local_cli_abort", 23, "b" * 64),
             contract.ContainedReviewerAttempt(True),
         )
 
@@ -761,9 +830,7 @@ def test_cover_abort_retries_once_with_immutable_attempt_projection() -> None:
             patch.object(adapter.sys, "platform", "linux"),
             patch.object(reviewer, "_verify_sandbox"),
             patch.object(adapter, "_sealed_cover_images", new=fake_sealed),
-            patch.object(
-                reviewer, "_run_attempt", side_effect=abort_then_runtime
-            ),
+            patch.object(reviewer, "_run_attempt", side_effect=abort_then_runtime),
             patch.object(adapter.time, "sleep") as sleep,
             pytest.raises(adapter.ContainedReviewerProcessError) as caught,
         ):
@@ -771,16 +838,12 @@ def test_cover_abort_retries_once_with_immutable_attempt_projection() -> None:
         assert (mixed_attempts, caught.value.code) == (2, "runtime")
         sleep.assert_called_once_with(1)
         assert caught.value.attempts == (
-            contract.ContainedReviewerAttempt(
-                True, "local_cli_abort", 29, "c" * 64
-            ),
+            contract.ContainedReviewerAttempt(True, "local_cli_abort", 29, "c" * 64),
             contract.ContainedReviewerAttempt(True),
         )
 
         with pytest.raises(ValueError):
-            adapter.ContainedReviewerProcessError(
-                "runtime", attempts=(object(),)
-            )
+            adapter.ContainedReviewerProcessError("runtime", attempts=(object(),))
         with pytest.raises(contract.ContainedReviewerError):
             contract.ContainedReviewResult(
                 document,
@@ -820,15 +883,15 @@ def test_sealed_image_copy_resists_callback_and_same_uid_mutation() -> None:
         payload = os.read(image.descriptor, 1_048_577)
         assert hashlib.sha256(payload).hexdigest() == image.digest
 
-        with tempfile.TemporaryDirectory() as temporary, \
-             open(sys.executable, "rb") as interpreter, \
-             open(os.devnull, "rb") as stdin, \
-             tempfile.TemporaryFile() as stdout, \
-             tempfile.TemporaryFile() as stderr, \
-             open(os.devnull, "rb") as credential:
-            reviewer = adapter.ContainedReviewerAdapter(
-                _profile(Path(temporary))
-            )
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            open(sys.executable, "rb") as interpreter,
+            open(os.devnull, "rb") as stdin,
+            tempfile.TemporaryFile() as stdout,
+            tempfile.TemporaryFile() as stderr,
+            open(os.devnull, "rb") as credential,
+        ):
+            reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
             executable = adapter._BoundArtifact(
                 interpreter.fileno(),
                 f"/proc/self/fd/{interpreter.fileno()}",
@@ -893,7 +956,7 @@ def test_bubblewrap_reads_ordered_sealed_images_and_cannot_write_them() -> None:
                 "set -eu\n"
                 "for image in /images/01.png /images/02.png; do\n"
                 "    sha256sum \"$image\" | cut -d' ' -f1\n"
-                "    if printf x >\"$image\" 2>/dev/null; then\n"
+                '    if printf x >"$image" 2>/dev/null; then\n'
                 "        exit 91\n"
                 "    fi\n"
                 "done\n",
@@ -910,17 +973,21 @@ def test_bubblewrap_reads_ordered_sealed_images_and_cannot_write_them() -> None:
             profile = replace(
                 _profile(root),
                 identity=replace(
-                    _identity(), memory_bytes=536_870_912,
-                    process_limit=32, file_bytes=1_048_576,
+                    _identity(),
+                    memory_bytes=536_870_912,
+                    process_limit=32,
+                    file_bytes=1_048_576,
                 ),
             )
             reviewer = adapter.ContainedReviewerAdapter(profile)
-            with open(codex, "rb") as codex_file, \
-                 open(shutil.which("bwrap"), "rb") as sandbox_file, \
-                 open(os.devnull, "rb") as stdin, \
-                 tempfile.TemporaryFile() as stdout, \
-                 tempfile.TemporaryFile() as stderr, \
-                 open(credential, "rb") as credential_file:
+            with (
+                open(codex, "rb") as codex_file,
+                open(shutil.which("bwrap"), "rb") as sandbox_file,
+                open(os.devnull, "rb") as stdin,
+                tempfile.TemporaryFile() as stdout,
+                tempfile.TemporaryFile() as stderr,
+                open(credential, "rb") as credential_file,
+            ):
                 bound_codex = adapter._BoundArtifact(
                     codex_file.fileno(), f"/proc/self/fd/{codex_file.fileno()}"
                 )
@@ -928,9 +995,12 @@ def test_bubblewrap_reads_ordered_sealed_images_and_cannot_write_them() -> None:
                     sandbox_file.fileno(), f"/proc/self/fd/{sandbox_file.fileno()}"
                 )
                 command = reviewer._sandbox_command(
-                    job, job / "result.json",
-                    tuple(image.descriptor for image in images), provider,
-                    bound_codex.invocation_path, bound_sandbox.invocation_path,
+                    job,
+                    job / "result.json",
+                    tuple(image.descriptor for image in images),
+                    provider,
+                    bound_codex.invocation_path,
+                    bound_sandbox.invocation_path,
                     f"/proc/self/fd/{credential_file.fileno()}",
                 )
                 stop_seeking = threading.Event()
@@ -956,8 +1026,12 @@ def test_bubblewrap_reads_ordered_sealed_images_and_cannot_write_them() -> None:
                 try:
                     with patch.object(reviewer, "_limit_child"):
                         returncode = reviewer._run_gated(
-                            command, bound_codex, bound_sandbox,
-                            stdin.fileno(), stdout.fileno(), stderr.fileno(),
+                            command,
+                            bound_codex,
+                            bound_sandbox,
+                            stdin.fileno(),
+                            stdout.fileno(),
+                            stderr.fileno(),
                             seek_shared_descriptors_to_eof,
                             credential_descriptor=credential_file.fileno(),
                             sealed_images=images,
@@ -980,29 +1054,48 @@ def test_bubblewrap_reads_ordered_sealed_images_and_cannot_write_them() -> None:
     ((TimeoutError(), "timeout"), (KeyboardInterrupt(), "cancel")),
     ids=("timeout", "cancel"),
 )
-def test_gated_timeout_and_cancel_kill_the_captured_process_identity(failure, code) -> None:
+def test_gated_timeout_and_cancel_kill_the_captured_process_identity(
+    failure, code
+) -> None:
     with tempfile.TemporaryDirectory() as temporary:
         reviewer = adapter.ContainedReviewerAdapter(_profile(Path(temporary)))
         artifact = adapter._BoundArtifact(10, "/proc/self/fd/10")
         killed: list[tuple[int, int, str]] = []
-        with patch.object(adapter.os, "pipe", side_effect=[(20, 21), (22, 23)]), \
-             patch.object(adapter.os, "fork", return_value=4321), \
-             patch.object(adapter.os, "close"), \
-             patch.object(adapter.os, "read", return_value=b"R"), \
-             patch.object(adapter.os, "write"), \
-             patch.object(adapter, "_process_start_token", return_value="9876"), \
-             patch.object(adapter, "_safe_start_token", return_value="9876"), \
-             patch.object(adapter, "_wait_for_exit", side_effect=failure), \
-             patch.object(adapter, "_kill_and_prove_dead", side_effect=lambda pid, pgid, token: killed.append((pid, pgid, token))):
+        with (
+            patch.object(adapter.os, "pipe", side_effect=[(20, 21), (22, 23)]),
+            patch.object(adapter.os, "fork", return_value=4321),
+            patch.object(adapter.os, "close"),
+            patch.object(adapter.os, "read", return_value=b"R"),
+            patch.object(adapter.os, "write"),
+            patch.object(adapter, "_process_start_token", return_value="9876"),
+            patch.object(adapter, "_safe_start_token", return_value="9876"),
+            patch.object(adapter, "_wait_for_exit", side_effect=failure),
+            patch.object(
+                adapter,
+                "_kill_and_prove_dead",
+                side_effect=lambda pid, pgid, token: killed.append((pid, pgid, token)),
+            ),
+        ):
             with pytest.raises(Exception, match=code):
-                reviewer._run_gated([], artifact, artifact, 1, 2, 3, lambda *_: None, credential_descriptor=4)
+                reviewer._run_gated(
+                    [],
+                    artifact,
+                    artifact,
+                    1,
+                    2,
+                    3,
+                    lambda *_: None,
+                    credential_descriptor=4,
+                )
         assert killed == [(4321, 4321, "9876")]
 
 
 def test_cleanup_kills_group_and_proves_process_death() -> None:
-    with patch.object(adapter.os, "killpg") as kill, \
-         patch.object(adapter, "_wait_for_exit", return_value=0), \
-         patch.object(adapter, "_process_identity_alive", return_value=False) as alive:
+    with (
+        patch.object(adapter.os, "killpg") as kill,
+        patch.object(adapter, "_wait_for_exit", return_value=0),
+        patch.object(adapter, "_process_identity_alive", return_value=False) as alive,
+    ):
         adapter._kill_and_prove_dead(12, 12, "34")
     kill.assert_called_once_with(12, adapter.signal.SIGKILL)
     alive.assert_called_once_with(12, 12, "34")
@@ -1010,7 +1103,13 @@ def test_cleanup_kills_group_and_proves_process_death() -> None:
 
 def test_live_schema_rejection_maps_to_closed_response_format_failure() -> None:
     message = adapter._LIVE_SCHEMA_REJECTION_PREFIX + "synthetic"
-    event = json.dumps({"error": {"message": message}, "type": "turn.failed"}, separators=(",", ":")).encode() + b"\n"
+    event = (
+        json.dumps(
+            {"error": {"message": message}, "type": "turn.failed"},
+            separators=(",", ":"),
+        ).encode()
+        + b"\n"
+    )
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         stdout.write(event)
         code, count, digest = adapter._nonzero_failure(stdout, stderr, returncode=1)
@@ -1059,4 +1158,7 @@ def test_near_miss_abort_conditions_are_typed_runtime(
 
 def test_proc_parser_uses_final_command_delimiter() -> None:
     fields = ["S", "1", "77"] + ["0"] * 16 + ["12345"] + ["0"] * 4
-    assert adapter._proc_identity("99 (odd ) command) " + " ".join(fields)) == ("12345", 77)
+    assert adapter._proc_identity("99 (odd ) command) " + " ".join(fields)) == (
+        "12345",
+        77,
+    )

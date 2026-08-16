@@ -65,8 +65,7 @@ class HumanDecision:
             and self.actor == actor
             and self.outcome == outcome
             and self.selected_value == selected_value
-            and self.idempotency_digest
-            == self.idempotency_digest_for(idempotency_key)
+            and self.idempotency_digest == self.idempotency_digest_for(idempotency_key)
         )
 
     @classmethod
@@ -107,8 +106,11 @@ class HumanDecision:
         if type(result) is not dict:
             raise HumanDecisionError("invalid")
         actionable = (
-            result.get("outcome") in {
-                "propose_change", "acceptable_choice", "unresolved_choice",
+            result.get("outcome")
+            in {
+                "propose_change",
+                "acceptable_choice",
+                "unresolved_choice",
             }
             or proposal["manual_required"] is True
         )
@@ -178,8 +180,11 @@ class HumanDecision:
             raise HumanDecisionError("stale")
         result = proposal["result"]
         if type(result) is not dict or not (
-            result.get("outcome") in {
-                "propose_change", "acceptable_choice", "unresolved_choice",
+            result.get("outcome")
+            in {
+                "propose_change",
+                "acceptable_choice",
+                "unresolved_choice",
             }
             or proposal["manual_required"] is True
         ):
@@ -241,20 +246,25 @@ class HumanDecision:
     def from_json(cls, serialized: str) -> Self:
         try:
             raw = json.loads(serialized)
-            if type(raw) is not dict or set(raw) != {
-                "actor",
-                "decision_id",
-                "destination",
-                "idempotency_digest",
-                "occurred_at",
-                "outcome",
-                "proposal_id",
-                "request_digest",
-                "review_case_id",
-                "schema_version",
-                "selected_value",
-                "target_fingerprint",
-            } or raw["schema_version"] != "human-decision-v1":
+            if (
+                type(raw) is not dict
+                or set(raw)
+                != {
+                    "actor",
+                    "decision_id",
+                    "destination",
+                    "idempotency_digest",
+                    "occurred_at",
+                    "outcome",
+                    "proposal_id",
+                    "request_digest",
+                    "review_case_id",
+                    "schema_version",
+                    "selected_value",
+                    "target_fingerprint",
+                }
+                or raw["schema_version"] != "human-decision-v1"
+            ):
                 raise ValueError
             value = cls(
                 raw["decision_id"],
@@ -289,8 +299,7 @@ class HumanDecision:
                 )
             )
             if (
-                re.fullmatch(r"human_decision_[0-9a-f]{64}", value.decision_id)
-                is None
+                re.fullmatch(r"human_decision_[0-9a-f]{64}", value.decision_id) is None
                 or value.decision_id != expected_id
                 or value.request_digest != expected_request
                 or re.fullmatch(r"review_case_[0-9a-f]{64}", value.review_case_id)

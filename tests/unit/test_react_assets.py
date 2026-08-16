@@ -35,7 +35,9 @@ def _write_bundle(root: Path) -> None:
                 "kind": (
                     "shell"
                     if path == "index.html"
-                    else "style" if path.endswith(".css") else "script"
+                    else "style"
+                    if path.endswith(".css")
+                    else "script"
                 ),
                 "path": path,
                 "sha256": hashlib.sha256(payload).hexdigest(),

@@ -7,9 +7,9 @@ import pytest
 
 from mechanical_librarian.adapters.persistence.batch_manifest import create, read
 from mechanical_librarian.application.batch import (
- BatchError,
- CatalogueSnapshot,
- manifest,
+    BatchError,
+    CatalogueSnapshot,
+    manifest,
 )
 
 

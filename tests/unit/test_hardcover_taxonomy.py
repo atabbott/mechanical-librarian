@@ -113,19 +113,23 @@ def test_work_lookup_retains_typed_taxonomy_and_first_publication() -> None:
         65_536,
     )
     lookup = work_lookup()
-    observation = qualify_provider_observation(
-        provider.observe(lookup), lookup
-    )
+    observation = qualify_provider_observation(provider.observe(lookup), lookup)
     assert ProviderQueryKind.WORK == observation.query_kind
     assert "MetadataEvidenceByWork" == captured[0]["operationName"]
-    assert {"authors": ["Ada Example"], "title": "Current title"} == captured[0]["variables"]
+    assert {"authors": ["Ada Example"], "title": "Current title"} == captured[0][
+        "variables"
+    ]
     work_claims = [
         claim
         for claim in observation.candidates[0].claims
         if claim.scope is ClaimScope.WORK and claim.state is FieldState.VALID
     ]
-    assert {"Fantasy"} == {claim.value for claim in work_claims if claim.kind is ClaimKind.GENRE}
-    assert {"Hopeful", "Violence"} == {claim.value for claim in work_claims if claim.kind is ClaimKind.TAG}
+    assert {"Fantasy"} == {
+        claim.value for claim in work_claims if claim.kind is ClaimKind.GENRE
+    }
+    assert {"Hopeful", "Violence"} == {
+        claim.value for claim in work_claims if claim.kind is ClaimKind.TAG
+    }
     assert {
         ProviderEvidenceKind.AUTHOR_IDENTITY,
         ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
@@ -145,8 +149,7 @@ def test_work_lookup_retains_typed_taxonomy_and_first_publication() -> None:
         ("Mood", "Hopeful", 1),
         ("ContentWarning", "Violence", 2),
     ] == [
-        (value.taxonomy_type, value.value, value.source_ordinal)
-        for value in taxonomy
+        (value.taxonomy_type, value.value, value.source_ordinal) for value in taxonomy
     ]
     replayed = MetadataReport.from_json(
         MetadataReport.create(
@@ -265,8 +268,7 @@ def test_equal_taxonomy_values_keep_type_and_source_order_through_replay() -> No
         ("Genre", "Shared", 1),
         ("Mood", "Shared", 2),
     ] == [
-        (value.taxonomy_type, value.value, value.source_ordinal)
-        for value in taxonomy
+        (value.taxonomy_type, value.value, value.source_ordinal) for value in taxonomy
     ]
     selected_taxonomy = tuple(
         claim
@@ -276,10 +278,7 @@ def test_equal_taxonomy_values_keep_type_and_source_order_through_replay() -> No
     assert {
         (ClaimKind.GENRE, FieldState.VALID, "Shared"),
         (ClaimKind.TAG, FieldState.VALID, "Shared"),
-    } == {
-        (claim.kind, claim.state, claim.value)
-        for claim in selected_taxonomy
-    }
+    } == {(claim.kind, claim.state, claim.value) for claim in selected_taxonomy}
     assert () == observation.diagnostics
     report = MetadataReport.create(
         target=TargetFacts(
@@ -412,18 +411,53 @@ def test_hardcover_taxonomy_and_work_publication_fail_closed() -> None:
         for claim in observation.candidates[0].claims
         if claim.kind in {ClaimKind.GENRE, ClaimKind.TAG}
     }
-    assert {ClaimKind.GENRE: FieldState.OVERSIZED, ClaimKind.TAG: FieldState.OVERSIZED} == states
+    assert {
+        ClaimKind.GENRE: FieldState.OVERSIZED,
+        ClaimKind.TAG: FieldState.OVERSIZED,
+    } == states
 
 
 def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing() -> None:
     calls: list[int] = []
-    client = httpx.Client(transport=httpx.MockTransport(lambda request: calls.append(1) or httpx.Response(200)))  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the call and still yields the response.
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: calls.append(1) or httpx.Response(200)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the call and still yields the response.
+        )
+    )
     provider = HardcoverMetadataProvider("catalogue", client, 65_536)
     assert provider.observe(isbn_lookup(())).status == ProviderStatus.INSUFFICIENT_INPUT
     assert calls == []
 
-    malformed = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json={"data": {"editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}, {"id": "bad", "book_id": 2, "isbn_10": None, "isbn_13": None}], "books": [{"id": 1, "title": "Fine"}, {"id": 2, "title": None}]}})))
-    observation = HardcoverMetadataProvider("catalogue", malformed, 65_536).observe(isbn_lookup((isbn_claim(),)))
+    malformed = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                headers={"content-type": "application/json"},
+                json={
+                    "data": {
+                        "editions": [
+                            {
+                                "id": 1,
+                                "book_id": 1,
+                                "isbn_10": None,
+                                "isbn_13": "9780306406157",
+                            },
+                            {
+                                "id": "bad",
+                                "book_id": 2,
+                                "isbn_10": None,
+                                "isbn_13": None,
+                            },
+                        ],
+                        "books": [{"id": 1, "title": "Fine"}, {"id": 2, "title": None}],
+                    }
+                },
+            )
+        )
+    )
+    observation = HardcoverMetadataProvider("catalogue", malformed, 65_536).observe(
+        isbn_lookup((isbn_claim(),))
+    )
     assert observation.status == ProviderStatus.MALFORMED
     assert observation.candidates == ()
 
@@ -431,17 +465,37 @@ def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing() -> None
 @pytest.mark.parametrize(
     "data",
     (
-        {"editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], "books": []},
-        {"editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], "books": [{"id": 1, "title": None}, {"id": 1, "title": None}]},
-        {"editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], "books": [{"id": 1, "title": None}, {"id": 2, "title": None}]},
+        {
+            "editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
+            "books": [],
+        },
+        {
+            "editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
+            "books": [{"id": 1, "title": None}, {"id": 1, "title": None}],
+        },
+        {
+            "editions": [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
+            "books": [{"id": 1, "title": None}, {"id": 2, "title": None}],
+        },
     ),
     ids=("missing_work", "duplicate_work", "unreferenced_work"),
 )
 def test_separate_root_join_rejects_missing_duplicate_and_unreferenced_work(
     data: dict[str, object],
 ) -> None:
-    client = httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json={"data": data})))
-    assert HardcoverMetadataProvider("catalogue", client, 65_536).observe(isbn_lookup((isbn_claim(),))).status == ProviderStatus.MALFORMED
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, headers={"content-type": "application/json"}, json={"data": data}
+            )
+        )
+    )
+    assert (
+        HardcoverMetadataProvider("catalogue", client, 65_536)
+        .observe(isbn_lookup((isbn_claim(),)))
+        .status
+        == ProviderStatus.MALFORMED
+    )
 
 
 @pytest.mark.parametrize(
@@ -797,8 +851,7 @@ def test_malformed_taxonomy_rows_are_local_to_referencing_works() -> None:
     ).observe(isbn_lookup((isbn_claim(),)))
 
     candidates = {
-        candidate.work_identity: candidate
-        for candidate in observation.candidates
+        candidate.work_identity: candidate for candidate in observation.candidates
     }
     first_states = {
         claim.state
@@ -913,4 +966,3 @@ def test_unavailable_or_oversized_taxonomy_root_is_global(
         if claim.kind in {ClaimKind.GENRE, ClaimKind.TAG}
     }
     assert 1 == observation.diagnostics[0].count
-

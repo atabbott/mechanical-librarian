@@ -68,7 +68,9 @@ _OVERFLOW_BOOK: dict[str, object] = {
 }
 
 
-def _hostile_overflow(contributions: list[dict[str, object]]) -> list[dict[str, object]]:
+def _hostile_overflow(
+    contributions: list[dict[str, object]],
+) -> list[dict[str, object]]:
     return [{**_OVERFLOW_BOOK, "contributions": contributions}]
 
 
@@ -77,30 +79,66 @@ def _hostile_overflow(contributions: list[dict[str, object]]) -> list[dict[str, 
     (
         (
             _OVERFLOW_ROWS,
-            _hostile_overflow([
-                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
-                {"id": 1, "contribution": "Author", "author": {"id": 8, "name": "Bea Example"}},
-            ]),
+            _hostile_overflow(
+                [
+                    {
+                        "id": 1,
+                        "contribution": "Author",
+                        "author": {"id": 7, "name": "Ada Example"},
+                    },
+                    {
+                        "id": 1,
+                        "contribution": "Author",
+                        "author": {"id": 8, "name": "Bea Example"},
+                    },
+                ]
+            ),
         ),
         (
             _OVERFLOW_ROWS,
-            _hostile_overflow([
-                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
-                {"id": 2, "contribution": "Author", "author": {"id": 7, "name": "Ada Other"}},
-            ]),
+            _hostile_overflow(
+                [
+                    {
+                        "id": 1,
+                        "contribution": "Author",
+                        "author": {"id": 7, "name": "Ada Example"},
+                    },
+                    {
+                        "id": 2,
+                        "contribution": "Author",
+                        "author": {"id": 7, "name": "Ada Other"},
+                    },
+                ]
+            ),
         ),
         (
             _OVERFLOW_ROWS,
-            _hostile_overflow([
-                {"id": 1, "contribution": "Translator", "author": {"id": 7, "name": "Ada Example"}},
-            ]),
+            _hostile_overflow(
+                [
+                    {
+                        "id": 1,
+                        "contribution": "Translator",
+                        "author": {"id": 7, "name": "Ada Example"},
+                    },
+                ]
+            ),
         ),
         (
             _OVERFLOW_ROWS,
-            _hostile_overflow([
-                {"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}},
-                {"id": 2, "contribution": "Author", "author": {"id": 8, "name": "ada example"}},
-            ]),
+            _hostile_overflow(
+                [
+                    {
+                        "id": 1,
+                        "contribution": "Author",
+                        "author": {"id": 7, "name": "Ada Example"},
+                    },
+                    {
+                        "id": 2,
+                        "contribution": "Author",
+                        "author": {"id": 8, "name": "ada example"},
+                    },
+                ]
+            ),
         ),
         ([{"id": 1, "book_id": 10}] * 6, [_OVERFLOW_BOOK]),
         (
@@ -128,30 +166,40 @@ def test_edition_overflow_rejects_hostile_creator_identity_bindings(
 
 @pytest.mark.parametrize("count", (5, 6, 7), ids=("five", "six", "seven"))
 def test_edition_overflow_probe_has_exact_five_six_seven_boundary(count: int) -> None:
-    book = [{
-        "id": 10,
-        "title": "Anchored work",
-        "contributions": [{
-            "id": 1, "contribution": "Author",
-            "author": {"id": 7, "name": "Ada Example"},
-        }],
-    }]
-    payload = json.dumps(hardcover_envelope(
-        [{"id": index, "book_id": 10} for index in range(1, count + 1)],
-        book,
-    )).encode()
+    book = [
+        {
+            "id": 10,
+            "title": "Anchored work",
+            "contributions": [
+                {
+                    "id": 1,
+                    "contribution": "Author",
+                    "author": {"id": 7, "name": "Ada Example"},
+                }
+            ],
+        }
+    ]
+    payload = json.dumps(
+        hardcover_envelope(
+            [{"id": index, "book_id": 10} for index in range(1, count + 1)],
+            book,
+        )
+    ).encode()
     if count == 7:
         with pytest.raises(hardcover_metadata._CandidateLimit):
             hardcover_metadata._parse_edition_enrichment_overflow(payload, "catalogue")
     else:
-        value = hardcover_metadata._parse_edition_enrichment_overflow(payload, "catalogue")
+        value = hardcover_metadata._parse_edition_enrichment_overflow(
+            payload, "catalogue"
+        )
         assert (count == 6) == (value is not None)
 
 
 def test_mixed_discovery_retains_only_the_work_overflow_witness() -> None:
     fields = tuple(
         TargetField(TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Ada Example",))
-        if field.destination is TargetDestination.AUTHORS else field
+        if field.destination is TargetDestination.AUTHORS
+        else field
         for field in default_target_fields("Current title")
     )
     title, isbn = title_claim(), isbn_claim()
@@ -160,10 +208,24 @@ def test_mixed_discovery_retains_only_the_work_overflow_witness() -> None:
         (title, isbn),
     )
     witness = hardcover_metadata._parse_edition_enrichment_overflow(
-        json.dumps(hardcover_envelope(
-            [{"id": index, "book_id": 10} for index in range(1, 7)],
-            [{"id": 10, "title": "Current title", "contributions": [{"id": 1, "contribution": "Author", "author": {"id": 7, "name": "Ada Example"}}]}],
-        )).encode(),
+        json.dumps(
+            hardcover_envelope(
+                [{"id": index, "book_id": 10} for index in range(1, 7)],
+                [
+                    {
+                        "id": 10,
+                        "title": "Current title",
+                        "contributions": [
+                            {
+                                "id": 1,
+                                "contribution": "Author",
+                                "author": {"id": 7, "name": "Ada Example"},
+                            }
+                        ],
+                    }
+                ],
+            )
+        ).encode(),
         "catalogue",
     )
     assert witness is not None
@@ -172,7 +234,11 @@ def test_mixed_discovery_retains_only_the_work_overflow_witness() -> None:
     observation = provider_observation(
         "catalogue",
         (
-            ProviderLaneResult(work, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, edition_enrichment_overflow=witness),
+            ProviderLaneResult(
+                work,
+                ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+                edition_enrichment_overflow=witness,
+            ),
             ProviderLaneResult(isbn_lane, ProviderStatus.NO_MATCH),
         ),
     )
@@ -190,10 +256,44 @@ def test_mixed_discovery_retains_only_the_work_overflow_witness() -> None:
 
 
 def test_rich_field_boundaries_are_local_and_public_safe() -> None:
-    row: dict[str, object] = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", "asin": "B012345678", "title": "T" * 513, "subtitle": "Edition subtitle", "release_date": "not-a-date", "publisher": None, "language": None, "contributions": [{"id": 1, "contribution": "Author", "author": {"id": 1, "name": "Ada"}}, {"id": 2, "contribution": "/Users/private", "author": {"id": 2, "name": "Bea"}}]}
-    book: dict[str, object] = {"id": 1, "title": "/Users/private/title", "description": "D" * 16385, "contributions": [{"id": 3, "contribution": "Translator", "author": {"id": 3, "name": "Cy"}}], "book_series": [{"id": 4, "position": 1.5, "series": {"id": 4, "name": "Series"}}], "taggings": []}
+    row: dict[str, object] = {
+        "id": 1,
+        "book_id": 1,
+        "isbn_10": None,
+        "isbn_13": "9780306406157",
+        "asin": "B012345678",
+        "title": "T" * 513,
+        "subtitle": "Edition subtitle",
+        "release_date": "not-a-date",
+        "publisher": None,
+        "language": None,
+        "contributions": [
+            {"id": 1, "contribution": "Author", "author": {"id": 1, "name": "Ada"}},
+            {
+                "id": 2,
+                "contribution": "/Users/private",
+                "author": {"id": 2, "name": "Bea"},
+            },
+        ],
+    }
+    book: dict[str, object] = {
+        "id": 1,
+        "title": "/Users/private/title",
+        "description": "D" * 16385,
+        "contributions": [
+            {"id": 3, "contribution": "Translator", "author": {"id": 3, "name": "Cy"}}
+        ],
+        "book_series": [
+            {"id": 4, "position": 1.5, "series": {"id": 4, "name": "Series"}}
+        ],
+        "taggings": [],
+    }
     payload = json.dumps(hardcover_envelope([row], [book])).encode()
-    claims = hardcover_metadata._parse_candidates(payload, "catalogue", (isbn_claim(),)).__getitem__(0).claims
+    claims = (
+        hardcover_metadata._parse_candidates(payload, "catalogue", (isbn_claim(),))
+        .__getitem__(0)
+        .claims
+    )
     by_kind = {claim.kind: claim for claim in claims}
     assert by_kind[ClaimKind.ASIN].state.value == "valid"
     assert by_kind[ClaimKind.PUBLICATION_DATE].state.value == "malformed"
@@ -220,35 +320,84 @@ def test_rich_field_boundaries_are_local_and_public_safe() -> None:
         (print_claim,),
     )[0].claims
     assert {"print"} == {
-            claim.applicability
-            for claim in print_claims
-            if claim.kind is ClaimKind.ISBN and claim.value is not None
-        }
+        claim.applicability
+        for claim in print_claims
+        if claim.kind is ClaimKind.ISBN and claim.value is not None
+    }
     assert {"print"} == {
-            claim.applicability
-            for claim in print_claims
-            if claim.kind in {ClaimKind.ASIN, ClaimKind.SUBTITLE}
-        }
+        claim.applicability
+        for claim in print_claims
+        if claim.kind in {ClaimKind.ASIN, ClaimKind.SUBTITLE}
+    }
     unknown_claims = hardcover_metadata._parse_candidates(
         payload,
         "catalogue",
         (title_claim(),),
     )[0].claims
     assert {"unknown"} == {
-            claim.applicability
-            for claim in unknown_claims
-            if claim.kind in {ClaimKind.ASIN, ClaimKind.SUBTITLE}
-        }
+        claim.applicability
+        for claim in unknown_claims
+        if claim.kind in {ClaimKind.ASIN, ClaimKind.SUBTITLE}
+    }
 
 
 def test_response_cap_and_candidate_probe_are_terminal() -> None:
-    capped = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, content=b"{}" * 20))), 1)
-    assert capped.observe(isbn_lookup((isbn_claim(),))).status == ProviderStatus.OVERSIZED
-    rows = [{"id": index, "book_id": index, "isbn_10": None, "isbn_13": None} for index in range(1, 7)]
-    overflow = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, headers={"content-type": "application/json"}, json=hardcover_envelope(rows, [{"id": index, "title": None} for index in range(1, 7)])))), 65_536)
-    assert overflow.observe(isbn_lookup((isbn_claim(),))).status == ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
-    for size, expected in ((262_144, ProviderStatus.MALFORMED), (262_145, ProviderStatus.OVERSIZED)):
-        provider = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request, length=size: httpx.Response(200, headers={"content-type": "application/json"}, content=b"x" * length))), 262_144)
+    capped = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    content=b"{}" * 20,
+                )
+            )
+        ),
+        1,
+    )
+    assert (
+        capped.observe(isbn_lookup((isbn_claim(),))).status == ProviderStatus.OVERSIZED
+    )
+    rows = [
+        {"id": index, "book_id": index, "isbn_10": None, "isbn_13": None}
+        for index in range(1, 7)
+    ]
+    overflow = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json=hardcover_envelope(
+                        rows, [{"id": index, "title": None} for index in range(1, 7)]
+                    ),
+                )
+            )
+        ),
+        65_536,
+    )
+    assert (
+        overflow.observe(isbn_lookup((isbn_claim(),))).status
+        == ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+    )
+    for size, expected in (
+        (262_144, ProviderStatus.MALFORMED),
+        (262_145, ProviderStatus.OVERSIZED),
+    ):
+        provider = HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request, length=size: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        content=b"x" * length,
+                    )
+                )
+            ),
+            262_144,
+        )
         assert provider.observe(isbn_lookup((isbn_claim(),))).status == expected
 
 
@@ -312,17 +461,22 @@ def test_edition_overflow_retains_only_work_scoped_witness() -> None:
     assert "Anchored work" == witness.title
     assert 1 == len(witness.authors)
     assert "Ada Example" == witness.authors[0].value
-    assert not ({
+    assert not (
+        {
             "Discarded edition 1",
             "Discarded publisher",
             "2001-02-03",
             "en",
             "9780306406157",
         }
-        & {witness.title, *(claim.value for claim in witness.authors)})
+        & {witness.title, *(claim.value for claim in witness.authors)}
+    )
     report = MetadataReport.create(
         target=TargetFacts(
-            "primary", "ebooks", "item-1", tuple(
+            "primary",
+            "ebooks",
+            "item-1",
+            tuple(
                 TargetField(
                     TargetDestination.AUTHORS,
                     TargetFieldState.VALUE,
@@ -331,7 +485,7 @@ def test_edition_overflow_retains_only_work_scoped_witness() -> None:
                 if field.destination is TargetDestination.AUTHORS
                 else field
                 for field in default_target_fields("Anchored work")
-            )
+            ),
         ),
         file=FileFacts(0, "a" * 64, "b" * 64),
         local_claims=(),
@@ -350,7 +504,9 @@ def test_edition_overflow_retains_only_work_scoped_witness() -> None:
             for field in document["target"]["fields"]
             if field["destination"] == "authors"
         ),
-        lambda document: document["providers"][0]["edition_enrichment_overflow"].update({"title": "Anchored work (Expanded)"}),
+        lambda document: document["providers"][0]["edition_enrichment_overflow"].update(
+            {"title": "Anchored work (Expanded)"}
+        ),
     ):
         document = report.to_data()
         mutate(document)
@@ -359,27 +515,106 @@ def test_edition_overflow_retains_only_work_scoped_witness() -> None:
 
 
 def test_exact_rich_caps_and_pinned_schema_are_admitted() -> None:
-    assert hardcover_metadata.HARDCOVER_SCHEMA_COMMIT == "1c5bdbd3244e02b03ccc658a792793e39cba17a8"
-    assert "contributions(order_by:{id:asc},limit:17){id contribution author{id name}}" in hardcover_metadata._QUERY
+    assert (
+        hardcover_metadata.HARDCOVER_SCHEMA_COMMIT
+        == "1c5bdbd3244e02b03ccc658a792793e39cba17a8"
+    )
+    assert (
+        "contributions(order_by:{id:asc},limit:17){id contribution author{id name}}"
+        in hardcover_metadata._QUERY
+    )
     assert "books:books(" in hardcover_metadata._QUERY
     assert "books_through_editions" not in hardcover_metadata._QUERY
-    assert "book_series(order_by:{id:asc},limit:17){id position series{id name}}" in hardcover_metadata._QUERY
-    assert "taggings(order_by:{id:asc},limit:33){id tag_id}" in hardcover_metadata._QUERY
+    assert (
+        "book_series(order_by:{id:asc},limit:17){id position series{id name}}"
+        in hardcover_metadata._QUERY
+    )
+    assert (
+        "taggings(order_by:{id:asc},limit:33){id tag_id}" in hardcover_metadata._QUERY
+    )
     assert "tags:tags(" in hardcover_metadata._QUERY
     assert "{id tag tag_category{id category}}" in hardcover_metadata._QUERY
-    for scalar, description, expected in (("x" * 512, "d" * 16384, "valid"), ("x" * 513, "d" * 16385, "oversized")):
-        payload = hardcover_envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "title": scalar}], [{"id": 1, "title": None, "description": description}])
-        claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", () )[0].claims
-        assert next(claim.state.value for claim in claims if claim.kind is ClaimKind.TITLE) == expected
-        assert next(claim.state.value for claim in claims if claim.kind is ClaimKind.DESCRIPTION) == expected
-    for count, kind, scope, key in ((16, ClaimKind.CREATOR, ClaimScope.EDITION, "edition"), (17, ClaimKind.CREATOR, ClaimScope.EDITION, "edition"), (16, ClaimKind.CREATOR, ClaimScope.WORK, "work"), (17, ClaimKind.CREATOR, ClaimScope.WORK, "work"), (16, ClaimKind.SERIES, ClaimScope.WORK, "series"), (17, ClaimKind.SERIES, ClaimScope.WORK, "series"), (32, ClaimKind.TAG, ClaimScope.WORK, "tag"), (33, ClaimKind.TAG, ClaimScope.WORK, "tag")):
-        contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": f"A{index}"}} for index in range(1, count + 1)]
-        series = [{"id": index, "position": str(index), "series": {"id": index, "name": f"S{index}"}} for index in range(1, count + 1)]
-        tags = [{"id": index, "tag": {"id": index, "tag": f"T{index}"}} for index in range(1, count + 1)]
-        row: dict[str, object] = {"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions if key == "edition" else []}
-        book: dict[str, object] = {"id": 1, "title": None, "contributions": contributions if key == "work" else [], "book_series": series if key == "series" else [], "taggings": tags if key == "tag" else []}
-        claims = hardcover_metadata._parse_candidates(json.dumps(hardcover_envelope([row], [book])).encode(), "catalogue", ())[0].claims
-        relevant = [claim for claim in claims if claim.kind is kind and claim.scope is scope]
+    for scalar, description, expected in (
+        ("x" * 512, "d" * 16384, "valid"),
+        ("x" * 513, "d" * 16385, "oversized"),
+    ):
+        payload = hardcover_envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": None,
+                    "title": scalar,
+                }
+            ],
+            [{"id": 1, "title": None, "description": description}],
+        )
+        claims = hardcover_metadata._parse_candidates(
+            json.dumps(payload).encode(), "catalogue", ()
+        )[0].claims
+        assert (
+            next(claim.state.value for claim in claims if claim.kind is ClaimKind.TITLE)
+            == expected
+        )
+        assert (
+            next(
+                claim.state.value
+                for claim in claims
+                if claim.kind is ClaimKind.DESCRIPTION
+            )
+            == expected
+        )
+    for count, kind, scope, key in (
+        (16, ClaimKind.CREATOR, ClaimScope.EDITION, "edition"),
+        (17, ClaimKind.CREATOR, ClaimScope.EDITION, "edition"),
+        (16, ClaimKind.CREATOR, ClaimScope.WORK, "work"),
+        (17, ClaimKind.CREATOR, ClaimScope.WORK, "work"),
+        (16, ClaimKind.SERIES, ClaimScope.WORK, "series"),
+        (17, ClaimKind.SERIES, ClaimScope.WORK, "series"),
+        (32, ClaimKind.TAG, ClaimScope.WORK, "tag"),
+        (33, ClaimKind.TAG, ClaimScope.WORK, "tag"),
+    ):
+        contributions = [
+            {
+                "id": index,
+                "contribution": "Author",
+                "author": {"id": index, "name": f"A{index}"},
+            }
+            for index in range(1, count + 1)
+        ]
+        series = [
+            {
+                "id": index,
+                "position": str(index),
+                "series": {"id": index, "name": f"S{index}"},
+            }
+            for index in range(1, count + 1)
+        ]
+        tags = [
+            {"id": index, "tag": {"id": index, "tag": f"T{index}"}}
+            for index in range(1, count + 1)
+        ]
+        row: dict[str, object] = {
+            "id": 1,
+            "book_id": 1,
+            "isbn_10": None,
+            "isbn_13": None,
+            "contributions": contributions if key == "edition" else [],
+        }
+        book: dict[str, object] = {
+            "id": 1,
+            "title": None,
+            "contributions": contributions if key == "work" else [],
+            "book_series": series if key == "series" else [],
+            "taggings": tags if key == "tag" else [],
+        }
+        claims = hardcover_metadata._parse_candidates(
+            json.dumps(hardcover_envelope([row], [book])).encode(), "catalogue", ()
+        )[0].claims
+        relevant = [
+            claim for claim in claims if claim.kind is kind and claim.scope is scope
+        ]
         if count in {17, 33}:
             assert len(relevant) == 1
             assert relevant[0].state == FieldState.OVERSIZED
@@ -389,24 +624,75 @@ def test_exact_rich_caps_and_pinned_schema_are_admitted() -> None:
 
 
 def test_contribution_probe_preserves_roles_and_overflow_validates_rows() -> None:
-    for roles, expected in (((["Author"] * 16) + ["Translator"], {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}), ((["Translator"] * 16) + ["Author"], {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR})):
-        contributions = [{"id": index, "contribution": role, "author": {"id": index, "name": f"A{index}"}} for index, role in enumerate(roles, 1)]
-        payload = hardcover_envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions}], [{"id": 1, "title": None}])
-        claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())[0].claims
-        overflow = {claim.kind for claim in claims if claim.state is FieldState.OVERSIZED and claim.scope is ClaimScope.EDITION}
+    for roles, expected in (
+        (
+            (["Author"] * 16) + ["Translator"],
+            {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR},
+        ),
+        (
+            (["Translator"] * 16) + ["Author"],
+            {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR},
+        ),
+    ):
+        contributions = [
+            {
+                "id": index,
+                "contribution": role,
+                "author": {"id": index, "name": f"A{index}"},
+            }
+            for index, role in enumerate(roles, 1)
+        ]
+        payload = hardcover_envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": None,
+                    "contributions": contributions,
+                }
+            ],
+            [{"id": 1, "title": None}],
+        )
+        claims = hardcover_metadata._parse_candidates(
+            json.dumps(payload).encode(), "catalogue", ()
+        )[0].claims
+        overflow = {
+            claim.kind
+            for claim in claims
+            if claim.state is FieldState.OVERSIZED and claim.scope is ClaimScope.EDITION
+        }
         assert overflow == expected
     for bad in (0, 16):
-        contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": "A"}} for index in range(17)]
+        contributions = [
+            {
+                "id": index,
+                "contribution": "Author",
+                "author": {"id": index, "name": "A"},
+            }
+            for index in range(17)
+        ]
         contributions[bad] = {"id": bad, "contribution": "Author"}
-        payload = hardcover_envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "contributions": contributions}], [{"id": 1, "title": None}])
+        payload = hardcover_envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": None,
+                    "contributions": contributions,
+                }
+            ],
+            [{"id": 1, "title": None}],
+        )
         claims = hardcover_metadata._parse_candidates(
             json.dumps(payload).encode(), "catalogue", ()
         )[0].claims
         assert any(
-                claim.kind in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}
-                and claim.state is FieldState.OVERSIZED
-                for claim in claims
-            )
+            claim.kind in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}
+            and claim.state is FieldState.OVERSIZED
+            for claim in claims
+        )
 
 
 def test_nullable_contribution_roles_preserve_neutral_identity_bound_creators() -> None:
@@ -426,32 +712,34 @@ def test_nullable_contribution_roles_preserve_neutral_identity_bound_creators() 
         and claim.role is None
     ]
     assert {ClaimScope.EDITION, ClaimScope.WORK} == {claim.scope for claim in creators}
-    work_creator = next(
-        claim for claim in creators if claim.scope is ClaimScope.WORK
-    )
+    work_creator = next(claim for claim in creators if claim.scope is ClaimScope.WORK)
     assert ((work_creator.reference, "hardcover-author-0000000001", None),) == tuple(
-            (binding.claim_reference, binding.identity, binding.role)
-            for binding in observation.candidates[0].identity_bindings
-        )
+        (binding.claim_reference, binding.identity, binding.role)
+        for binding in observation.candidates[0].identity_bindings
+    )
     qualified = qualify_provider_observation(
         observation,
         work_lookup("Synthetic title", ("Synthetic Contributor",)),
     )
     assert ProviderStatus.CANDIDATES == qualified.status
     assert (None,) == tuple(
-            claim.role
-            for claim in qualified.candidates[0].claims
-            if claim.kind is ClaimKind.CREATOR
-        )
-    assert {ProviderEvidenceKind.FIRST_PUBLICATION_DATE} == {evidence.kind for evidence in observation.candidates[0].evidence}
+        claim.role
+        for claim in qualified.candidates[0].claims
+        if claim.kind is ClaimKind.CREATOR
+    )
+    assert {ProviderEvidenceKind.FIRST_PUBLICATION_DATE} == {
+        evidence.kind for evidence in observation.candidates[0].evidence
+    }
     sibling_claims = observation.candidates[0].claims
     assert {"Synthetic title", "9780306406157"} == {
-            claim.value
-            for claim in sibling_claims
-            if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
-            and claim.state is FieldState.VALID
-        }
-    assert ProviderEvidenceKind.FIRST_PUBLICATION_DATE in {evidence.kind for evidence in observation.candidates[0].evidence}
+        claim.value
+        for claim in sibling_claims
+        if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
+        and claim.state is FieldState.VALID
+    }
+    assert ProviderEvidenceKind.FIRST_PUBLICATION_DATE in {
+        evidence.kind for evidence in observation.candidates[0].evidence
+    }
 
 
 def test_mixed_author_and_neutral_creators_reject_author_projection() -> None:
@@ -478,20 +766,21 @@ def test_mixed_author_and_neutral_creators_reject_author_projection() -> None:
     assert ProviderStatus.CANDIDATES == qualified.status
     candidate = qualified.candidates[0]
     assert not any(
-            claim.scope is ClaimScope.WORK
-            and claim.kind is ClaimKind.CREATOR
-            for claim in candidate.claims
-        )
+        claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CREATOR
+        for claim in candidate.claims
+    )
     assert () == candidate.identity_bindings
     assert {"Synthetic title", "9780306406157"} == {
-            claim.value
-            for claim in candidate.claims
-            if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
-            and claim.state is FieldState.VALID
-        }
+        claim.value
+        for claim in candidate.claims
+        if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
+        and claim.state is FieldState.VALID
+    }
     report = MetadataReport.create(
         target=TargetFacts(
-            "primary", "ebooks", "item-1",
+            "primary",
+            "ebooks",
+            "item-1",
             default_target_fields("Synthetic title"),
         ),
         file=FileFacts(0, "a" * 64, "b" * 64),
@@ -563,52 +852,66 @@ def test_reused_neutral_creator_identity_binding_fails_qualification_locally() -
                 candidate,
                 identity_bindings=tuple(
                     ProviderIdentityBinding(
-                        claim.reference, "hardcover-author-0000000001",
-                        ClaimScope.WORK, None, index,
+                        claim.reference,
+                        "hardcover-author-0000000001",
+                        ClaimScope.WORK,
+                        None,
+                        index,
                     )
                     for index, claim in enumerate(creators)
                 ),
             ),
         ),
     )
-    assert len({value.identity for value in observation.candidates[0].identity_bindings}) != len(observation.candidates[0].identity_bindings)
-    assert complete_creator_identity_bindings(
-            observation.candidates[0], creators,
-        ) is not None
+    assert len(
+        {value.identity for value in observation.candidates[0].identity_bindings}
+    ) != len(observation.candidates[0].identity_bindings)
+    assert (
+        complete_creator_identity_bindings(
+            observation.candidates[0],
+            creators,
+        )
+        is not None
+    )
 
     qualified = qualify_provider_observation(
         observation,
         work_lookup("Synthetic title", ("Synthetic One", "Synthetic Two")),
     )
     assert ProviderStatus.CANDIDATES == qualified.status
-    assert ("hardcover-author-0000000001", "hardcover-author-0000000001") == tuple(value.identity for value in observation.candidates[0].identity_bindings)
+    assert ("hardcover-author-0000000001", "hardcover-author-0000000001") == tuple(
+        value.identity for value in observation.candidates[0].identity_bindings
+    )
     assert 2 == len(
-            tuple(
-                claim
-                for claim in observation.candidates[0].claims
-                if claim.scope is ClaimScope.WORK
-                and claim.kind is ClaimKind.CREATOR
-                and claim.role is None
-            )
+        tuple(
+            claim
+            for claim in observation.candidates[0].claims
+            if claim.scope is ClaimScope.WORK
+            and claim.kind is ClaimKind.CREATOR
+            and claim.role is None
         )
+    )
     assert not any(
-            claim.kind is ClaimKind.CREATOR
-            and claim.scope is ClaimScope.WORK
-            for claim in qualified.candidates[0].claims
-        )
+        claim.kind is ClaimKind.CREATOR and claim.scope is ClaimScope.WORK
+        for claim in qualified.candidates[0].claims
+    )
     assert () == qualified.candidates[0].identity_bindings
     sibling_claims = observation.candidates[0].claims
     assert {"Synthetic title", "9780306406157"} == {
-            claim.value
-            for claim in sibling_claims
-            if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
-            and claim.state is FieldState.VALID
-        }
-    assert ProviderEvidenceKind.FIRST_PUBLICATION_DATE in {evidence.kind for evidence in qualified.candidates[0].evidence}
+        claim.value
+        for claim in sibling_claims
+        if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
+        and claim.state is FieldState.VALID
+    }
+    assert ProviderEvidenceKind.FIRST_PUBLICATION_DATE in {
+        evidence.kind for evidence in qualified.candidates[0].evidence
+    }
     replayed = MetadataReport.from_json(
         MetadataReport.create(
             target=TargetFacts(
-                "primary", "ebooks", "item-1",
+                "primary",
+                "ebooks",
+                "item-1",
                 default_target_fields("Synthetic title"),
             ),
             file=FileFacts(0, "a" * 64, "b" * 64),
@@ -619,21 +922,21 @@ def test_reused_neutral_creator_identity_binding_fails_qualification_locally() -
     )
     replayed_claims = replayed.providers[0].candidates[0].claims
     assert {"Synthetic title", "9780306406157"} == {
-            claim.value
-            for claim in replayed_claims
-            if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
-            and claim.state is FieldState.VALID
-        }
+        claim.value
+        for claim in replayed_claims
+        if claim.kind in {ClaimKind.TITLE, ClaimKind.ISBN}
+        and claim.state is FieldState.VALID
+    }
     authors = next(
         result
         for result in evaluate_report(replayed).results
         if result.destination is TargetDestination.AUTHORS
     )
     assert not any(
-            reference in {claim.reference for claim in creators}
-            for alternative in authors.alternatives
-            for reference in alternative.evidence_references
-        )
+        reference in {claim.reference for claim in creators}
+        for alternative in authors.alternatives
+        for reference in alternative.evidence_references
+    )
 
 
 @pytest.mark.parametrize(
@@ -665,17 +968,17 @@ def test_nullable_and_malformed_contribution_authors_are_field_local(
     malformed = [
         claim
         for claim in observation.candidates[0].claims
-        if claim.kind is expected_kind
-        and claim.state is FieldState.MALFORMED
+        if claim.kind is expected_kind and claim.state is FieldState.MALFORMED
     ]
     assert {ClaimScope.EDITION, ClaimScope.WORK} == {claim.scope for claim in malformed}
     assert {ProviderEvidenceKind.FIRST_PUBLICATION_DATE} == {
-            evidence.kind
-            for evidence in observation.candidates[0].evidence
-        }
+        evidence.kind for evidence in observation.candidates[0].evidence
+    }
 
 
-def test_malformed_author_identity_is_omitted_without_losing_valid_name_claims() -> None:
+def test_malformed_author_identity_is_omitted_without_losing_valid_name_claims() -> (
+    None
+):
     contribution = {
         "id": 1,
         "contribution": "Author",
@@ -691,13 +994,16 @@ def test_malformed_author_identity_is_omitted_without_losing_valid_name_claims()
     ]
     assert {ClaimScope.EDITION, ClaimScope.WORK} == {claim.scope for claim in creators}
     assert all(claim.state is FieldState.VALID for claim in creators)
-    assert {ProviderEvidenceKind.FIRST_PUBLICATION_DATE} == {evidence.kind for evidence in observation.candidates[0].evidence}
+    assert {ProviderEvidenceKind.FIRST_PUBLICATION_DATE} == {
+        evidence.kind for evidence in observation.candidates[0].evidence
+    }
 
 
-def test_nullable_contribution_overflow_remains_bounded_without_author_inference() -> None:
+def test_nullable_contribution_overflow_remains_bounded_without_author_inference() -> (
+    None
+):
     contributions = [
-        {"id": index, "contribution": None, "author": None}
-        for index in range(1, 18)
+        {"id": index, "contribution": None, "author": None} for index in range(1, 18)
     ]
     observation = observe_contributions(contributions)
 
@@ -708,23 +1014,28 @@ def test_nullable_contribution_overflow_remains_bounded_without_author_inference
         if claim.kind in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}
     ]
     assert {
-            (ClaimKind.CREATOR, ClaimScope.EDITION, FieldState.OVERSIZED),
-            (ClaimKind.CREATOR, ClaimScope.WORK, FieldState.OVERSIZED),
-            (ClaimKind.CONTRIBUTOR, ClaimScope.EDITION, FieldState.OVERSIZED),
-            (ClaimKind.CONTRIBUTOR, ClaimScope.WORK, FieldState.OVERSIZED),
-        } == {
-            (claim.kind, claim.scope, claim.state)
-            for claim in contribution_claims
-        }
-    assert {ProviderEvidenceKind.FIRST_PUBLICATION_DATE} == {evidence.kind for evidence in observation.candidates[0].evidence}
+        (ClaimKind.CREATOR, ClaimScope.EDITION, FieldState.OVERSIZED),
+        (ClaimKind.CREATOR, ClaimScope.WORK, FieldState.OVERSIZED),
+        (ClaimKind.CONTRIBUTOR, ClaimScope.EDITION, FieldState.OVERSIZED),
+        (ClaimKind.CONTRIBUTOR, ClaimScope.WORK, FieldState.OVERSIZED),
+    } == {(claim.kind, claim.scope, claim.state) for claim in contribution_claims}
+    assert {ProviderEvidenceKind.FIRST_PUBLICATION_DATE} == {
+        evidence.kind for evidence in observation.candidates[0].evidence
+    }
 
 
 def _nested_overflow_probes() -> dict[str, tuple[dict[str, object], dict[str, object]]]:
     """One edition and two work payloads whose last nested object is unknown."""
 
-    contributions = [{"id": index, "contribution": "Author", "author": {"id": index, "name": "A"}} for index in range(17)]
+    contributions = [
+        {"id": index, "contribution": "Author", "author": {"id": index, "name": "A"}}
+        for index in range(17)
+    ]
     contributions[16]["author"] = {"id": 17, "unexpected": "A"}
-    series = [{"id": index, "position": str(index), "series": {"id": index, "name": "S"}} for index in range(17)]
+    series = [
+        {"id": index, "position": str(index), "series": {"id": index, "name": "S"}}
+        for index in range(17)
+    ]
     series[16]["series"] = {"id": 17, "unexpected": "S"}
     tags = [{"id": index, "tag": {"id": index, "tag": "T"}} for index in range(33)]
     tags[32]["tag"] = {"id": 33, "unexpected": "T"}
@@ -746,26 +1057,135 @@ _NESTED_OVERFLOW_PROBES = _nested_overflow_probes()
 def test_nested_overflow_probe_objects_are_structurally_validated(
     edition: dict[str, object], work: dict[str, object]
 ) -> None:
-    payload = hardcover_envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157", **edition}], [{"id": 1, "title": None, **work}])
-    provider = HardcoverMetadataProvider("catalogue", httpx.Client(transport=httpx.MockTransport(lambda request, value=payload: httpx.Response(200, headers={"content-type": "application/json"}, json=value))), 65_536)
+    payload = hardcover_envelope(
+        [
+            {
+                "id": 1,
+                "book_id": 1,
+                "isbn_10": None,
+                "isbn_13": "9780306406157",
+                **edition,
+            }
+        ],
+        [{"id": 1, "title": None, **work}],
+    )
+    provider = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request, value=payload: httpx.Response(
+                    200, headers={"content-type": "application/json"}, json=value
+                )
+            )
+        ),
+        65_536,
+    )
     observation = provider.observe(isbn_lookup((isbn_claim(),)))
     assert observation.status == ProviderStatus.CANDIDATES
 
 
 def test_series_positions_and_code3_are_retained_at_projection_bounds() -> None:
-    for position, expected in (("10", "10"), ("20.0", "20"), ("100", "100"), (10, "10")):
-        payload = hardcover_envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None, "language": {"id": 1, "code2": None, "code3": "eng", "language": "English"}}], [{"id": 1, "title": None, "book_series": [{"id": 1, "position": position, "series": {"id": 1, "name": "S"}}]}])
-        claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())[0].claims
-        assert next(claim.value for claim in claims if claim.kind is ClaimKind.SERIES_SEQUENCE) == expected
-        assert next(claim.value for claim in claims if claim.kind is ClaimKind.LANGUAGE) == "eng"
+    for position, expected in (
+        ("10", "10"),
+        ("20.0", "20"),
+        ("100", "100"),
+        (10, "10"),
+    ):
+        payload = hardcover_envelope(
+            [
+                {
+                    "id": 1,
+                    "book_id": 1,
+                    "isbn_10": None,
+                    "isbn_13": None,
+                    "language": {
+                        "id": 1,
+                        "code2": None,
+                        "code3": "eng",
+                        "language": "English",
+                    },
+                }
+            ],
+            [
+                {
+                    "id": 1,
+                    "title": None,
+                    "book_series": [
+                        {
+                            "id": 1,
+                            "position": position,
+                            "series": {"id": 1, "name": "S"},
+                        }
+                    ],
+                }
+            ],
+        )
+        claims = hardcover_metadata._parse_candidates(
+            json.dumps(payload).encode(), "catalogue", ()
+        )[0].claims
+        assert (
+            next(
+                claim.value
+                for claim in claims
+                if claim.kind is ClaimKind.SERIES_SEQUENCE
+            )
+            == expected
+        )
+        assert (
+            next(claim.value for claim in claims if claim.kind is ClaimKind.LANGUAGE)
+            == "eng"
+        )
     boundary = "1" * 512
-    payload = hardcover_envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], [{"id": 1, "title": None, "book_series": [{"id": 1, "position": boundary, "series": {"id": 1, "name": "S"}}]}])
-    claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())[0].claims
-    assert next(claim.value for claim in claims if claim.kind is ClaimKind.SERIES_SEQUENCE) == boundary
-    for position, state in (("9" * 513, FieldState.OVERSIZED), ("1e-999", FieldState.MALFORMED)):
-        payload = hardcover_envelope([{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}], [{"id": 1, "title": None, "book_series": [{"id": 1, "position": position, "series": {"id": 1, "name": "S"}}]}])
-        claims = hardcover_metadata._parse_candidates(json.dumps(payload).encode(), "catalogue", ())[0].claims
-        assert next(claim.state for claim in claims if claim.kind is ClaimKind.SERIES_SEQUENCE) == state
+    payload = hardcover_envelope(
+        [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
+        [
+            {
+                "id": 1,
+                "title": None,
+                "book_series": [
+                    {"id": 1, "position": boundary, "series": {"id": 1, "name": "S"}}
+                ],
+            }
+        ],
+    )
+    claims = hardcover_metadata._parse_candidates(
+        json.dumps(payload).encode(), "catalogue", ()
+    )[0].claims
+    assert (
+        next(claim.value for claim in claims if claim.kind is ClaimKind.SERIES_SEQUENCE)
+        == boundary
+    )
+    for position, state in (
+        ("9" * 513, FieldState.OVERSIZED),
+        ("1e-999", FieldState.MALFORMED),
+    ):
+        payload = hardcover_envelope(
+            [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": None}],
+            [
+                {
+                    "id": 1,
+                    "title": None,
+                    "book_series": [
+                        {
+                            "id": 1,
+                            "position": position,
+                            "series": {"id": 1, "name": "S"},
+                        }
+                    ],
+                }
+            ],
+        )
+        claims = hardcover_metadata._parse_candidates(
+            json.dumps(payload).encode(), "catalogue", ()
+        )[0].claims
+        assert (
+            next(
+                claim.state
+                for claim in claims
+                if claim.kind is ClaimKind.SERIES_SEQUENCE
+            )
+            == state
+        )
 
 
 def test_hardcover_multiple_series_keep_exact_correlated_sequence_slots() -> None:
@@ -811,36 +1231,58 @@ def test_hardcover_multiple_series_keep_exact_correlated_sequence_slots() -> Non
         if claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
     )
     assert (
-            (ClaimKind.SERIES, FieldState.VALID, "Reading Order"),
-            (ClaimKind.SERIES_SEQUENCE, FieldState.VALID, "2"),
-            (ClaimKind.SERIES, FieldState.VALID, "Publication Order"),
-            (ClaimKind.SERIES_SEQUENCE, FieldState.ABSENT, None),
-        ) == series
+        (ClaimKind.SERIES, FieldState.VALID, "Reading Order"),
+        (ClaimKind.SERIES_SEQUENCE, FieldState.VALID, "2"),
+        (ClaimKind.SERIES, FieldState.VALID, "Publication Order"),
+        (ClaimKind.SERIES_SEQUENCE, FieldState.ABSENT, None),
+    ) == series
 
 
 def test_optional_hardcover_projection_members_are_field_local() -> None:
     row: dict[str, object] = {
-        "id": 1, "book_id": 1, "isbn_10": None,
-        "isbn_13": "9780306406157", "title": "Edition",
+        "id": 1,
+        "book_id": 1,
+        "isbn_10": None,
+        "isbn_13": "9780306406157",
+        "title": "Edition",
         "release_date": "2024-02-30",
         "publisher": {"name": "Independent Press", "parent_id": {}},
         "language": {"code2": {}, "code3": "eng"},
-        "contributions": [{"id": 1, "contribution": "Author", "author": {"name": "Ada"}}],
+        "contributions": [
+            {"id": 1, "contribution": "Author", "author": {"name": "Ada"}}
+        ],
     }
     book: dict[str, object] = {
-        "id": 1, "title": "Work", "release_date": "2020",
-        "contributions": [{"id": 1, "contribution": "Translator", "author": {"id": 2, "name": "Bea"}}, "bad"],
-        "book_series": [{"id": 1, "position": "1", "series": {"name": "Series"}}, "bad"],
+        "id": 1,
+        "title": "Work",
+        "release_date": "2020",
+        "contributions": [
+            {"id": 1, "contribution": "Translator", "author": {"id": 2, "name": "Bea"}},
+            "bad",
+        ],
+        "book_series": [
+            {"id": 1, "position": "1", "series": {"name": "Series"}},
+            "bad",
+        ],
         "taggings": [],
     }
     candidate = hardcover_metadata._parse_candidates(
         json.dumps(hardcover_envelope([row], [book])).encode(), "catalogue", ()
     )[0]
     claims = candidate.claims
-    assert "Independent Press" == next(value.value for value in claims if value.kind is ClaimKind.PUBLISHER)
-    assert "eng" == next(value.value for value in claims if value.kind is ClaimKind.LANGUAGE)
-    assert FieldState.MALFORMED == next(value.state for value in claims if value.kind is ClaimKind.PUBLICATION_DATE)
-    assert {ProviderEvidenceKind.FIRST_PUBLICATION_DATE, ProviderEvidenceKind.CONTRIBUTOR_IDENTITY} == {value.kind for value in candidate.evidence}
+    assert "Independent Press" == next(
+        value.value for value in claims if value.kind is ClaimKind.PUBLISHER
+    )
+    assert "eng" == next(
+        value.value for value in claims if value.kind is ClaimKind.LANGUAGE
+    )
+    assert FieldState.MALFORMED == next(
+        value.state for value in claims if value.kind is ClaimKind.PUBLICATION_DATE
+    )
+    assert {
+        ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+        ProviderEvidenceKind.CONTRIBUTOR_IDENTITY,
+    } == {value.kind for value in candidate.evidence}
 
 
 def test_hardcover_optional_cap_is_cardinality_first() -> None:
@@ -850,21 +1292,75 @@ def test_hardcover_optional_cap_is_cardinality_first() -> None:
     assert ([], True, False) == (values, overflow, invalid)
 
 
-def test_hardcover_optional_projection_diagnostics_only_count_unknown_additive_keys() -> None:
+def test_hardcover_optional_projection_diagnostics_only_count_unknown_additive_keys() -> (
+    None
+):
     diagnostic = hardcover_metadata._optional_projection_rejections
-    tag = {"id": 1, "tag_id": 1, "tag": {"id": 1, "tag": "T", "tag_category": {"id": 1, "category": "Mood"}}}
-    assert 0 == diagnostic(json.dumps(hardcover_envelope([], [{"id": 1, "title": "T", "taggings": [tag]}])).encode())
-    assert 0 == diagnostic(json.dumps(hardcover_envelope([], [{"id": 1, "title": "T", "taggings": [tag] * 18}])).encode())
-    assert 0 == diagnostic(json.dumps(hardcover_envelope([], [{"id": 1, "title": "T", "taggings": [tag] * 34}])).encode())
-    assert 0 == diagnostic(json.dumps(hardcover_envelope([{"id": 1, "book_id": 1, "contributions": ["hostile" for _ in range(18)]}], [])).encode())
-    assert 0 == diagnostic(json.dumps(hardcover_envelope([], [{"id": 1, "title": "T", "release_date": "not-a-date"}])).encode())
-    subject = {**tag, "tag": {"id": 1, "tag": "T", "tag_category": {"id": 1, "category": "Subject"}}}
-    assert 0 == diagnostic(json.dumps(hardcover_envelope([], [{"id": 1, "title": "T", "taggings": [subject]}])).encode())
-    assert 0 == diagnostic(b'{"data":{"editions":[],"books":[{"id":1,"taggings":[{"id":1,"tag_id":"bad"}]}],"tags":[]}}')
-    assert 0 == diagnostic(b'{"data":{"editions":[{"id":1,"book_id":1,"contributions":[{"id":1,"author":{"id":{}}}]}],"books":[],"tags":[]} }')
-    assert 0 == diagnostic(b'{"data":{"editions":[],"books":[{"id":1,"book_series":[{"id":1,"series":"bad"}]}],"tags":[]} }')
-    assert 0 == diagnostic(b'{"data":{"editions":[{"id":1,"publisher":{"id":1,"parent_id":{}},"image":{"url":7}}],"books":[],"tags":[]} }')
-    assert 1 == diagnostic(b'{"data":{"editions":[],"books":[{"id":1,"new_optional_value":true}],"tags":[]} }')
+    tag = {
+        "id": 1,
+        "tag_id": 1,
+        "tag": {"id": 1, "tag": "T", "tag_category": {"id": 1, "category": "Mood"}},
+    }
+    assert 0 == diagnostic(
+        json.dumps(
+            hardcover_envelope([], [{"id": 1, "title": "T", "taggings": [tag]}])
+        ).encode()
+    )
+    assert 0 == diagnostic(
+        json.dumps(
+            hardcover_envelope([], [{"id": 1, "title": "T", "taggings": [tag] * 18}])
+        ).encode()
+    )
+    assert 0 == diagnostic(
+        json.dumps(
+            hardcover_envelope([], [{"id": 1, "title": "T", "taggings": [tag] * 34}])
+        ).encode()
+    )
+    assert 0 == diagnostic(
+        json.dumps(
+            hardcover_envelope(
+                [
+                    {
+                        "id": 1,
+                        "book_id": 1,
+                        "contributions": ["hostile" for _ in range(18)],
+                    }
+                ],
+                [],
+            )
+        ).encode()
+    )
+    assert 0 == diagnostic(
+        json.dumps(
+            hardcover_envelope(
+                [], [{"id": 1, "title": "T", "release_date": "not-a-date"}]
+            )
+        ).encode()
+    )
+    subject = {
+        **tag,
+        "tag": {"id": 1, "tag": "T", "tag_category": {"id": 1, "category": "Subject"}},
+    }
+    assert 0 == diagnostic(
+        json.dumps(
+            hardcover_envelope([], [{"id": 1, "title": "T", "taggings": [subject]}])
+        ).encode()
+    )
+    assert 0 == diagnostic(
+        b'{"data":{"editions":[],"books":[{"id":1,"taggings":[{"id":1,"tag_id":"bad"}]}],"tags":[]}}'
+    )
+    assert 0 == diagnostic(
+        b'{"data":{"editions":[{"id":1,"book_id":1,"contributions":[{"id":1,"author":{"id":{}}}]}],"books":[],"tags":[]} }'
+    )
+    assert 0 == diagnostic(
+        b'{"data":{"editions":[],"books":[{"id":1,"book_series":[{"id":1,"series":"bad"}]}],"tags":[]} }'
+    )
+    assert 0 == diagnostic(
+        b'{"data":{"editions":[{"id":1,"publisher":{"id":1,"parent_id":{}},"image":{"url":7}}],"books":[],"tags":[]} }'
+    )
+    assert 1 == diagnostic(
+        b'{"data":{"editions":[],"books":[{"id":1,"new_optional_value":true}],"tags":[]} }'
+    )
 
 
 def test_hardcover_actual_parser_diagnostics_count_source_rejections_once() -> None:
@@ -1050,7 +1546,12 @@ def test_hardcover_actual_parser_diagnostics_count_source_rejections_once() -> N
         (
             "series position",
             base_rows,
-            [{**base_books[0], "book_series": [{**valid_series, "position": "1e-999"}]}],
+            [
+                {
+                    **base_books[0],
+                    "book_series": [{**valid_series, "position": "1e-999"}],
+                }
+            ],
             False,
         ),
         (
@@ -1063,9 +1564,7 @@ def test_hardcover_actual_parser_diagnostics_count_source_rejections_once() -> N
                         {
                             **valid_tagging,
                             "tag": {
-                                **cast(
-                                    dict[str, object], valid_tagging["tag"]
-                                ),
+                                **cast(dict[str, object], valid_tagging["tag"]),
                                 "tag_category": {
                                     "id": 1,
                                     "category": "Subject",
@@ -1129,7 +1628,9 @@ def test_hardcover_actual_parser_diagnostics_count_source_rejections_once() -> N
             additive_work_key=additive,
         )
         assert ProviderStatus.CANDIDATES == observation.status
-        assert (() if name == "taxonomy enum" else (1,)) == tuple(value.count for value in observation.diagnostics)
+        assert (() if name == "taxonomy enum" else (1,)) == tuple(
+            value.count for value in observation.diagnostics
+        )
 
 
 def test_hardcover_over_cap_fields_retain_no_prefix() -> None:
@@ -1165,12 +1666,10 @@ def test_hardcover_over_cap_fields_retain_no_prefix() -> None:
     payload["data"]["editions"][0]["contributions"] = [
         {**contribution, "untraversed": True}
     ] * 17
-    payload["data"]["books"][0]["book_series"] = [
-        {**series, "untraversed": True}
-    ] * 17
+    payload["data"]["books"][0]["book_series"] = [{**series, "untraversed": True}] * 17
     assert 0 == hardcover_metadata._optional_projection_rejections(
-            json.dumps(payload).encode()
-        )
+        json.dumps(payload).encode()
+    )
     candidate = hardcover_metadata._parse_candidates(
         json.dumps(payload).encode(),
         "catalogue",
@@ -1180,16 +1679,16 @@ def test_hardcover_over_cap_fields_retain_no_prefix() -> None:
     assert not any(claim.value == "Series" for claim in candidate.claims)
     assert () == candidate.evidence
     assert all(
-            claim.state is FieldState.OVERSIZED
-            for claim in candidate.claims
-            if claim.kind
-            in {
-                ClaimKind.CREATOR,
-                ClaimKind.CONTRIBUTOR,
-                ClaimKind.SERIES,
-                ClaimKind.SERIES_SEQUENCE,
-            }
-        )
+        claim.state is FieldState.OVERSIZED
+        for claim in candidate.claims
+        if claim.kind
+        in {
+            ClaimKind.CREATOR,
+            ClaimKind.CONTRIBUTOR,
+            ClaimKind.SERIES,
+            ClaimKind.SERIES_SEQUENCE,
+        }
+    )
 
 
 def test_hardcover_invalid_cover_links_and_author_names_are_field_local() -> None:
@@ -1273,11 +1772,11 @@ def test_hardcover_invalid_cover_links_and_author_names_are_field_local() -> Non
         assert ProviderStatus.CANDIDATES == observation.status
         assert (1,) == tuple(value.count for value in observation.diagnostics)
         assert any(
-                claim.kind is ClaimKind.TITLE
-                and claim.value in {"Edition title", "Work title"}
-                for candidate in observation.candidates
-                for claim in candidate.claims
-            )
+            claim.kind is ClaimKind.TITLE
+            and claim.value in {"Edition title", "Work title"}
+            for candidate in observation.candidates
+            for claim in candidate.claims
+        )
         descriptor = next(
             value
             for value in provider.cover_descriptors
@@ -1334,13 +1833,11 @@ def test_hardcover_invalid_cover_links_and_author_names_are_field_local() -> Non
         ]
         assert affected, name
         assert all(
-                claim.state is FieldState.MALFORMED
-                and claim.value is None
-                for claim in affected
-            ), name
+            claim.state is FieldState.MALFORMED and claim.value is None
+            for claim in affected
+        ), name
         assert any(
-                claim.kind is ClaimKind.TITLE
-                and claim.state is FieldState.VALID
-                for candidate in observation.candidates
-                for claim in candidate.claims
-            )
+            claim.kind is ClaimKind.TITLE and claim.state is FieldState.VALID
+            for candidate in observation.candidates
+            for claim in candidate.claims
+        )

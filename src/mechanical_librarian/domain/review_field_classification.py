@@ -6,11 +6,20 @@ from dataclasses import dataclass
 from typing import Literal, Mapping
 
 ReviewFieldState = Literal[
-    "needs_attention", "manual_fallback", "automatic_recorded",
-    "human_recorded", "unsupported",
+    "needs_attention",
+    "manual_fallback",
+    "automatic_recorded",
+    "human_recorded",
+    "unsupported",
 ]
 ReviewNavigationRole = Literal["attention", "inspect"]
-ReviewFieldCause = Literal["unsupported", "automatic_safety_suspended", "external_field_failure", "external_connection_failure", "external_recovered"]
+ReviewFieldCause = Literal[
+    "unsupported",
+    "automatic_safety_suspended",
+    "external_field_failure",
+    "external_connection_failure",
+    "external_recovered",
+]
 _CAUSE_GUIDANCE: dict[ReviewFieldCause, str] = {
     "unsupported": "This field is unavailable for the current service capability.",
     "automatic_safety_suspended": "Automatic handling is suspended pending a safety recovery.",
@@ -56,17 +65,33 @@ def classify_review_field(
     )
     if has_human_decision:
         return ReviewFieldClassification(
-            "human_recorded", "Your recorded decision is retained.", False,
-            False, True, "inspect", preservation_only,
+            "human_recorded",
+            "Your recorded decision is retained.",
+            False,
+            False,
+            True,
+            "inspect",
+            preservation_only,
         )
     if cause == "unsupported":
         return ReviewFieldClassification(
-            "unsupported", _CAUSE_GUIDANCE[cause], False, False, False, "inspect", preservation_only,
+            "unsupported",
+            _CAUSE_GUIDANCE[cause],
+            False,
+            False,
+            False,
+            "inspect",
+            preservation_only,
         )
     if automatic_outcome == "abstention":
         return ReviewFieldClassification(
-            "manual_fallback", "Automatic handling abstained, so this field needs your review.",
-            True, True, False, "attention", preservation_only,
+            "manual_fallback",
+            "Automatic handling abstained, so this field needs your review.",
+            True,
+            True,
+            False,
+            "attention",
+            preservation_only,
         )
     if automatic_outcome is not None:
         return ReviewFieldClassification(
@@ -76,26 +101,50 @@ def classify_review_field(
                 if automatic_override_available
                 else "Automatic handling has advanced to external application and can no longer be overridden."
             ),
-            False, automatic_override_available, True, "inspect", preservation_only,
+            False,
+            automatic_override_available,
+            True,
+            "inspect",
+            preservation_only,
         )
     if cause == "automatic_safety_suspended":
         return ReviewFieldClassification(
-            "needs_attention", _CAUSE_GUIDANCE[cause], True, True, False,
-            "attention", preservation_only,
+            "needs_attention",
+            _CAUSE_GUIDANCE[cause],
+            True,
+            True,
+            False,
+            "attention",
+            preservation_only,
         )
     if suspended:
         return ReviewFieldClassification(
-            "unsupported", _CAUSE_GUIDANCE[cause or "automatic_safety_suspended"],
-            False, False, False, "inspect", preservation_only,
+            "unsupported",
+            _CAUSE_GUIDANCE[cause or "automatic_safety_suspended"],
+            False,
+            False,
+            False,
+            "inspect",
+            preservation_only,
         )
     if attention_candidate:
         return ReviewFieldClassification(
-            "needs_attention", "This field needs your review.", True, True,
-            False, "attention", preservation_only,
+            "needs_attention",
+            "This field needs your review.",
+            True,
+            True,
+            False,
+            "attention",
+            preservation_only,
         )
     return ReviewFieldClassification(
-        "unsupported", "There is no owner decision available for this field.",
-        False, False, False, "inspect", preservation_only,
+        "unsupported",
+        "There is no owner decision available for this field.",
+        False,
+        False,
+        False,
+        "inspect",
+        preservation_only,
     )
 
 
@@ -106,4 +155,10 @@ def _canonical_value(value: object) -> object:
     return value
 
 
-__all__ = ["ReviewFieldClassification", "ReviewFieldState", "ReviewNavigationRole", "ReviewFieldCause", "classify_review_field"]
+__all__ = [
+    "ReviewFieldClassification",
+    "ReviewFieldState",
+    "ReviewNavigationRole",
+    "ReviewFieldCause",
+    "classify_review_field",
+]

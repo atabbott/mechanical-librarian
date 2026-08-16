@@ -42,10 +42,18 @@ from mechanical_librarian.application.review_pipeline import ReviewPipelineError
 from mechanical_librarian.domain.metadata_report import MetadataReport, ProviderStatus
 
 _CONFIGURATION = ApplicationConfiguration(
-    (TargetConnectionConfiguration("primary", "https://example.invalid", "/run/token"),),
+    (
+        TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/run/token"
+        ),
+    ),
     (
         LibraryConfiguration(
-            "books", "primary", "library-1", "ebook", "mount",
+            "books",
+            "primary",
+            "library-1",
+            "ebook",
+            "mount",
             ("catalogue-a", "catalogue-b"),
         ),
     ),
@@ -55,7 +63,11 @@ _CONFIGURATION = ApplicationConfiguration(
             "catalogue-a", True, False, "/run/hardcover", "hardcover"
         ),
         ProviderConnectionConfiguration(
-            "catalogue-b", True, False, None, "open_library",
+            "catalogue-b",
+            True,
+            False,
+            None,
+            "open_library",
             "owner@example.invalid",
         ),
     ),
@@ -86,8 +98,14 @@ class _Observer:
         self.calls: list[tuple[str, str, str, int, str, int]] = []
 
     def observe_failure(
-        self, *, connection: str, adapter: str, scope: str, generation: int,
-        failure: str, now: int,
+        self,
+        *,
+        connection: str,
+        adapter: str,
+        scope: str,
+        generation: int,
+        failure: str,
+        now: int,
     ) -> None:
         self.calls.append((connection, adapter, scope, generation, failure, now))
 
@@ -106,19 +124,24 @@ def _recognised_failures() -> dict[str, tuple[Exception, tuple[str, int | None]]
         "unrelated_cause": (unrelated_caused, ("terminal", None)),
         "retry_disabled": (ProviderRetryDisabled("disabled"), ("disabled", None)),
         "shared_unavailable": (
-            ProviderRetrySharedFailure("unavailable"), ("transient", None),
+            ProviderRetrySharedFailure("unavailable"),
+            ("transient", None),
         ),
         "shared_incomplete": (
-            ProviderRetrySharedFailure("incomplete", 900), ("transient", 900),
+            ProviderRetrySharedFailure("incomplete", 900),
+            ("transient", 900),
         ),
         "shared_rate_limited": (
-            ProviderRetrySharedFailure("rate_limited", 1), ("rate_limited", 1),
+            ProviderRetrySharedFailure("rate_limited", 1),
+            ("rate_limited", 1),
         ),
         "shared_authentication": (
-            ProviderRetrySharedFailure("authentication"), ("authentication", None),
+            ProviderRetrySharedFailure("authentication"),
+            ("authentication", None),
         ),
         "shared_authorization": (
-            ProviderRetrySharedFailure("authorization"), ("authorization", None),
+            ProviderRetrySharedFailure("authorization"),
+            ("authorization", None),
         ),
         "shared_configuration": (
             ProviderRetrySharedFailure("configuration", 86_400),
@@ -129,7 +152,8 @@ def _recognised_failures() -> dict[str, tuple[Exception, tuple[str, int | None]]
             ("configuration", None),
         ),
         "successor_failed": (
-            ProviderRetrySuccessorError("provider retry failed"), ("terminal", None),
+            ProviderRetrySuccessorError("provider retry failed"),
+            ("terminal", None),
         ),
         "currentness": (CurrentnessError("stale"), ("stale", None)),
         "target_not_found": (TargetNotFoundError("absent"), ("stale", None)),
@@ -156,24 +180,27 @@ def test_target_hold_outranks_the_currentness_it_inherits() -> None:
     held = TargetConnectionHeld("held")
     assert isinstance(held, CurrentnessError)
     assert ("target_held", None) == classify_provider_recovery_failure(held)
-    assert ("stale", None) == classify_provider_recovery_failure(CurrentnessError("held"))
+    assert ("stale", None) == classify_provider_recovery_failure(
+        CurrentnessError("held")
+    )
 
 
 def test_observation_status_precedes_its_lanes_in_declaration_order() -> None:
     report = _report(
         _observation(
-            "catalogue-a", ProviderStatus.INCOMPLETE,
+            "catalogue-a",
+            ProviderStatus.INCOMPLETE,
             _lane("b-lane", ProviderStatus.CANDIDATES),
             _lane("a-lane", ProviderStatus.RATE_LIMITED),
         ),
         _observation("catalogue-b", ProviderStatus.DISABLED),
     )
     assert (
-            ProviderStatus.INCOMPLETE,
-            ProviderStatus.CANDIDATES,
-            ProviderStatus.RATE_LIMITED,
-            ProviderStatus.DISABLED,
-        ) == provider_statuses(report)
+        ProviderStatus.INCOMPLETE,
+        ProviderStatus.CANDIDATES,
+        ProviderStatus.RATE_LIMITED,
+        ProviderStatus.DISABLED,
+    ) == provider_statuses(report)
 
 
 def test_credential_failure_outranks_a_transient_one_on_the_same_provider() -> None:
@@ -182,14 +209,19 @@ def test_credential_failure_outranks_a_transient_one_on_the_same_provider() -> N
         observer,
         _report(
             _observation(
-                "catalogue-a", ProviderStatus.UNAVAILABLE,
+                "catalogue-a",
+                ProviderStatus.UNAVAILABLE,
                 _lane("lane", ProviderStatus.AUTHORIZATION),
             ),
         ),
         adapters={"catalogue-a": "hardcover"},
-        scope="books", generation=4, now=7,
+        scope="books",
+        generation=4,
+        now=7,
     )
-    assert [("catalogue-a", "hardcover", "books", 4, "authorization", 7)] == observer.calls
+    assert [
+        ("catalogue-a", "hardcover", "books", 4, "authorization", 7)
+    ] == observer.calls
 
 
 def test_non_terminal_providers_are_never_observed() -> None:
@@ -198,13 +230,16 @@ def test_non_terminal_providers_are_never_observed() -> None:
         observer,
         _report(
             _observation(
-                "catalogue-a", ProviderStatus.CANDIDATES,
+                "catalogue-a",
+                ProviderStatus.CANDIDATES,
                 _lane("lane", ProviderStatus.CANDIDATES),
             ),
             _observation("catalogue-b", ProviderStatus.DISABLED),
         ),
         adapters={"catalogue-a": "hardcover", "catalogue-b": "open_library"},
-        scope="books", generation=4, now=7,
+        scope="books",
+        generation=4,
+        now=7,
     )
     assert [] == observer.calls
 
@@ -215,7 +250,10 @@ def test_unconfigured_adapter_is_a_configuration_failure() -> None:
         record_provider_recovery_observations(
             observer,
             _report(_observation("unknown", ProviderStatus.RATE_LIMITED)),
-            adapters={}, scope="books", generation=4, now=7,
+            adapters={},
+            scope="books",
+            generation=4,
+            now=7,
         )
     assert "configuration" == raised.value.code
     assert [] == observer.calls
@@ -225,13 +263,15 @@ def test_only_retryable_lanes_become_canonically_ordered_work() -> None:
     jobs = provider_recovery_jobs(
         _report(
             _observation(
-                "catalogue-b", ProviderStatus.CANDIDATES,
+                "catalogue-b",
+                ProviderStatus.CANDIDATES,
                 _lane("z-lane", ProviderStatus.RATE_LIMITED),
                 _lane("a-lane", ProviderStatus.INCOMPLETE),
                 _lane("skipped", ProviderStatus.CANDIDATES),
             ),
             _observation(
-                "catalogue-a", ProviderStatus.UNAVAILABLE,
+                "catalogue-a",
+                ProviderStatus.UNAVAILABLE,
                 _lane("only", ProviderStatus.AUTHENTICATION),
             ),
             _observation("quiet", ProviderStatus.CANDIDATES),
@@ -250,16 +290,17 @@ def test_only_retryable_lanes_become_canonically_ordered_work() -> None:
 
 def test_a_report_with_no_retryable_lane_creates_no_work() -> None:
     assert () == provider_recovery_jobs(
-            _report(
-                _observation(
-                    "catalogue-a", ProviderStatus.AUTHENTICATION,
-                    _lane("lane", ProviderStatus.CANDIDATES),
-                ),
+        _report(
+            _observation(
+                "catalogue-a",
+                ProviderStatus.AUTHENTICATION,
+                _lane("lane", ProviderStatus.CANDIDATES),
             ),
-            package=(None, "report-1", None, None, "report_only"),
-            configuration=_CONFIGURATION,
-            scope="books",
-        )
+        ),
+        package=(None, "report-1", None, None, "report_only"),
+        configuration=_CONFIGURATION,
+        scope="books",
+    )
 
 
 def test_unconfigured_provider_is_a_configuration_failure() -> None:
@@ -267,7 +308,8 @@ def test_unconfigured_provider_is_a_configuration_failure() -> None:
         provider_recovery_jobs(
             _report(
                 _observation(
-                    "unknown", ProviderStatus.UNAVAILABLE,
+                    "unknown",
+                    ProviderStatus.UNAVAILABLE,
                     _lane("lane", ProviderStatus.UNAVAILABLE),
                 ),
             ),

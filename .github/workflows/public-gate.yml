@@ -53,6 +53,9 @@ jobs:
       - name: Install locked development dependencies
         run: uv sync --locked --all-groups
 
+      - name: Check the Python source formatting
+        run: uv run ruff format --check src tests scripts
+
       - name: Lint the Python source
         run: uv run ruff check src tests scripts
 

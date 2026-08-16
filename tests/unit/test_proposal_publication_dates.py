@@ -57,12 +57,8 @@ def test_work_publication_date_never_votes_for_manifestation_fields() -> None:
             TargetFieldState.MISSING,
         ),
     )
-    proposal_set = evaluate_report(
-        _report(fields=fields, providers=(provider,))
-    )
-    date_result = _result(
-        proposal_set, TargetDestination.PUBLISHED_DATE
-    )
+    proposal_set = evaluate_report(_report(fields=fields, providers=(provider,)))
+    date_result = _result(proposal_set, TargetDestination.PUBLISHED_DATE)
     assert ProposalOutcome.INELIGIBLE == date_result.outcome
 
 
@@ -83,12 +79,14 @@ def test_contradictory_work_relation_date_remains_non_voting() -> None:
             providers=(_contradictory_publication_provider(),),
         )
     )
-    assert ProposalOutcome.INELIGIBLE == _result(
-            proposal_set, TargetDestination.PUBLISHED_YEAR
-        ).outcome
-    assert ProposalOutcome.INELIGIBLE == _result(
-            proposal_set, TargetDestination.PUBLISHED_DATE
-        ).outcome
+    assert (
+        ProposalOutcome.INELIGIBLE
+        == _result(proposal_set, TargetDestination.PUBLISHED_YEAR).outcome
+    )
+    assert (
+        ProposalOutcome.INELIGIBLE
+        == _result(proposal_set, TargetDestination.PUBLISHED_DATE).outcome
+    )
 
 
 def test_month_precision_derives_only_the_stated_year() -> None:
@@ -105,11 +103,7 @@ def test_month_precision_derives_only_the_stated_year() -> None:
                 ),
             ),
             local_claims=(_publication_local_isbn(),),
-            providers=(
-                _publication_provider(
-                    "catalogue", "edition-1", ("2001-02",)
-                ),
-            ),
+            providers=(_publication_provider("catalogue", "edition-1", ("2001-02",)),),
         )
     )
     year = _result(proposal, TargetDestination.PUBLISHED_YEAR)
@@ -121,11 +115,11 @@ def test_month_precision_derives_only_the_stated_year() -> None:
     assert ProposalOutcome.INELIGIBLE == published_date.outcome
 
 
-def test_signed_offset_timestamp_reduces_to_day_without_losing_source_precision() -> None:
+def test_signed_offset_timestamp_reduces_to_day_without_losing_source_precision() -> (
+    None
+):
     lexical = "2001-02-03T04:05:06-04:00"
-    provider = _publication_provider(
-        "catalogue", "edition-1", (lexical,)
-    )
+    provider = _publication_provider("catalogue", "edition-1", (lexical,))
     claim = provider.candidates[0].claims[1]
     proposal = evaluate_report(
         _report(
@@ -202,23 +196,21 @@ def test_naive_timestamps_never_vote_with_any_provider_or_local_date_count(
         for provider in replayed.providers
         for candidate in provider.candidates
         for evidence in candidate.evidence
-        if evidence.kind
-        is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
         and evidence.value == naive
         and evidence.date_precision is DatePrecision.TIMESTAMP
     ]
-    assert proposal.to_json() == evaluate_report(
-            MetadataReport.from_json(replayed.to_json())
-        ).to_json()
-    assert provider_count == len(visible_naive)
-    date = _result(
-        proposal, TargetDestination.PUBLISHED_DATE
+    assert (
+        proposal.to_json()
+        == evaluate_report(MetadataReport.from_json(replayed.to_json())).to_json()
     )
+    assert provider_count == len(visible_naive)
+    date = _result(proposal, TargetDestination.PUBLISHED_DATE)
     assert all(
-            set(alternative.evidence_references)
-            <= ({local_date.reference} if include_local_date else set())
-            for alternative in date.alternatives
-        )
+        set(alternative.evidence_references)
+        <= ({local_date.reference} if include_local_date else set())
+        for alternative in date.alternatives
+    )
     if not include_local_date:
         assert ProposalOutcome.INELIGIBLE == date.outcome
 
@@ -295,8 +287,7 @@ def test_timestamp_offset_eligibility_is_identical_in_report_and_proposals(
         for provider in report.providers
         for candidate in provider.candidates
         for evidence in candidate.evidence
-        if evidence.kind
-        is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
+        if evidence.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
         and evidence.value == lexical
     ]
     proposal = evaluate_report(report)
@@ -309,13 +300,9 @@ def test_timestamp_offset_eligibility_is_identical_in_report_and_proposals(
     assert (provider_count if expected_voting else 0) == len(retained_claims)
     assert (0 if expected_voting else provider_count) == len(retained_text)
     if expected_voting:
-        assert provider_references.issubset(
-                proposal_references
-            )
+        assert provider_references.issubset(proposal_references)
     else:
-        assert provider_references.isdisjoint(
-                proposal_references
-            )
+        assert provider_references.isdisjoint(proposal_references)
 
 
 def test_unresolved_provider_publication_text_is_visible_but_nonselectable() -> None:
@@ -353,9 +340,15 @@ def test_unresolved_provider_publication_text_is_visible_but_nonselectable() -> 
         ),
     )
     proposal = evaluate_report(report)
-    assert ProposalOutcome.INELIGIBLE == _result(proposal, TargetDestination.PUBLISHED_YEAR).outcome
+    assert (
+        ProposalOutcome.INELIGIBLE
+        == _result(proposal, TargetDestination.PUBLISHED_YEAR).outcome
+    )
     retained = report.providers[0].candidates[0].evidence[0]
-    assert PublicationDateRelation.MANIFESTATION_INCOMPATIBLE == retained.links[0].publication_date_relation
+    assert (
+        PublicationDateRelation.MANIFESTATION_INCOMPATIBLE
+        == retained.links[0].publication_date_relation
+    )
     assert retained.links[0].local_reference is None
     assert DateEvent.UNKNOWN == evidence[0].date_event
 
@@ -392,7 +385,9 @@ def test_different_years_remain_conflicting_at_the_year_destination() -> None:
     year = _result(proposal, TargetDestination.PUBLISHED_YEAR)
     published_date = _result(proposal, TargetDestination.PUBLISHED_DATE)
     assert ProposalOutcome.UNRESOLVED_CHOICE == year.outcome
-    assert ["2001", "2002"] == sorted(str(value.value.value) for value in year.alternatives)
+    assert ["2001", "2002"] == sorted(
+        str(value.value.value) for value in year.alternatives
+    )
     assert ProposalOutcome.INELIGIBLE == published_date.outcome
     assert () == published_date.alternatives
 
@@ -469,21 +464,16 @@ def test_year_only_edition_evidence_proposes_only_published_year() -> None:
                 ),
             ),
             local_claims=(_publication_local_isbn(),),
-            providers=(
-                _publication_provider(
-                    "catalogue", "edition-1", ("2001",)
-                ),
-            ),
+            providers=(_publication_provider("catalogue", "edition-1", ("2001",)),),
         )
     )
-    year_result = _result(
-        proposal_set, TargetDestination.PUBLISHED_YEAR
-    )
+    year_result = _result(proposal_set, TargetDestination.PUBLISHED_YEAR)
     assert ProposalOutcome.PROPOSE_CHANGE == year_result.outcome
     assert "2001" == year_result.alternatives[0].value.value
-    assert ProposalOutcome.INELIGIBLE == _result(
-            proposal_set, TargetDestination.PUBLISHED_DATE
-        ).outcome
+    assert (
+        ProposalOutcome.INELIGIBLE
+        == _result(proposal_set, TargetDestination.PUBLISHED_DATE).outcome
+    )
 
 
 def test_day_and_year_support_year_twice_but_day_once() -> None:
@@ -561,9 +551,9 @@ def test_day_and_month_project_shared_month_with_union_support() -> None:
     assert 2 == len(year.alternatives[0].correlations)
     assert ProposalOutcome.PROPOSE_CHANGE == published_date.outcome
     assert ("2001-02", DatePrecision.MONTH) == (
-            published_date.alternatives[0].value.value,
-            published_date.alternatives[0].date_precision,
-        )
+        published_date.alternatives[0].value.value,
+        published_date.alternatives[0].date_precision,
+    )
     assert 2 == len(published_date.alternatives[0].correlations)
     assert 2 == len(published_date.alternatives[0].evidence_references)
 

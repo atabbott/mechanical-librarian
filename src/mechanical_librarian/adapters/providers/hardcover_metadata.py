@@ -172,9 +172,17 @@ class HardcoverMetadataProvider:
         sleep: Callable[[float], None] = time.sleep,
         jitter: Callable[[], float] = random.random,
     ) -> None:
-        if type(maximum_bytes) is not int or isinstance(maximum_bytes, bool) or maximum_bytes < 1:
+        if (
+            type(maximum_bytes) is not int
+            or isinstance(maximum_bytes, bool)
+            or maximum_bytes < 1
+        ):
             raise ValueError("provider response bound is invalid")
-        if type(timeout_seconds) not in {int, float} or isinstance(timeout_seconds, bool) or not 0 < timeout_seconds <= 60:
+        if (
+            type(timeout_seconds) not in {int, float}
+            or isinstance(timeout_seconds, bool)
+            or not 0 < timeout_seconds <= 60
+        ):
             raise ValueError("provider timeout is invalid")
         self._name, self._client = name, client
         self._maximum_bytes = min(maximum_bytes, MAX_RESPONSE_BYTES)
@@ -230,11 +238,26 @@ class HardcoverMetadataProvider:
         self._called = True
         if type(plan) is MetadataLookup:
             ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
-            projection = _ISBN_QUERY if plan.kind is ProviderQueryKind.ISBN else _WORK_QUERY
-            ledger.register(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=projection)
+            projection = (
+                _ISBN_QUERY if plan.kind is ProviderQueryKind.ISBN else _WORK_QUERY
+            )
+            ledger.register(
+                kind=plan.kind.value,
+                matched_family=plan.matched_family,
+                title=plan.title,
+                authors=plan.authors,
+                projection=projection,
+            )
             self._ledger = ledger
             try:
-                value, _ = ledger.resolve(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=projection, execute=lambda: self._observe_lookup(plan, deadline=deadline))
+                value, _ = ledger.resolve(
+                    kind=plan.kind.value,
+                    matched_family=plan.matched_family,
+                    title=plan.title,
+                    authors=plan.authors,
+                    projection=projection,
+                    execute=lambda: self._observe_lookup(plan, deadline=deadline),
+                )
                 return replace(value, request_accounting=ledger.accounting())
             finally:
                 self._client.close()
@@ -242,13 +265,19 @@ class HardcoverMetadataProvider:
             raise ValueError("provider lookup is invalid")
         if plan.overflow:
             self._client.close()
-            return ProviderObservation(
-                self._name, ProviderStatus.QUERY_LIMIT_EXCEEDED
-            )
+            return ProviderObservation(self._name, ProviderStatus.QUERY_LIMIT_EXCEEDED)
         results: list[ProviderLaneResult] = []
         ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
         for lane in plan.lanes:
-            ledger.register(kind=lane.kind.value, matched_family=lane.matched_family, title=lane.title, authors=lane.authors, projection=(_ISBN_QUERY if lane.kind is ProviderQueryKind.ISBN else _WORK_QUERY))
+            ledger.register(
+                kind=lane.kind.value,
+                matched_family=lane.matched_family,
+                title=lane.title,
+                authors=lane.authors,
+                projection=(
+                    _ISBN_QUERY if lane.kind is ProviderQueryKind.ISBN else _WORK_QUERY
+                ),
+            )
         self._ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         try:
@@ -332,8 +361,7 @@ class HardcoverMetadataProvider:
                         )
                         or (
                             lookup.matched_family is not None
-                            and isbn_family(claim.canonical)
-                            == lookup.matched_family
+                            and isbn_family(claim.canonical) == lookup.matched_family
                         )
                     )
                 ),
@@ -377,6 +405,7 @@ class HardcoverMetadataProvider:
                 ProviderStatus.INSUFFICIENT_INPUT,
                 query_kind=lookup.kind,
             )
+
         def result(
             status: ProviderStatus,
             candidates: tuple[ProviderCandidate, ...] = (),
@@ -392,6 +421,7 @@ class HardcoverMetadataProvider:
                 diagnostics=self._schema_diagnostics(),
                 edition_enrichment_overflow=edition_enrichment_overflow,
             )
+
         try:
             payload = self._request(body, deadline=deadline)
         except ProviderFailure as error:
@@ -407,7 +437,9 @@ class HardcoverMetadataProvider:
                     ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
                     edition_enrichment_overflow=overflow,
                 )
-            candidates = _parse_candidates(payload, self._name, local_claims, self._optional_rejections)
+            candidates = _parse_candidates(
+                payload, self._name, local_claims, self._optional_rejections
+            )
             self._reject_schema_members(_optional_projection_rejections(payload))
             if (
                 lookup.kind is ProviderQueryKind.ISBN
@@ -428,7 +460,13 @@ class HardcoverMetadataProvider:
         except _CandidateLimit:
             self._mark_response_attempt("response_oversized")
             return result(ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
-        except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
+        except (
+            ValueError,
+            TypeError,
+            UnicodeError,
+            RecursionError,
+            json.JSONDecodeError,
+        ):
             self._mark_response_attempt("response_malformed")
             return result(ProviderStatus.MALFORMED)
         try:
@@ -437,7 +475,13 @@ class HardcoverMetadataProvider:
                 self._name,
                 lookup.kind,
             )
-        except (ValueError, TypeError, UnicodeError, RecursionError, json.JSONDecodeError):
+        except (
+            ValueError,
+            TypeError,
+            UnicodeError,
+            RecursionError,
+            json.JSONDecodeError,
+        ):
             self.cover_descriptors = ()
         observation = result(
             ProviderStatus.CANDIDATES if candidates else ProviderStatus.NO_MATCH,
@@ -452,19 +496,24 @@ class HardcoverMetadataProvider:
             )
 
     def _schema_diagnostics(self) -> tuple[FailureDiagnostic, ...]:
-        count = min(MAX_DIAGNOSTIC_COUNT, self._schema_rejections + self._optional_rejections.count)
-        return () if not count else (
-            FailureDiagnostic(
-                FailureCategory.SCHEMA_CONSTRUCTION,
-                FailureComponent.PROVIDER,
-                FailureStage.SCHEMA,
-                count=count,
-            ),
+        count = min(
+            MAX_DIAGNOSTIC_COUNT,
+            self._schema_rejections + self._optional_rejections.count,
+        )
+        return (
+            ()
+            if not count
+            else (
+                FailureDiagnostic(
+                    FailureCategory.SCHEMA_CONSTRUCTION,
+                    FailureComponent.PROVIDER,
+                    FailureStage.SCHEMA,
+                    count=count,
+                ),
+            )
         )
 
-    def _request(
-        self, body: dict[str, object], *, deadline: float | None
-    ) -> bytes:
+    def _request(self, body: dict[str, object], *, deadline: float | None) -> bytes:
         for retry_index in range(_MAX_ATTEMPTS_PER_QUERY):
             started = self._clock()
             attempts_before_dispatch = self._attempt_count
@@ -488,15 +537,21 @@ class HardcoverMetadataProvider:
                     error.retryable
                     and retry_index + 1 < _MAX_ATTEMPTS_PER_QUERY
                     and self._attempt_count < _MAX_ATTEMPTS_PER_OBSERVATION
-                    and self._ledger.allows_retry(self._attempt_count, _MAX_ATTEMPTS_PER_OBSERVATION)
+                    and self._ledger.allows_retry(
+                        self._attempt_count, _MAX_ATTEMPTS_PER_OBSERVATION
+                    )
                 )
                 delay = (
                     error.retry_after
                     if error.retry_after is not None
-                    else self._retry_delay(retry_index) if can_retry else None
+                    else self._retry_delay(retry_index)
+                    if can_retry
+                    else None
                 )
-                if can_retry and delay is not None and not self._delay_fits(
-                    delay, deadline=deadline
+                if (
+                    can_retry
+                    and delay is not None
+                    and not self._delay_fits(delay, deadline=deadline)
                 ):
                     can_retry = False
                 if not can_retry or delay is None:
@@ -504,11 +559,7 @@ class HardcoverMetadataProvider:
                         started,
                         category=error.category,
                         delay=delay,
-                        outcome=(
-                            "exhausted"
-                            if error.retryable
-                            else "terminal"
-                        ),
+                        outcome=("exhausted" if error.retryable else "terminal"),
                     )
                     raise
                 try:
@@ -552,9 +603,7 @@ class HardcoverMetadataProvider:
             raise self._incomplete(ProviderIncompleteCause.AGGREGATE_BYTES)
         if self._attempt_count >= _MAX_ATTEMPTS_PER_OBSERVATION:
             raise self._incomplete(ProviderIncompleteCause.DISPATCH_COUNT)
-        if self._pacer is not None and not self._pacer.wait(
-            deadline=deadline
-        ):
+        if self._pacer is not None and not self._pacer.wait(deadline=deadline):
             raise self._incomplete(ProviderIncompleteCause.DEADLINE)
         remaining = self._timeout_seconds
         if deadline is not None:
@@ -583,12 +632,9 @@ class HardcoverMetadataProvider:
                     response.headers.get("retry-after"),
                     now=self._wall_clock(),
                 )
-                identity_encoding = (
-                    response.headers.get("content-encoding", "identity")
-                    .strip()
-                    .lower()
-                    in {"", "identity"}
-                )
+                identity_encoding = response.headers.get(
+                    "content-encoding", "identity"
+                ).strip().lower() in {"", "identity"}
                 if response.is_stream_consumed and not identity_encoding:
                     raise ProviderFailure(
                         ProviderStatus.MALFORMED,
@@ -633,9 +679,7 @@ class HardcoverMetadataProvider:
                         category=f"http_{response.status_code}",
                         retryable=True,
                         retry_after=(
-                            retry_after
-                            if response.status_code == 503
-                            else None
+                            retry_after if response.status_code == 503 else None
                         ),
                     )
                 if response.status_code != 200:
@@ -686,9 +730,7 @@ class HardcoverMetadataProvider:
             self._remaining_response_bytes = 0
             raise _ResponseOversized
 
-    def _incomplete(
-        self, cause: ProviderIncompleteCause
-    ) -> ProviderFailure:
+    def _incomplete(self, cause: ProviderIncompleteCause) -> ProviderFailure:
         self._incomplete_causes.append(ProviderIncompleteCauseRecord(cause))
         return ProviderFailure(ProviderStatus.INCOMPLETE)
 
@@ -702,9 +744,7 @@ class HardcoverMetadataProvider:
             jitter = 0.0
         return min(float(2**retry_index) + float(jitter), 16.0)
 
-    def _delay_fits(
-        self, delay: float, *, deadline: float | None
-    ) -> bool:
+    def _delay_fits(self, delay: float, *, deadline: float | None) -> bool:
         if deadline is None:
             return True
         return self._clock() + delay < deadline
@@ -723,9 +763,7 @@ class HardcoverMetadataProvider:
                 ordinal=self._attempt_count,
                 category=category,
                 delay_seconds=delay,
-                elapsed_seconds=bounded_attempt_elapsed(
-                    started, self._clock()
-                ),
+                elapsed_seconds=bounded_attempt_elapsed(started, self._clock()),
                 outcome=outcome,
             )
         )
@@ -768,9 +806,7 @@ def _body(
     chunks: list[bytes] = []
     size = 0
     raw_chunks = (
-        (response.content,)
-        if response.is_stream_consumed
-        else response.iter_raw()
+        (response.content,) if response.is_stream_consumed else response.iter_raw()
     )
     for chunk in raw_chunks:
         consume(len(chunk))
@@ -802,11 +838,7 @@ def _has_graphql_errors(payload: bytes) -> bool:
         {"data", "errors"} if "data" in source else {"errors"},
     )
     errors = root["errors"]
-    if (
-        type(errors) is not list
-        or not errors
-        or len(errors) > MAX_GRAPHQL_ERRORS
-    ):
+    if type(errors) is not list or not errors or len(errors) > MAX_GRAPHQL_ERRORS:
         raise ValueError("provider errors invalid")
     for value in errors:
         error = _closed_subset(
@@ -817,10 +849,7 @@ def _has_graphql_errors(payload: bytes) -> bool:
         _text(error["message"], MAX_GRAPHQL_ERROR_MESSAGE_CHARACTERS)
         if "locations" in error:
             locations = error["locations"]
-            if (
-                type(locations) is not list
-                or len(locations) > MAX_GRAPHQL_ERRORS
-            ):
+            if type(locations) is not list or len(locations) > MAX_GRAPHQL_ERRORS:
                 raise ValueError("provider error locations invalid")
             for raw_location in locations:
                 location = _closed(raw_location, {"line", "column"})
@@ -867,7 +896,12 @@ def _parse_candidates(
     rejected: _OptionalRejections | None = None,
 ) -> tuple[ProviderCandidate, ...]:
     rejected = rejected or _OptionalRejections()
-    source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
+    source = json.loads(
+        payload.decode("utf-8", "strict"),
+        object_pairs_hook=_unique_object,
+        parse_constant=_reject_number,
+        parse_float=Decimal,
+    )
     root = _closed(source, {"data"})
     data = _closed(root["data"], {"editions", "books", "tags"})
     rows, books, tags = data["editions"], data["books"], data["tags"]
@@ -979,11 +1013,37 @@ def _parse_candidates(
         row = _anchored_projection(
             row_value,
             {"id", "book_id"},
-            {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"},
+            {
+                "id",
+                "book_id",
+                "isbn_10",
+                "isbn_13",
+                "asin",
+                "title",
+                "subtitle",
+                "release_date",
+                "image",
+                "publisher",
+                "language",
+                "contributions",
+            },
         )
         row = {
             key: row.get(key)
-            for key in {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"}
+            for key in {
+                "id",
+                "book_id",
+                "isbn_10",
+                "isbn_13",
+                "asin",
+                "title",
+                "subtitle",
+                "release_date",
+                "image",
+                "publisher",
+                "language",
+                "contributions",
+            }
         }
         edition_id, book_id = _identifier(row["id"]), _identifier(row["book_id"])
         if book_id not in indexed:
@@ -1002,7 +1062,8 @@ def _parse_candidates(
             provider,
             identity,
             row,
-            local_claims, rejected,
+            local_claims,
+            rejected,
         )
         identity_bindings: list[ProviderIdentityBinding] = []
         work_rejections = rejected if book_id not in diagnosed_works else None
@@ -1042,16 +1103,24 @@ def _parse_candidates(
                 provider,
             )
         )
-    if used != set(indexed) or len({candidate.identity for candidate in candidates}) != len(candidates):
+    if used != set(indexed) or len(
+        {candidate.identity for candidate in candidates}
+    ) != len(candidates):
         raise ValueError("provider join invalid")
     return tuple(sorted(candidates, key=lambda candidate: candidate.identity))
 
 
 def _parse_edition_enrichment_overflow(
-    payload: bytes, provider: str,
+    payload: bytes,
+    provider: str,
 ) -> EditionEnrichmentOverflow | None:
     """Retain one work-only witness, never an edition candidate, at the probe cap."""
-    source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
+    source = json.loads(
+        payload.decode("utf-8", "strict"),
+        object_pairs_hook=_unique_object,
+        parse_constant=_reject_number,
+        parse_float=Decimal,
+    )
     data = _closed(_closed(source, {"data"})["data"], {"editions", "books", "tags"})
     rows, books = data["editions"], data["books"]
     if type(rows) is not list or type(books) is not list:
@@ -1060,7 +1129,9 @@ def _parse_edition_enrichment_overflow(
         return None
     if len(rows) != MAX_CANDIDATES + 1 or len(books) != 1:
         raise _CandidateLimit
-    book = _anchored_projection(books[0], {"id", "title", "contributions"}, {"id", "title", "contributions"})
+    book = _anchored_projection(
+        books[0], {"id", "title", "contributions"}, {"id", "title", "contributions"}
+    )
     book_id = _identifier(book["id"])
     edition_ids: set[int] = set()
     for value in rows:
@@ -1070,9 +1141,23 @@ def _parse_edition_enrichment_overflow(
             raise ValueError("provider overflow linkage invalid")
         edition_ids.add(edition_id)
     work_identity = f"hardcover-work-{book_id:010d}"
-    title = _claim(provider, work_identity, ClaimKind.TITLE, book["title"], ClaimScope.WORK, "not_applicable", None, (), 0)
+    title = _claim(
+        provider,
+        work_identity,
+        ClaimKind.TITLE,
+        book["title"],
+        ClaimScope.WORK,
+        "not_applicable",
+        None,
+        (),
+        0,
+    )
     contributions = book["contributions"]
-    if type(contributions) is not list or not contributions or len(contributions) > MAX_CONTRIBUTIONS:
+    if (
+        type(contributions) is not list
+        or not contributions
+        or len(contributions) > MAX_CONTRIBUTIONS
+    ):
         raise ValueError("provider overflow work is incomplete")
     contribution_ids: set[int] = set()
     author_ids: dict[int, str] = {}
@@ -1089,20 +1174,41 @@ def _parse_edition_enrichment_overflow(
             contribution_id in contribution_ids
             or author_id in author_ids
             or normalize_title(author["name"]).casefold() in author_names
-            or validate_role_projection(contribution["contribution"]).casefold() != "author"
+            or validate_role_projection(contribution["contribution"]).casefold()
+            != "author"
         ):
             raise ValueError("provider overflow authors are contradictory")
         contribution_ids.add(contribution_id)
         author_ids[author_id] = author["name"]
         author_names.add(normalize_title(author["name"]).casefold())
-        claim = _claim(provider, work_identity, ClaimKind.CREATOR, author["name"], ClaimScope.WORK, "not_applicable", "author", (), ordinal)
+        claim = _claim(
+            provider,
+            work_identity,
+            ClaimKind.CREATOR,
+            author["name"],
+            ClaimScope.WORK,
+            "not_applicable",
+            "author",
+            (),
+            ordinal,
+        )
         if claim.state is not FieldState.VALID:
             raise ValueError("provider overflow work is incomplete")
         authors.append(claim)
-        bindings.append(ProviderIdentityBinding(claim.reference, f"hardcover-author-{author_id:010d}", ClaimScope.WORK, "author", ordinal))
+        bindings.append(
+            ProviderIdentityBinding(
+                claim.reference,
+                f"hardcover-author-{author_id:010d}",
+                ClaimScope.WORK,
+                "author",
+                ordinal,
+            )
+        )
     if title.state is not FieldState.VALID or title.value is None:
         raise ValueError("provider overflow work is incomplete")
-    return EditionEnrichmentOverflow(work_identity, title.value, tuple(authors), tuple(bindings))
+    return EditionEnrichmentOverflow(
+        work_identity, title.value, tuple(authors), tuple(bindings)
+    )
 
 
 def _parse_cover_descriptors(
@@ -1112,7 +1218,12 @@ def _parse_cover_descriptors(
     rejected: _OptionalRejections | None = None,
 ) -> tuple[ProviderCoverDescriptor, ...]:
     rejected = rejected or _OptionalRejections()
-    source = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique_object, parse_constant=_reject_number, parse_float=Decimal)
+    source = json.loads(
+        payload.decode("utf-8", "strict"),
+        object_pairs_hook=_unique_object,
+        parse_constant=_reject_number,
+        parse_float=Decimal,
+    )
     data = _closed(
         _closed(source, {"data"})["data"],
         {"editions", "books", "tags"},
@@ -1130,8 +1241,41 @@ def _parse_cover_descriptors(
     for row_value in rows:
         if type(row_value) is dict and "image" not in row_value:
             row_value = {**row_value, "image": None}
-        row = _anchored_projection(row_value, {"id", "book_id"}, {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"})
-        row = {key: row.get(key) for key in {"id", "book_id", "isbn_10", "isbn_13", "asin", "title", "subtitle", "release_date", "image", "publisher", "language", "contributions"}}
+        row = _anchored_projection(
+            row_value,
+            {"id", "book_id"},
+            {
+                "id",
+                "book_id",
+                "isbn_10",
+                "isbn_13",
+                "asin",
+                "title",
+                "subtitle",
+                "release_date",
+                "image",
+                "publisher",
+                "language",
+                "contributions",
+            },
+        )
+        row = {
+            key: row.get(key)
+            for key in {
+                "id",
+                "book_id",
+                "isbn_10",
+                "isbn_13",
+                "asin",
+                "title",
+                "subtitle",
+                "release_date",
+                "image",
+                "publisher",
+                "language",
+                "contributions",
+            }
+        }
         url, terminal_state = _cover_url(row["image"], rejected)
         edition_id = _identifier(row["id"])
         book_id = _identifier(row["book_id"])
@@ -1196,7 +1340,9 @@ def _parse_cover_descriptors(
     return tuple(descriptors)
 
 
-def _cover_url(value: object, rejected: _OptionalRejections | None = None) -> tuple[str | None, CoverSourceState | None]:
+def _cover_url(
+    value: object, rejected: _OptionalRejections | None = None
+) -> tuple[str | None, CoverSourceState | None]:
     try:
         image = _closed_or_none(value, {"url"})
     except (TypeError, ValueError):
@@ -1236,7 +1382,9 @@ def _cover_url(value: object, rejected: _OptionalRejections | None = None) -> tu
     return url, None
 
 
-def _work_cover_context(book: dict[str, Any], rejected: _OptionalRejections | None = None) -> tuple[CoverContext, ...]:
+def _work_cover_context(
+    book: dict[str, Any], rejected: _OptionalRejections | None = None
+) -> tuple[CoverContext, ...]:
     if book["release_date"] is None:
         return ()
     try:
@@ -1249,12 +1397,18 @@ def _work_cover_context(book: dict[str, Any], rejected: _OptionalRejections | No
     return (CoverContext(CoverContextField.PUBLICATION_DATE, value),)
 
 
-def _edition_cover_context(row: dict[str, Any], rejected: _OptionalRejections | None = None) -> tuple[CoverContext, ...]:
+def _edition_cover_context(
+    row: dict[str, Any], rejected: _OptionalRejections | None = None
+) -> tuple[CoverContext, ...]:
     values: set[CoverContext] = set()
     for key in ("isbn_10", "isbn_13"):
         if row[key] is not None:
             try:
-                values.add(CoverContext(CoverContextField.ISBN, _text(row[key], MAX_SCALAR_CHARACTERS)))
+                values.add(
+                    CoverContext(
+                        CoverContextField.ISBN, _text(row[key], MAX_SCALAR_CHARACTERS)
+                    )
+                )
             except ValueError:
                 if rejected:
                     rejected.reject()
@@ -1269,7 +1423,9 @@ def _edition_cover_context(row: dict[str, Any], rejected: _OptionalRejections | 
             values.add(CoverContext(CoverContextField.LANGUAGE, value))
             break
     try:
-        publisher = _text(_optional_member(row["publisher"], "name"), MAX_SCALAR_CHARACTERS)
+        publisher = _text(
+            _optional_member(row["publisher"], "name"), MAX_SCALAR_CHARACTERS
+        )
     except ValueError:
         if rejected:
             rejected.reject()
@@ -1285,9 +1441,7 @@ def _edition_cover_context(row: dict[str, Any], rejected: _OptionalRejections | 
             if rejected:
                 rejected.reject()
             pass
-    return tuple(
-        sorted(values, key=lambda value: (value.field.value, value.value))
-    )
+    return tuple(sorted(values, key=lambda value: (value.field.value, value.value)))
 
 
 def _edition_claims(
@@ -1304,9 +1458,36 @@ def _edition_claims(
         if row[key] is not None
     )
     edition_applicability = _edition_applicability(isbn_applicability)
-    def add(kind: ClaimKind, value: object, scope: ClaimScope = ClaimScope.EDITION, applicability: str = "not_applicable") -> None:
-        claims.append(_claim(provider, identity, kind, value, scope, applicability, None, local, len(claims), rejected))
-    for key, kind in (("isbn_10", ClaimKind.ISBN), ("isbn_13", ClaimKind.ISBN), ("asin", ClaimKind.ASIN), ("title", ClaimKind.TITLE), ("subtitle", ClaimKind.SUBTITLE), ("release_date", ClaimKind.PUBLICATION_DATE)):
+
+    def add(
+        kind: ClaimKind,
+        value: object,
+        scope: ClaimScope = ClaimScope.EDITION,
+        applicability: str = "not_applicable",
+    ) -> None:
+        claims.append(
+            _claim(
+                provider,
+                identity,
+                kind,
+                value,
+                scope,
+                applicability,
+                None,
+                local,
+                len(claims),
+                rejected,
+            )
+        )
+
+    for key, kind in (
+        ("isbn_10", ClaimKind.ISBN),
+        ("isbn_13", ClaimKind.ISBN),
+        ("asin", ClaimKind.ASIN),
+        ("title", ClaimKind.TITLE),
+        ("subtitle", ClaimKind.SUBTITLE),
+        ("release_date", ClaimKind.PUBLICATION_DATE),
+    ):
         add(
             kind,
             row[key],
@@ -1320,7 +1501,17 @@ def _edition_claims(
             ),
         )
     add(ClaimKind.PUBLISHER, _optional_member(row["publisher"], "name", rejected))
-    claims.append(_state_claim(provider, identity, ClaimKind.IMPRINT, FieldState.UNSUPPORTED, ClaimScope.EDITION, local, len(claims)))
+    claims.append(
+        _state_claim(
+            provider,
+            identity,
+            ClaimKind.IMPRINT,
+            FieldState.UNSUPPORTED,
+            ClaimScope.EDITION,
+            local,
+            len(claims),
+        )
+    )
     language = _optional_mapping(row["language"], rejected)
     # Code siblings are optional alternatives: a bad code2 cannot discard a
     # valid code3 (or the inverse).
@@ -1328,12 +1519,24 @@ def _edition_claims(
     if language is not None:
         for key in ("code2", "code3"):
             if language.get(key) is not None:
-                state, candidate = _field(ClaimKind.LANGUAGE, language.get(key), rejected)
+                state, candidate = _field(
+                    ClaimKind.LANGUAGE, language.get(key), rejected
+                )
                 if state is FieldState.VALID:
                     language_value = candidate
                     break
     add(ClaimKind.LANGUAGE, language_value)
-    claims.extend(_contributions(provider, identity, row["contributions"], ClaimScope.EDITION, local, len(claims), rejected))
+    claims.extend(
+        _contributions(
+            provider,
+            identity,
+            row["contributions"],
+            ClaimScope.EDITION,
+            local,
+            len(claims),
+            rejected,
+        )
+    )
     return claims
 
 
@@ -1358,7 +1561,32 @@ def _work_claims(
     # `series` names the bounded series list and then, inside the loop over
     # that list, the closed per-item series object.
     series: list[dict[str, Any]] | dict[str, Any] | None
-    claims = [_claim(provider, identity, ClaimKind.TITLE, book["title"], ClaimScope.WORK, "not_applicable", None, local, offset, rejected), _claim(provider, identity, ClaimKind.DESCRIPTION, book["description"], ClaimScope.WORK, "not_applicable", None, local, offset + 1, rejected)]
+    claims = [
+        _claim(
+            provider,
+            identity,
+            ClaimKind.TITLE,
+            book["title"],
+            ClaimScope.WORK,
+            "not_applicable",
+            None,
+            local,
+            offset,
+            rejected,
+        ),
+        _claim(
+            provider,
+            identity,
+            ClaimKind.DESCRIPTION,
+            book["description"],
+            ClaimScope.WORK,
+            "not_applicable",
+            None,
+            local,
+            offset + 1,
+            rejected,
+        ),
+    ]
     claims.extend(
         _contributions(
             provider,
@@ -1371,23 +1599,75 @@ def _work_claims(
             identity_bindings,
         )
     )
-    series, series_overflow, series_invalid = _optional_bounded_list(book["book_series"], MAX_SERIES, {"id", "position", "series"}, rejected)
+    series, series_overflow, series_invalid = _optional_bounded_list(
+        book["book_series"], MAX_SERIES, {"id", "position", "series"}, rejected
+    )
     if series_overflow:
-        claims.extend((_state_claim(provider, identity, ClaimKind.SERIES, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset), _state_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, FieldState.OVERSIZED, ClaimScope.WORK, local, len(claims) + offset + 1)))
+        claims.extend(
+            (
+                _state_claim(
+                    provider,
+                    identity,
+                    ClaimKind.SERIES,
+                    FieldState.OVERSIZED,
+                    ClaimScope.WORK,
+                    local,
+                    len(claims) + offset,
+                ),
+                _state_claim(
+                    provider,
+                    identity,
+                    ClaimKind.SERIES_SEQUENCE,
+                    FieldState.OVERSIZED,
+                    ClaimScope.WORK,
+                    local,
+                    len(claims) + offset + 1,
+                ),
+            )
+        )
         series = []
     for item in series:
         series = _optional_closed(item["series"], {"id", "name"}, rejected)
-        claims.append(_claim(provider, identity, ClaimKind.SERIES, None if series is None else series["name"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset, rejected))
-        claims.append(_claim(provider, identity, ClaimKind.SERIES_SEQUENCE, item["position"], ClaimScope.WORK, "not_applicable", None, local, len(claims) + offset, rejected))
+        claims.append(
+            _claim(
+                provider,
+                identity,
+                ClaimKind.SERIES,
+                None if series is None else series["name"],
+                ClaimScope.WORK,
+                "not_applicable",
+                None,
+                local,
+                len(claims) + offset,
+                rejected,
+            )
+        )
+        claims.append(
+            _claim(
+                provider,
+                identity,
+                ClaimKind.SERIES_SEQUENCE,
+                item["position"],
+                ClaimScope.WORK,
+                "not_applicable",
+                None,
+                local,
+                len(claims) + offset,
+                rejected,
+            )
+        )
     if series_invalid:
         claims.extend(
             _state_claim(
-                provider, identity, kind, FieldState.MALFORMED, ClaimScope.WORK,
-                local, len(claims) + offset + index,
+                provider,
+                identity,
+                kind,
+                FieldState.MALFORMED,
+                ClaimScope.WORK,
+                local,
+                len(claims) + offset + index,
             )
-            for index, kind in enumerate(
-                (ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE)
-            )
+            for index, kind in enumerate((ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE))
         )
     if book.get("_taxonomy_oversized"):
         claims.extend(
@@ -1416,7 +1696,9 @@ def _work_claims(
             )
             for index, kind in enumerate((ClaimKind.GENRE, ClaimKind.TAG))
         )
-    taggings, taggings_overflow, taggings_invalid = _optional_bounded_list(book["taggings"], MAX_TAGS, {"id", "tag"}, rejected)
+    taggings, taggings_overflow, taggings_invalid = _optional_bounded_list(
+        book["taggings"], MAX_TAGS, {"id", "tag"}, rejected
+    )
     taxonomy: list[tuple[str, str]] = []
     categorized: list[tuple[ClaimKind, str]] = []
     seen: dict[str, ClaimKind] = {}
@@ -1433,9 +1715,7 @@ def _work_claims(
                 rejected.reject()
             malformed_taxonomy = True
             continue
-        category = _optional_closed(
-            tag["tag_category"], {"id", "category"}, rejected
-        )
+        category = _optional_closed(tag["tag_category"], {"id", "category"}, rejected)
         if category is None:
             malformed_taxonomy = True
             continue
@@ -1475,8 +1755,15 @@ def _work_claims(
     for kind, name in categorized:
         claims.append(
             _claim(
-                provider, identity, kind, name, ClaimScope.WORK,
-                "not_applicable", None, local, len(claims) + offset,
+                provider,
+                identity,
+                kind,
+                name,
+                ClaimScope.WORK,
+                "not_applicable",
+                None,
+                local,
+                len(claims) + offset,
             )
         )
     if malformed_taxonomy or taggings_invalid:
@@ -1553,7 +1840,10 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
     if overflow:
         return tuple(
             sorted(
-                (replace(value, source_ordinal=index) for index, value in enumerate(evidence)),
+                (
+                    replace(value, source_ordinal=index)
+                    for index, value in enumerate(evidence)
+                ),
                 key=lambda value: (
                     value.scope.value,
                     value.kind.value,
@@ -1565,9 +1855,7 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
         )
     for contribution in contributions:
         try:
-            role = validate_role_projection(
-                contribution["contribution"]
-            ).casefold()
+            role = validate_role_projection(contribution["contribution"]).casefold()
         except EvidenceValueError:
             # The claim projection records the malformed role. It cannot
             # safely support identity evidence, but it must not discard the
@@ -1599,7 +1887,10 @@ def _work_evidence(book: dict[str, Any]) -> tuple[ProviderEvidence, ...]:
             )
     return tuple(
         sorted(
-            (replace(value, source_ordinal=index) for index, value in enumerate(evidence)),
+            (
+                replace(value, source_ordinal=index)
+                for index, value in enumerate(evidence)
+            ),
             key=lambda value: (
                 value.scope.value,
                 value.kind.value,
@@ -1622,12 +1913,22 @@ def _contributions(
     identity_bindings: list[ProviderIdentityBinding] | None = None,
 ) -> list[ProviderClaim]:
     claims: list[ProviderClaim] = []
-    contributions, overflow, invalid = _optional_bounded_list(value, MAX_CONTRIBUTIONS, {"id", "contribution", "author"}, rejected)
+    contributions, overflow, invalid = _optional_bounded_list(
+        value, MAX_CONTRIBUTIONS, {"id", "contribution", "author"}, rejected
+    )
     if overflow:
         # No prefix can determine which roles occur in an unadmitted source
         # collection, so expose the two supported contribution fields only.
         return [
-            _state_claim(provider, identity, kind, FieldState.OVERSIZED, scope, local, offset + index)
+            _state_claim(
+                provider,
+                identity,
+                kind,
+                FieldState.OVERSIZED,
+                scope,
+                local,
+                offset + index,
+            )
             for index, kind in enumerate((ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR))
         ]
     for item in contributions:
@@ -1640,12 +1941,32 @@ def _contributions(
             except EvidenceValueError:
                 if rejected:
                     rejected.reject()
-                claims.append(_state_claim(provider, identity, ClaimKind.CONTRIBUTOR, FieldState.MALFORMED, scope, local, offset + len(claims)))
+                claims.append(
+                    _state_claim(
+                        provider,
+                        identity,
+                        ClaimKind.CONTRIBUTOR,
+                        FieldState.MALFORMED,
+                        scope,
+                        local,
+                        offset + len(claims),
+                    )
+                )
                 continue
         kind = ClaimKind.CREATOR if role in {None, "author"} else ClaimKind.CONTRIBUTOR
         author = _field_local_author(item["author"], rejected)
         if author is None:
-            claims.append(_state_claim(provider, identity, kind, FieldState.MALFORMED, scope, local, offset + len(claims)))
+            claims.append(
+                _state_claim(
+                    provider,
+                    identity,
+                    kind,
+                    FieldState.MALFORMED,
+                    scope,
+                    local,
+                    offset + len(claims),
+                )
+            )
             continue
         try:
             author_id = _identifier(author["id"])
@@ -1683,11 +2004,23 @@ def _contributions(
                 )
             )
     if invalid:
-        claims.append(_state_claim(provider, identity, ClaimKind.CONTRIBUTOR, FieldState.MALFORMED, scope, local, offset + len(claims)))
+        claims.append(
+            _state_claim(
+                provider,
+                identity,
+                ClaimKind.CONTRIBUTOR,
+                FieldState.MALFORMED,
+                scope,
+                local,
+                offset + len(claims),
+            )
+        )
     return claims
 
 
-def _field_local_author(value: object, rejected: _OptionalRejections | None = None) -> dict[str, Any] | None:
+def _field_local_author(
+    value: object, rejected: _OptionalRejections | None = None
+) -> dict[str, Any] | None:
     if type(value) is not dict or set(value) != {"id", "name"}:
         if rejected:
             rejected.reject()
@@ -1695,23 +2028,92 @@ def _field_local_author(value: object, rejected: _OptionalRejections | None = No
     return value
 
 
-def _claim(provider: str, identity: str, kind: ClaimKind, value: object, scope: ClaimScope, applicability: str, role: str | None, local: tuple[LocalClaim, ...], raw_order: int, rejected: _OptionalRejections | None = None) -> ProviderClaim:
+def _claim(
+    provider: str,
+    identity: str,
+    kind: ClaimKind,
+    value: object,
+    scope: ClaimScope,
+    applicability: str,
+    role: str | None,
+    local: tuple[LocalClaim, ...],
+    raw_order: int,
+    rejected: _OptionalRejections | None = None,
+) -> ProviderClaim:
     state, text = _field(kind, value, rejected)
-    bare = ProviderClaim.create(provider=provider, candidate=identity, kind=kind, value=text, state=state, scope=scope, applicability=applicability, role=role, raw_order=raw_order)
-    return ProviderClaim.create(provider=provider, candidate=identity, kind=kind, value=text, state=state, scope=scope, applicability=applicability, role=role, raw_order=raw_order, links=comparison_links(bare, local))
+    bare = ProviderClaim.create(
+        provider=provider,
+        candidate=identity,
+        kind=kind,
+        value=text,
+        state=state,
+        scope=scope,
+        applicability=applicability,
+        role=role,
+        raw_order=raw_order,
+    )
+    return ProviderClaim.create(
+        provider=provider,
+        candidate=identity,
+        kind=kind,
+        value=text,
+        state=state,
+        scope=scope,
+        applicability=applicability,
+        role=role,
+        raw_order=raw_order,
+        links=comparison_links(bare, local),
+    )
 
 
-def _state_claim(provider: str, identity: str, kind: ClaimKind, state: FieldState, scope: ClaimScope, local: tuple[LocalClaim, ...], raw_order: int) -> ProviderClaim:
-    bare = ProviderClaim.create(provider=provider, candidate=identity, kind=kind, value=None, state=state, scope=scope, applicability="not_applicable", raw_order=raw_order)
-    return ProviderClaim.create(provider=provider, candidate=identity, kind=kind, value=None, state=state, scope=scope, applicability="not_applicable", raw_order=raw_order, links=comparison_links(bare, local))
+def _state_claim(
+    provider: str,
+    identity: str,
+    kind: ClaimKind,
+    state: FieldState,
+    scope: ClaimScope,
+    local: tuple[LocalClaim, ...],
+    raw_order: int,
+) -> ProviderClaim:
+    bare = ProviderClaim.create(
+        provider=provider,
+        candidate=identity,
+        kind=kind,
+        value=None,
+        state=state,
+        scope=scope,
+        applicability="not_applicable",
+        raw_order=raw_order,
+    )
+    return ProviderClaim.create(
+        provider=provider,
+        candidate=identity,
+        kind=kind,
+        value=None,
+        state=state,
+        scope=scope,
+        applicability="not_applicable",
+        raw_order=raw_order,
+        links=comparison_links(bare, local),
+    )
 
 
-def _field(kind: ClaimKind, value: object, rejected: _OptionalRejections | None = None) -> tuple[FieldState, str | None]:
+def _field(
+    kind: ClaimKind, value: object, rejected: _OptionalRejections | None = None
+) -> tuple[FieldState, str | None]:
     if value is None:
         return FieldState.ABSENT, None
-    maximum = MAX_DESCRIPTION_CHARACTERS if kind is ClaimKind.DESCRIPTION else MAX_SCALAR_CHARACTERS
+    maximum = (
+        MAX_DESCRIPTION_CHARACTERS
+        if kind is ClaimKind.DESCRIPTION
+        else MAX_SCALAR_CHARACTERS
+    )
     try:
-        if kind is ClaimKind.SERIES_SEQUENCE and type(value) in {Decimal, int} and type(value) is not bool:
+        if (
+            kind is ClaimKind.SERIES_SEQUENCE
+            and type(value) in {Decimal, int}
+            and type(value) is not bool
+        ):
             # The guard above admits only exact `Decimal` and `int` values.
             return FieldState.VALID, _position(cast("Decimal | int", value))
         text = validate_projection_text(value, "provider claim value", maximum)
@@ -1734,10 +2136,16 @@ def _field(kind: ClaimKind, value: object, rejected: _OptionalRejections | None 
     except (ValueError, EvidenceValueError):
         if rejected:
             rejected.reject()
-        return (FieldState.OVERSIZED if type(value) is str and len(value) > maximum else FieldState.MALFORMED), None
+        return (
+            FieldState.OVERSIZED
+            if type(value) is str and len(value) > maximum
+            else FieldState.MALFORMED
+        ), None
 
 
-def _bounded_list(value: object, maximum: int, keys: set[str]) -> tuple[list[dict[str, Any]], bool]:
+def _bounded_list(
+    value: object, maximum: int, keys: set[str]
+) -> tuple[list[dict[str, Any]], bool]:
     if type(value) is not list:
         raise ValueError("provider list invalid")
     values = [_closed(item, keys) for item in value]
@@ -1745,7 +2153,10 @@ def _bounded_list(value: object, maximum: int, keys: set[str]) -> tuple[list[dic
 
 
 def _optional_bounded_list(
-    value: object, maximum: int, keys: set[str], rejected: _OptionalRejections | None = None
+    value: object,
+    maximum: int,
+    keys: set[str],
+    rejected: _OptionalRejections | None = None,
 ) -> tuple[list[dict[str, Any]], bool, bool]:
     """Retain valid optional members only after a whole-field cap check."""
     if type(value) is not list:
@@ -1802,7 +2213,9 @@ def _closed_or_none(value: object, keys: set[str]) -> dict[str, Any] | None:
     return None if value is None else _closed(value, keys)
 
 
-def _optional_closed(value: object, keys: set[str], rejected: _OptionalRejections | None = None) -> dict[str, Any] | None:
+def _optional_closed(
+    value: object, keys: set[str], rejected: _OptionalRejections | None = None
+) -> dict[str, Any] | None:
     try:
         return _closed_or_none(value, keys)
     except ValueError:
@@ -1811,7 +2224,9 @@ def _optional_closed(value: object, keys: set[str], rejected: _OptionalRejection
         return None
 
 
-def _optional_mapping(value: object, rejected: _OptionalRejections | None = None) -> dict[str, Any] | None:
+def _optional_mapping(
+    value: object, rejected: _OptionalRejections | None = None
+) -> dict[str, Any] | None:
     """An optional parent is not an anchor; validate its children locally."""
     if type(value) is dict:
         return value
@@ -1820,7 +2235,9 @@ def _optional_mapping(value: object, rejected: _OptionalRejections | None = None
     return None
 
 
-def _optional_member(value: object, key: str, rejected: _OptionalRejections | None = None) -> object:
+def _optional_member(
+    value: object, key: str, rejected: _OptionalRejections | None = None
+) -> object:
     mapping = _optional_mapping(value, rejected)
     return None if mapping is None else mapping.get(key)
 
@@ -1844,8 +2261,17 @@ def _optional_projection_rejections(payload: bytes) -> int:
     editions = data.get("editions")
     if type(editions) is list and len(editions) <= MAX_CANDIDATES:
         edition_keys = {
-            "id", "book_id", "isbn_10", "isbn_13", "asin", "title",
-            "subtitle", "release_date", "image", "publisher", "language",
+            "id",
+            "book_id",
+            "isbn_10",
+            "isbn_13",
+            "asin",
+            "title",
+            "subtitle",
+            "release_date",
+            "image",
+            "publisher",
+            "language",
             "contributions",
         }
         for row in editions:
@@ -1857,14 +2283,18 @@ def _optional_projection_rejections(payload: bytes) -> int:
                 count += len(set(publisher) - {"id", "name", "parent_id"})
             language = row.get("language")
             if type(language) is dict:
-                count += len(
-                    set(language) - {"id", "code2", "code3", "language"}
-                )
+                count += len(set(language) - {"id", "code2", "code3", "language"})
     books = data.get("books")
     if type(books) is list and len(books) <= MAX_CANDIDATES:
         work_keys = {
-            "id", "title", "description", "release_date", "image",
-            "contributions", "book_series", "taggings",
+            "id",
+            "title",
+            "description",
+            "release_date",
+            "image",
+            "contributions",
+            "book_series",
+            "taggings",
         }
         for book in books:
             if type(book) is dict:
@@ -1879,18 +2309,54 @@ def _identifier(value: object) -> int:
 
 
 def _text(value: object, maximum: int) -> str:
-    if type(value) is not str or not value or len(value) > maximum or value.strip() != value or "\x00" in value or any(unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value):
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > maximum
+        or value.strip() != value
+        or "\x00" in value
+        or any(
+            unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value
+        )
+    ):
         raise ValueError("provider text invalid")
     return value
 
 
 def _isbn(value: str, length: int) -> str:
     text = _text(value, 32).replace("-", "").replace(" ", "").upper()
-    if length not in {10, 13} or len(text) != length or any(not character.isdigit() and not (length == 10 and character == "X" and index == 9) for index, character in enumerate(text)):
+    if (
+        length not in {10, 13}
+        or len(text) != length
+        or any(
+            not character.isdigit()
+            and not (length == 10 and character == "X" and index == 9)
+            for index, character in enumerate(text)
+        )
+    ):
         raise ValueError("provider ISBN invalid")
-    if length == 13 and int(text[-1]) != (10 - sum((1 if index % 2 == 0 else 3) * int(character) for index, character in enumerate(text[:12])) % 10) % 10:
+    if (
+        length == 13
+        and int(text[-1])
+        != (
+            10
+            - sum(
+                (1 if index % 2 == 0 else 3) * int(character)
+                for index, character in enumerate(text[:12])
+            )
+            % 10
+        )
+        % 10
+    ):
         raise ValueError("provider ISBN invalid")
-    if length == 10 and sum((10 - index) * (10 if character == "X" else int(character)) for index, character in enumerate(text)) % 11:
+    if (
+        length == 10
+        and sum(
+            (10 - index) * (10 if character == "X" else int(character))
+            for index, character in enumerate(text)
+        )
+        % 11
+    ):
         raise ValueError("provider ISBN invalid")
     return text
 

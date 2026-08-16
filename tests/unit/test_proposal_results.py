@@ -46,7 +46,9 @@ from tests.support.proposal_evidence import (
     ("overrides", "ignored"),
     (
         pytest.param(
-            {"title_layout": "ignore", "subtitle": "ask"}, False, id="title_layout_ignores"
+            {"title_layout": "ignore", "subtitle": "ask"},
+            False,
+            id="title_layout_ignores",
         ),
         pytest.param(
             {"title_layout": "ask", "subtitle": "ignore"}, False, id="subtitle_ignores"
@@ -62,8 +64,9 @@ def test_shared_title_subtitle_destination_requires_every_owner_to_ignore(
     from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 
     destinations = {**dict(MetadataPolicyProfile.builtin().destinations), **overrides}
-    assert ignored == (TargetDestination.SUBTITLE
-        in _ignored_policy_targets(destinations))
+    assert ignored == (
+        TargetDestination.SUBTITLE in _ignored_policy_targets(destinations)
+    )
 
 
 def test_exact_sixteen_results_are_deterministic_and_round_trip() -> None:
@@ -71,19 +74,27 @@ def test_exact_sixteen_results_are_deterministic_and_round_trip() -> None:
     assert tuple(TargetDestination) == tuple(
         value.destination for value in proposal_set.results
     )
-    assert {"connection", "fields", "item", "library"} == set(cast(dict[str, object], _report().to_data()["target"]))
+    assert {"connection", "fields", "item", "library"} == set(
+        cast(dict[str, object], _report().to_data()["target"])
+    )
     assert {
-            "policy_version",
-            "resolved_policy_id",
-            "relationships",
-            "report",
-            "results",
-            "schema_version",
-        } == set(proposal_set.to_data())
-    assert proposal_set.proposal_set_id == ProposalSet.from_json(proposal_set.to_json()).proposal_set_id
+        "policy_version",
+        "resolved_policy_id",
+        "relationships",
+        "report",
+        "results",
+        "schema_version",
+    } == set(proposal_set.to_data())
+    assert (
+        proposal_set.proposal_set_id
+        == ProposalSet.from_json(proposal_set.to_json()).proposal_set_id
+    )
     assert "fixed-conservative-v8" == POLICY_VERSION
     assert POLICY_VERSION == proposal_set.policy_version
-    assert re.search(r"^resolved_policy_[0-9a-f]{64}$", proposal_set.resolved_policy_id) is not None
+    assert (
+        re.search(r"^resolved_policy_[0-9a-f]{64}$", proposal_set.resolved_policy_id)
+        is not None
+    )
 
 
 def test_prior_policy_document_is_rejected_and_current_replay_is_exact() -> None:
@@ -128,11 +139,17 @@ def test_linked_destinations_retain_fixed_dependencies() -> None:
     dependencies = {
         result.destination: result.dependencies for result in proposal_set.results
     }
-    assert (TargetDestination.SUBTITLE, TargetDestination.SERIES) == dependencies[TargetDestination.TITLE]
+    assert (TargetDestination.SUBTITLE, TargetDestination.SERIES) == dependencies[
+        TargetDestination.TITLE
+    ]
     assert (TargetDestination.TITLE,) == dependencies[TargetDestination.SUBTITLE]
     assert (TargetDestination.TITLE,) == dependencies[TargetDestination.SERIES]
-    assert (TargetDestination.PUBLISHED_YEAR,) == dependencies[TargetDestination.PUBLISHED_DATE]
-    assert (TargetDestination.PUBLISHED_DATE,) == dependencies[TargetDestination.PUBLISHED_YEAR]
+    assert (TargetDestination.PUBLISHED_YEAR,) == dependencies[
+        TargetDestination.PUBLISHED_DATE
+    ]
+    assert (TargetDestination.PUBLISHED_DATE,) == dependencies[
+        TargetDestination.PUBLISHED_YEAR
+    ]
     assert proposal_set == ProposalSet.from_json(proposal_set.to_json())
     assert proposal_set == evaluate_report(_report())
     assert "excerpt" not in proposal_set.to_json()
@@ -252,13 +269,16 @@ def test_result_variants_reject_contradictory_choices() -> None:
             None,
             ("target_state_unusable",),
         )
-    assert ProposalOutcome.REJECT == ProposalResult(
+    assert (
+        ProposalOutcome.REJECT
+        == ProposalResult(
             TargetDestination.TITLE,
             ProposalOutcome.REJECT,
             (),
             None,
             ("policy_reject",),
         ).outcome
+    )
 
 
 def test_language_result_validation_encodes_target_compatibility() -> None:
@@ -346,20 +366,26 @@ def test_language_result_validation_encodes_target_compatibility() -> None:
             replaces_region.alternative_id,
             ("unique_typed_candidate",),
         )
-    assert ProposalOutcome.UNRESOLVED_CHOICE == ProposalResult(
+    assert (
+        ProposalOutcome.UNRESOLVED_CHOICE
+        == ProposalResult(
             TargetDestination.LANGUAGE,
             ProposalOutcome.UNRESOLVED_CHOICE,
             mixed,
             None,
             ("field_policy_conflict",),
         ).outcome
-    assert ProposalOutcome.UNRESOLVED_CHOICE == ProposalResult(
+    )
+    assert (
+        ProposalOutcome.UNRESOLVED_CHOICE
+        == ProposalResult(
             TargetDestination.LANGUAGE,
             ProposalOutcome.UNRESOLVED_CHOICE,
             (replaces_region,),
             None,
             ("field_policy_conflict",),
         ).outcome
+    )
     with pytest.raises(ProposalValueError):
         ProposalResult(
             TargetDestination.LANGUAGE,
@@ -410,7 +436,9 @@ def test_destination_value_scope_contract_is_exhaustive(
         TargetDestination.ISBN: {(ProposalValueKind.TEXT, ProposalScope.EDITION)},
         TargetDestination.ASIN: {(ProposalValueKind.TEXT, ProposalScope.EDITION)},
         TargetDestination.LANGUAGE: {(ProposalValueKind.TEXT, ProposalScope.EDITION)},
-        TargetDestination.EXPLICIT: {(ProposalValueKind.BOOLEAN, ProposalScope.EDITION)},
+        TargetDestination.EXPLICIT: {
+            (ProposalValueKind.BOOLEAN, ProposalScope.EDITION)
+        },
         TargetDestination.TAGS: {(ProposalValueKind.LIST, ProposalScope.WORK)},
         TargetDestination.COVER: {(ProposalValueKind.COVER, ProposalScope.COVER)},
     }
@@ -424,9 +452,7 @@ def test_destination_value_scope_contract_is_exhaustive(
                     kind is ProposalValueKind.TEXT
                     and destination is TargetDestination.PUBLISHED_YEAR
                 )
-                else ProposalValue(
-                    ProposalValueKind.TEXT, "2001-02-03"
-                )
+                else ProposalValue(ProposalValueKind.TEXT, "2001-02-03")
                 if (
                     kind is ProposalValueKind.TEXT
                     and destination is TargetDestination.PUBLISHED_DATE
@@ -461,9 +487,7 @@ def test_destination_value_scope_contract_is_exhaustive(
                 ProposalOutcome.PROPOSE_CHANGE,
                 (alternative,),
                 alternative.alternative_id,
-                (
-                    "unique_safe_cover",
-                )
+                ("unique_safe_cover",)
                 if destination is TargetDestination.COVER
                 else ("unique_typed_candidate",),
             )
@@ -588,9 +612,7 @@ def test_destination_date_semantics_reject_constructed_and_replayed_mismatch(
             title=None,
             fields=_fields(
                 None,
-                title=TargetField(
-                    TargetDestination.TITLE, TargetFieldState.MISSING
-                ),
+                title=TargetField(TargetDestination.TITLE, TargetFieldState.MISSING),
             ),
             providers=(
                 _provider(
@@ -662,11 +684,7 @@ def test_unique_empty_fill_and_positive_preservation_are_explainable() -> None:
         scope=ClaimScope.WORK,
     )
     preserved = evaluate_report(
-        _report(
-            providers=(
-                _provider("catalogue", "edition-1", (matching_claim,)),
-            )
-        )
+        _report(providers=(_provider("catalogue", "edition-1", (matching_claim,)),))
     )
     assert ProposalOutcome.KEEP == _result(preserved, TargetDestination.TITLE).outcome
 

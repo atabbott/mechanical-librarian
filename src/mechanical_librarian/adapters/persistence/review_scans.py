@@ -45,10 +45,16 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         requested_at: int,
     ) -> PipelineProgress:
         if (
-            any(type(value) is not str or not 1 <= len(value) <= 128 for value in (connection, library, library_id))
+            any(
+                type(value) is not str or not 1 <= len(value) <= 128
+                for value in (connection, library, library_id)
+            )
             or type(producer_fingerprint) is not str
             or len(producer_fingerprint) != 64
-            or any(character not in "0123456789abcdef" for character in producer_fingerprint)
+            or any(
+                character not in "0123456789abcdef"
+                for character in producer_fingerprint
+            )
             or type(requested_at) is not int
             or requested_at < 0
         ):
@@ -131,7 +137,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             transaction.rollback()
             if isinstance(error, (MetadataReportError, ReviewPipelineError)):
                 raise
-            raise MetadataReportError("review preparation persistence failed") from error
+            raise MetadataReportError(
+                "review preparation persistence failed"
+            ) from error
 
     def review_pipeline_progress(
         self, connection: str, library: str
@@ -166,7 +174,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 row[4],
             )
         except sqlite3.Error as error:
-            raise MetadataReportError("review preparation persistence failed") from error
+            raise MetadataReportError(
+                "review preparation persistence failed"
+            ) from error
 
     def review_pipeline_status(
         self, libraries: tuple[tuple[str, str], ...]
@@ -192,9 +202,12 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             ).fetchone()
             if control is None:
                 raise MetadataReportError("review preparation control is unavailable")
-            scope = " OR ".join(
-                "(s.connection_name=? AND s.library_name=?)" for _ in libraries
-            ) or "0"
+            scope = (
+                " OR ".join(
+                    "(s.connection_name=? AND s.library_name=?)" for _ in libraries
+                )
+                or "0"
+            )
             rows = self._connection.execute(
                 "SELECT s.scan_id,s.connection_name,s.library_name,s.state,s.total,"
                 "s.rescan_requested,s.updated_at,"
@@ -215,17 +228,29 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             transaction.commit()
             progress = {
                 (row[1], row[2]): PipelineProgress(
-                    row[0], row[1], row[2], row[3], row[7], row[4], row[8], row[9],
-                    bool(row[5]), row[6]
+                    row[0],
+                    row[1],
+                    row[2],
+                    row[3],
+                    row[7],
+                    row[4],
+                    row[8],
+                    row[9],
+                    bool(row[5]),
+                    row[6],
                 )
                 for row in rows
             }
-            return tuple(progress.get(library) for library in libraries), bool(control[0])
+            return tuple(progress.get(library) for library in libraries), bool(
+                control[0]
+            )
         except (sqlite3.Error, MetadataReportError) as error:
             transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError("review preparation persistence failed") from error
+            raise MetadataReportError(
+                "review preparation persistence failed"
+            ) from error
 
     def review_pipeline_paused(self) -> bool:
         try:
@@ -236,7 +261,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 raise MetadataReportError("review preparation control is unavailable")
             return bool(row[0])
         except sqlite3.Error as error:
-            raise MetadataReportError("review preparation persistence failed") from error
+            raise MetadataReportError(
+                "review preparation persistence failed"
+            ) from error
 
     def set_review_pipeline_paused(self, paused: bool, updated_at: int) -> None:
         if type(paused) is not bool or type(updated_at) is not int or updated_at < 0:
@@ -250,7 +277,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             )
             transaction.commit()
         except sqlite3.Error as error:
-            raise MetadataReportError("review preparation persistence failed") from error
+            raise MetadataReportError(
+                "review preparation persistence failed"
+            ) from error
 
     def recover_review_pipeline(
         self, producers: tuple[tuple[str, str, str, str], ...]
@@ -276,7 +305,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "UPDATE review_preparation_connection_conditions "
                 "SET state='paused' WHERE state='checking'"
             )
-            configured_connections = tuple(sorted({connection for connection, *_ in producers}))
+            configured_connections = tuple(
+                sorted({connection for connection, *_ in producers})
+            )
             if configured_connections:
                 placeholders = ",".join("?" for _ in configured_connections)
                 self._connection.execute(
@@ -284,7 +315,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     f"WHERE connection_name NOT IN ({placeholders})",
                     configured_connections,
                 )
-            configured_scopes = {(connection, library) for connection, library, *_ in producers}
+            configured_scopes = {
+                (connection, library) for connection, library, *_ in producers
+            }
             active_scans = self._connection.execute(
                 "SELECT scan_id,connection_name,library_name FROM review_preparation_scans "
                 "WHERE state IN ('queued','discovering','processing')"
@@ -345,7 +378,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             ).fetchall()
             return tuple(TargetConnectionCondition(*row) for row in rows)
         except (sqlite3.Error, TypeError, ValueError) as error:
-            raise MetadataReportError("target connection condition is unavailable") from error
+            raise MetadataReportError(
+                "target connection condition is unavailable"
+            ) from error
 
     def guard_target_connection(self, action: PipelineAction, checked_at: int) -> bool:
         """Return a claimed action to queue when its connection is held."""
@@ -354,7 +389,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             transaction.begin()
             condition = self._connection.execute(
                 "SELECT state FROM review_preparation_connection_conditions "
-                "WHERE connection_name=?", (action.connection,)
+                "WHERE connection_name=?",
+                (action.connection,),
             ).fetchone()
             if condition is None or condition[0] not in {"paused", "checking"}:
                 transaction.commit()
@@ -379,7 +415,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError("target connection condition is unavailable") from error
+            raise MetadataReportError(
+                "target connection condition is unavailable"
+            ) from error
 
     def discovery_requires_qualification(self, action: PipelineAction) -> bool:
         if action.stage != "discovery":
@@ -387,15 +425,20 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         try:
             row = self._connection.execute(
                 "SELECT qualification_epoch FROM review_preparation_scans "
-                "WHERE scan_id=? AND state='discovering'", (action.scan_id,)
+                "WHERE scan_id=? AND state='discovering'",
+                (action.scan_id,),
             ).fetchone()
             if row is None:
                 raise MetadataReportError("review preparation state changed")
             return row[0] is None
         except sqlite3.Error as error:
-            raise MetadataReportError("target connection condition is unavailable") from error
+            raise MetadataReportError(
+                "target connection condition is unavailable"
+            ) from error
 
-    def qualify_review_discovery(self, action: PipelineAction, qualified_at: int) -> bool:
+    def qualify_review_discovery(
+        self, action: PipelineAction, qualified_at: int
+    ) -> bool:
         """Persist successful preflight authority before target enumeration."""
         if action.stage != "discovery":
             raise MetadataReportError("review preparation state changed")
@@ -404,12 +447,14 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             transaction.begin()
             condition = self._connection.execute(
                 "SELECT state,epoch FROM review_preparation_connection_conditions "
-                "WHERE connection_name=?", (action.connection,)
+                "WHERE connection_name=?",
+                (action.connection,),
             ).fetchone()
             if condition is not None and condition[0] in {"paused", "checking"}:
                 updated = self._connection.execute(
                     "UPDATE review_preparation_scans SET state='queued',updated_at=? "
-                    "WHERE scan_id=? AND state='discovering'", (qualified_at, action.scan_id)
+                    "WHERE scan_id=? AND state='discovering'",
+                    (qualified_at, action.scan_id),
                 ).rowcount
                 if updated != 1:
                     raise MetadataReportError("review preparation state changed")
@@ -429,7 +474,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError("target connection condition is unavailable") from error
+            raise MetadataReportError(
+                "target connection condition is unavailable"
+            ) from error
 
     def defer_for_target_connection(
         self, action: PipelineAction, code: str, updated_at: int
@@ -441,7 +488,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             transaction.begin()
             current = self._connection.execute(
                 "SELECT epoch,state FROM review_preparation_connection_conditions "
-                "WHERE connection_name=?", (action.connection,)
+                "WHERE connection_name=?",
+                (action.connection,),
             ).fetchone()
             epoch = 1 if current is None else current[0] + (current[1] != "paused")
             self._connection.execute(
@@ -454,7 +502,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             if action.stage == "discovery":
                 updated = self._connection.execute(
                     "UPDATE review_preparation_scans SET state='queued',qualification_epoch=NULL,updated_at=? "
-                    "WHERE scan_id=? AND state='discovering'", (updated_at, action.scan_id)
+                    "WHERE scan_id=? AND state='discovering'",
+                    (updated_at, action.scan_id),
                 ).rowcount
             else:
                 updated = self._connection.execute(
@@ -467,16 +516,21 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             affected = self._target_connection_affected(action.connection)
             self._connection.execute(
                 "UPDATE review_preparation_connection_conditions SET affected=? "
-                "WHERE connection_name=?", (affected, action.connection)
+                "WHERE connection_name=?",
+                (affected, action.connection),
             )
             transaction.commit()
         except (sqlite3.Error, MetadataReportError) as error:
             transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError("target connection condition is unavailable") from error
+            raise MetadataReportError(
+                "target connection condition is unavailable"
+            ) from error
 
-    def hold_target_connection(self, connection: str, code: str, updated_at: int) -> None:
+    def hold_target_connection(
+        self, connection: str, code: str, updated_at: int
+    ) -> None:
         """Persist a connection-wide hold without changing a retry checkpoint."""
         if code not in {"tls", "authentication", "authorization", "unavailable"}:
             raise MetadataReportError("target connection condition is invalid")
@@ -485,7 +539,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             transaction.begin()
             current = self._connection.execute(
                 "SELECT epoch,state FROM review_preparation_connection_conditions "
-                "WHERE connection_name=?", (connection,)
+                "WHERE connection_name=?",
+                (connection,),
             ).fetchone()
             epoch = 1 if current is None else current[0] + (current[1] != "paused")
             self._connection.execute(
@@ -493,16 +548,26 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "connection_name,code,state,epoch,affected,updated_at) VALUES(?,?,'paused',?,?,?) "
                 "ON CONFLICT(connection_name) DO UPDATE SET code=excluded.code,state='paused',"
                 "epoch=excluded.epoch,affected=excluded.affected,updated_at=excluded.updated_at",
-                (connection, code, epoch, self._target_connection_affected(connection), updated_at),
+                (
+                    connection,
+                    code,
+                    epoch,
+                    self._target_connection_affected(connection),
+                    updated_at,
+                ),
             )
             transaction.commit()
         except sqlite3.Error as error:
             transaction.rollback()
-            raise MetadataReportError("target connection condition is unavailable") from error
+            raise MetadataReportError(
+                "target connection condition is unavailable"
+            ) from error
 
     def _target_connection_affected(self, connection: str) -> int:
         # The projection is a sum of two COUNT(*) sub-selects, always one int.
-        return cast(int, self._connection.execute(
+        return cast(
+            int,
+            self._connection.execute(
                 "SELECT (SELECT count(*) FROM review_preparation_scans scan "
                 "WHERE scan.connection_name=? AND scan.state IN ('queued','discovering','processing') "
                 "AND NOT EXISTS(SELECT 1 FROM review_preparation_work work "
@@ -510,7 +575,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "(SELECT count(*) FROM review_preparation_work "
                 "WHERE connection_name=? AND state IN ('queued','running'))",
                 (connection, connection),
-            ).fetchone()[0])
+            ).fetchone()[0],
+        )
 
     def _refresh_target_connection_affected(self, connection: str) -> None:
         """Keep an existing hold truthful as newly admitted work arrives."""
@@ -528,30 +594,43 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             transaction.begin()
             row = self._connection.execute(
                 "SELECT code,state,epoch,affected,updated_at FROM review_preparation_connection_conditions "
-                "WHERE connection_name=?", (connection,)
+                "WHERE connection_name=?",
+                (connection,),
             ).fetchone()
             if row is None or row[1] != "paused":
                 transaction.commit()
                 return None
             epoch = row[2] + 1
-            if self._connection.execute(
-                "UPDATE review_preparation_connection_conditions SET state='checking',epoch=?,updated_at=? "
-                "WHERE connection_name=? AND state='paused' AND epoch=?",
-                (epoch, checked_at, connection, row[2]),
-            ).rowcount != 1:
+            if (
+                self._connection.execute(
+                    "UPDATE review_preparation_connection_conditions SET state='checking',epoch=?,updated_at=? "
+                    "WHERE connection_name=? AND state='paused' AND epoch=?",
+                    (epoch, checked_at, connection, row[2]),
+                ).rowcount
+                != 1
+            ):
                 raise MetadataReportError("target connection check changed")
             transaction.commit()
-            return TargetConnectionCondition(connection, row[0], "checking", epoch, row[3], checked_at)
+            return TargetConnectionCondition(
+                connection, row[0], "checking", epoch, row[3], checked_at
+            )
         except (sqlite3.Error, MetadataReportError) as error:
             transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
-            raise MetadataReportError("target connection condition is unavailable") from error
+            raise MetadataReportError(
+                "target connection condition is unavailable"
+            ) from error
 
     def finish_target_connection_check(
         self, connection: str, epoch: int, code: str | None, checked_at: int
     ) -> bool:
-        if code is not None and code not in {"tls", "authentication", "authorization", "unavailable"}:
+        if code is not None and code not in {
+            "tls",
+            "authentication",
+            "authorization",
+            "unavailable",
+        }:
             raise MetadataReportError("target connection condition is invalid")
         transaction = self._transaction("finish_target_connection_check")
         try:
@@ -560,7 +639,14 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             updated = self._connection.execute(
                 "UPDATE review_preparation_connection_conditions SET state=?,code=COALESCE(?,code),"
                 "affected=?,updated_at=? WHERE connection_name=? AND state='checking' AND epoch=?",
-                ("recovered" if code is None else "paused", code, affected, checked_at, connection, epoch),
+                (
+                    "recovered" if code is None else "paused",
+                    code,
+                    affected,
+                    checked_at,
+                    connection,
+                    epoch,
+                ),
             ).rowcount
             if updated == 1 and code is None:
                 self._connection.execute(
@@ -573,4 +659,6 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             return updated == 1
         except sqlite3.Error as error:
             transaction.rollback()
-            raise MetadataReportError("target connection condition is unavailable") from error
+            raise MetadataReportError(
+                "target connection condition is unavailable"
+            ) from error

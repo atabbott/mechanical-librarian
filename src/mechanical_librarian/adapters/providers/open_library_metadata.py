@@ -104,7 +104,10 @@ class _DetailResult:
 
 def _freeze_detail(value: object) -> object:
     if type(value) is dict:
-        return ("mapping", tuple((key, _freeze_detail(item)) for key, item in value.items()))
+        return (
+            "mapping",
+            tuple((key, _freeze_detail(item)) for key, item in value.items()),
+        )
     if type(value) is list:
         return ("sequence", tuple(_freeze_detail(item) for item in value))
     return value
@@ -120,7 +123,10 @@ def _thaw_detail(value: object | None) -> dict[str, Any]:
 def _thaw_detail_value(value: object) -> object:
     if type(value) is tuple and len(value) == 2 and value[0] == "mapping":
         items = value[1]
-        if type(items) is not tuple or any(type(item) is not tuple or len(item) != 2 or type(item[0]) is not str for item in items):
+        if type(items) is not tuple or any(
+            type(item) is not tuple or len(item) != 2 or type(item[0]) is not str
+            for item in items
+        ):
             raise ValueError("detail replay is malformed")
         return {key: _thaw_detail_value(item) for key, item in items}
     if type(value) is tuple and len(value) == 2 and value[0] == "sequence":
@@ -131,6 +137,8 @@ def _thaw_detail_value(value: object) -> object:
     if type(value) is tuple:
         raise ValueError("detail replay is malformed")
     return value
+
+
 _MAX_VALUES = 8
 _MAX_AGGREGATE_RESPONSE_BYTES = 2_097_152
 _MAX_ATTEMPTS_PER_REQUEST = 2
@@ -262,11 +270,28 @@ class OpenLibraryMetadataProvider:
         self._called = True
         if type(plan) is MetadataLookup:
             ledger = _DiscoveryRequestLedger("open_library", "search-v1")
-            projection = (_ISBN_SEARCH_PROJECTION if plan.kind is ProviderQueryKind.ISBN else _WORK_SEARCH_PROJECTION)
-            ledger.register(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=projection)
+            projection = (
+                _ISBN_SEARCH_PROJECTION
+                if plan.kind is ProviderQueryKind.ISBN
+                else _WORK_SEARCH_PROJECTION
+            )
+            ledger.register(
+                kind=plan.kind.value,
+                matched_family=plan.matched_family,
+                title=plan.title,
+                authors=plan.authors,
+                projection=projection,
+            )
             self._ledger = ledger
             try:
-                value, _ = ledger.resolve(kind=plan.kind.value, matched_family=plan.matched_family, title=plan.title, authors=plan.authors, projection=projection, execute=lambda: self._observe_lookup(plan, deadline=deadline))
+                value, _ = ledger.resolve(
+                    kind=plan.kind.value,
+                    matched_family=plan.matched_family,
+                    title=plan.title,
+                    authors=plan.authors,
+                    projection=projection,
+                    execute=lambda: self._observe_lookup(plan, deadline=deadline),
+                )
                 return replace(value, request_accounting=ledger.accounting())
             finally:
                 self._client.close()
@@ -274,13 +299,21 @@ class OpenLibraryMetadataProvider:
             raise ValueError("provider lookup is invalid")
         if plan.overflow:
             self._client.close()
-            return ProviderObservation(
-                self._name, ProviderStatus.QUERY_LIMIT_EXCEEDED
-            )
+            return ProviderObservation(self._name, ProviderStatus.QUERY_LIMIT_EXCEEDED)
         results: list[ProviderLaneResult] = []
         ledger = _DiscoveryRequestLedger("open_library", "search-v1")
         for lane in plan.lanes:
-            ledger.register(kind=lane.kind.value, matched_family=lane.matched_family, title=lane.title, authors=lane.authors, projection=(_ISBN_SEARCH_PROJECTION if lane.kind is ProviderQueryKind.ISBN else _WORK_SEARCH_PROJECTION))
+            ledger.register(
+                kind=lane.kind.value,
+                matched_family=lane.matched_family,
+                title=lane.title,
+                authors=lane.authors,
+                projection=(
+                    _ISBN_SEARCH_PROJECTION
+                    if lane.kind is ProviderQueryKind.ISBN
+                    else _WORK_SEARCH_PROJECTION
+                ),
+            )
         self._ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
         try:
@@ -363,8 +396,7 @@ class OpenLibraryMetadataProvider:
                         )
                         or (
                             lookup.matched_family is not None
-                            and isbn_family(claim.canonical)
-                            == lookup.matched_family
+                            and isbn_family(claim.canonical) == lookup.matched_family
                         )
                     )
                 ),
@@ -402,6 +434,7 @@ class OpenLibraryMetadataProvider:
                 ProviderStatus.INSUFFICIENT_INPUT,
                 query_kind=lookup.kind,
             )
+
         def result(
             status: ProviderStatus,
             candidates: tuple[ProviderCandidate, ...] = (),
@@ -415,6 +448,7 @@ class OpenLibraryMetadataProvider:
                 accessed_at=self._accessed_at,
                 diagnostics=self._schema_diagnostics(),
             )
+
         try:
             with nullcontext():
                 if lookup.kind is ProviderQueryKind.ISBN:
@@ -431,9 +465,7 @@ class OpenLibraryMetadataProvider:
                         tuple[str, str, tuple[tuple[str, str | None], ...]], ...
                     ] = tuple(
                         (edition, work, ())
-                        for edition, work in _admitted_candidates(
-                            search, family or ""
-                        )
+                        for edition, work in _admitted_candidates(search, family or "")
                     )
                 else:
                     search = self._request(
@@ -481,9 +513,7 @@ class OpenLibraryMetadataProvider:
                             + _parser_optional_rejections(value),
                         )
 
-                    replay, _ = self._ledger.resolve_detail(
-                        identity, execute=execute
-                    )
+                    replay, _ = self._ledger.resolve_detail(identity, execute=execute)
                     if replay.status is not None:
                         raise ProviderFailure(replay.status)
                     if identity not in self._diagnosed_detail_identities:
@@ -579,13 +609,17 @@ class OpenLibraryMetadataProvider:
             )
 
     def _schema_diagnostics(self) -> tuple[FailureDiagnostic, ...]:
-        return () if not self._schema_rejections else (
-            FailureDiagnostic(
-                FailureCategory.SCHEMA_CONSTRUCTION,
-                FailureComponent.PROVIDER,
-                FailureStage.SCHEMA,
-                count=self._schema_rejections,
-            ),
+        return (
+            ()
+            if not self._schema_rejections
+            else (
+                FailureDiagnostic(
+                    FailureCategory.SCHEMA_CONSTRUCTION,
+                    FailureComponent.PROVIDER,
+                    FailureStage.SCHEMA,
+                    count=self._schema_rejections,
+                ),
+            )
         )
 
     def _request(
@@ -621,17 +655,22 @@ class OpenLibraryMetadataProvider:
                     error.retryable
                     and retry_index + 1 < _MAX_ATTEMPTS_PER_REQUEST
                     and self._retry_count < _MAX_RETRIES_PER_OBSERVATION
-                    and self._attempt_count
-                    < _MAX_ATTEMPTS_PER_OBSERVATION
-                    and self._ledger.allows_retry(self._attempt_count, _MAX_ATTEMPTS_PER_OBSERVATION)
+                    and self._attempt_count < _MAX_ATTEMPTS_PER_OBSERVATION
+                    and self._ledger.allows_retry(
+                        self._attempt_count, _MAX_ATTEMPTS_PER_OBSERVATION
+                    )
                 )
                 delay = (
                     error.retry_after
                     if error.retry_after is not None
-                    else self._retry_delay() if can_retry else None
+                    else self._retry_delay()
+                    if can_retry
+                    else None
                 )
-                if can_retry and delay is not None and not self._delay_fits(
-                    delay, deadline=deadline
+                if (
+                    can_retry
+                    and delay is not None
+                    and not self._delay_fits(delay, deadline=deadline)
                 ):
                     can_retry = False
                 if not can_retry or delay is None:
@@ -639,11 +678,7 @@ class OpenLibraryMetadataProvider:
                         started,
                         category=error.category,
                         delay=delay,
-                        outcome=(
-                            "exhausted"
-                            if error.retryable
-                            else "terminal"
-                        ),
+                        outcome=("exhausted" if error.retryable else "terminal"),
                     )
                     raise
                 try:
@@ -724,12 +759,9 @@ class OpenLibraryMetadataProvider:
                     response.headers.get("retry-after"),
                     now=self._wall_clock(),
                 )
-                identity_encoding = (
-                    response.headers.get("content-encoding", "identity")
-                    .strip()
-                    .lower()
-                    in {"", "identity"}
-                )
+                identity_encoding = response.headers.get(
+                    "content-encoding", "identity"
+                ).strip().lower() in {"", "identity"}
                 if response.is_stream_consumed and not identity_encoding:
                     raise ProviderFailure(ProviderStatus.MALFORMED)
                 payload = _body(
@@ -755,9 +787,7 @@ class OpenLibraryMetadataProvider:
                         category=f"http_{response.status_code}",
                         retryable=True,
                         retry_after=(
-                            retry_after
-                            if response.status_code == 503
-                            else None
+                            retry_after if response.status_code == 503 else None
                         ),
                     )
                 if response.status_code != 200:
@@ -813,9 +843,7 @@ class OpenLibraryMetadataProvider:
             self._remaining_response_bytes = 0
             raise ProviderFailure(ProviderStatus.OVERSIZED)
 
-    def _incomplete(
-        self, cause: ProviderIncompleteCause
-    ) -> ProviderFailure:
+    def _incomplete(self, cause: ProviderIncompleteCause) -> ProviderFailure:
         self._incomplete_causes.append(ProviderIncompleteCauseRecord(cause))
         return ProviderFailure(ProviderStatus.INCOMPLETE)
 
@@ -829,9 +857,7 @@ class OpenLibraryMetadataProvider:
             jitter = 0.0
         return min(1.0 + float(jitter), 16.0)
 
-    def _delay_fits(
-        self, delay: float, *, deadline: float | None
-    ) -> bool:
+    def _delay_fits(self, delay: float, *, deadline: float | None) -> bool:
         if deadline is None:
             return True
         return self._clock() + delay < deadline
@@ -850,9 +876,7 @@ class OpenLibraryMetadataProvider:
                 ordinal=self._attempt_count,
                 category=category,
                 delay_seconds=delay,
-                elapsed_seconds=bounded_attempt_elapsed(
-                    started, self._clock()
-                ),
+                elapsed_seconds=bounded_attempt_elapsed(started, self._clock()),
                 outcome=outcome,
             )
         )
@@ -1009,9 +1033,7 @@ def _candidate(
                 raise ValueError("edition ISBN is malformed")
             edition_isbns.append(compact)
     if requested_family is not None and requested_family not in {
-        family
-        for value in edition_isbns
-        if (family := isbn_family(value)) is not None
+        family for value in edition_isbns if (family := isbn_family(value)) is not None
     }:
         raise ValueError("edition ISBN family is missing")
     for compact in sorted(set(edition_isbns)):
@@ -1023,8 +1045,7 @@ def _candidate(
         )
     edition_applicability = _edition_applicability(
         tuple(
-            provider_isbn_applicability(value, local_claims)
-            for value in edition_isbns
+            provider_isbn_applicability(value, local_claims) for value in edition_isbns
         )
     )
     add(ClaimKind.ASIN, None, ClaimScope.EDITION, state=FieldState.UNSUPPORTED)
@@ -1054,9 +1075,13 @@ def _candidate(
                 publication_date_text = _text(publication_date)
             except (ValueError, EvidenceValueError):
                 pass
-    for value in _optional_string_list(edition.get("alternate_titles", []), _MAX_VALUES):
+    for value in _optional_string_list(
+        edition.get("alternate_titles", []), _MAX_VALUES
+    ):
         add(ClaimKind.TITLE, value, ClaimScope.EDITION)
-    for value in _optional_string_list(edition.get("alternative_titles", []), _MAX_VALUES):
+    for value in _optional_string_list(
+        edition.get("alternative_titles", []), _MAX_VALUES
+    ):
         add(ClaimKind.TITLE, value, ClaimScope.EDITION)
     for publisher in _optional_string_list(edition.get("publishers", []), _MAX_VALUES):
         add(ClaimKind.PUBLISHER, publisher, ClaimScope.EDITION)
@@ -1089,7 +1114,9 @@ def _candidate(
         ClaimScope.EDITION,
         state=FieldState.UNSUPPORTED,
     )
-    for contribution in _optional_string_list(edition.get("contributions", []), _MAX_VALUES):
+    for contribution in _optional_string_list(
+        edition.get("contributions", []), _MAX_VALUES
+    ):
         add(ClaimKind.CONTRIBUTOR, contribution, ClaimScope.EDITION)
 
     add(ClaimKind.TITLE, work.get("title"), ClaimScope.WORK)
@@ -1145,7 +1172,7 @@ def _candidate(
         add(ClaimKind.SERIES, value, ClaimScope.WORK)
         if index < len(sequences):
             add(ClaimKind.SERIES_SEQUENCE, sequences[index], ClaimScope.WORK)
-    for value in sequences[len(series):]:
+    for value in sequences[len(series) :]:
         add(ClaimKind.SERIES_SEQUENCE, value, ClaimScope.WORK)
     if series_state is not None:
         for kind in (ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE):
@@ -1167,17 +1194,37 @@ def _candidate(
             )
         )
     if publication_date_text is not None:
-        evidence.append(ProviderEvidence(ProviderEvidenceKind.PUBLICATION_DATE_TEXT, publication_date_text, ClaimScope.EDITION))
+        evidence.append(
+            ProviderEvidence(
+                ProviderEvidenceKind.PUBLICATION_DATE_TEXT,
+                publication_date_text,
+                ClaimScope.EDITION,
+            )
+        )
     _provenance(evidence, edition, ClaimScope.EDITION)
     _provenance(evidence, work, ClaimScope.WORK)
     for value in _by_statement_values(edition.get("by_statement")):
-        evidence.append(ProviderEvidence(ProviderEvidenceKind.RESPONSIBILITY_STATEMENT, value, ClaimScope.EDITION))
+        evidence.append(
+            ProviderEvidence(
+                ProviderEvidenceKind.RESPONSIBILITY_STATEMENT, value, ClaimScope.EDITION
+            )
+        )
     for value in _optional_string_list(edition.get("distributors", []), _MAX_VALUES):
-        evidence.append(ProviderEvidence(ProviderEvidenceKind.DISTRIBUTOR, value, ClaimScope.EDITION))
-    for field, kind in (("edition_name", ProviderEvidenceKind.EDITION_STATEMENT), ("edition_statement", ProviderEvidenceKind.EDITION_STATEMENT), ("translation_of", ProviderEvidenceKind.TRANSLATION_STATEMENT)):
+        evidence.append(
+            ProviderEvidence(
+                ProviderEvidenceKind.DISTRIBUTOR, value, ClaimScope.EDITION
+            )
+        )
+    for field, kind in (
+        ("edition_name", ProviderEvidenceKind.EDITION_STATEMENT),
+        ("edition_statement", ProviderEvidenceKind.EDITION_STATEMENT),
+        ("translation_of", ProviderEvidenceKind.TRANSLATION_STATEMENT),
+    ):
         if isinstance(edition.get(field), str):
             try:
-                evidence.append(ProviderEvidence(kind, _text(edition[field]), ClaimScope.EDITION))
+                evidence.append(
+                    ProviderEvidence(kind, _text(edition[field]), ClaimScope.EDITION)
+                )
             except (ValueError, EvidenceValueError):
                 pass
     _search_work_evidence(evidence, search_work)
@@ -1225,10 +1272,14 @@ def _candidate(
         _optional_string_evidence(evidence, work, field, kind, ClaimScope.WORK)
     _optional_identifier_evidence(evidence, edition, ClaimScope.EDITION)
     _optional_identifier_evidence(evidence, work, ClaimScope.WORK)
-    for field, kind, scope in (("description", ProviderEvidenceKind.EDITION_DESCRIPTION, ClaimScope.EDITION),):
+    for field, kind, scope in (
+        ("description", ProviderEvidenceKind.EDITION_DESCRIPTION, ClaimScope.EDITION),
+    ):
         if field in edition and edition[field] is not None:
             try:
-                evidence.append(ProviderEvidence(kind, _description(edition[field]), scope))  # type: ignore[arg-type]  # reason: `_description` unwraps an untrusted provider member, so its value stays `object`; `ProviderEvidence` validates it and this `try` already absorbs ValueError/EvidenceValueError for a non-string payload.
+                evidence.append(
+                    ProviderEvidence(kind, _description(edition[field]), scope)  # type: ignore[arg-type]  # reason: `_description` unwraps an untrusted provider member, so its value stays `object`; `ProviderEvidence` validates it and this `try` already absorbs ValueError/EvidenceValueError for a non-string payload.
+                )
             except (ValueError, EvidenceValueError):
                 pass
     for field, kind in (
@@ -1238,18 +1289,34 @@ def _candidate(
     ):
         if field in edition and edition[field] is not None:
             try:
-                evidence.append(ProviderEvidence(kind, _text(edition[field]), ClaimScope.EDITION))
+                evidence.append(
+                    ProviderEvidence(kind, _text(edition[field]), ClaimScope.EDITION)
+                )
             except (ValueError, EvidenceValueError):
                 pass
     if "number_of_pages" in edition and edition["number_of_pages"] is not None:
         pages = edition["number_of_pages"]
-        if type(pages) is not int or isinstance(pages, bool) or not 1 <= pages <= 100_000:
+        if (
+            type(pages) is not int
+            or isinstance(pages, bool)
+            or not 1 <= pages <= 100_000
+        ):
             pages = None
         if pages is not None:
-            evidence.append(ProviderEvidence(ProviderEvidenceKind.PAGE_COUNT, str(pages), ClaimScope.EDITION))
+            evidence.append(
+                ProviderEvidence(
+                    ProviderEvidenceKind.PAGE_COUNT, str(pages), ClaimScope.EDITION
+                )
+            )
     if "first_publish_date" in work and work["first_publish_date"] is not None:
         try:
-            evidence.append(ProviderEvidence(ProviderEvidenceKind.FIRST_PUBLICATION_DATE, _text(work["first_publish_date"]), ClaimScope.WORK))
+            evidence.append(
+                ProviderEvidence(
+                    ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                    _text(work["first_publish_date"]),
+                    ClaimScope.WORK,
+                )
+            )
         except (ValueError, EvidenceValueError):
             pass
     edition_cover = _cover_id(edition)
@@ -1271,17 +1338,16 @@ def _candidate(
             )
         )
     if relation_contradiction:
-        claims = [
-            claim for claim in claims if claim.scope is ClaimScope.EDITION
-        ]
-        evidence = [
-            value for value in evidence if value.scope is ClaimScope.EDITION
-        ]
+        claims = [claim for claim in claims if claim.scope is ClaimScope.EDITION]
+        evidence = [value for value in evidence if value.scope is ClaimScope.EDITION]
         identity_bindings = []
         work_cover = _CoverId(None)
     canonical_evidence = tuple(
         sorted(
-            (replace(value, source_ordinal=index) for index, value in enumerate(evidence)),
+            (
+                replace(value, source_ordinal=index)
+                for index, value in enumerate(evidence)
+            ),
             key=lambda value: (
                 value.scope.value,
                 value.kind.value,
@@ -1359,11 +1425,7 @@ def _canonical_discovery_results(
             and claim.role == "author"
         )
         if not creators or len(creators) != len(
-            {
-                claim.value.casefold()
-                for claim in creators
-                if claim.value is not None
-            }
+            {claim.value.casefold() for claim in creators if claim.value is not None}
         ):
             continue
         work_claim_content = {
@@ -1400,10 +1462,7 @@ def _canonical_discovery_results(
         claims = [
             claim
             for claim in edition.claims
-            if not (
-                claim.kind is ClaimKind.CREATOR
-                and claim.scope is ClaimScope.WORK
-            )
+            if not (claim.kind is ClaimKind.CREATOR and claim.scope is ClaimScope.WORK)
         ]
         raw_order = max((claim.raw_order for claim in claims), default=-1) + 1
         recreated_creators = tuple(
@@ -1424,18 +1483,14 @@ def _canonical_discovery_results(
         claims.extend(recreated_creators)
         recreated_references = {
             original.reference: recreated.reference
-            for original, recreated in zip(
-                creators, recreated_creators, strict=True
-            )
+            for original, recreated in zip(creators, recreated_creators, strict=True)
         }
         identity_bindings = tuple(
             sorted(
                 (
                     replace(
                         binding,
-                        claim_reference=recreated_references[
-                            binding.claim_reference
-                        ],
+                        claim_reference=recreated_references[binding.claim_reference],
                     )
                     for binding in work.identity_bindings
                     if binding.claim_reference in recreated_references
@@ -1512,10 +1567,13 @@ def _canonical_evidence_union(
     for value in canonical:
         key = _evidence_semantic_key(value)
         represented[key] = represented.get(key, 0) + 1
-    next_ordinal = max(
-        (value.source_ordinal for value in selected),
-        default=-1,
-    ) + 1
+    next_ordinal = (
+        max(
+            (value.source_ordinal for value in selected),
+            default=-1,
+        )
+        + 1
+    )
     observed_optional: dict[tuple[object, ...], int] = {}
     for value in sorted(
         optional,
@@ -1555,9 +1613,7 @@ def _claim(
     raw_order: int,
     state: FieldState | None,
 ) -> ProviderClaim:
-    resolved_state, text = (
-        (state, None) if state is not None else _field(kind, value)
-    )
+    resolved_state, text = (state, None) if state is not None else _field(kind, value)
     bare = ProviderClaim.create(
         provider=provider,
         candidate=identity,
@@ -1613,9 +1669,7 @@ def _provenance(
     revision, _ = _revision_projection(source)
     if revision is not None:
         evidence.append(
-            ProviderEvidence(
-                ProviderEvidenceKind.REVISION, revision, scope
-            )
+            ProviderEvidence(ProviderEvidenceKind.REVISION, revision, scope)
         )
     try:
         modified = _last_modified_value(source)
@@ -1820,9 +1874,7 @@ def _cover_provenance(
                 _open_library_cover_context(
                     source,
                     schema=(
-                        "work_detail"
-                        if edition_identity is None
-                        else "edition_detail"
+                        "work_detail" if edition_identity is None else "edition_detail"
                     ),
                 ),
             ),
@@ -1852,9 +1904,7 @@ def _open_library_cover_context(
             for value in _string_list(source.get(key, []), _MAX_VALUES):
                 values.add(CoverContext(CoverContextField.ISBN, value))
         for item in _object_list(source.get("languages", []), _MAX_VALUES):
-            match = _LANGUAGE_KEY.fullmatch(
-                _key(item.get("key"), _LANGUAGE_KEY)
-            )
+            match = _LANGUAGE_KEY.fullmatch(_key(item.get("key"), _LANGUAGE_KEY))
             if match is None:
                 raise ValueError("cover language is malformed")
             values.add(
@@ -1865,12 +1915,8 @@ def _open_library_cover_context(
             )
         for value in _string_list(source.get("publishers", []), _MAX_VALUES):
             values.add(CoverContext(CoverContextField.PUBLISHER, value))
-        for value in _string_list(
-            source.get("publish_places", []), _MAX_VALUES
-        ):
-            values.add(
-                CoverContext(CoverContextField.PUBLICATION_PLACE, value)
-            )
+        for value in _string_list(source.get("publish_places", []), _MAX_VALUES):
+            values.add(CoverContext(CoverContextField.PUBLICATION_PLACE, value))
         if source.get("publish_country") is not None:
             values.add(
                 CoverContext(
@@ -1897,9 +1943,7 @@ def _open_library_cover_context(
                 _text(source[date_field]),
             )
         )
-    return tuple(
-        sorted(values, key=lambda value: (value.field.value, value.value))
-    )
+    return tuple(sorted(values, key=lambda value: (value.field.value, value.value)))
 
 
 def _cover_context_text(value: object) -> str:
@@ -1937,9 +1981,7 @@ def _body(
     chunks: list[bytes] = []
     total = 0
     raw_chunks = (
-        (response.content,)
-        if response.is_stream_consumed
-        else response.iter_raw()
+        (response.content,) if response.is_stream_consumed else response.iter_raw()
     )
     for chunk in raw_chunks:
         consume(len(chunk))
@@ -2073,9 +2115,7 @@ def _detail_projection_schema(identity: str) -> str:
     raise ValueError("detail identity is malformed")
 
 
-def _unknown_projection_rejections(
-    *documents: dict[str, Any], schema: str
-) -> int:
+def _unknown_projection_rejections(*documents: dict[str, Any], schema: str) -> int:
     """Count members outside the trusted physical response context."""
     known = _PROJECTION_FIELDS.get(schema)
     if known is None:
@@ -2142,20 +2182,47 @@ def _parser_optional_rejections(
 ) -> int:
     """Account at the optional parsing boundary without retaining bad values."""
     list_fields = {
-        "publishers", "languages", "authors", "oclc_numbers", "lccn",
-        "dewey_decimal_class", "lc_classifications", "publish_places", "subjects",
-        "subject_people", "subject_places", "subject_times", "covers",
-        "alternate_titles", "alternative_titles", "imprints", "distributors",
-        "contributions", "series", "series_number", "publisher", "language",
-        "edition_key", "author_name", "author_key",
+        "publishers",
+        "languages",
+        "authors",
+        "oclc_numbers",
+        "lccn",
+        "dewey_decimal_class",
+        "lc_classifications",
+        "publish_places",
+        "subjects",
+        "subject_people",
+        "subject_places",
+        "subject_times",
+        "covers",
+        "alternate_titles",
+        "alternative_titles",
+        "imprints",
+        "distributors",
+        "contributions",
+        "series",
+        "series_number",
+        "publisher",
+        "language",
+        "edition_key",
+        "author_name",
+        "author_key",
     }
     if search_projection:
         list_fields.add("publish_date")
     object_lists = {"works", "languages", "authors"}
     scalar_fields = {
-        "publish_date", "physical_format", "pagination", "imprint",
-        "edition_name", "edition_statement", "translation_of", "description",
-        "copyright_date", "number_of_pages", "first_publish_date",
+        "publish_date",
+        "physical_format",
+        "pagination",
+        "imprint",
+        "edition_name",
+        "edition_statement",
+        "translation_of",
+        "description",
+        "copyright_date",
+        "number_of_pages",
+        "first_publish_date",
     }
     if search_projection:
         scalar_fields.remove("publish_date")
@@ -2169,7 +2236,9 @@ def _parser_optional_rejections(
             continue
         if field == "author_key":
             continue
-        expected = int if field == "covers" else (dict if field in object_lists else str)
+        expected = (
+            int if field == "covers" else (dict if field in object_lists else str)
+        )
         for item in value:
             if type(item) is not expected:
                 count += 1
@@ -2195,7 +2264,11 @@ def _parser_optional_rejections(
             except (ValueError, EvidenceValueError):
                 valid = False
         elif field == "number_of_pages":
-            valid = type(value) is int and not isinstance(value, bool) and 1 <= value <= 100_000
+            valid = (
+                type(value) is int
+                and not isinstance(value, bool)
+                and 1 <= value <= 100_000
+            )
         else:
             try:
                 _text(value)
@@ -2230,7 +2303,11 @@ def _parser_optional_rejections(
             count += 1
         else:
             for namespace, values in identifiers.items():
-                if namespace != "wikidata" or type(values) is not list or len(values) > _MAX_VALUES:
+                if (
+                    namespace != "wikidata"
+                    or type(values) is not list
+                    or len(values) > _MAX_VALUES
+                ):
                     count += 1
                 else:
                     for value in values:
@@ -2268,7 +2345,9 @@ def _optional_projection_rejections(
     )
 
 
-def _search_work_document(source: dict[str, Any], work_key: str) -> dict[str, Any] | None:
+def _search_work_document(
+    source: dict[str, Any], work_key: str
+) -> dict[str, Any] | None:
     """Find the exact search document without making optional fields identity-bearing."""
     docs = source.get("docs")
     if type(docs) is not list or len(docs) > _MAX_SEARCH_ROWS:
@@ -2304,9 +2383,7 @@ def _search_work_evidence(
             evidence.append(ProviderEvidence(kind, value, ClaimScope.WORK))
 
 
-def _search_authors(
-    names: object, keys: object
-) -> tuple[tuple[str, str | None], ...]:
+def _search_authors(names: object, keys: object) -> tuple[tuple[str, str | None], ...]:
     """Retain safe search names, binding identities only by source index.
 
     Search result author fields are optional evidence.  A malformed sibling
@@ -2391,11 +2468,7 @@ def _work_author_keys(source: dict[str, Any]) -> tuple[str, ...]:
 def _search_isbn_families(value: object) -> set[str]:
     if type(value) is not list:
         raise ValueError("search ISBN list is malformed")
-    return {
-        family
-        for raw in value
-        if (family := isbn_family(_text(raw))) is not None
-    }
+    return {family for raw in value if (family := isbn_family(_text(raw))) is not None}
 
 
 def _key(value: object, pattern: re.Pattern[str]) -> str:

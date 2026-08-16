@@ -50,30 +50,169 @@ from mechanical_librarian.domain.metadata_report import (
 
 
 def test_comparison_links_are_complete_per_local_claim_and_canonical() -> None:
-    agree = LocalClaim.create(kind=ClaimKind.TITLE, observed="Shared title", canonical="Shared title", excerpt="Shared title", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK)
-    disagree = LocalClaim.create(kind=ClaimKind.TITLE, observed="Other title", canonical="Other title", excerpt="Other title", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK)
-    invalid = LocalClaim.create(kind=ClaimKind.TITLE, observed="unsafe-source-text-sha256:" + "a" * 64, canonical=None, excerpt="unsafe-source-text-sha256:" + "a" * 64, applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK, state=FieldState.UNSUPPORTED)
-    edition = LocalClaim.create(kind=ClaimKind.TITLE, observed="Shared title", canonical="Shared title", excerpt="Shared title", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.EDITION)
-    author = LocalClaim.create(kind=ClaimKind.CREATOR, observed="Ada", canonical="Ada", excerpt="Ada", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK, role="author")
-    provider = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.TITLE, value="Shared title", state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable")
-    links = tuple(sorted((ComparisonLink(agree.reference, Comparison.AGREEMENT, ComparisonMethod.EXACT), ComparisonLink(disagree.reference, Comparison.DISAGREEMENT), ComparisonLink(invalid.reference, Comparison.NOT_COMPARABLE), ComparisonLink(edition.reference, Comparison.NOT_COMPARABLE)), key=lambda link: cast(str, link.local_reference)))
-    linked = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.TITLE, value="Shared title", state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable", links=links)
-    report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(agree, disagree, invalid, edition, author), local_reasons=("opening_title",), providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, candidates=(ProviderCandidate("candidate", "work-candidate", (linked,)),)),))
-    changed_work = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item-1", default_target_fields("Current title")), file=FileFacts(0, "a" * 64, "b" * 64), local_claims=(agree, disagree, invalid, edition, author), local_reasons=("opening_title",), providers=(ProviderObservation("catalogue", ProviderStatus.CANDIDATES, candidates=(ProviderCandidate("candidate", "different-work", (linked,)),)),))
+    agree = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed="Shared title",
+        canonical="Shared title",
+        excerpt="Shared title",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
+    disagree = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed="Other title",
+        canonical="Other title",
+        excerpt="Other title",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
+    invalid = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed="unsafe-source-text-sha256:" + "a" * 64,
+        canonical=None,
+        excerpt="unsafe-source-text-sha256:" + "a" * 64,
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+        state=FieldState.UNSUPPORTED,
+    )
+    edition = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed="Shared title",
+        canonical="Shared title",
+        excerpt="Shared title",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.EDITION,
+    )
+    author = LocalClaim.create(
+        kind=ClaimKind.CREATOR,
+        observed="Ada",
+        canonical="Ada",
+        excerpt="Ada",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+        role="author",
+    )
+    provider = ProviderClaim.create(
+        provider="catalogue",
+        candidate="candidate",
+        kind=ClaimKind.TITLE,
+        value="Shared title",
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+    )
+    links = tuple(
+        sorted(
+            (
+                ComparisonLink(
+                    agree.reference, Comparison.AGREEMENT, ComparisonMethod.EXACT
+                ),
+                ComparisonLink(disagree.reference, Comparison.DISAGREEMENT),
+                ComparisonLink(invalid.reference, Comparison.NOT_COMPARABLE),
+                ComparisonLink(edition.reference, Comparison.NOT_COMPARABLE),
+            ),
+            key=lambda link: cast(str, link.local_reference),
+        )
+    )
+    linked = ProviderClaim.create(
+        provider="catalogue",
+        candidate="candidate",
+        kind=ClaimKind.TITLE,
+        value="Shared title",
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+        links=links,
+    )
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(agree, disagree, invalid, edition, author),
+        local_reasons=("opening_title",),
+        providers=(
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.CANDIDATES,
+                candidates=(
+                    ProviderCandidate("candidate", "work-candidate", (linked,)),
+                ),
+            ),
+        ),
+    )
+    changed_work = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(agree, disagree, invalid, edition, author),
+        local_reasons=("opening_title",),
+        providers=(
+            ProviderObservation(
+                "catalogue",
+                ProviderStatus.CANDIDATES,
+                candidates=(
+                    ProviderCandidate("candidate", "different-work", (linked,)),
+                ),
+            ),
+        ),
+    )
     assert provider.links == ()
-    assert {link.outcome for link in linked.links} == {Comparison.AGREEMENT, Comparison.DISAGREEMENT, Comparison.NOT_COMPARABLE}
+    assert {link.outcome for link in linked.links} == {
+        Comparison.AGREEMENT,
+        Comparison.DISAGREEMENT,
+        Comparison.NOT_COMPARABLE,
+    }
     assert author.reference not in {link.local_reference for link in linked.links}
     assert report.report_id != changed_work.report_id
     assert MetadataReport.from_json(changed_work.to_json()) == changed_work
-    contributor = LocalClaim.create(kind=ClaimKind.CREATOR, observed="Ada", canonical="Ada", excerpt="Ada", applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK, role="translator")
-    creator = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.CREATOR, value="Ada", state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable", role="author")
-    assert {link.local_reference: link.outcome for link in comparison_links(creator, (author, contributor))} == {author.reference: Comparison.AGREEMENT, contributor.reference: Comparison.NOT_COMPARABLE}
+    contributor = LocalClaim.create(
+        kind=ClaimKind.CREATOR,
+        observed="Ada",
+        canonical="Ada",
+        excerpt="Ada",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+        role="translator",
+    )
+    creator = ProviderClaim.create(
+        provider="catalogue",
+        candidate="candidate",
+        kind=ClaimKind.CREATOR,
+        value="Ada",
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+        role="author",
+    )
+    assert {
+        link.local_reference: link.outcome
+        for link in comparison_links(creator, (author, contributor))
+    } == {
+        author.reference: Comparison.AGREEMENT,
+        contributor.reference: Comparison.NOT_COMPARABLE,
+    }
     data = report.to_data()
     data["providers"][0]["candidates"][0]["claims"][0]["links"] = []
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(canonical_json(data))
     data = report.to_data()
-    data["providers"][0]["candidates"][0]["claims"][0]["links"][0]["outcome"] = "disagreement"
+    data["providers"][0]["candidates"][0]["claims"][0]["links"][0]["outcome"] = (
+        "disagreement"
+    )
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(canonical_json(data))
 
@@ -87,19 +226,30 @@ def test_comparison_links_are_complete_per_local_claim_and_canonical() -> None:
             "The Road—Translated",
             ComparisonMethod.EXACT,
         ),
-        ("CAFE\u0301   SOCIETY", "café society", ComparisonMethod.UNICODE_CASE_WHITESPACE),
-        ("The “Long\u00a0Road”—Home", 'the "long road"-home', ComparisonMethod.TYPOGRAPHIC_PUNCTUATION),
+        (
+            "CAFE\u0301   SOCIETY",
+            "café society",
+            ComparisonMethod.UNICODE_CASE_WHITESPACE,
+        ),
+        (
+            "The “Long\u00a0Road”—Home",
+            'the "long road"-home',
+            ComparisonMethod.TYPOGRAPHIC_PUNCTUATION,
+        ),
     ),
-    ids=("exact", "em_dash_exact", "unicode_case_whitespace", "typographic_punctuation"),
+    ids=(
+        "exact",
+        "em_dash_exact",
+        "unicode_case_whitespace",
+        "typographic_punctuation",
+    ),
 )
 def test_title_comparison_methods_are_closed_and_preserve_diacritics(
     provider_value: str,
     local_value: str,
     method: ComparisonMethod,
 ) -> None:
-    def local(
-        value: str, kind: ClaimKind = ClaimKind.TITLE
-    ) -> LocalClaim:
+    def local(value: str, kind: ClaimKind = ClaimKind.TITLE) -> LocalClaim:
         return LocalClaim.create(
             kind=kind,
             observed=value,
@@ -122,14 +272,10 @@ def test_title_comparison_methods_are_closed_and_preserve_diacritics(
         applicability="not_applicable",
     )
     assert comparison_links(provider, (claim,)) == (
-            ComparisonLink(
-                claim.reference, Comparison.AGREEMENT, method
-            ),
-        )
-
-    subtitle_claim = local(
-        "the road-abridgment", ClaimKind.SUBTITLE
+        ComparisonLink(claim.reference, Comparison.AGREEMENT, method),
     )
+
+    subtitle_claim = local("the road-abridgment", ClaimKind.SUBTITLE)
     subtitle_provider = ProviderClaim.create(
         provider="catalogue",
         candidate="candidate",
@@ -139,7 +285,10 @@ def test_title_comparison_methods_are_closed_and_preserve_diacritics(
         scope=ClaimScope.WORK,
         applicability="not_applicable",
     )
-    assert comparison_links(subtitle_provider, (subtitle_claim,))[0].outcome is Comparison.DISAGREEMENT
+    assert (
+        comparison_links(subtitle_provider, (subtitle_claim,))[0].outcome
+        is Comparison.DISAGREEMENT
+    )
 
     for provider_value, local_value in (
         ("Cafe", "Café"),
@@ -174,12 +323,14 @@ def test_title_comparison_methods_are_closed_and_preserve_diacritics(
             scope=ClaimScope.WORK,
             applicability="not_applicable",
         )
-        assert comparison_links(provider, (claim,))[0].outcome == Comparison.DISAGREEMENT
+        assert (
+            comparison_links(provider, (claim,))[0].outcome == Comparison.DISAGREEMENT
+        )
 
     for provider_value, local_value in (
         ("The ‘Road’", "the 'road'"),
         ("The “Road”", 'the "road"'),
-        ("The “Long ‘Road’”", 'the "long \'road\'"'),
+        ("The “Long ‘Road’”", "the \"long 'road'\""),
     ):
         claim = local(local_value)
         provider = ProviderClaim.create(
@@ -229,7 +380,10 @@ def test_title_comparison_methods_are_closed_and_preserve_diacritics(
     )
     reopened = MetadataReport.from_json(replay_report.to_json())
     assert reopened == replay_report
-    assert reopened.providers[0].candidates[0].claims[0].links[0].method is ComparisonMethod.TYPOGRAPHIC_PUNCTUATION
+    assert (
+        reopened.providers[0].candidates[0].claims[0].links[0].method
+        is ComparisonMethod.TYPOGRAPHIC_PUNCTUATION
+    )
 
 
 @pytest.mark.parametrize(
@@ -282,14 +436,14 @@ def test_complete_creator_order_and_comma_inversion_are_conservative(
         locals_,
     )
     assert tuple(
-            link.method
-            for claim in ordered.claims
-            for link in claim.links
-            if link.outcome is Comparison.AGREEMENT
-        ) == (
-            ComparisonMethod.UNICODE_CASE_WHITESPACE,
-            ComparisonMethod.EXACT,
-        )
+        link.method
+        for claim in ordered.claims
+        for link in claim.links
+        if link.outcome is Comparison.AGREEMENT
+    ) == (
+        ComparisonMethod.UNICODE_CASE_WHITESPACE,
+        ComparisonMethod.EXACT,
+    )
     candidate = finalize_candidate_comparisons(
         ProviderCandidate(
             "candidate",
@@ -299,10 +453,10 @@ def test_complete_creator_order_and_comma_inversion_are_conservative(
         locals_,
     )
     assert not any(
-            link.outcome is Comparison.AGREEMENT
-            for claim in candidate.claims
-            for link in claim.links
-        )
+        link.outcome is Comparison.AGREEMENT
+        for claim in candidate.claims
+        for link in claim.links
+    )
 
     one = (local("Ada Example"),)
     for value, expected in (
@@ -325,13 +479,13 @@ def test_complete_creator_order_and_comma_inversion_are_conservative(
         )
         link = candidate.claims[0].links[0]
         assert link.method is expected
-        assert link.outcome is (Comparison.AGREEMENT
-                if expected is not ComparisonMethod.NONE
-                else Comparison.DISAGREEMENT)
-    for organization in ("Library", "Libraries"):
-        organization_local = (
-            local(f"British {organization}"),
+        assert link.outcome is (
+            Comparison.AGREEMENT
+            if expected is not ComparisonMethod.NONE
+            else Comparison.DISAGREEMENT
         )
+    for organization in ("Library", "Libraries"):
+        organization_local = (local(f"British {organization}"),)
         organization_candidate = finalize_candidate_comparisons(
             ProviderCandidate(
                 "candidate",
@@ -340,7 +494,9 @@ def test_complete_creator_order_and_comma_inversion_are_conservative(
             ),
             organization_local,
         )
-        assert organization_candidate.claims[0].links[0].outcome is Comparison.DISAGREEMENT
+        assert (
+            organization_candidate.claims[0].links[0].outcome is Comparison.DISAGREEMENT
+        )
 
 
 def test_identity_bound_aliases_collapse_only_one_complete_creator_set() -> None:
@@ -372,9 +528,7 @@ def test_identity_bound_aliases_collapse_only_one_complete_creator_set() -> None
             role="author",
             raw_order=index,
         )
-        for index, value in enumerate(
-            ("A. Example", "Ada Example", "Bob Example")
-        )
+        for index, value in enumerate(("A. Example", "Ada Example", "Bob Example"))
     )
     bindings = tuple(
         sorted(
@@ -408,37 +562,37 @@ def test_identity_bound_aliases_collapse_only_one_complete_creator_set() -> None
         local_claims,
     )
     assert tuple(
-            (
-                claim.value,
-                next(
-                    link.method
-                    for link in claim.links
-                    if link.outcome is Comparison.AGREEMENT
-                ),
-                next(
-                    link.local_reference
-                    for link in claim.links
-                    if link.outcome is Comparison.AGREEMENT
-                ),
-            )
-            for claim in candidate.claims
-        ) == (
-            (
-                "A. Example",
-                ComparisonMethod.STRUCTURAL_IDENTITY_BINDING,
-                local_claims[0].reference,
+        (
+            claim.value,
+            next(
+                link.method
+                for link in claim.links
+                if link.outcome is Comparison.AGREEMENT
             ),
-            (
-                "Ada Example",
-                ComparisonMethod.EXACT,
-                local_claims[0].reference,
-            ),
-            (
-                "Bob Example",
-                ComparisonMethod.EXACT,
-                local_claims[1].reference,
+            next(
+                link.local_reference
+                for link in claim.links
+                if link.outcome is Comparison.AGREEMENT
             ),
         )
+        for claim in candidate.claims
+    ) == (
+        (
+            "A. Example",
+            ComparisonMethod.STRUCTURAL_IDENTITY_BINDING,
+            local_claims[0].reference,
+        ),
+        (
+            "Ada Example",
+            ComparisonMethod.EXACT,
+            local_claims[0].reference,
+        ),
+        (
+            "Bob Example",
+            ComparisonMethod.EXACT,
+            local_claims[1].reference,
+        ),
+    )
     replay = MetadataReport.create(
         target=TargetFacts(
             "primary",
@@ -485,10 +639,10 @@ def test_identity_bound_aliases_collapse_only_one_complete_creator_set() -> None
         local_claims,
     )
     assert not any(
-            link.outcome is Comparison.AGREEMENT
-            for claim in contradictory.claims
-            for link in claim.links
-        )
+        link.outcome is Comparison.AGREEMENT
+        for claim in contradictory.claims
+        for link in claim.links
+    )
 
     direct_claims = claims[1:]
     reversed_bindings = (
@@ -506,10 +660,10 @@ def test_identity_bound_aliases_collapse_only_one_complete_creator_set() -> None
         local_claims,
     )
     assert not any(
-            link.outcome is Comparison.AGREEMENT
-            for claim in reversed_bound.claims
-            for link in claim.links
-        )
+        link.outcome is Comparison.AGREEMENT
+        for claim in reversed_bound.claims
+        for link in claim.links
+    )
 
     partial = finalize_candidate_comparisons(
         ProviderCandidate(
@@ -522,14 +676,14 @@ def test_identity_bound_aliases_collapse_only_one_complete_creator_set() -> None
         local_claims,
     )
     assert (
-            ComparisonMethod.EXACT,
-            ComparisonMethod.EXACT,
-        ) == tuple(
-            link.method
-            for claim in partial.claims
-            for link in claim.links
-            if link.outcome is Comparison.AGREEMENT
-        )
+        ComparisonMethod.EXACT,
+        ComparisonMethod.EXACT,
+    ) == tuple(
+        link.method
+        for claim in partial.claims
+        for link in claim.links
+        if link.outcome is Comparison.AGREEMENT
+    )
     partial_alias = finalize_candidate_comparisons(
         ProviderCandidate(
             "candidate",
@@ -541,10 +695,10 @@ def test_identity_bound_aliases_collapse_only_one_complete_creator_set() -> None
         local_claims,
     )
     assert not any(
-            link.outcome is Comparison.AGREEMENT
-            for claim in partial_alias.claims
-            for link in claim.links
-        )
+        link.outcome is Comparison.AGREEMENT
+        for claim in partial_alias.claims
+        for link in claim.links
+    )
     partial_replay = MetadataReport.create(
         target=replay.target,
         file=replay.file,
@@ -563,8 +717,8 @@ def test_identity_bound_aliases_collapse_only_one_complete_creator_set() -> None
         repository = open_repository(Path(directory) / "reports.sqlite")
         repository.publish(partial_replay, lambda: True)
         assert partial_replay == MetadataReport.from_json(
-                repository.get(partial_replay.report_id)
-            )
+            repository.get(partial_replay.report_id)
+        )
         repository.close()
     duplicate_ordinal = replace(bindings[1], source_ordinal=0)
     with pytest.raises(ReportValueError):
@@ -593,18 +747,16 @@ def test_identity_bound_aliases_collapse_only_one_complete_creator_set() -> None
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(canonical_json(tampered))
     ordinal_tampered = replay.to_data()
-    ordinal_tampered["providers"][0]["candidates"][0][
-        "identity_bindings"
-    ][1]["source_ordinal"] = 0
+    ordinal_tampered["providers"][0]["candidates"][0]["identity_bindings"][1][
+        "source_ordinal"
+    ] = 0
     serialized_tamper = canonical_json(ordinal_tampered)
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(serialized_tamper)
     with tempfile.TemporaryDirectory() as directory:
         repository = open_repository(Path(directory) / "reports.sqlite")
         repository.publish(replay, lambda: True)
-        repository._connection.execute(
-            "DROP TRIGGER metadata_reports_no_update"
-        )
+        repository._connection.execute("DROP TRIGGER metadata_reports_no_update")
         repository._connection.execute(
             "UPDATE metadata_reports SET document=?,document_digest=?",
             (
@@ -628,9 +780,7 @@ def test_identity_bound_aliases_collapse_only_one_complete_creator_set() -> None
             role="author",
             raw_order=index,
         )
-        for index, value in enumerate(
-            ("Ada Example", "ADA  EXAMPLE", "Bob Example")
-        )
+        for index, value in enumerate(("Ada Example", "ADA  EXAMPLE", "Bob Example"))
     )
     duplicated_bindings = tuple(
         ProviderIdentityBinding(
@@ -659,10 +809,10 @@ def test_identity_bound_aliases_collapse_only_one_complete_creator_set() -> None
         local_claims,
     )
     assert not any(
-            link.outcome is Comparison.AGREEMENT
-            for claim in duplicated.claims
-            for link in claim.links
-        )
+        link.outcome is Comparison.AGREEMENT
+        for claim in duplicated.claims
+        for link in claim.links
+    )
 
     duplicate_local = tuple(
         LocalClaim.create(
@@ -704,10 +854,10 @@ def test_identity_bound_aliases_collapse_only_one_complete_creator_set() -> None
             local_values,
         )
         assert not any(
-                link.outcome is Comparison.AGREEMENT
-                for claim in duplicate_set.claims
-                for link in claim.links
-            )
+            link.outcome is Comparison.AGREEMENT
+            for claim in duplicate_set.claims
+            for link in claim.links
+        )
 
 
 @pytest.mark.parametrize(
@@ -841,75 +991,81 @@ def test_date_comparison_normalizes_both_lexicals_without_losing_precision(
 
     negative_offset = provider("2024-03-05T10:30:00-04:00")
     assert {
-            zulu.reference: Comparison.AGREEMENT,
-            different.reference: Comparison.AGREEMENT,
-            day.reference: Comparison.AGREEMENT,
-        } == {
-            link.local_reference: link.outcome
-            for link in comparison_links(
-                negative_offset,
-                (zulu, different, day),
-            )
-        }
+        zulu.reference: Comparison.AGREEMENT,
+        different.reference: Comparison.AGREEMENT,
+        day.reference: Comparison.AGREEMENT,
+    } == {
+        link.local_reference: link.outcome
+        for link in comparison_links(
+            negative_offset,
+            (zulu, different, day),
+        )
+    }
     coarse_links = {
         link.local_reference: link
         for link in comparison_links(negative_offset, (month, year))
     }
-    assert ComparisonLink(
+    assert (
+        ComparisonLink(
             month.reference,
             Comparison.AGREEMENT,
             ComparisonMethod.DATE_PRECISION_COMPATIBILITY,
             PublicationDateRelation.MONTH_COMPATIBLE,
             DatePrecision.MONTH,
-        ) == coarse_links[month.reference]
-    assert ComparisonLink(
+        )
+        == coarse_links[month.reference]
+    )
+    assert (
+        ComparisonLink(
             year.reference,
             Comparison.AGREEMENT,
             ComparisonMethod.DATE_PRECISION_COMPATIBILITY,
             PublicationDateRelation.YEAR_COMPATIBLE,
             DatePrecision.YEAR,
-        ) == coarse_links[year.reference]
-    assert (
-            ComparisonLink(
-                positive_offset.reference,
-                Comparison.AGREEMENT,
-                ComparisonMethod.EXACT,
-                PublicationDateRelation.EXACT,
-                DatePrecision.DAY,
-            ),
-        ) == comparison_links(
-            provider("2024-03-05T10:30:00Z"),
-            (positive_offset,),
         )
+        == coarse_links[year.reference]
+    )
     assert (
-            ComparisonLink(
-                rollover.reference,
-                Comparison.DISAGREEMENT,
-                ComparisonMethod.NONE,
-                PublicationDateRelation.FINER_CONFLICT,
-                DatePrecision.MONTH,
-            ),
-        ) == comparison_links(
-            provider("2024-03-06T00:30:00+01:00"),
-            (rollover,),
-        )
+        ComparisonLink(
+            positive_offset.reference,
+            Comparison.AGREEMENT,
+            ComparisonMethod.EXACT,
+            PublicationDateRelation.EXACT,
+            DatePrecision.DAY,
+        ),
+    ) == comparison_links(
+        provider("2024-03-05T10:30:00Z"),
+        (positive_offset,),
+    )
+    assert (
+        ComparisonLink(
+            rollover.reference,
+            Comparison.DISAGREEMENT,
+            ComparisonMethod.NONE,
+            PublicationDateRelation.FINER_CONFLICT,
+            DatePrecision.MONTH,
+        ),
+    ) == comparison_links(
+        provider("2024-03-06T00:30:00+01:00"),
+        (rollover,),
+    )
     expected = (relation, shared)
     assert expected == publication_date_relation(
-            left_value=left,
-            left_event=DateEvent.MANIFESTATION_PUBLICATION,
-            left_precision=left_precision,
-            right_value=right,
-            right_event=DateEvent.MANIFESTATION_PUBLICATION,
-            right_precision=right_precision,
-        )
+        left_value=left,
+        left_event=DateEvent.MANIFESTATION_PUBLICATION,
+        left_precision=left_precision,
+        right_value=right,
+        right_event=DateEvent.MANIFESTATION_PUBLICATION,
+        right_precision=right_precision,
+    )
     assert expected == publication_date_relation(
-            left_value=right,
-            left_event=DateEvent.MANIFESTATION_PUBLICATION,
-            left_precision=right_precision,
-            right_value=left,
-            right_event=DateEvent.MANIFESTATION_PUBLICATION,
-            right_precision=left_precision,
-        )
+        left_value=right,
+        left_event=DateEvent.MANIFESTATION_PUBLICATION,
+        left_precision=right_precision,
+        right_value=left,
+        right_event=DateEvent.MANIFESTATION_PUBLICATION,
+        right_precision=left_precision,
+    )
     assert () == comparison_links(negative_offset, (naive,))
     with pytest.raises(ReportValueError):
         comparison_links(
@@ -922,7 +1078,14 @@ def test_date_comparison_normalizes_both_lexicals_without_losing_precision(
 
 
 @pytest.mark.parametrize(
-    ("left", "left_precision", "right", "right_precision", "expected_relation", "expected_shared"),
+    (
+        "left",
+        "left_precision",
+        "right",
+        "right_precision",
+        "expected_relation",
+        "expected_shared",
+    ),
     (
         (
             "2021-09-14",
@@ -975,35 +1138,60 @@ def test_publication_date_relation_preserves_shared_precision_and_conflict(
     expected_shared: DatePrecision | None,
 ) -> None:
     assert (expected_relation, expected_shared) == publication_date_relation(
-            left_value=left,
-            left_event=DateEvent.MANIFESTATION_PUBLICATION,
-            left_precision=left_precision,
-            right_value=right,
-            right_event=DateEvent.MANIFESTATION_PUBLICATION,
-            right_precision=right_precision,
-        )
-    assert (PublicationDateRelation.EVENT_INCOMPATIBLE, None) == publication_date_relation(
-            left_value="2021",
-            left_event=DateEvent.WORK_FIRST_PUBLICATION,
-            left_precision=DatePrecision.YEAR,
-            right_value="2021",
-            right_event=DateEvent.MANIFESTATION_PUBLICATION,
-            right_precision=DatePrecision.YEAR,
-        )
-    assert (PublicationDateRelation.MANIFESTATION_INCOMPATIBLE, None) == publication_date_relation(
-            left_value="2021",
-            left_event=DateEvent.MANIFESTATION_PUBLICATION,
-            left_precision=DatePrecision.YEAR,
-            right_value="2021",
-            right_event=DateEvent.MANIFESTATION_PUBLICATION,
-            right_precision=DatePrecision.YEAR,
-            manifestation_compatible=False,
-        )
+        left_value=left,
+        left_event=DateEvent.MANIFESTATION_PUBLICATION,
+        left_precision=left_precision,
+        right_value=right,
+        right_event=DateEvent.MANIFESTATION_PUBLICATION,
+        right_precision=right_precision,
+    )
+    assert (
+        PublicationDateRelation.EVENT_INCOMPATIBLE,
+        None,
+    ) == publication_date_relation(
+        left_value="2021",
+        left_event=DateEvent.WORK_FIRST_PUBLICATION,
+        left_precision=DatePrecision.YEAR,
+        right_value="2021",
+        right_event=DateEvent.MANIFESTATION_PUBLICATION,
+        right_precision=DatePrecision.YEAR,
+    )
+    assert (
+        PublicationDateRelation.MANIFESTATION_INCOMPATIBLE,
+        None,
+    ) == publication_date_relation(
+        left_value="2021",
+        left_event=DateEvent.MANIFESTATION_PUBLICATION,
+        left_precision=DatePrecision.YEAR,
+        right_value="2021",
+        right_event=DateEvent.MANIFESTATION_PUBLICATION,
+        right_precision=DatePrecision.YEAR,
+        manifestation_compatible=False,
+    )
 
 
 def test_maximum_description_comparison_is_field_appropriate() -> None:
     local_value = "d" * 512
     provider_value = "p" * MAX_DESCRIPTION_CHARACTERS
-    local = LocalClaim.create(kind=ClaimKind.DESCRIPTION, observed=local_value, canonical=local_value, excerpt=local_value, applicability="not_applicable", checksum="not_applicable", applicability_basis="not_applicable", scope=ClaimScope.WORK)
-    bare = ProviderClaim.create(provider="catalogue", candidate="candidate", kind=ClaimKind.DESCRIPTION, value=provider_value, state=FieldState.VALID, scope=ClaimScope.WORK, applicability="not_applicable")
-    assert comparison_links(bare, (local,)) == (ComparisonLink(local.reference, Comparison.DISAGREEMENT),)
+    local = LocalClaim.create(
+        kind=ClaimKind.DESCRIPTION,
+        observed=local_value,
+        canonical=local_value,
+        excerpt=local_value,
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
+    bare = ProviderClaim.create(
+        provider="catalogue",
+        candidate="candidate",
+        kind=ClaimKind.DESCRIPTION,
+        value=provider_value,
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+    )
+    assert comparison_links(bare, (local,)) == (
+        ComparisonLink(local.reference, Comparison.DISAGREEMENT),
+    )

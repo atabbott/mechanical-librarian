@@ -71,9 +71,9 @@ class _TestReactAssetLoader:
                     path,
                     hashlib.sha256(payload).hexdigest(),
                     len(payload),
-                    "shell" if path == "index.html" else (
-                        "style" if path.endswith(".css") else "script"
-                    ),
+                    "shell"
+                    if path == "index.html"
+                    else ("style" if path.endswith(".css") else "script"),
                 )
                 for path, payload in sorted(values.items())
             ),
@@ -92,7 +92,9 @@ def create_transport_test_app(
     close_repository: bool = False,
     review_preparation: ReviewPreparationSupervisor | None = None,
     policy_libraries: tuple[tuple[str, dict[str, object] | None], ...] = (),
-    field_application: GuardedFieldApplication | ContinuousGuardedApplication | None = None,
+    field_application: GuardedFieldApplication
+    | ContinuousGuardedApplication
+    | None = None,
     operational_timings: TimingRepository | None = None,
     operational_support: SupportExporter | None = None,
     operational_timer: StageTimer | None = None,

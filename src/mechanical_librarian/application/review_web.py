@@ -83,14 +83,14 @@ class ReviewLibrarySnapshot:
 
 @dataclass(frozen=True, slots=True)
 class ReviewAttentionSnapshot:
-    rows: tuple[
-        tuple[str, str, str, int, str | None, ReviewFieldCause | None], ...
-    ]
+    rows: tuple[tuple[str, str, str, int, str | None, ReviewFieldCause | None], ...]
     total: int
 
 
 class ReviewSessionStore(Protocol):
-    def begin_login(self, now: int, window_seconds: int, maximum_failures: int) -> bool: ...
+    def begin_login(
+        self, now: int, window_seconds: int, maximum_failures: int
+    ) -> bool: ...
     def create_review_session(
         self,
         session_digest: str,
@@ -251,7 +251,9 @@ class OwnerSessionService:
         except Exception as error:
             raise ReviewWebError("persistence") from error
         if outcome != "revoked":
-            raise ReviewWebError(outcome if outcome in {"unauthorized", "csrf"} else "persistence")
+            raise ReviewWebError(
+                outcome if outcome in {"unauthorized", "csrf"} else "persistence"
+            )
 
 
 class InspectCurrentReviewCase:
@@ -271,7 +273,11 @@ class InspectCurrentReviewCase:
                 review_case_id, history_limit
             )
             raw = json.loads(snapshot.case_document)
-            if type(raw) is not dict or raw.get("current") is not True or type(raw.get("case")) is not dict:
+            if (
+                type(raw) is not dict
+                or raw.get("current") is not True
+                or type(raw.get("case")) is not dict
+            ):
                 raise ReviewWebError("stale")
             case = ReviewCase.create_from_data(raw["case"])
             report = MetadataReport.from_json(snapshot.report_document)
@@ -293,8 +299,13 @@ class InspectCurrentReviewCase:
                     automatic[str(value["destination"])] = {
                         key: value[key]
                         for key in (
-                            "decision_id", "destination", "occurred_at", "outcome",
-                            "proposal_id", "review_case_id", "target_fingerprint",
+                            "decision_id",
+                            "destination",
+                            "occurred_at",
+                            "outcome",
+                            "proposal_id",
+                            "review_case_id",
+                            "target_fingerprint",
                         )
                     } | {"candidate_id": value.get("candidate_id")}
                 else:
@@ -350,8 +361,11 @@ class InspectCurrentReviewCase:
             if automatic_decision is not None:
                 candidate_id = automatic_decision.get("candidate_id")
                 selected = next(
-                    (alternative["value"] for alternative in alternatives
-                     if alternative["alternative_id"] == candidate_id),
+                    (
+                        alternative["value"]
+                        for alternative in alternatives
+                        if alternative["alternative_id"] == candidate_id
+                    ),
                     None,
                 )
                 if automatic_decision["outcome"] == "candidate" and selected is None:
@@ -362,17 +376,24 @@ class InspectCurrentReviewCase:
                 }
             evidence = _evidence_by_reference(report)
             choice_contexts = _choice_contexts(
-                alternatives, result, report, target_fields[destination],
-                automatic_decision, evidence,
+                alternatives,
+                result,
+                report,
+                target_fields[destination],
+                automatic_decision,
+                evidence,
             )
             classification = classify_review_field(
                 attention_candidate=_needs_attention(
-                    proposal, snapshot.automatic_attention_destinations,
+                    proposal,
+                    snapshot.automatic_attention_destinations,
                 ),
                 automatic_outcome=(
-                    ("abstention" if destination in snapshot.shadow_abstention_destinations
-                     else None if automatic_decision is None
-                     else str(automatic_decision["outcome"]))
+                    "abstention"
+                    if destination in snapshot.shadow_abstention_destinations
+                    else None
+                    if automatic_decision is None
+                    else str(automatic_decision["outcome"])
                 ),
                 automatic_override_available=(
                     destination not in snapshot.automatic_override_blocked_destinations
@@ -390,57 +411,63 @@ class InspectCurrentReviewCase:
                 ),
             )
             field = {
-                    "current": target_fields[destination],
-                    "deterministic_disposition": result["outcome"],
-                    "destination": destination,
-                    "manual_required": proposal["manual_required"],
-                    "human_decision": (
-                        None if decision is None else _decision_projection(decision)
-                    ),
-                    "automatic_decision": automatic_decision,
-                    "manual_hold": decision is not None and automatic_decision is not None,
-                    "classification": classification.state,
-                    "classification_reason": classification.reason,
-                    "editable": classification.editable,
-                    "navigation_role": classification.navigation_role,
-                    "needs_attention": classification.needs_attention,
-                    "preservation_only": classification.preservation_only,
-                    "notices": reasons,
-                    "proposed_values": [
-                        alternative["value"] for alternative in alternatives
-                    ],
-                    "choice_contexts": choice_contexts,
-                    "provenance": references,
-                    "corroboration_sources": _corroboration_source_labels(
-                        report, references, reasons,
-                    ),
-                    "proposal_id": proposal["proposal_id"],
-                    "target_fingerprint": case.target_fingerprint,
-                    "uncertainty": (
-                        reasons
-                        if result["outcome"] == "unresolved_choice"
-                        or proposal["manual_required"] is True
-                        else []
-                    ),
-                }
+                "current": target_fields[destination],
+                "deterministic_disposition": result["outcome"],
+                "destination": destination,
+                "manual_required": proposal["manual_required"],
+                "human_decision": (
+                    None if decision is None else _decision_projection(decision)
+                ),
+                "automatic_decision": automatic_decision,
+                "manual_hold": decision is not None and automatic_decision is not None,
+                "classification": classification.state,
+                "classification_reason": classification.reason,
+                "editable": classification.editable,
+                "navigation_role": classification.navigation_role,
+                "needs_attention": classification.needs_attention,
+                "preservation_only": classification.preservation_only,
+                "notices": reasons,
+                "proposed_values": [
+                    alternative["value"] for alternative in alternatives
+                ],
+                "choice_contexts": choice_contexts,
+                "provenance": references,
+                "corroboration_sources": _corroboration_source_labels(
+                    report,
+                    references,
+                    reasons,
+                ),
+                "proposal_id": proposal["proposal_id"],
+                "target_fingerprint": case.target_fingerprint,
+                "uncertainty": (
+                    reasons
+                    if result["outcome"] == "unresolved_choice"
+                    or proposal["manual_required"] is True
+                    else []
+                ),
+            }
             if destination == "cover" and self._cover_considerations is not None:
                 field["cover_consideration"] = current_cover_consideration
             fields.append(field)
         fields.sort(key=lambda value: not value["needs_attention"])
-        return {
-            "comparison_notices": _provider_comparison_notices(report),
-            "current": True,
-            "fields": fields,
-            "review_case_id": case.review_case_id,
-            "schema_version": "review-case-detail-v1",
-            "target": {
-                "authors": _report_authors(report),
-                "connection": report.target.connection,
-                "item": report.target.item,
-                "library": report.target.library,
-                "media_kind": report.file.format,
+        return (
+            {
+                "comparison_notices": _provider_comparison_notices(report),
+                "current": True,
+                "fields": fields,
+                "review_case_id": case.review_case_id,
+                "schema_version": "review-case-detail-v1",
+                "target": {
+                    "authors": _report_authors(report),
+                    "connection": report.target.connection,
+                    "item": report.target.item,
+                    "library": report.target.library,
+                    "media_kind": report.file.format,
+                },
             },
-        }, report, snapshot
+            report,
+            snapshot,
+        )
 
     def run(self, review_case_id: str) -> dict[str, object]:
         detail, _, _ = self._read(review_case_id)
@@ -455,11 +482,7 @@ class InspectCurrentReviewCase:
         detail, report, _ = self._read(review_case_id)
         fields = detail["fields"]
         assert type(fields) is list
-        wanted = {
-            reference
-            for field in fields
-            for reference in field["provenance"]
-        }
+        wanted = {reference for field in fields for reference in field["provenance"]}
         evidence = _evidence_by_reference(report)
         if wanted.difference(evidence):
             raise ReviewWebError("not_found")
@@ -471,9 +494,7 @@ class InspectCurrentReviewCase:
             ).encode("utf-8")
         ).hexdigest()
         ordered = [
-            evidence[reference]
-            for reference in sorted(wanted)
-            if reference in evidence
+            evidence[reference] for reference in sorted(wanted) if reference in evidence
         ]
         bounded_limit = min(max(limit, 1), 50)
         offset = _decode_cursor(
@@ -578,9 +599,7 @@ class RecordHumanDecision:
         consideration_id: str | None = None,
     ) -> dict[str, object]:
         try:
-            idempotency_digest = HumanDecision.idempotency_digest_for(
-                idempotency_key
-            )
+            idempotency_digest = HumanDecision.idempotency_digest_for(idempotency_key)
             try:
                 replay_document = self._repository.find_human_decision(
                     idempotency_digest
@@ -673,8 +692,11 @@ class RecordHumanDecision:
                 raise ReviewWebError("persistence") from error
             if stored.request_digest != decision.request_digest:
                 raise ReviewWebError("persistence")
-            if (type(ready_at) is int and ready_at >= 0
-                    and stored.occurred_at >= ready_at):
+            if (
+                type(ready_at) is int
+                and ready_at >= 0
+                and stored.occurred_at >= ready_at
+            ):
                 self._timing.record(
                     "human_wait",
                     "owner",
@@ -702,6 +724,7 @@ class RecordHumanDecision:
             # identity, and the cause is chained, so the origin stays legible.
             raise ReviewWebError("unavailable") from error
 
+
 class BrowseReviewLibrary:
     def __init__(self, repository: ReviewLibraryStore) -> None:
         self._repository = repository
@@ -719,11 +742,7 @@ class BrowseReviewLibrary:
             raise ReviewWebError("request")
         bounded_limit = _review_limit(limit)
         offset = _decode_cursor(cursor, "library", lens, normalized)
-        attention = (
-            None
-            if lens == "all"
-            else lens == "needs_attention"
-        )
+        attention = None if lens == "all" else lens == "needs_attention"
         try:
             snapshot = self._repository.read_review_library(
                 normalized, bounded_limit + 1, offset, attention
@@ -735,7 +754,17 @@ class BrowseReviewLibrary:
                 suspended_destinations = row[4] if len(row) >= 5 else ()
                 shadow_abstention_destinations = row[5] if len(row) >= 6 else ()
                 terminal_document = row[6] if len(row) >= 7 else None
-                items.append(_library_item(case_document, report_document, decision_documents, automatic_attention_destinations, suspended_destinations, shadow_abstention_destinations, terminal_document))
+                items.append(
+                    _library_item(
+                        case_document,
+                        report_document,
+                        decision_documents,
+                        automatic_attention_destinations,
+                        suspended_destinations,
+                        shadow_abstention_destinations,
+                        terminal_document,
+                    )
+                )
         except Exception as error:
             # The undeclared page read and the row projection are one outcome:
             # a page this surface cannot render. Row width is read defensively
@@ -751,9 +780,7 @@ class BrowseReviewLibrary:
             "items": items,
             "lens": lens,
             "next_cursor": (
-                _encode_cursor(
-                    offset + bounded_limit, "library", lens, normalized
-                )
+                _encode_cursor(offset + bounded_limit, "library", lens, normalized)
                 if len(snapshot.rows) > bounded_limit
                 else None
             ),
@@ -790,7 +817,14 @@ class BrowseReviewLibrary:
                 if raw_total is None:
                     raw_total = snapshot.total
                 for row in raw_rows:
-                    case_document, report_document, destination, work_attention_count, automatic_outcome, cause = row
+                    (
+                        case_document,
+                        report_document,
+                        destination,
+                        work_attention_count,
+                        automatic_outcome,
+                        cause,
+                    ) = row
                     item = _attention_item(
                         case_document,
                         report_document,
@@ -847,6 +881,7 @@ class BrowseReviewLibrary:
             "total": raw_total,
         }
 
+
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
@@ -885,7 +920,9 @@ def _corroboration_source_labels(
         for candidate in provider.candidates
         for claim in candidate.claims
     }
-    authorities = {by_reference[reference] for reference in references if reference in by_reference}
+    authorities = {
+        by_reference[reference] for reference in references if reference in by_reference
+    }
     return [labels[authority] for authority in sorted(authorities)]
 
 
@@ -901,7 +938,9 @@ def _choice_contexts(
     local_value_present = target.get("state") == "value" and _current_value_present(
         target.get("value")
     )
-    preserves = [item for item in alternatives if item.get("assessment") == "preserves_target"]
+    preserves = [
+        item for item in alternatives if item.get("assessment") == "preserves_target"
+    ]
     evidence = _evidence_by_reference(report) if evidence is None else evidence
     current_rows = [
         _choice_evidence(row)
@@ -910,26 +949,47 @@ def _choice_contexts(
         if type(reference) is str and reference in evidence
         for row in [evidence[reference]]
     ]
-    current_recommended = automatic_decision is not None and automatic_decision.get("outcome") in {"keep_current", "preserves_target"}
-    contexts: list[dict[str, object]] = [{
-        "alternative_id": None,
-        "evidence": ([{
-            "observation": "This value is currently present in the local library.",
-            "role": "local_presence",
-            "source": "Local library record",
-        }] if local_value_present else []) + current_rows,
-        "limitations": _choice_limitations(preserves[0], result) if preserves else [],
-        "rationale": (
-            ("Deterministic policy retained the local value."
-             if current_recommended else "Keep the value currently held by the local library.")
-            if local_value_present else
-            "The local library has no retained value for this field."
-        ),
-        "recommendation": "recommended" if current_recommended else "no_recommendation",
-        "recommendation_reason": ("Deterministic policy retained the local value."
-                                  if current_recommended else "No deterministic recommendation is retained for the current value."),
-        "selection": "current",
-    }]
+    current_recommended = automatic_decision is not None and automatic_decision.get(
+        "outcome"
+    ) in {"keep_current", "preserves_target"}
+    contexts: list[dict[str, object]] = [
+        {
+            "alternative_id": None,
+            "evidence": (
+                [
+                    {
+                        "observation": "This value is currently present in the local library.",
+                        "role": "local_presence",
+                        "source": "Local library record",
+                    }
+                ]
+                if local_value_present
+                else []
+            )
+            + current_rows,
+            "limitations": _choice_limitations(preserves[0], result)
+            if preserves
+            else [],
+            "rationale": (
+                (
+                    "Deterministic policy retained the local value."
+                    if current_recommended
+                    else "Keep the value currently held by the local library."
+                )
+                if local_value_present
+                else "The local library has no retained value for this field."
+            ),
+            "recommendation": "recommended"
+            if current_recommended
+            else "no_recommendation",
+            "recommendation_reason": (
+                "Deterministic policy retained the local value."
+                if current_recommended
+                else "No deterministic recommendation is retained for the current value."
+            ),
+            "selection": "current",
+        }
+    ]
     for alternative in alternatives:
         references = alternative["evidence_references"]
         assert type(references) is list
@@ -940,28 +1000,42 @@ def _choice_contexts(
         ]
         alternative_id = alternative["alternative_id"]
         assert type(alternative_id) is str
-        automatic_candidate = automatic_decision.get("candidate_id") if automatic_decision is not None and automatic_decision.get("outcome") == "candidate" else None
+        automatic_candidate = (
+            automatic_decision.get("candidate_id")
+            if automatic_decision is not None
+            and automatic_decision.get("outcome") == "candidate"
+            else None
+        )
         recommended = alternative_id == automatic_candidate
-        contexts.append({
-            "alternative_id": alternative_id,
-            "evidence": rows,
-            "limitations": _choice_limitations(alternative, result),
-            "rationale": _choice_rationale(alternative, bool(rows)),
-            "recommendation": "recommended" if recommended else "no_recommendation",
-            "recommendation_reason": (
-                "Deterministic policy selected this retained alternative."
-                if recommended else "No deterministic recommendation is retained for this alternative."
-            ),
-            "selection": "proposed",
-        })
+        contexts.append(
+            {
+                "alternative_id": alternative_id,
+                "evidence": rows,
+                "limitations": _choice_limitations(alternative, result),
+                "rationale": _choice_rationale(alternative, bool(rows)),
+                "recommendation": "recommended" if recommended else "no_recommendation",
+                "recommendation_reason": (
+                    "Deterministic policy selected this retained alternative."
+                    if recommended
+                    else "No deterministic recommendation is retained for this alternative."
+                ),
+                "selection": "proposed",
+            }
+        )
     return contexts
 
 
-def _choice_limitations(alternative: dict[str, object], result: dict[str, object]) -> list[str]:
+def _choice_limitations(
+    alternative: dict[str, object], result: dict[str, object]
+) -> list[str]:
     """Keep material comparison constraints with their retained alternative lineage."""
     alternatives = result.get("alternatives")
     alternative_id = alternative.get("alternative_id")
-    if not isinstance(alternatives, list) or len(alternatives) != 1 or alternative_id is None:
+    if (
+        not isinstance(alternatives, list)
+        or len(alternatives) != 1
+        or alternative_id is None
+    ):
         return []
     only = alternatives[0]
     if not isinstance(only, dict) or only.get("alternative_id") != alternative_id:
@@ -969,8 +1043,15 @@ def _choice_limitations(alternative: dict[str, object], result: dict[str, object
     reasons = result.get("reasons")
     if not isinstance(reasons, list):
         return []
-    material = {"insufficient_independent_corroboration", "populated_subjective_field", "date_refinement_requires_corroboration", "date_year_conflict"}
-    return [reason for reason in reasons if isinstance(reason, str) and reason in material][:3]
+    material = {
+        "insufficient_independent_corroboration",
+        "populated_subjective_field",
+        "date_refinement_requires_corroboration",
+        "date_year_conflict",
+    }
+    return [
+        reason for reason in reasons if isinstance(reason, str) and reason in material
+    ][:3]
 
 
 def _current_value_present(value: object) -> bool:
@@ -980,24 +1061,36 @@ def _current_value_present(value: object) -> bool:
 
 
 def _choice_rationale(alternative: dict[str, object], supported: bool) -> str:
-    assessment = cast("dict[object, str]", {
-        "fills_empty": "fills an empty local value",
-        "preserves_target": "preserves the local value",
-        "replaces_target": "replaces the local value",
-    }).get(alternative.get("assessment"), "retains a proposal value")
-    scope = cast("dict[object, str]", {
-        "cover": "cover-specific",
-        "edition": "edition-specific",
-        "work": "work-level",
-    }).get(alternative.get("scope"), "retained")
-    evidence = "with retained supporting evidence" if supported else "from the retained proposal"
+    assessment = cast(
+        "dict[object, str]",
+        {
+            "fills_empty": "fills an empty local value",
+            "preserves_target": "preserves the local value",
+            "replaces_target": "replaces the local value",
+        },
+    ).get(alternative.get("assessment"), "retains a proposal value")
+    scope = cast(
+        "dict[object, str]",
+        {
+            "cover": "cover-specific",
+            "edition": "edition-specific",
+            "work": "work-level",
+        },
+    ).get(alternative.get("scope"), "retained")
+    evidence = (
+        "with retained supporting evidence"
+        if supported
+        else "from the retained proposal"
+    )
     return f"This alternative {assessment} using {scope} evidence {evidence}."
 
 
 def _choice_evidence(evidence: dict[str, str | None]) -> dict[str, str]:
     return {
         "observation": _choice_observation(evidence),
-        "role": "local_presence" if evidence["source"] == "local" else "external_corroboration",
+        "role": "local_presence"
+        if evidence["source"] == "local"
+        else "external_corroboration",
         "source": _choice_source_label(evidence),
     }
 
@@ -1023,14 +1116,17 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
         return "A retained observation supports this choice."
     if type(fact) is not dict:
         return "A retained observation supports this choice."
-    kind = cast("dict[object, str]", {
-        "authors": "Contributors",
-        "description": "Description",
-        "isbn": "ISBN",
-        "publication_date": "Publication date",
-        "series": "Series membership",
-        "title": "Title",
-    }).get(fact.get("kind"), "Metadata")
+    kind = cast(
+        "dict[object, str]",
+        {
+            "authors": "Contributors",
+            "description": "Description",
+            "isbn": "ISBN",
+            "publication_date": "Publication date",
+            "series": "Series membership",
+            "title": "Title",
+        },
+    ).get(fact.get("kind"), "Metadata")
     value = fact.get("value", fact.get("observed"))
     if type(value) in {str, int, float}:
         return f"{kind}: {_choice_text(cast('str | int | float', value))}"
@@ -1040,7 +1136,8 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
 def _choice_text(value: str | int | float) -> str:
     text = str(value)
     cleaned = "".join(
-        character for character in text
+        character
+        for character in text
         if not unicodedata.category(character).startswith("C")
     )
     normalized = " ".join(cleaned.split())
@@ -1102,18 +1199,21 @@ def _evidence_by_reference(
                 )
             for fact in candidate["evidence"]:
                 assert type(fact) is dict
-                reference = "evidence_" + hashlib.sha256(
-                    json.dumps(
-                        {
-                            "candidate": candidate_identity,
-                            "evidence": fact,
-                            "provider": provider_name,
-                        },
-                        ensure_ascii=False,
-                        separators=(",", ":"),
-                        sort_keys=True,
-                    ).encode("utf-8")
-                ).hexdigest()
+                reference = (
+                    "evidence_"
+                    + hashlib.sha256(
+                        json.dumps(
+                            {
+                                "candidate": candidate_identity,
+                                "evidence": fact,
+                                "provider": provider_name,
+                            },
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ).encode("utf-8")
+                    ).hexdigest()
+                )
                 rich_fact = dict(fact)
                 rich_fact["reference"] = reference
                 add(
@@ -1128,9 +1228,7 @@ def _evidence_by_reference(
             "identifier",
             fact,
             provider=(
-                fact.get("provider")
-                if type(fact.get("provider")) is str
-                else None
+                fact.get("provider") if type(fact.get("provider")) is str else None
             ),
             candidate=(
                 fact.get("candidate_identity")
@@ -1147,8 +1245,7 @@ def _evidence_by_reference(
             reference_key="source_id",
             provider=(
                 provenance.get("provider")
-                if type(provenance) is dict
-                and type(provenance.get("provider")) is str
+                if type(provenance) is dict and type(provenance.get("provider")) is str
                 else None
             ),
         )
@@ -1180,9 +1277,7 @@ def _cursor_binding(kind: str, lens: str, search: str | None) -> str:
     ).hexdigest()[:16]
 
 
-def _encode_cursor(
-    offset: int, kind: str, lens: str, search: str | None
-) -> str:
+def _encode_cursor(offset: int, kind: str, lens: str, search: str | None) -> str:
     if (
         type(offset) is not int
         or isinstance(offset, bool)
@@ -1196,9 +1291,7 @@ def _encode_cursor(
     return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
 
 
-def _decode_cursor(
-    cursor: str | None, kind: str, lens: str, search: str | None
-) -> int:
+def _decode_cursor(cursor: str | None, kind: str, lens: str, search: str | None) -> int:
     if cursor is None:
         return 0
     try:
@@ -1210,9 +1303,9 @@ def _decode_cursor(
             raise ValueError
         padding = "=" * (-len(cursor) % 4)
         raw = json.loads(
-            base64.b64decode(
-                cursor + padding, altchars=b"-_", validate=True
-            ).decode("ascii")
+            base64.b64decode(cursor + padding, altchars=b"-_", validate=True).decode(
+                "ascii"
+            )
         )
         if (
             type(raw) is not list
@@ -1250,17 +1343,16 @@ def _case_and_report(
     return case, report
 
 
-def _needs_attention(proposal: dict[str, object], automatic_attention_destinations: tuple[str, ...] = ()) -> bool:
+def _needs_attention(
+    proposal: dict[str, object], automatic_attention_destinations: tuple[str, ...] = ()
+) -> bool:
     result = proposal["result"]
     assert type(result) is dict
     reasons = result["reasons"]
     assert type(reasons) is list
     return (
         proposal["destination"] in automatic_attention_destinations
-        or (
-            proposal["destination"] == "cover"
-            and "current_cover_verified" in reasons
-        )
+        or (proposal["destination"] == "cover" and "current_cover_verified" in reasons)
         or result["outcome"] == "unresolved_choice"
         or proposal["manual_required"] is True
         or "no_safe_bibliographic_combination" in reasons
@@ -1270,10 +1362,18 @@ def _needs_attention(proposal: dict[str, object], automatic_attention_destinatio
 def _report_authors(report: MetadataReport) -> list[str]:
     """Derive the bounded current author display value without persistence."""
     value = next(
-        (field.value for field in report.target.fields if field.destination is TargetDestination.AUTHORS),
+        (
+            field.value
+            for field in report.target.fields
+            if field.destination is TargetDestination.AUTHORS
+        ),
         (),
     )
-    return list(cast("tuple[str, ...]", value)) if type(value) is tuple and all(type(author) is str for author in value) else []
+    return (
+        list(cast("tuple[str, ...]", value))
+        if type(value) is tuple and all(type(author) is str for author in value)
+        else []
+    )
 
 
 def _provider_outcomes(report: MetadataReport) -> list[dict[str, object]]:
@@ -1291,16 +1391,29 @@ def _provider_outcomes(report: MetadataReport) -> list[dict[str, object]]:
                 if provider.lanes
                 else provider.query_kind
             ).value
-            outcomes.append({"provider_requests": provider.request_accounting.logical_requests, "lane_kind": kind, "provider": _provider_label(provider.authority), "reason": "Provider returned no matching metadata." if status == "no_match" else "Provider returned a bounded terminal status.", "status": status})
+            outcomes.append(
+                {
+                    "provider_requests": provider.request_accounting.logical_requests,
+                    "lane_kind": kind,
+                    "provider": _provider_label(provider.authority),
+                    "reason": "Provider returned no matching metadata."
+                    if status == "no_match"
+                    else "Provider returned a bounded terminal status.",
+                    "status": status,
+                }
+            )
     return outcomes
 
 
 def _provider_label(authority: str | None) -> str:
-    return cast("dict[str | None, str]", {
-        "google_books": "Google Books",
-        "hardcover": "Hardcover",
-        "open_library": "Open Library",
-    }).get(authority, "Provider (name unavailable)")
+    return cast(
+        "dict[str | None, str]",
+        {
+            "google_books": "Google Books",
+            "hardcover": "Hardcover",
+            "open_library": "Open Library",
+        },
+    ).get(authority, "Provider (name unavailable)")
 
 
 def _provider_comparison_notices(report: MetadataReport) -> list[str]:
@@ -1323,17 +1436,63 @@ def _library_item(
     if case_document is None:
         try:
             terminal = json.loads(report_document)
-            if type(terminal) is dict and terminal.get("schema_version") == "review-terminal-work-v1":
+            if (
+                type(terminal) is dict
+                and terminal.get("schema_version") == "review-terminal-work-v1"
+            ):
                 status = terminal["status"]
                 lane = terminal["lane"]
                 root = terminal["failure_root"]
-                if type(status) is not str or type(lane) is not str or (root is not None and type(root) is not str):
+                if (
+                    type(status) is not str
+                    or type(lane) is not str
+                    or (root is not None and type(root) is not str)
+                ):
                     raise ValueError
-                reasons = {"authentication": "Provider credentials need owner attention.", "configuration": "Provider configuration needs owner attention.", "provider": "Provider work ended without a usable result.", "transient": "Provider recovery attempts were exhausted.", "failed": "Preparation ended before a usable review package was produced.", "projection": "Review projection could not be completed."}
-                work_id, item, library = terminal["work_id"], terminal["item"], terminal["library"]
-                if type(work_id) is not str or type(item) is not str or type(library) is not str:
+                reasons = {
+                    "authentication": "Provider credentials need owner attention.",
+                    "configuration": "Provider configuration needs owner attention.",
+                    "provider": "Provider work ended without a usable result.",
+                    "transient": "Provider recovery attempts were exhausted.",
+                    "failed": "Preparation ended before a usable review package was produced.",
+                    "projection": "Review projection could not be completed.",
+                }
+                work_id, item, library = (
+                    terminal["work_id"],
+                    terminal["item"],
+                    terminal["library"],
+                )
+                if (
+                    type(work_id) is not str
+                    or type(item) is not str
+                    or type(library) is not str
+                ):
                     raise ValueError
-                return {"authors": [], "attention_count": 0, "attention_state": "no_attention_needed", "detail_url": None, "dispositions": ["terminal_failure"], "item": item, "library": library, "media_kind": "unknown", "review_case_id": None, "title": "Preparation unavailable", "work_id": work_id, "preparation": {"attempt": terminal["attempt"], "provider": root or "provider", "reason": reasons.get(status, "Preparation ended without a usable review package."), "recovery": "Retry review preparation after correcting the reported condition.", "recovery_attempt": terminal["recovery_attempt"], "stage": lane, "status": status}, "preparation_outcomes": []}
+                return {
+                    "authors": [],
+                    "attention_count": 0,
+                    "attention_state": "no_attention_needed",
+                    "detail_url": None,
+                    "dispositions": ["terminal_failure"],
+                    "item": item,
+                    "library": library,
+                    "media_kind": "unknown",
+                    "review_case_id": None,
+                    "title": "Preparation unavailable",
+                    "work_id": work_id,
+                    "preparation": {
+                        "attempt": terminal["attempt"],
+                        "provider": root or "provider",
+                        "reason": reasons.get(
+                            status, "Preparation ended without a usable review package."
+                        ),
+                        "recovery": "Retry review preparation after correcting the reported condition.",
+                        "recovery_attempt": terminal["recovery_attempt"],
+                        "stage": lane,
+                        "status": status,
+                    },
+                    "preparation_outcomes": [],
+                }
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise ReviewWebError("unavailable") from error
     try:
@@ -1361,36 +1520,47 @@ def _library_item(
             assert case is not None
             decision.validate_for(case)
             decisions.add(decision.destination)
-    attention = [] if case is None else [
-        value
-        for value in case.proposals
-        if (value["destination"] not in decisions
-            and value["destination"] not in suspended_destinations
-            and classify_review_field(
-                attention_candidate=_needs_attention(
-                    value, automatic_attention_destinations,
-                ),
-                automatic_outcome=(
-                    "abstention"
-                    if value["destination"] in shadow_abstention_destinations
-                    else automatic_outcomes.get(cast(str, value["destination"]))
-                ),
-                has_human_decision=value["destination"] in decisions,
-                suspended=value["destination"] in suspended_destinations,
-                cause=(
-                    "automatic_safety_suspended"
-                    if value["destination"] in automatic_attention_destinations
-                    else None
-                ),
-                current_value=None,
-                proposed_values=(),
-            ).needs_attention)
-    ]
-    outcomes = [] if case is None else sorted(
-        {
-            value["result"]["outcome"]  # type: ignore[index]
+    attention = (
+        []
+        if case is None
+        else [
+            value
             for value in case.proposals
-        }
+            if (
+                value["destination"] not in decisions
+                and value["destination"] not in suspended_destinations
+                and classify_review_field(
+                    attention_candidate=_needs_attention(
+                        value,
+                        automatic_attention_destinations,
+                    ),
+                    automatic_outcome=(
+                        "abstention"
+                        if value["destination"] in shadow_abstention_destinations
+                        else automatic_outcomes.get(cast(str, value["destination"]))
+                    ),
+                    has_human_decision=value["destination"] in decisions,
+                    suspended=value["destination"] in suspended_destinations,
+                    cause=(
+                        "automatic_safety_suspended"
+                        if value["destination"] in automatic_attention_destinations
+                        else None
+                    ),
+                    current_value=None,
+                    proposed_values=(),
+                ).needs_attention
+            )
+        ]
+    )
+    outcomes = (
+        []
+        if case is None
+        else sorted(
+            {
+                value["result"]["outcome"]  # type: ignore[index]
+                for value in case.proposals
+            }
+        )
     )
     material = (
         f"review-library-work-v1\0{report.target.connection}\0"
@@ -1400,9 +1570,7 @@ def _library_item(
     value = {
         "authors": _report_authors(report),
         "attention_count": len(attention),
-        "attention_state": (
-            "needs_attention" if attention else "no_attention_needed"
-        ),
+        "attention_state": ("needs_attention" if attention else "no_attention_needed"),
         "detail_url": None if case is None else f"/review/{case.review_case_id}",
         "dispositions": outcomes,
         "item": report.target.item,
@@ -1411,7 +1579,9 @@ def _library_item(
         "review_case_id": None if case is None else case.review_case_id,
         "title": report.target.current_title or "Untitled",
         "work_id": work_id,
-        "preparation": None if terminal_document is None else _library_item(None, terminal_document, ())["preparation"],
+        "preparation": None
+        if terminal_document is None
+        else _library_item(None, terminal_document, ())["preparation"],
         "preparation_outcomes": _provider_outcomes(report),
     }
     return value
@@ -1427,23 +1597,16 @@ def _attention_item(
 ) -> dict[str, object] | None:
     case, report = _case_and_report(case_document, report_document)
     proposal = next(
-        (
-            value
-            for value in case.proposals
-            if value["destination"] == destination
-        ),
+        (value for value in case.proposals if value["destination"] == destination),
         None,
     )
     if proposal is None:
         return None
     classification = classify_review_field(
         attention_candidate=(
-            _needs_attention(proposal)
-            or cause == "automatic_safety_suspended"
+            _needs_attention(proposal) or cause == "automatic_safety_suspended"
         ),
-        automatic_outcome=(
-            "abstention" if automatic_outcome == "abstention" else None
-        ),
+        automatic_outcome=("abstention" if automatic_outcome == "abstention" else None),
         has_human_decision=False,
         suspended=False,
         cause=cause,

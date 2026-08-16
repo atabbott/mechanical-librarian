@@ -155,7 +155,11 @@ class EpubPackageSource:
     _reader: Callable[[int, int], bytes]
 
     def __post_init__(self) -> None:
-        if type(self.length) is not int or self.length < 0 or not callable(self._reader):
+        if (
+            type(self.length) is not int
+            or self.length < 0
+            or not callable(self._reader)
+        ):
             raise EvidenceValueError("local evidence source is malformed")
 
     def read_at(self, offset: int, maximum_bytes: int) -> bytes:
@@ -173,7 +177,9 @@ class EpubPackageSource:
         except Exception:
             raise EpubPackageSourceError("local evidence source read failed") from None
         if type(value) is not bytes or len(value) > maximum_bytes:
-            raise EpubPackageSourceError("local evidence source returned an invalid read")
+            raise EpubPackageSourceError(
+                "local evidence source returned an invalid read"
+            )
         return value
 
     def __repr__(self) -> str:
@@ -209,7 +215,9 @@ class EpubPackageRequest:
         ):
             raise EvidenceValueError("local evidence request is malformed")
         if self.source.length > self.limits.source_archive_bytes:
-            raise EvidenceValueError("local evidence source exceeds the requested limit")
+            raise EvidenceValueError(
+                "local evidence source exceeds the requested limit"
+            )
         self.deadline.astimezone(timezone.utc)
 
 
@@ -229,7 +237,10 @@ class EpubPackageCitation:
         if type(self.section) is not EpubPackageCitationSection:
             raise EvidenceValueError("citation section is malformed")
         _expanded_name(self.expanded_name)
-        if type(self.source_ordinal) is not int or not 1 <= self.source_ordinal <= 1_000_000:
+        if (
+            type(self.source_ordinal) is not int
+            or not 1 <= self.source_ordinal <= 1_000_000
+        ):
             raise EvidenceValueError("citation source ordinal is invalid")
         if self.selector is not None:
             validate_projection_text(self.selector, "citation selector", 256)
@@ -345,13 +356,21 @@ class EpubPackageDeclaration:
     spine_position: int | None = None
 
     def __post_init__(self) -> None:
-        if type(self.kind) is not EpubPackageDeclarationKind or type(self.citation) is not EpubPackageCitation:
+        if (
+            type(self.kind) is not EpubPackageDeclarationKind
+            or type(self.citation) is not EpubPackageCitation
+        ):
             raise EvidenceValueError("local evidence declaration is malformed")
         if type(self.linear) is not bool:
             raise EvidenceValueError("declaration linearity is malformed")
-        if self.spine_position is not None and (type(self.spine_position) is not int or self.spine_position < 1):
+        if self.spine_position is not None and (
+            type(self.spine_position) is not int or self.spine_position < 1
+        ):
             raise EvidenceValueError("declaration spine position is malformed")
-        if type(self.source_ordinal) is not int or not 1 <= self.source_ordinal <= 1_000_000:
+        if (
+            type(self.source_ordinal) is not int
+            or not 1 <= self.source_ordinal <= 1_000_000
+        ):
             raise EvidenceValueError("declaration source ordinal is invalid")
         if self.resource_identity is not None:
             _digest(self.resource_identity, "declaration resource identity")
@@ -370,9 +389,9 @@ class EpubPackageDeclaration:
         for value in self.properties:
             validate_code(value, "declaration property")
             validate_projection_text(value, "public declaration property", 64)
-        if len(set(self.properties)) != len(self.properties) or self.properties != tuple(
-            sorted(self.properties)
-        ):
+        if len(set(self.properties)) != len(
+            self.properties
+        ) or self.properties != tuple(sorted(self.properties)):
             raise EvidenceValueError("declaration properties must be unique and sorted")
 
 
@@ -394,7 +413,9 @@ class EpubPackageUsage:
     prefix_mappings: int = 0
 
     def __post_init__(self) -> None:
-        if any(type(value) is not int or value < 0 for value in self.to_data().values()):
+        if any(
+            type(value) is not int or value < 0 for value in self.to_data().values()
+        ):
             raise EvidenceValueError("local evidence usage is malformed")
 
     def to_data(self) -> dict[str, int]:
@@ -433,56 +454,89 @@ class EpubPackageReport:
             or type(self.usage) is not EpubPackageUsage
         ):
             raise EvidenceValueError("local evidence report is malformed")
-        if self.source_fingerprint is not None and type(self.source_fingerprint) is not Fingerprint:
+        if (
+            self.source_fingerprint is not None
+            and type(self.source_fingerprint) is not Fingerprint
+        ):
             raise EvidenceValueError("local evidence source fingerprint is malformed")
-        _typed_tuple(self.observations, EpubPackageObservation, MAX_OBSERVATIONS, "observations")
+        _typed_tuple(
+            self.observations, EpubPackageObservation, MAX_OBSERVATIONS, "observations"
+        )
         _typed_tuple(self.warnings, EpubPackageWarning, MAX_WARNINGS, "warnings")
-        _typed_tuple(self.declarations, EpubPackageDeclaration, MAX_DECLARATIONS, "declarations")
-        if self.outcome is EpubInspectionOutcome.SUCCESS and self.source_fingerprint is None:
-            raise EvidenceValueError("successful local evidence requires a source fingerprint")
+        _typed_tuple(
+            self.declarations, EpubPackageDeclaration, MAX_DECLARATIONS, "declarations"
+        )
+        if (
+            self.outcome is EpubInspectionOutcome.SUCCESS
+            and self.source_fingerprint is None
+        ):
+            raise EvidenceValueError(
+                "successful local evidence requires a source fingerprint"
+            )
         if not self.outcome.succeeded and (self.observations or self.declarations):
-            raise EvidenceValueError("failed local evidence cannot contain a partial report")
+            raise EvidenceValueError(
+                "failed local evidence cannot contain a partial report"
+            )
         if self.outcome is EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE and (
             self.observations or self.declarations
         ):
-            raise EvidenceValueError("no-applicable-evidence cannot contain observations")
+            raise EvidenceValueError(
+                "no-applicable-evidence cannot contain observations"
+            )
         if self.observations != tuple(
             sorted(
                 self.observations,
                 key=lambda item: (item.citation.source_ordinal, item.citation.identity),
             )
         ):
-            raise EvidenceValueError("raw observations must retain source occurrence order")
-        if self.warnings != tuple(sorted(self.warnings, key=lambda item: item.sort_key)):
-            raise EvidenceValueError("warnings must use canonical code and citation order")
+            raise EvidenceValueError(
+                "raw observations must retain source occurrence order"
+            )
+        if self.warnings != tuple(
+            sorted(self.warnings, key=lambda item: item.sort_key)
+        ):
+            raise EvidenceValueError(
+                "warnings must use canonical code and citation order"
+            )
         if self.declarations != tuple(
-            sorted(self.declarations, key=lambda item: (item.source_ordinal, item.citation.identity))
+            sorted(
+                self.declarations,
+                key=lambda item: (item.source_ordinal, item.citation.identity),
+            )
         ):
             raise EvidenceValueError("declarations must retain canonical source order")
         citations = (
             tuple(item.citation for item in self.observations)
             + tuple(item.citation for item in self.declarations)
-            + tuple(item.citation for item in self.warnings if item.citation is not None)
+            + tuple(
+                item.citation for item in self.warnings if item.citation is not None
+            )
         )
         if self.source_fingerprint is not None and any(
             item.source_fingerprint != self.source_fingerprint for item in citations
         ):
-            raise EvidenceValueError("local evidence citations must match source identity")
+            raise EvidenceValueError(
+                "local evidence citations must match source identity"
+            )
         if (
             self.capability is EpubPackageCapability.PACKAGE
             and self.source_fingerprint is not None
             and any(
-                item.same_file_lineage
-                != epub_file_lineage(self.source_fingerprint)
+                item.same_file_lineage != epub_file_lineage(self.source_fingerprint)
                 for item in self.observations
             )
         ):
             raise EvidenceValueError("package evidence file lineage is not derived")
-        if len({item.identity for item in (entry.citation for entry in self.observations)}) != len(
-            self.observations
+        if len(
+            {item.identity for item in (entry.citation for entry in self.observations)}
+        ) != len(self.observations):
+            raise EvidenceValueError(
+                "local evidence observation citations must be unique"
+            )
+        if any(
+            item.source_ordinal != item.citation.source_ordinal
+            for item in self.declarations
         ):
-            raise EvidenceValueError("local evidence observation citations must be unique")
-        if any(item.source_ordinal != item.citation.source_ordinal for item in self.declarations):
             raise EvidenceValueError("declaration and citation order must agree")
         counts: dict[EpubPackageField, int] = {}
         for observation in self.observations:
@@ -491,13 +545,17 @@ class EpubPackageReport:
             count > MAX_VALUES_PER_FIELD for count in counts.values()
         ):
             raise EvidenceValueError("local evidence observation bounds are exceeded")
+
     @property
     def succeeded(self) -> bool:
         return self.outcome.succeeded
 
     @property
     def normalized_observations(self) -> tuple[EpubPackageObservation, ...]:
-        return tuple(sorted(self.observations, key=lambda item: item.normalized_sort_key))
+        return tuple(
+            sorted(self.observations, key=lambda item: item.normalized_sort_key)
+        )
+
 
 def _digest(value: object, label: str) -> str:
     if type(value) is not str or _DIGEST.fullmatch(value) is None:
@@ -537,12 +595,8 @@ def _expanded_name(value: object) -> str:
             or "\\" in namespace
         ):
             raise EvidenceValueError("citation expanded name is malformed")
-        validate_projection_text(
-            namespace, "citation expanded namespace", 512
-        )
-        validate_projection_text(
-            local_name, "citation expanded local name", 512
-        )
+        validate_projection_text(namespace, "citation expanded namespace", 512)
+        validate_projection_text(local_name, "citation expanded local name", 512)
     elif _XML_NAME.fullmatch(text) is None:
         raise EvidenceValueError("citation expanded name is malformed")
     else:
@@ -550,9 +604,13 @@ def _expanded_name(value: object) -> str:
     return text
 
 
-def _typed_tuple(values: object, item_type: type[Any], maximum: int, label: str) -> None:
-    if type(values) is not tuple or len(values) > maximum or any(
-        type(item) is not item_type for item in values
+def _typed_tuple(
+    values: object, item_type: type[Any], maximum: int, label: str
+) -> None:
+    if (
+        type(values) is not tuple
+        or len(values) > maximum
+        or any(type(item) is not item_type for item in values)
     ):
         raise EvidenceValueError(f"local evidence {label} are malformed")
 

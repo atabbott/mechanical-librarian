@@ -18,23 +18,34 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 
 
 def _digest(value: object) -> str:
-    return hashlib.sha256(json.dumps(
-        value,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def test_candidate_is_immutable_and_binds_all_authority_inputs() -> None:
     value = AutomaticDecision.create(
-        review_case_id="review_case_" + "a" * 64, report_id="report_" + "b" * 64,
-        proposal_set_id="proposal_set_" + "c" * 64, proposal_id="review_proposal_" + "d" * 64,
-        target_fingerprint="e" * 64, destination="title", outcome="candidate",
-        candidate_id="alternative_" + "f" * 64, resolved_policy_id="resolved_policy_" + "0" * 64,
-        policy_generation=1, rule_id="shadow_rule_" + "1" * 64, policy_category="title_layout",
-        policy_option="preserve", qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
-        source_outcome_id="shadow_outcome_" + "3" * 64, occurred_at=1,
+        review_case_id="review_case_" + "a" * 64,
+        report_id="report_" + "b" * 64,
+        proposal_set_id="proposal_set_" + "c" * 64,
+        proposal_id="review_proposal_" + "d" * 64,
+        target_fingerprint="e" * 64,
+        destination="title",
+        outcome="candidate",
+        candidate_id="alternative_" + "f" * 64,
+        resolved_policy_id="resolved_policy_" + "0" * 64,
+        policy_generation=1,
+        rule_id="shadow_rule_" + "1" * 64,
+        policy_category="title_layout",
+        policy_option="preserve",
+        qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
+        source_outcome_id="shadow_outcome_" + "3" * 64,
+        occurred_at=1,
         bundle_id="automatic_bundle_" + "4" * 64,
     )
     assert "automatic_policy" == value.to_data()["origin"]
@@ -136,9 +147,8 @@ def test_prior_f20_decision_remains_readable_without_granting_new_authority() ->
             "qualification_manifest_sha256": prior_digest,
         }
         prior = AutomaticDecision(
-            decision_id="automatic_decision_" + _digest(
-                {**prior_core, "occurred_at": 1}
-            ),
+            decision_id="automatic_decision_"
+            + _digest({**prior_core, "occurred_at": 1}),
             **prior_core,
             idempotency_digest=_digest(prior_core),
             occurred_at=1,
@@ -172,13 +182,22 @@ def test_prior_f20_decision_remains_readable_without_granting_new_authority() ->
 def test_ignore_has_no_candidate() -> None:
     with pytest.raises(AutomaticDecisionError):
         AutomaticDecision.create(
-            review_case_id="review_case_" + "a" * 64, report_id="report_" + "b" * 64,
-            proposal_set_id="proposal_set_" + "c" * 64, proposal_id="review_proposal_" + "d" * 64,
-            target_fingerprint="e" * 64, destination="title", outcome="ignore",
-            candidate_id="alternative_" + "f" * 64, resolved_policy_id="resolved_policy_" + "0" * 64,
-            policy_generation=1, rule_id="shadow_rule_" + "1" * 64, policy_category="title_layout",
-            policy_option="preserve", qualification_manifest_sha256="2" * 64,
-            source_outcome_id="shadow_outcome_" + "3" * 64, occurred_at=1,
+            review_case_id="review_case_" + "a" * 64,
+            report_id="report_" + "b" * 64,
+            proposal_set_id="proposal_set_" + "c" * 64,
+            proposal_id="review_proposal_" + "d" * 64,
+            target_fingerprint="e" * 64,
+            destination="title",
+            outcome="ignore",
+            candidate_id="alternative_" + "f" * 64,
+            resolved_policy_id="resolved_policy_" + "0" * 64,
+            policy_generation=1,
+            rule_id="shadow_rule_" + "1" * 64,
+            policy_category="title_layout",
+            policy_option="preserve",
+            qualification_manifest_sha256="2" * 64,
+            source_outcome_id="shadow_outcome_" + "3" * 64,
+            occurred_at=1,
             bundle_id="automatic_bundle_" + "4" * 64,
         )
 
@@ -186,19 +205,30 @@ def test_ignore_has_no_candidate() -> None:
 def test_unqualified_imprint_cannot_create_authority() -> None:
     with pytest.raises(AutomaticDecisionError):
         AutomaticDecision.create(
-            review_case_id="review_case_" + "a" * 64, report_id="report_" + "b" * 64,
-            proposal_set_id="proposal_set_" + "c" * 64, proposal_id="review_proposal_" + "d" * 64,
-            target_fingerprint="e" * 64, destination="publisher", outcome="keep_current",
-            candidate_id=None, resolved_policy_id="resolved_policy_" + "0" * 64,
-            policy_generation=1, rule_id="shadow_rule_" + "1" * 64, policy_category="publisher_preference",
-            policy_option="imprint", qualification_manifest_sha256="2" * 64,
-            source_outcome_id="shadow_outcome_" + "3" * 64, occurred_at=1,
+            review_case_id="review_case_" + "a" * 64,
+            report_id="report_" + "b" * 64,
+            proposal_set_id="proposal_set_" + "c" * 64,
+            proposal_id="review_proposal_" + "d" * 64,
+            target_fingerprint="e" * 64,
+            destination="publisher",
+            outcome="keep_current",
+            candidate_id=None,
+            resolved_policy_id="resolved_policy_" + "0" * 64,
+            policy_generation=1,
+            rule_id="shadow_rule_" + "1" * 64,
+            policy_category="publisher_preference",
+            policy_option="imprint",
+            qualification_manifest_sha256="2" * 64,
+            source_outcome_id="shadow_outcome_" + "3" * 64,
+            occurred_at=1,
             bundle_id=None,
         )
 
 
 def test_safety_state_fails_closed_per_category_and_globally() -> None:
-    assert not AutomaticSafetyState(False, None, (("title_layout", "safety"),)).permits("title_layout")
+    assert not AutomaticSafetyState(False, None, (("title_layout", "safety"),)).permits(
+        "title_layout"
+    )
     assert not AutomaticSafetyState(False, "identity", ()).permits("date_precision")
     assert not AutomaticSafetyState(True, None, ()).permits("date_precision")
 

@@ -223,7 +223,13 @@ class _CoverConsiderationResponse(_ClosedModel):
 
 
 class _ReviewField(_ClosedModel):
-    classification: Literal["needs_attention", "manual_fallback", "automatic_recorded", "human_recorded", "unsupported"]
+    classification: Literal[
+        "needs_attention",
+        "manual_fallback",
+        "automatic_recorded",
+        "human_recorded",
+        "unsupported",
+    ]
     classification_reason: str
     current: _TargetField
     deterministic_disposition: str
@@ -344,7 +350,13 @@ class _HistoryCoverItem(_ClosedModel):
     decision: _DecisionProjection | None
     decision_id: str | None
     kind: Literal[
-        "automatic_prepared", "owner_retry_prepared", "superseded", "selected", "kept_incumbent", "no_action", "stale"
+        "automatic_prepared",
+        "owner_retry_prepared",
+        "superseded",
+        "selected",
+        "kept_incumbent",
+        "no_action",
+        "stale",
     ]
     occurred_at: int
     review_case_id: str
@@ -352,7 +364,13 @@ class _HistoryCoverItem(_ClosedModel):
 
 
 class _HistoryResponse(_ClosedModel):
-    items: list[_HistoryTransitionItem | _HistoryDecisionItem | _HistoryShadowItem | _HistoryAutomaticItem | _HistoryCoverItem]
+    items: list[
+        _HistoryTransitionItem
+        | _HistoryDecisionItem
+        | _HistoryShadowItem
+        | _HistoryAutomaticItem
+        | _HistoryCoverItem
+    ]
     next_cursor: str | None
     review_case_id: str
     schema_version: str
@@ -545,7 +563,9 @@ class _ActivityResponse(_ClosedModel):
     current_waiting: _ActivityWaiting | None
     paused: bool
     prepared: _ActivityPrepared
-    provider_recovery: list[_ProviderRecoveryActivity] = Field(default_factory=list, max_length=100)
+    provider_recovery: list[_ProviderRecoveryActivity] = Field(
+        default_factory=list, max_length=100
+    )
     schema_version: Literal["continuous-field-activity-v2"]
     suspensions: list[_ActivitySuspension]
 
@@ -688,10 +708,16 @@ class _ExplicitQualification(_RichQualificationBase):
 
 
 _RichQualification: TypeAlias = (
-    _SubtitleQualification | _SeriesQualification | _GenresQualification
-    | _TagsOffQualification | _TagsQualification | _DescriptionQualification
+    _SubtitleQualification
+    | _SeriesQualification
+    | _GenresQualification
+    | _TagsOffQualification
+    | _TagsQualification
+    | _DescriptionQualification
     | _GoogleDescriptionQualification
-    | _IsbnQualification | _AsinQualification | _ExplicitQualification
+    | _IsbnQualification
+    | _AsinQualification
+    | _ExplicitQualification
 )
 _RICH_QUALIFICATION_ADAPTER: TypeAdapter[_RichQualification] = TypeAdapter(
     _RichQualification
@@ -702,7 +728,9 @@ class _PolicyProfileResponse(_ClosedModel):
     policy_id: str
     profile: _PolicyProfile
     rich_qualification: list[_RichQualification]
-    schema_version: Literal["metadata-policy-notebook-v1"] = "metadata-policy-notebook-v1"
+    schema_version: Literal["metadata-policy-notebook-v1"] = (
+        "metadata-policy-notebook-v1"
+    )
 
 
 class _RichFieldPreviewResponse(_ClosedModel):
@@ -758,13 +786,17 @@ class _PolicyTransitionResponse(_ClosedModel):
     total: int
     failed: int
     acknowledged: bool
-    schema_version: Literal["metadata-policy-transition-v1"] = "metadata-policy-transition-v1"
+    schema_version: Literal["metadata-policy-transition-v1"] = (
+        "metadata-policy-transition-v1"
+    )
 
 
 class _PolicyActivationResponse(_ClosedModel):
     policy_id: str
     transition: _PolicyTransitionResponse | None
-    schema_version: Literal["metadata-policy-activation-v1"] = "metadata-policy-activation-v1"
+    schema_version: Literal["metadata-policy-activation-v1"] = (
+        "metadata-policy-activation-v1"
+    )
 
 
 class _ShadowPostureResponse(_ClosedModel):
@@ -878,22 +910,33 @@ class _PolicyTransitionFields(TypedDict):
 
 
 def _policy_transition_response(value: PolicyTransition) -> _PolicyTransitionResponse:
-    return _PolicyTransitionResponse(**cast("_PolicyTransitionFields", {
-        "transition_id": value.transition_id,
-        "from_policy_id": value.from_policy_id,
-        "to_policy_id": value.to_policy_id,
-        "generation": value.generation,
-        "state": value.state,
-        "completed": value.completed,
-        "total": value.total,
-        "failed": value.failed,
-        "acknowledged": value.acknowledged,
-    }))
+    return _PolicyTransitionResponse(
+        **cast(
+            "_PolicyTransitionFields",
+            {
+                "transition_id": value.transition_id,
+                "from_policy_id": value.from_policy_id,
+                "to_policy_id": value.to_policy_id,
+                "generation": value.generation,
+                "state": value.state,
+                "completed": value.completed,
+                "total": value.total,
+                "failed": value.failed,
+                "acknowledged": value.acknowledged,
+            },
+        )
+    )
 
 
-def _policy_application_http_error(error: MetadataPolicyApplicationError) -> HTTPException:
+def _policy_application_http_error(
+    error: MetadataPolicyApplicationError,
+) -> HTTPException:
     code = str(error)
-    status = 409 if "stale" in code or "processing" in code else (422 if "invalid" in code or "unqualified" in code else 503)
+    status = (
+        409
+        if "stale" in code or "processing" in code
+        else (422 if "invalid" in code or "unqualified" in code else 503)
+    )
     return HTTPException(status, detail={"code": code.replace(" ", "_")})
 
 
@@ -949,7 +992,11 @@ class _BodyLimitMiddleware:
         if scope["type"] != "http" or not (is_login or is_decision or is_policy_draft):
             await self._app(scope, receive, send)
             return
-        maximum = self._maximum_bytes if is_login else (16_384 if is_policy_draft else self._decision_maximum_bytes)
+        maximum = (
+            self._maximum_bytes
+            if is_login
+            else (16_384 if is_policy_draft else self._decision_maximum_bytes)
+        )
         declared = next(
             (
                 value
@@ -992,9 +1039,7 @@ def _replay(messages: list[Message]) -> Receive:
     return receive
 
 
-async def _oversized_body_response(
-    scope: Scope, receive: Receive, send: Send
-) -> None:
+async def _oversized_body_response(scope: Scope, receive: Receive, send: Send) -> None:
     response = _error(413, "body_too_large")
     _set_security_headers(response, hsts=True)
     await response(scope, receive, send)
@@ -1052,12 +1097,8 @@ def create_review_app(
         try:
             return sessions.issue_browser_csrf(session_token)
         except ReviewWebError as error:
-            status_code = {"unauthorized": 401, "persistence": 503}.get(
-                error.code, 503
-            )
-            raise HTTPException(
-                status_code, detail={"code": error.code}
-            ) from None
+            status_code = {"unauthorized": 401, "persistence": 503}.get(error.code, 503)
+            raise HTTPException(status_code, detail={"code": error.code}) from None
 
     app.add_middleware(
         _BodyLimitMiddleware,
@@ -1077,7 +1118,10 @@ def create_review_app(
         if request.scope["path"] not in {"/health/live", "/health/ready"}:
             if not _request_matches_origin(request, configuration):
                 return _secured_error(400, "invalid_origin")
-            if request.method not in {"GET", "HEAD", "OPTIONS"} and request.headers.get("origin") != configuration.canonical_origin:
+            if (
+                request.method not in {"GET", "HEAD", "OPTIONS"}
+                and request.headers.get("origin") != configuration.canonical_origin
+            ):
                 return _secured_error(403, "origin")
         response = await call_next(request)
         _set_security_headers(response, hsts=origin.scheme == "https")
@@ -1090,8 +1134,9 @@ def create_review_app(
     @app.get("/health/ready", include_in_schema=False)
     def readiness() -> PlainTextResponse:
         ready = application.ready()
-        return PlainTextResponse("ready\n" if ready else "draining\n",
-                                 status_code=200 if ready else 503)
+        return PlainTextResponse(
+            "ready\n" if ready else "draining\n", status_code=200 if ready else 503
+        )
 
     _register_session_and_operations_routes(
         app, application, configuration, authenticated_session_cookie
@@ -1103,9 +1148,7 @@ def create_review_app(
     _register_browse_and_preparation_routes(
         app, application, session_cookie, authenticated_session_cookie
     )
-    _register_html_routes(
-        app, application, session_cookie, browser_csrf, assets
-    )
+    _register_html_routes(app, application, session_cookie, browser_csrf, assets)
 
     @app.exception_handler(HTTPException)
     async def http_error(_: Request, error: HTTPException) -> JSONResponse:
@@ -1114,9 +1157,13 @@ def create_review_app(
         return _error(error.status_code, str(code))
 
     @app.exception_handler(RequestValidationError)
-    async def validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
+    async def validation_error(
+        request: Request, error: RequestValidationError
+    ) -> JSONResponse:
         if request.scope["path"].startswith("/api/v1/metadata-policy/"):
-            if any(item.get("loc") == ("header", "x-csrf-token") for item in error.errors()):
+            if any(
+                item.get("loc") == ("header", "x-csrf-token") for item in error.errors()
+            ):
                 return _error(403, "csrf")
             return _error(422, "policy_validation")
         return _error(422, "invalid")
@@ -1195,8 +1242,11 @@ def _register_session_and_operations_routes(
 ) -> None:
     sessions = application
 
-    @app.get("/api/v1/operations/status", response_model=_OperationalResponse,
-             responses={status: {"model": _ErrorResponse} for status in (401, 503)})
+    @app.get(
+        "/api/v1/operations/status",
+        response_model=_OperationalResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
     def operations_status(
         ml_session: str = Depends(authenticated_session_cookie),
     ) -> _OperationalResponse:
@@ -1206,11 +1256,15 @@ def _register_session_and_operations_routes(
         try:
             return _OperationalResponse.model_validate(application.operations_status())
         except (OperationsError, FieldEffectError):
-            raise HTTPException(503, detail={"code": "operations_unavailable"}) from None
+            raise HTTPException(
+                503, detail={"code": "operations_unavailable"}
+            ) from None
 
-    @app.get("/api/v1/operations/support/preview",
-             response_model=_SupportPreviewResponse,
-             responses={status: {"model": _ErrorResponse} for status in (401, 503)})
+    @app.get(
+        "/api/v1/operations/support/preview",
+        response_model=_SupportPreviewResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
     def support_preview(
         ml_session: str = Depends(authenticated_session_cookie),
     ) -> _SupportPreviewResponse:
@@ -1218,14 +1272,16 @@ def _register_session_and_operations_routes(
         try:
             if not application.operations_available:
                 raise OperationsError("support_unavailable")
-            return _SupportPreviewResponse.model_validate(
-                application.support_preview()
-            )
+            return _SupportPreviewResponse.model_validate(application.support_preview())
         except OperationsError:
             raise HTTPException(503, detail={"code": "support_unavailable"}) from None
 
-    @app.post("/api/v1/operations/support/export",
-              responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)})
+    @app.post(
+        "/api/v1/operations/support/export",
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)
+        },
+    )
     def support_export(
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
@@ -1234,10 +1290,13 @@ def _register_session_and_operations_routes(
         try:
             if not application.operations_available:
                 raise OperationsError("support_unavailable")
-            return Response(application.support_export(),
-                            media_type="application/json",
-                            headers={"Content-Disposition":
-                                     "attachment; filename=mechanical-librarian-support.json"})
+            return Response(
+                application.support_export(),
+                media_type="application/json",
+                headers={
+                    "Content-Disposition": "attachment; filename=mechanical-librarian-support.json"
+                },
+            )
         except OperationsError:
             raise HTTPException(503, detail={"code": "support_unavailable"}) from None
 
@@ -1291,8 +1350,7 @@ def _register_session_and_operations_routes(
         "/api/v1/session/logout",
         status_code=204,
         responses={
-            status: {"model": _ErrorResponse}
-            for status in (400, 401, 403, 422, 503)
+            status: {"model": _ErrorResponse} for status in (400, 401, 403, 422, 503)
         },
     )
     def logout(
@@ -1309,7 +1367,9 @@ def _register_session_and_operations_routes(
                 "unauthorized": 401,
             }.get(error.code, 503)
             raise HTTPException(status, detail={"code": error.code}) from None
-        response.delete_cookie(_COOKIE_NAME, path="/", secure=True, httponly=True, samesite="strict")
+        response.delete_cookie(
+            _COOKIE_NAME, path="/", secure=True, httponly=True, samesite="strict"
+        )
         response.status_code = 204
         return response
 
@@ -1327,7 +1387,9 @@ def _register_policy_routes(
         "/api/v1/metadata-policy/drafts",
         response_model=_PolicyDraftResponse,
         status_code=201,
-        responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)},
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)
+        },
     )
     def create_metadata_policy_draft(
         payload: _PolicyDraftRequest,
@@ -1352,50 +1414,107 @@ def _register_policy_routes(
             raise HTTPException(503, detail={"code": "persistence"}) from None
         return _PolicyDraftResponse(policy_id=policy_id)
 
-    @app.get("/api/v1/metadata-policy/state", response_model=_PolicyProfileResponse, responses={status: {"model": _ErrorResponse} for status in (401, 503)})
-    def metadata_policy_state(ml_session: str = Depends(authenticated_session_cookie)) -> _PolicyProfileResponse:
+    @app.get(
+        "/api/v1/metadata-policy/state",
+        response_model=_PolicyProfileResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def metadata_policy_state(
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> _PolicyProfileResponse:
         _require_session(sessions, ml_session)
         profile = notebook.active()
         return _PolicyProfileResponse(
-            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data()),
-            rich_qualification=[_RICH_QUALIFICATION_ADAPTER.validate_python(item) for item in notebook.rich_qualification(profile)],
+            policy_id=profile.policy_id,
+            profile=_PolicyProfile.model_validate(profile.to_data()),
+            rich_qualification=[
+                _RICH_QUALIFICATION_ADAPTER.validate_python(item)
+                for item in notebook.rich_qualification(profile)
+            ],
         )
 
-    @app.get("/api/v1/metadata-policy/shadow", response_model=_ShadowPostureResponse, responses={status: {"model": _ErrorResponse} for status in (401, 503)})
-    def shadow_posture(ml_session: str = Depends(authenticated_session_cookie)) -> _ShadowPostureResponse:
+    @app.get(
+        "/api/v1/metadata-policy/shadow",
+        response_model=_ShadowPostureResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def shadow_posture(
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> _ShadowPostureResponse:
         _require_session(sessions, ml_session)
         try:
             return _ShadowPostureResponse.model_validate(notebook.shadow_state())
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 
-    @app.post("/api/v1/metadata-policy/shadow/enter", response_model=_ShadowPostureResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)})
-    def enter_shadow_preview(ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _ShadowPostureResponse:
+    @app.post(
+        "/api/v1/metadata-policy/shadow/enter",
+        response_model=_ShadowPostureResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)
+        },
+    )
+    def enter_shadow_preview(
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _ShadowPostureResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            return _ShadowPostureResponse.model_validate(notebook.enter_preview(application.now()))
+            return _ShadowPostureResponse.model_validate(
+                notebook.enter_preview(application.now())
+            )
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 
-    @app.post("/api/v1/metadata-policy/shadow/confirm-automatic", response_model=_ShadowPostureResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)})
-    def confirm_automatic(ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _ShadowPostureResponse:
+    @app.post(
+        "/api/v1/metadata-policy/shadow/confirm-automatic",
+        response_model=_ShadowPostureResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)
+        },
+    )
+    def confirm_automatic(
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _ShadowPostureResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
-            return _ShadowPostureResponse.model_validate(notebook.confirm_automatic(application.now()))
+            return _ShadowPostureResponse.model_validate(
+                notebook.confirm_automatic(application.now())
+            )
         except MetadataPolicyApplicationError:
             raise HTTPException(422, detail={"code": "automatic_unavailable"}) from None
 
     def _automatic_safety_response() -> _AutomaticSafetyResponse:
         state = automatic_safety.state()
-        return _AutomaticSafetyResponse(paused=state.paused, global_suspension=state.global_suspension, category_suspensions=dict(state.category_suspensions))
+        return _AutomaticSafetyResponse(
+            paused=state.paused,
+            global_suspension=state.global_suspension,
+            category_suspensions=dict(state.category_suspensions),
+        )
 
-    @app.get("/api/v1/metadata-policy/automatic-safety", response_model=_AutomaticSafetyResponse)
-    def automatic_safety_state(ml_session: str = Depends(authenticated_session_cookie)) -> _AutomaticSafetyResponse:
+    @app.get(
+        "/api/v1/metadata-policy/automatic-safety",
+        response_model=_AutomaticSafetyResponse,
+    )
+    def automatic_safety_state(
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> _AutomaticSafetyResponse:
         _require_session(sessions, ml_session)
         return _automatic_safety_response()
 
-    @app.post("/api/v1/metadata-policy/automatic-safety/pause", response_model=_AutomaticSafetyResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
-    def set_automatic_pause(payload: _AutomaticPauseRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _AutomaticSafetyResponse:
+    @app.post(
+        "/api/v1/metadata-policy/automatic-safety/pause",
+        response_model=_AutomaticSafetyResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)
+        },
+    )
+    def set_automatic_pause(
+        payload: _AutomaticPauseRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _AutomaticSafetyResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
             automatic_safety.pause(payload.paused, application.now())
@@ -1405,8 +1524,18 @@ def _register_policy_routes(
         except Exception:
             raise HTTPException(422, detail={"code": "request"}) from None
 
-    @app.post("/api/v1/metadata-policy/automatic-safety/recover", response_model=_AutomaticSafetyResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
-    def recover_automatic_safety(payload: _AutomaticRecoveryRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _AutomaticSafetyResponse:
+    @app.post(
+        "/api/v1/metadata-policy/automatic-safety/recover",
+        response_model=_AutomaticSafetyResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)
+        },
+    )
+    def recover_automatic_safety(
+        payload: _AutomaticRecoveryRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _AutomaticSafetyResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
             category = payload.category
@@ -1419,38 +1548,72 @@ def _register_policy_routes(
         except Exception:
             raise HTTPException(422, detail={"code": "request"}) from None
 
-    @app.post("/api/v1/metadata-policy/automatic-safety/suspend", response_model=_AutomaticSafetyResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
-    def suspend_automatic_safety(payload: _AutomaticSuspendRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _AutomaticSafetyResponse:
+    @app.post(
+        "/api/v1/metadata-policy/automatic-safety/suspend",
+        response_model=_AutomaticSafetyResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)
+        },
+    )
+    def suspend_automatic_safety(
+        payload: _AutomaticSuspendRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _AutomaticSafetyResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
             if payload.category is not None and not payload.category:
                 raise ValueError
-            automatic_safety.suspend(payload.reason, application.now(), payload.category)
+            automatic_safety.suspend(
+                payload.reason, application.now(), payload.category
+            )
             return _automatic_safety_response()
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
         except Exception:
             raise HTTPException(422, detail={"code": "request"}) from None
 
-
-    @app.get("/api/v1/metadata-policy/shadow/leave-preview", response_model=_ShadowLeaveResponse, responses={status: {"model": _ErrorResponse} for status in (401, 503)})
-    def preview_leave_shadow(ml_session: str = Depends(authenticated_session_cookie)) -> _ShadowLeaveResponse:
+    @app.get(
+        "/api/v1/metadata-policy/shadow/leave-preview",
+        response_model=_ShadowLeaveResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def preview_leave_shadow(
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> _ShadowLeaveResponse:
         _require_session(sessions, ml_session)
         try:
             return _ShadowLeaveResponse.model_validate(notebook.preview_leave())
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 
-    @app.get("/api/v1/metadata-policy/shadow/outcomes", response_model=_ShadowSampleResponse, responses={status: {"model": _ErrorResponse} for status in (401, 422, 503)})
-    def shadow_outcome_sample(limit: int = Query(default=20, ge=1, le=50), ml_session: str = Depends(authenticated_session_cookie)) -> _ShadowSampleResponse:
+    @app.get(
+        "/api/v1/metadata-policy/shadow/outcomes",
+        response_model=_ShadowSampleResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 422, 503)},
+    )
+    def shadow_outcome_sample(
+        limit: int = Query(default=20, ge=1, le=50),
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> _ShadowSampleResponse:
         _require_session(sessions, ml_session)
         try:
             return _ShadowSampleResponse.model_validate(notebook.shadow_sample(limit))
         except MetadataPolicyApplicationError:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 
-    @app.post("/api/v1/metadata-policy/validate", response_model=_PolicyProfileResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
-    def validate_metadata_policy(payload: _PolicyDraftRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyProfileResponse:
+    @app.post(
+        "/api/v1/metadata-policy/validate",
+        response_model=_PolicyProfileResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)
+        },
+    )
+    def validate_metadata_policy(
+        payload: _PolicyDraftRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PolicyProfileResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
             profile = application.validate_policy(
@@ -1461,24 +1624,50 @@ def _register_policy_routes(
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None
         return _PolicyProfileResponse(
-            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data()),
-            rich_qualification=[_RICH_QUALIFICATION_ADAPTER.validate_python(item) for item in notebook.rich_qualification(profile)],
+            policy_id=profile.policy_id,
+            profile=_PolicyProfile.model_validate(profile.to_data()),
+            rich_qualification=[
+                _RICH_QUALIFICATION_ADAPTER.validate_python(item)
+                for item in notebook.rich_qualification(profile)
+            ],
         )
 
-    @app.get("/api/v1/metadata-policy/drafts/{policy_id}", response_model=_PolicyProfileResponse, responses={status: {"model": _ErrorResponse} for status in (401, 404, 422, 503)})
-    def get_metadata_policy_draft(policy_id: str, ml_session: str = Depends(authenticated_session_cookie)) -> _PolicyProfileResponse:
+    @app.get(
+        "/api/v1/metadata-policy/drafts/{policy_id}",
+        response_model=_PolicyProfileResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 404, 422, 503)
+        },
+    )
+    def get_metadata_policy_draft(
+        policy_id: str, ml_session: str = Depends(authenticated_session_cookie)
+    ) -> _PolicyProfileResponse:
         _require_session(sessions, ml_session)
         try:
             profile = notebook.read(policy_id)
         except MetadataPolicyApplicationError:
             raise HTTPException(404, detail={"code": "unavailable"}) from None
         return _PolicyProfileResponse(
-            policy_id=profile.policy_id, profile=_PolicyProfile.model_validate(profile.to_data()),
-            rich_qualification=[_RICH_QUALIFICATION_ADAPTER.validate_python(item) for item in notebook.rich_qualification(profile)],
+            policy_id=profile.policy_id,
+            profile=_PolicyProfile.model_validate(profile.to_data()),
+            rich_qualification=[
+                _RICH_QUALIFICATION_ADAPTER.validate_python(item)
+                for item in notebook.rich_qualification(profile)
+            ],
         )
 
-    @app.post("/api/v1/metadata-policy/preview", response_model=_PolicyPreviewResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)})
-    def preview_metadata_policy(payload: _PolicyDraftRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyPreviewResponse:
+    @app.post(
+        "/api/v1/metadata-policy/preview",
+        response_model=_PolicyPreviewResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 413, 422, 503)
+        },
+    )
+    def preview_metadata_policy(
+        payload: _PolicyDraftRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PolicyPreviewResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
             profile, preview = application.preview_policy(
@@ -1488,10 +1677,45 @@ def _register_policy_routes(
             raise HTTPException(422, detail={"code": _policy_problem(error)}) from None
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None
-        return _PolicyPreviewResponse(active_policy_id=preview.active_policy_id, policy_id=profile.policy_id, rich_qualification=[_RICH_QUALIFICATION_ADAPTER.validate_python(item) for item in notebook.rich_qualification(profile)], libraries=[_PolicyImpactResponse(affected_categories=list(item.affected_categories), cases=[_RichCasePreviewResponse.model_validate({**case.to_data(), "work_label": item.work_labels[index]}) for index, case in enumerate(item.cases)], cases_total=item.cases_total, cases_truncated=item.cases_truncated, current_unapplied_count=item.current_unapplied_count, library=item.library, resolved_policy_id=item.resolved_policy_id) for item in preview.libraries])
+        return _PolicyPreviewResponse(
+            active_policy_id=preview.active_policy_id,
+            policy_id=profile.policy_id,
+            rich_qualification=[
+                _RICH_QUALIFICATION_ADAPTER.validate_python(item)
+                for item in notebook.rich_qualification(profile)
+            ],
+            libraries=[
+                _PolicyImpactResponse(
+                    affected_categories=list(item.affected_categories),
+                    cases=[
+                        _RichCasePreviewResponse.model_validate(
+                            {**case.to_data(), "work_label": item.work_labels[index]}
+                        )
+                        for index, case in enumerate(item.cases)
+                    ],
+                    cases_total=item.cases_total,
+                    cases_truncated=item.cases_truncated,
+                    current_unapplied_count=item.current_unapplied_count,
+                    library=item.library,
+                    resolved_policy_id=item.resolved_policy_id,
+                )
+                for item in preview.libraries
+            ],
+        )
 
-    @app.post("/api/v1/metadata-policy/activate", response_model=_PolicyActivationResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 413, 422, 503)})
-    def activate_metadata_policy(payload: _PolicyActivationRequest, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyActivationResponse:
+    @app.post(
+        "/api/v1/metadata-policy/activate",
+        response_model=_PolicyActivationResponse,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
+    )
+    def activate_metadata_policy(
+        payload: _PolicyActivationRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PolicyActivationResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
             result = notebook.activate(
@@ -1501,18 +1725,39 @@ def _register_policy_routes(
             )
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None
-        return _PolicyActivationResponse(policy_id=result.active.policy_id, transition=None if result.transition is None else _policy_transition_response(result.transition))
+        return _PolicyActivationResponse(
+            policy_id=result.active.policy_id,
+            transition=None
+            if result.transition is None
+            else _policy_transition_response(result.transition),
+        )
 
-    @app.get("/api/v1/metadata-policy/transition", response_model=_PolicyTransitionResponse | None, responses={status: {"model": _ErrorResponse} for status in (401, 503)})
-    def metadata_policy_transition(ml_session: str = Depends(authenticated_session_cookie)) -> _PolicyTransitionResponse | None:
+    @app.get(
+        "/api/v1/metadata-policy/transition",
+        response_model=_PolicyTransitionResponse | None,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def metadata_policy_transition(
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> _PolicyTransitionResponse | None:
         try:
             transition = notebook.transition()
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None
         return None if transition is None else _policy_transition_response(transition)
 
-    @app.post("/api/v1/metadata-policy/transitions/{transition_id}/retry", response_model=_PolicyTransitionResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)})
-    def retry_metadata_policy_transition(transition_id: str, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyTransitionResponse:
+    @app.post(
+        "/api/v1/metadata-policy/transitions/{transition_id}/retry",
+        response_model=_PolicyTransitionResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
+    )
+    def retry_metadata_policy_transition(
+        transition_id: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PolicyTransitionResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
             return _policy_transition_response(
@@ -1521,8 +1766,18 @@ def _register_policy_routes(
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None
 
-    @app.post("/api/v1/metadata-policy/transitions/{transition_id}/acknowledge", response_model=_PolicyTransitionResponse, responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)})
-    def acknowledge_metadata_policy_transition(transition_id: str, ml_session: str = Depends(authenticated_session_cookie), x_csrf_token: str = Header()) -> _PolicyTransitionResponse:
+    @app.post(
+        "/api/v1/metadata-policy/transitions/{transition_id}/acknowledge",
+        response_model=_PolicyTransitionResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
+    )
+    def acknowledge_metadata_policy_transition(
+        transition_id: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _PolicyTransitionResponse:
         _require_session(sessions, ml_session, x_csrf_token)
         try:
             return _policy_transition_response(
@@ -1544,8 +1799,7 @@ def _register_case_and_effect_routes(
         "/api/v1/review-cases/{review_case_id}",
         response_model=_CaseDetailResponse,
         responses={
-            status: {"model": _ErrorResponse}
-            for status in (400, 401, 404, 409, 422)
+            status: {"model": _ErrorResponse} for status in (400, 401, 404, 409, 422)
         },
     )
     def case_detail(
@@ -1561,8 +1815,15 @@ def _register_case_and_effect_routes(
         "/api/v1/review-cases/{review_case_id}/cover-considerations/{consideration_id}/images/{reference}",
         response_class=Response,
         responses={
-            200: {"content": {"image/png": {"schema": {"type": "string", "format": "binary"}}}},
-            **{status: {"model": _ErrorResponse} for status in (401, 404, 409, 422, 503)},
+            200: {
+                "content": {
+                    "image/png": {"schema": {"type": "string", "format": "binary"}}
+                }
+            },
+            **{
+                status: {"model": _ErrorResponse}
+                for status in (401, 404, 409, 422, 503)
+            },
         },
     )
     def cover_consideration_image(
@@ -1579,9 +1840,7 @@ def _register_case_and_effect_routes(
         ):
             raise HTTPException(404, detail={"code": "not_found"})
         payload = _case_call(
-            lambda: application.cover_image(
-                review_case_id, consideration_id, reference
-            )
+            lambda: application.cover_image(review_case_id, consideration_id, reference)
         )
         return Response(
             content=payload,
@@ -1596,7 +1855,10 @@ def _register_case_and_effect_routes(
     @app.post(
         "/api/v1/review-cases/{review_case_id}/cover-considerations/retry",
         response_model=_CoverConsiderationResponse,
-        responses={status: {"model": _ErrorResponse} for status in (401, 403, 404, 409, 422, 503)},
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 404, 409, 422, 503)
+        },
     )
     def retry_cover_consideration(
         review_case_id: str,
@@ -1622,9 +1884,7 @@ def _register_case_and_effect_routes(
         payload: _DecisionRequest,
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
-        idempotency_key: str = Header(
-            min_length=16, max_length=128
-        ),
+        idempotency_key: str = Header(min_length=16, max_length=128),
     ) -> _DecisionAcknowledgement:
         actor = _require_session(sessions, ml_session, x_csrf_token)
         _require_case_id(review_case_id)
@@ -1654,16 +1914,26 @@ def _register_case_and_effect_routes(
             return callable_()
         except (GuardedApplicationError, FieldEffectError, RuntimeError) as error:
             code = getattr(error, "code", "unavailable")
-            status_code = 404 if code == "not_found" else 409 if code in {
-                "claim_conflict", "transition_conflict", "draining", "paused"
-            } else 503
+            status_code = (
+                404
+                if code == "not_found"
+                else 409
+                if code
+                in {"claim_conflict", "transition_conflict", "draining", "paused"}
+                else 503
+            )
             raise HTTPException(status_code, detail={"code": code}) from None
 
-    @app.get("/api/v1/activity", response_model=_ActivityResponse,
-             responses={status: {"model": _ErrorResponse} for status in (401, 422, 503)})
+    @app.get(
+        "/api/v1/activity",
+        response_model=_ActivityResponse,
+        responses={status: {"model": _ErrorResponse} for status in (401, 422, 503)},
+    )
     def activity_status(
         q: str | None = Query(default=None),
-        event_type: Literal["all", "review", "policy", "metadata", "safety", "unknown"] = Query(default="all"),
+        event_type: Literal[
+            "all", "review", "policy", "metadata", "safety", "unknown"
+        ] = Query(default="all"),
         range_days: int = Query(default=30, json_schema_extra={"enum": [7, 30, 90]}),
         page: int = Query(default=1, ge=1, le=1_000_000),
         page_size: int = Query(default=25, json_schema_extra={"enum": [25, 50, 100]}),
@@ -1681,32 +1951,49 @@ def _register_case_and_effect_routes(
                 raise HTTPException(status_code=422, detail={"code": "invalid"})
         if range_days not in {7, 30, 90} or page_size not in {25, 50, 100}:
             raise HTTPException(status_code=422, detail={"code": "invalid"})
-        return _ActivityResponse.model_validate(field_effect_call(lambda: application.activity(
-            search=q,
-            event_type=event_type,
-            range_days=range_days,
-            page=page,
-            page_size=page_size,
-        )))
+        return _ActivityResponse.model_validate(
+            field_effect_call(
+                lambda: application.activity(
+                    search=q,
+                    event_type=event_type,
+                    range_days=range_days,
+                    page=page,
+                    page_size=page_size,
+                )
+            )
+        )
 
-    @app.post("/api/v1/activity/consent", response_model=_ActivityResponse,
-              responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)})
+    @app.post(
+        "/api/v1/activity/consent",
+        response_model=_ActivityResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
+    )
     def enable_guarded_activity(
         payload: _ActivityConsentRequest,
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
     ) -> _ActivityResponse:
         _require_session(sessions, ml_session, x_csrf_token)
-        return _ActivityResponse.model_validate(field_effect_call(
-            lambda: application.enable_activity(tuple(
-                (grant.library, tuple(grant.destinations))
-                for grant in payload.grants
-            ))
-        ))
+        return _ActivityResponse.model_validate(
+            field_effect_call(
+                lambda: application.enable_activity(
+                    tuple(
+                        (grant.library, tuple(grant.destinations))
+                        for grant in payload.grants
+                    )
+                )
+            )
+        )
 
-    @app.post("/api/v1/activity/{connection}/{library}/revoke",
-              response_model=_ActivityResponse,
-              responses={status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)})
+    @app.post(
+        "/api/v1/activity/{connection}/{library}/revoke",
+        response_model=_ActivityResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
+    )
     def revoke_guarded_activity(
         connection: str,
         library: str,
@@ -1714,15 +2001,17 @@ def _register_case_and_effect_routes(
         x_csrf_token: str = Header(),
     ) -> _ActivityResponse:
         _require_session(sessions, ml_session, x_csrf_token)
-        return _ActivityResponse.model_validate(field_effect_call(
-            lambda: application.revoke_activity(connection, library)
-        ))
+        return _ActivityResponse.model_validate(
+            field_effect_call(lambda: application.revoke_activity(connection, library))
+        )
 
     @app.post(
         "/api/v1/review-cases/{review_case_id}/fields/{destination}/return-to-automatic",
         status_code=204,
-        responses={status: {"model": _ErrorResponse}
-                   for status in (401, 403, 404, 409, 422, 503)},
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 404, 409, 422, 503)
+        },
     )
     def return_field_to_automatic(
         review_case_id: str,
@@ -1735,52 +2024,86 @@ def _register_case_and_effect_routes(
         if destination not in SUPPORTED_DESTINATIONS:
             raise HTTPException(404, detail={"code": "not_found"})
         field_effect_call(
-            lambda: application.return_to_automatic(
-                review_case_id, destination
-            )
+            lambda: application.return_to_automatic(review_case_id, destination)
         )
         return Response(status_code=204)
 
-    @app.get("/api/v1/field-effects/{plan_id}", response_model=dict[str, object],
-             responses={status: {"model": _ErrorResponse} for status in (401, 404, 422, 503)})
-    def field_effect_status(plan_id: str,
-                            ml_session: str = Depends(authenticated_session_cookie)) -> dict[str, object]:
+    @app.get(
+        "/api/v1/field-effects/{plan_id}",
+        response_model=dict[str, object],
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 404, 422, 503)
+        },
+    )
+    def field_effect_status(
+        plan_id: str, ml_session: str = Depends(authenticated_session_cookie)
+    ) -> dict[str, object]:
         if not re.fullmatch(r"effect_plan_[0-9a-f]{64}", plan_id):
             raise HTTPException(404, detail={"code": "not_found"})
         return field_effect_call(lambda: application.field_effect_status(plan_id))
 
-    @app.post("/api/v1/field-effects/{plan_id}/apply", response_model=dict[str, object],
-              responses={status: {"model": _ErrorResponse} for status in (401, 403, 404, 409, 422, 503)})
-    def apply_field_effect(plan_id: str, ml_session: str = Depends(authenticated_session_cookie),
-                           x_csrf_token: str = Header()) -> dict[str, object]:
+    @app.post(
+        "/api/v1/field-effects/{plan_id}/apply",
+        response_model=dict[str, object],
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 404, 409, 422, 503)
+        },
+    )
+    def apply_field_effect(
+        plan_id: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> dict[str, object]:
         _require_session(sessions, ml_session, x_csrf_token)
         if not re.fullmatch(r"effect_plan_[0-9a-f]{64}", plan_id):
             raise HTTPException(404, detail={"code": "not_found"})
         return field_effect_call(lambda: application.apply_field_effect(plan_id))
 
-    @app.post("/api/v1/field-effects/{plan_id}/reconcile", response_model=dict[str, object],
-              responses={status: {"model": _ErrorResponse} for status in (401, 403, 404, 409, 422, 503)})
-    def reconcile_field_effect(plan_id: str, ml_session: str = Depends(authenticated_session_cookie),
-                               x_csrf_token: str = Header()) -> dict[str, object]:
+    @app.post(
+        "/api/v1/field-effects/{plan_id}/reconcile",
+        response_model=dict[str, object],
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 404, 409, 422, 503)
+        },
+    )
+    def reconcile_field_effect(
+        plan_id: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> dict[str, object]:
         _require_session(sessions, ml_session, x_csrf_token)
         if not re.fullmatch(r"effect_plan_[0-9a-f]{64}", plan_id):
             raise HTTPException(404, detail={"code": "not_found"})
-        return field_effect_call(
-            lambda: application.reconcile_field_effect(plan_id)
-        )
+        return field_effect_call(lambda: application.reconcile_field_effect(plan_id))
 
-    @app.post("/api/v1/field-effects/pause", status_code=204,
-              responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)})
-    def pause_field_effects(ml_session: str = Depends(authenticated_session_cookie),
-                            x_csrf_token: str = Header()) -> Response:
+    @app.post(
+        "/api/v1/field-effects/pause",
+        status_code=204,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)
+        },
+    )
+    def pause_field_effects(
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> Response:
         _require_session(sessions, ml_session, x_csrf_token)
         field_effect_call(application.pause_field_effects)
         return Response(status_code=204)
 
-    @app.post("/api/v1/field-effects/resume", status_code=204,
-              responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)})
-    def resume_field_effects(ml_session: str = Depends(authenticated_session_cookie),
-                             x_csrf_token: str = Header()) -> Response:
+    @app.post(
+        "/api/v1/field-effects/resume",
+        status_code=204,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)
+        },
+    )
+    def resume_field_effects(
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> Response:
         _require_session(sessions, ml_session, x_csrf_token)
         field_effect_call(application.resume_field_effects)
         return Response(status_code=204)
@@ -1805,8 +2128,7 @@ def _register_browse_and_preparation_routes(
         "/api/v1/library",
         response_model=_LibraryResponse,
         responses={
-            status: {"model": _ErrorResponse}
-            for status in (400, 401, 422, 503)
+            status: {"model": _ErrorResponse} for status in (400, 401, 422, 503)
         },
     )
     def library(
@@ -1832,8 +2154,7 @@ def _register_browse_and_preparation_routes(
         "/api/v1/attention",
         response_model=_AttentionResponse,
         responses={
-            status: {"model": _ErrorResponse}
-            for status in (400, 401, 422, 503)
+            status: {"model": _ErrorResponse} for status in (400, 401, 422, 503)
         },
     )
     def attention(
@@ -1896,7 +2217,9 @@ def _register_browse_and_preparation_routes(
         except Exception:
             raise HTTPException(503, detail={"code": "persistence"}) from None
 
-    def preparation_control(paused: bool, ml_session: str, csrf: str) -> _PreparationResponse:
+    def preparation_control(
+        paused: bool, ml_session: str, csrf: str
+    ) -> _PreparationResponse:
         _require_session(sessions, ml_session, csrf)
         try:
             return _PreparationResponse.model_validate(
@@ -1914,7 +2237,9 @@ def _register_browse_and_preparation_routes(
     @app.post(
         "/api/v1/review-preparation/pause",
         response_model=_PreparationResponse,
-        responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)},
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)
+        },
     )
     def pause_review_preparation(
         ml_session: str = Depends(authenticated_session_cookie),
@@ -1925,7 +2250,9 @@ def _register_browse_and_preparation_routes(
     @app.post(
         "/api/v1/review-preparation/resume",
         response_model=_PreparationResponse,
-        responses={status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)},
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 422, 503)
+        },
     )
     def resume_review_preparation(
         ml_session: str = Depends(authenticated_session_cookie),
@@ -1936,7 +2263,9 @@ def _register_browse_and_preparation_routes(
     @app.post(
         "/api/v1/review-preparation/{connection}/check-connection",
         response_model=_PreparationResponse,
-        responses={status: {"model": _ErrorResponse} for status in (401, 403, 404, 422, 503)},
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 404, 422, 503)
+        },
     )
     def check_review_preparation_connection(
         connection: str,
@@ -1959,7 +2288,10 @@ def _register_browse_and_preparation_routes(
         "/api/v1/review-preparation/{connection}/{library_name}/retry",
         response_model=_PreparationProgress,
         status_code=202,
-        responses={status: {"model": _ErrorResponse} for status in (401, 403, 404, 409, 422, 503)},
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 404, 409, 422, 503)
+        },
     )
     def retry_review_preparation(
         connection: str,
@@ -1981,8 +2313,7 @@ def _register_browse_and_preparation_routes(
         "/api/v1/review-cases/{review_case_id}/evidence",
         response_model=_EvidenceResponse,
         responses={
-            status: {"model": _ErrorResponse}
-            for status in (400, 401, 404, 409, 422)
+            status: {"model": _ErrorResponse} for status in (400, 401, 404, 409, 422)
         },
     )
     def case_evidence(
@@ -2007,8 +2338,7 @@ def _register_browse_and_preparation_routes(
         "/api/v1/review-cases/{review_case_id}/history",
         response_model=_HistoryResponse,
         responses={
-            status: {"model": _ErrorResponse}
-            for status in (400, 401, 404, 409, 422)
+            status: {"model": _ErrorResponse} for status in (400, 401, 404, 409, 422)
         },
     )
     def case_history(
@@ -2097,7 +2427,7 @@ def _register_html_routes(
 
 def _react_asset_recovery_response() -> HTMLResponse:
     return HTMLResponse(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         "<title>Review workspace unavailable</title></head><body>"
         "<main><h1>Review workspace unavailable</h1>"
         "<p>Ask the owner to restart after rebuilding the installed assets.</p>"
@@ -2122,9 +2452,8 @@ def load_owner_password_verifier(path: Path) -> Callable[[str], bool]:
         encoded = payload.decode("utf-8", "strict").strip()
         if not encoded or len(payload) > 1024 or "\n" in encoded or "\r" in encoded:
             raise ValueError
-        if (
-            not encoded.startswith("$argon2id$")
-            or PasswordHasher().check_needs_rehash(encoded)
+        if not encoded.startswith("$argon2id$") or PasswordHasher().check_needs_rehash(
+            encoded
         ):
             raise ValueError
     except (UnicodeError, ValueError, InvalidHashError) as error:
@@ -2139,7 +2468,9 @@ def load_owner_password_verifier(path: Path) -> Callable[[str], bool]:
     return verify
 
 
-def _request_matches_origin(request: Request, configuration: ReviewWebConfiguration) -> bool:
+def _request_matches_origin(
+    request: Request, configuration: ReviewWebConfiguration
+) -> bool:
     host = request.headers.get("host", "")
     scheme = request.url.scheme
     forwarded_host = request.headers.get("x-forwarded-host")

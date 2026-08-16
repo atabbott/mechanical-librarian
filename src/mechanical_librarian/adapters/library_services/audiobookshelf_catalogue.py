@@ -40,30 +40,61 @@ def target_connection_code(error: BaseException) -> str:
 
 
 class AudiobookshelfCatalogueReader:
-    def __init__(self, *, client_factory: Callable[[str], httpx.Client], mounts: dict[str, MediaMountConfiguration], maximum_bytes: int, timeout_seconds: int) -> None:
+    def __init__(
+        self,
+        *,
+        client_factory: Callable[[str], httpx.Client],
+        mounts: dict[str, MediaMountConfiguration],
+        maximum_bytes: int,
+        timeout_seconds: int,
+    ) -> None:
         self._client_factory = client_factory
         self._mounts = mounts
         self._maximum_bytes = maximum_bytes
         self._timeout_seconds = timeout_seconds
 
-    def read_library(self, connection: str, library: LibraryConfiguration, remaining: int) -> tuple[CatalogueEntry, ...]:
+    def read_library(
+        self, connection: str, library: LibraryConfiguration, remaining: int
+    ) -> tuple[CatalogueEntry, ...]:
         if type(remaining) is not int or not 0 <= remaining <= 10_000:
             raise CatalogueError("catalogue limit exceeded")
         try:
             with self._client_factory(connection) as client:
-                libraries = _get(client, "/api/libraries", self._maximum_bytes, self._timeout_seconds)
-                if not any(type(value) is dict and value.get("id") == library.library_id and value.get("mediaType") == "book" for value in libraries.get("libraries", [])):
+                libraries = _get(
+                    client, "/api/libraries", self._maximum_bytes, self._timeout_seconds
+                )
+                if not any(
+                    type(value) is dict
+                    and value.get("id") == library.library_id
+                    and value.get("mediaType") == "book"
+                    for value in libraries.get("libraries", [])
+                ):
                     raise CatalogueError("configured library is unavailable")
                 summaries: list[dict[str, Any]] = []
                 page = 0
                 total: int | None = None
                 while True:
-                    payload = _get(client, f"/api/libraries/{quote(library.library_id, safe='')}/items", self._maximum_bytes, self._timeout_seconds, {"page": str(page), "limit": "100", "minified": "1", "collapsed": "0"})
+                    payload = _get(
+                        client,
+                        f"/api/libraries/{quote(library.library_id, safe='')}/items",
+                        self._maximum_bytes,
+                        self._timeout_seconds,
+                        {
+                            "page": str(page),
+                            "limit": "100",
+                            "minified": "1",
+                            "collapsed": "0",
+                        },
+                    )
                     rows = payload.get("results")
                     if type(rows) is not list or len(rows) > 100:
                         raise CatalogueError("catalogue response is invalid")
                     reported = payload.get("total")
-                    if type(reported) is not int or reported < 0 or reported > remaining:
+                    if (
+                        type(reported) is not int
+                        or reported < 0
+                        or reported > remaining
+                    ):
                         raise CatalogueError("catalogue limit exceeded")
                     total = reported if total is None else total
                     if total != reported or len(summaries) + len(rows) > total:
@@ -79,7 +110,22 @@ class AudiobookshelfCatalogueReader:
                     if page > 100:
                         raise CatalogueError("catalogue limit exceeded")
                 mount = None if library.mount is None else self._mounts[library.mount]
-                return tuple(_entry(connection, library, mount, summary, _get(client, f"/api/items/{quote(str(summary.get('id')), safe='')}", self._maximum_bytes, self._timeout_seconds, {"expanded": "1"})) for summary in summaries)
+                return tuple(
+                    _entry(
+                        connection,
+                        library,
+                        mount,
+                        summary,
+                        _get(
+                            client,
+                            f"/api/items/{quote(str(summary.get('id')), safe='')}",
+                            self._maximum_bytes,
+                            self._timeout_seconds,
+                            {"expanded": "1"},
+                        ),
+                    )
+                    for summary in summaries
+                )
         except CatalogueError:
             raise
         except httpx.TransportError as error:
@@ -96,7 +142,9 @@ class AudiobookshelfCatalogueReader:
         try:
             with self._client_factory(connection) as client:
                 payload = _get(
-                    client, "/api/libraries", self._maximum_bytes,
+                    client,
+                    "/api/libraries",
+                    self._maximum_bytes,
                     self._timeout_seconds,
                 )
                 available = {
@@ -114,13 +162,29 @@ class AudiobookshelfCatalogueReader:
             raise TargetConnectionError(target_connection_code(error)) from None
 
 
-def _get(client: httpx.Client, path: str, maximum: int, timeout: int, params: dict[str, str] | None = None) -> dict[str, Any]:
-    with client.stream("GET", path, params=params, headers={"Accept": "application/json", "Accept-Encoding": "identity"}, timeout=timeout) as response:
+def _get(
+    client: httpx.Client,
+    path: str,
+    maximum: int,
+    timeout: int,
+    params: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    with client.stream(
+        "GET",
+        path,
+        params=params,
+        headers={"Accept": "application/json", "Accept-Encoding": "identity"},
+        timeout=timeout,
+    ) as response:
         if response.status_code == 401:
             raise TargetConnectionError("authentication")
         if response.status_code == 403:
             raise TargetConnectionError("authorization")
-        if response.status_code != 200 or response.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+        if (
+            response.status_code != 200
+            or response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+            != "application/json"
+        ):
             raise TargetConnectionError("unavailable")
         chunks: list[bytes] = []
         size = 0
@@ -132,7 +196,11 @@ def _get(client: httpx.Client, path: str, maximum: int, timeout: int, params: di
         payload = b"".join(chunks)
     try:
         _json_depth(payload)
-        value = json.loads(payload.decode("utf-8", "strict"), object_pairs_hook=_unique, parse_constant=_reject_constant)
+        value = json.loads(
+            payload.decode("utf-8", "strict"),
+            object_pairs_hook=_unique,
+            parse_constant=_reject_constant,
+        )
     except (UnicodeError, ValueError, RecursionError):
         raise CatalogueError("catalogue response is invalid") from None
     if type(value) is not dict:
@@ -140,9 +208,22 @@ def _get(client: httpx.Client, path: str, maximum: int, timeout: int, params: di
     return value
 
 
-def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConfiguration | None, summary: dict[str, Any], detail: dict[str, Any]) -> CatalogueEntry:
+def _entry(
+    connection: str,
+    library: LibraryConfiguration,
+    mount: MediaMountConfiguration | None,
+    summary: dict[str, Any],
+    detail: dict[str, Any],
+) -> CatalogueEntry:
     item_id = summary.get("id")
-    if type(item_id) is not str or detail.get("id") != item_id or summary.get("libraryId") != library.library_id or detail.get("libraryId") != library.library_id or summary.get("updatedAt") != detail.get("updatedAt") or type(detail.get("updatedAt")) is not int:
+    if (
+        type(item_id) is not str
+        or detail.get("id") != item_id
+        or summary.get("libraryId") != library.library_id
+        or detail.get("libraryId") != library.library_id
+        or summary.get("updatedAt") != detail.get("updatedAt")
+        or type(detail.get("updatedAt")) is not int
+    ):
         raise CatalogueError("catalogue item changed")
     media = detail.get("media")
     if type(media) is not dict:
@@ -154,10 +235,22 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
     authors = metadata.get("authors", [])
     if type(authors) is not list or len(authors) > 32:
         raise CatalogueError("catalogue response is invalid")
-    names = tuple(value if type(value) is str else value.get("name") if type(value) is dict else None for value in authors)
+    names = tuple(
+        value
+        if type(value) is str
+        else value.get("name")
+        if type(value) is dict
+        else None
+        for value in authors
+    )
     if any(type(value) is not str or not 1 <= len(value) <= 256 for value in names):
         raise CatalogueError("catalogue response is invalid")
-    if summary.get("isMissing") is True or summary.get("isInvalid") is True or detail.get("isMissing") is True or detail.get("isInvalid") is True:
+    if (
+        summary.get("isMissing") is True
+        or summary.get("isInvalid") is True
+        or detail.get("isMissing") is True
+        or detail.get("isInvalid") is True
+    ):
         raise CatalogueError("catalogue item is unavailable")
     ebook = media.get("ebookFile")
     plural = media.get("ebookFiles")
@@ -196,16 +289,30 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
     reviewed_fields = {
         name: {"present": name in metadata, "value": metadata.get(name)}
         for name in (
-            "title", "subtitle", "authors", "narrators", "series", "genres", "tags",
-            "publishedYear", "publishedDate", "publisher", "description", "isbn", "asin",
-            "language", "explicit",
+            "title",
+            "subtitle",
+            "authors",
+            "narrators",
+            "series",
+            "genres",
+            "tags",
+            "publishedYear",
+            "publishedDate",
+            "publisher",
+            "description",
+            "isbn",
+            "asin",
+            "language",
+            "explicit",
         )
     }
     cover_reference = next(
         (
             value
             for value in (
-                detail.get("coverPath"), media.get("coverPath"), metadata.get("coverPath")
+                detail.get("coverPath"),
+                media.get("coverPath"),
+                metadata.get("coverPath"),
             )
             if type(value) is str
         ),
@@ -231,7 +338,9 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
     # has no independent revision in the supported payload, so its bytes also
     # require that fallback even when the EPUB has a stable revision.
     item_revision_fallback = (
-        detail["updatedAt"] if not media_revision or cover_reference is not None else None
+        detail["updatedAt"]
+        if not media_revision or cover_reference is not None
+        else None
     )
     source_fingerprint = hashlib.sha256(
         canonical_json(
@@ -254,7 +363,23 @@ def _entry(connection: str, library: LibraryConfiguration, mount: MediaMountConf
         ).encode("utf-8")
     ).hexdigest()
     # `names` was rejected above unless every element is a 1..256 character str.
-    return CatalogueEntry(connection, library.name, library.library_id, item_id, detail["updatedAt"], title, cast("tuple[str, ...]", names), has_ebook, has_audio, classification, file_identity, service_path, format_value, mount_name, source_fingerprint)
+    return CatalogueEntry(
+        connection,
+        library.name,
+        library.library_id,
+        item_id,
+        detail["updatedAt"],
+        title,
+        cast("tuple[str, ...]", names),
+        has_ebook,
+        has_audio,
+        classification,
+        file_identity,
+        service_path,
+        format_value,
+        mount_name,
+        source_fingerprint,
+    )
 
 
 def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:

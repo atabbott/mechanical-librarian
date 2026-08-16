@@ -113,21 +113,27 @@ def web() -> Iterator[ReviewWebContext[_CloseRecordingRepository]]:
 
 
 def test_cover_omission_response_models_every_valid_shape() -> None:
-    duplicate = _CoverOmission.model_validate({
-        "preview_sha256": "a" * 64,
-        "reason": "duplicate_preview",
-        "reference": "cover_ref_" + "b" * 64,
-        "retained_reference": "cover_ref_" + "c" * 64,
-    })
-    bounded = _CoverOmission.model_validate({
-        "preview_bytes": 1_048_577,
-        "reason": "preview_byte_limit",
-        "reference": "cover_ref_" + "d" * 64,
-    })
-    unavailable = _CoverOmission.model_validate({
-        "reason": "source_unavailable",
-        "reference": "cover_ref_" + "e" * 64,
-    })
+    duplicate = _CoverOmission.model_validate(
+        {
+            "preview_sha256": "a" * 64,
+            "reason": "duplicate_preview",
+            "reference": "cover_ref_" + "b" * 64,
+            "retained_reference": "cover_ref_" + "c" * 64,
+        }
+    )
+    bounded = _CoverOmission.model_validate(
+        {
+            "preview_bytes": 1_048_577,
+            "reason": "preview_byte_limit",
+            "reference": "cover_ref_" + "d" * 64,
+        }
+    )
+    unavailable = _CoverOmission.model_validate(
+        {
+            "reason": "source_unavailable",
+            "reference": "cover_ref_" + "e" * 64,
+        }
+    )
 
     assert duplicate.preview_sha256 == "a" * 64
     assert duplicate.retained_reference == "cover_ref_" + "c" * 64
@@ -135,7 +141,9 @@ def test_cover_omission_response_models_every_valid_shape() -> None:
     assert unavailable.preview_bytes is None
 
 
-def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     payloads = (_cover_preview(1), _cover_preview(2))
     sources = (
         _cover_source(1, payloads[0], incumbent=True),
@@ -199,7 +207,13 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(web: R
         "choice_contexts": [
             {
                 "alternative_id": None,
-                "evidence": [{"observation": "Local library cover retained.", "role": "local_presence", "source": "Local library record"}],
+                "evidence": [
+                    {
+                        "observation": "Local library cover retained.",
+                        "role": "local_presence",
+                        "source": "Local library record",
+                    }
+                ],
                 "limitations": [],
                 "rationale": "Keep the retained local cover.",
                 "recommendation": "no_recommendation",
@@ -251,11 +265,12 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(web: R
     image = web.client.get(image_path)
     assert 200 == image.status_code
     assert "image/png" == image.headers["content-type"]
-    assert {"no-store", "private"} == {value.strip() for value in image.headers["cache-control"].split(",")}
+    assert {"no-store", "private"} == {
+        value.strip() for value in image.headers["cache-control"].split(",")
+    }
     assert "nosniff" == image.headers["x-content-type-options"]
     retry_path = (
-        f"/api/v1/review-cases/{case.review_case_id}"
-        "/cover-considerations/retry"
+        f"/api/v1/review-cases/{case.review_case_id}/cover-considerations/retry"
     )
     assert web.client.post(retry_path, headers=web.origin).status_code == 422
     denied = web.client.post(
@@ -274,9 +289,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(web: R
         },
     )
     assert 200 == retried.status_code, retried.text
-    detail = web.client.get(
-        f"/api/v1/review-cases/{case.review_case_id}"
-    ).json()
+    detail = web.client.get(f"/api/v1/review-cases/{case.review_case_id}").json()
     cover = next(field for field in detail["fields"] if field["destination"] == "cover")
     decision = web.client.post(
         f"/api/v1/review-cases/{case.review_case_id}/decisions",
@@ -298,7 +311,9 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(web: R
     covers.validate_decision.assert_called_once()
 
 
-def test_shutdown_timeout_preserves_shared_repository_for_live_worker(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_shutdown_timeout_preserves_shared_repository_for_live_worker(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     class _DrainingApplication:
         started = False
 
@@ -318,7 +333,9 @@ def test_shutdown_timeout_preserves_shared_repository_for_live_worker(web: Revie
         session_lifetime_seconds=600,
     )
     app = create_transport_test_app(
-        web.repository, configuration, close_repository=True,
+        web.repository,
+        configuration,
+        close_repository=True,
         field_application=application,
     )
     with pytest.raises(GuardedApplicationError, match="shutdown_timeout"):
@@ -366,7 +383,9 @@ def test_shutdown_closes_both_admissions_before_one_shared_deadline(
                 raise ReviewPipelineError("shutdown_timeout")
 
     app = create_transport_test_app(
-        web.repository, configuration, close_repository=True,
+        web.repository,
+        configuration,
+        close_repository=True,
         field_application=_FieldApplication(),
         review_preparation=FakePreparation(),
     )
@@ -376,11 +395,13 @@ def test_shutdown_closes_both_admissions_before_one_shared_deadline(
     field_close = calls.index("field-close")
     preparation_close = calls.index("preparation-close")
     field_wait = next(
-        index for index, value in enumerate(calls)
+        index
+        for index, value in enumerate(calls)
         if isinstance(value, tuple) and value[0] == "field-wait"
     )
     preparation_wait = next(
-        index for index, value in enumerate(calls)
+        index
+        for index, value in enumerate(calls)
         if isinstance(value, tuple) and value[0] == "preparation-wait"
     )
     assert field_close < field_wait
@@ -388,7 +409,8 @@ def test_shutdown_closes_both_admissions_before_one_shared_deadline(
     assert field_close < preparation_wait
     assert preparation_close < preparation_wait
     deadlines = [
-        value[1] for value in calls
+        value[1]
+        for value in calls
         if isinstance(value, tuple) and value[0].endswith("wait")
     ]
     assert len(deadlines) == 2
@@ -396,7 +418,9 @@ def test_shutdown_closes_both_admissions_before_one_shared_deadline(
     assert web.repository.closes == []
 
 
-def test_activity_is_permanent_and_consent_is_csrf_bound(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_activity_is_permanent_and_consent_is_csrf_bound(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     application = FakeActivityApplication()
     configuration = ReviewWebConfiguration(
         canonical_origin="https://review.test",
@@ -406,7 +430,9 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(web: ReviewWebContext[_
     web.client.close()
     web.client = TestClient(
         create_transport_test_app(
-            web.repository, configuration, clock=lambda: web.now,
+            web.repository,
+            configuration,
+            clock=lambda: web.now,
             field_application=application,
         ),
         base_url="https://review.test",
@@ -415,9 +441,7 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(web: ReviewWebContext[_
     page = web.client.get("/activity")
     assert page.status_code == 200
     assert f'data-build-identity="{TEST_REACT_BUILD_IDENTITY}"' in page.text
-    script = web.client.get(
-        "/assets/review-app/assets/index-deadbeef.js"
-    )
+    script = web.client.get("/assets/review-app/assets/index-deadbeef.js")
     assert script.status_code == 200
     assert web.client.get("/api/v1/activity").json()["prepared"]["total"] == 2
     filtered = web.client.get(
@@ -425,8 +449,13 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(web: ReviewWebContext[_
     )
     assert filtered.status_code == 200, filtered.text
     assert filtered.json()["ledger"] == {
-        "event_type": "all", "page": 1, "page_count": 1, "page_size": 25,
-        "query": None, "range_days": 30, "total": 1,
+        "event_type": "all",
+        "page": 1,
+        "page_count": 1,
+        "page_size": 25,
+        "query": None,
+        "range_days": 30,
+        "total": 1,
     }
     assert web.client.get("/api/v1/activity?range_days=8").status_code == 422
     denied = web.client.post(
@@ -449,16 +478,23 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(web: ReviewWebContext[_
         json={"grants": [{"library": "history", "destinations": ["title"]}]},
     )
     assert later.status_code == 200
-    assert {item["library"] for item in later.json()["enabled_libraries"]} == {"fiction", "history"}
+    assert {item["library"] for item in later.json()["enabled_libraries"]} == {
+        "fiction",
+        "history",
+    }
     revoked = web.client.post(
         "/api/v1/activity/primary/fiction/revoke",
         headers={**web.origin, "X-CSRF-Token": login["csrf_token"]},
     )
     assert revoked.status_code == 200
-    assert [item["library"] for item in revoked.json()["enabled_libraries"]] == ["history"]
+    assert [item["library"] for item in revoked.json()["enabled_libraries"]] == [
+        "history"
+    ]
 
 
-def test_review_preparation_is_authenticated_csrf_bound_and_bounded(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_review_preparation_is_authenticated_csrf_bound_and_bounded(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     configuration = ReviewWebConfiguration(
         canonical_origin="https://review.test",
         owner_password_hash_file=str(web.hash_path),
@@ -593,8 +629,12 @@ def test_review_preparation_control_runtime_failures_remain_persistence(
     assert response.json()["error"]["code"] == "persistence"
 
 
-def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
-    anonymous = web.client.post("/api/v1/metadata-policy/validate", headers=web.origin, json={})
+def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    anonymous = web.client.post(
+        "/api/v1/metadata-policy/validate", headers=web.origin, json={}
+    )
     assert 401 == anonymous.status_code
     login = web.login()
     headers = {**web.origin, "X-CSRF-Token": login["csrf_token"]}
@@ -603,19 +643,25 @@ def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(web: 
     del payload["schema_version"]
     payload["name"] = "Draft"
     payload["options"]["removed"] = "unknown"
-    invalid = web.client.post("/api/v1/metadata-policy/validate", headers=headers, json=payload)
+    invalid = web.client.post(
+        "/api/v1/metadata-policy/validate", headers=headers, json=payload
+    )
     assert 422 == invalid.status_code
     assert "policy_option_unavailable" == invalid.json()["error"]["code"]
     assert "review-error-v1" == invalid.json()["schema_version"]
     assert "no-store, private" == invalid.headers["cache-control"]
     valid_payload = active.json()["profile"]
     del valid_payload["schema_version"]
-    denied = web.client.post("/api/v1/metadata-policy/preview", headers=web.origin, json=valid_payload)
+    denied = web.client.post(
+        "/api/v1/metadata-policy/preview", headers=web.origin, json=valid_payload
+    )
     assert 403 == denied.status_code
     assert "csrf" == denied.json()["error"]["code"]
 
 
-def test_policy_routes_are_closed_read_only_and_schema_deterministic(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_policy_routes_are_closed_read_only_and_schema_deterministic(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     login = web.login()
     headers = {**web.origin, "X-CSRF-Token": login["csrf_token"]}
     active = web.client.get("/api/v1/metadata-policy/state")
@@ -625,31 +671,45 @@ def test_policy_routes_are_closed_read_only_and_schema_deterministic(web: Review
     payload["name"] = "<hostile draft>"
     payload["options"]["date_precision"] = "full_date"
     before = (dict(web.repository.decisions), dict(web.repository.policy_documents))
-    validated = web.client.post("/api/v1/metadata-policy/validate", headers=headers, json=payload)
+    validated = web.client.post(
+        "/api/v1/metadata-policy/validate", headers=headers, json=payload
+    )
     assert 200 == validated.status_code
     assert "metadata-policy-notebook-v1" == validated.json()["schema_version"]
-    created = web.client.post("/api/v1/metadata-policy/drafts", headers=headers, json=payload)
+    created = web.client.post(
+        "/api/v1/metadata-policy/drafts", headers=headers, json=payload
+    )
     assert 201 == created.status_code
     policy_id = created.json()["policy_id"]
     read = web.client.get(f"/api/v1/metadata-policy/drafts/{policy_id}")
     assert validated.json() == read.json()
-    preview = web.client.post("/api/v1/metadata-policy/preview", headers=headers, json=payload)
+    preview = web.client.post(
+        "/api/v1/metadata-policy/preview", headers=headers, json=payload
+    )
     assert 200 == preview.status_code
     assert "metadata-policy-preview-v1" == preview.json()["schema_version"]
     denied_activation = web.client.post(
         "/api/v1/metadata-policy/activate",
         headers=web.origin,
-        json={"policy_id": policy_id, "expected_active_policy_id": active.json()["policy_id"]},
+        json={
+            "policy_id": policy_id,
+            "expected_active_policy_id": active.json()["policy_id"],
+        },
     )
     assert 403 == denied_activation.status_code
     activated = web.client.post(
         "/api/v1/metadata-policy/activate",
         headers=headers,
-        json={"policy_id": policy_id, "expected_active_policy_id": active.json()["policy_id"]},
+        json={
+            "policy_id": policy_id,
+            "expected_active_policy_id": active.json()["policy_id"],
+        },
     )
     assert 200 == activated.status_code
     assert "metadata-policy-activation-v1" == activated.json()["schema_version"]
-    assert policy_id == web.client.get("/api/v1/metadata-policy/state").json()["policy_id"]
+    assert (
+        policy_id == web.client.get("/api/v1/metadata-policy/state").json()["policy_id"]
+    )
     transition = web.client.get("/api/v1/metadata-policy/transition")
     assert "metadata-policy-transition-v1" == transition.json()["schema_version"]
     dismissed = web.client.post(
@@ -662,7 +722,9 @@ def test_policy_routes_are_closed_read_only_and_schema_deterministic(web: Review
     assert [] == web.repository.policy_count_calls
 
 
-def test_shadow_posture_and_sample_are_authenticated_non_authoritative(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_shadow_posture_and_sample_are_authenticated_non_authoritative(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     anonymous = web.client.get("/api/v1/metadata-policy/shadow")
     assert 401 == anonymous.status_code
     login = web.login()
@@ -683,13 +745,9 @@ def test_shadow_posture_and_sample_are_authenticated_non_authoritative(web: Revi
         "/api/v1/metadata-policy/validate", headers=headers, json=automatic_payload
     )
     assert 200 == validated_before_preview.status_code
-    denied = web.client.post(
-        "/api/v1/metadata-policy/shadow/enter", headers=web.origin
-    )
+    denied = web.client.post("/api/v1/metadata-policy/shadow/enter", headers=web.origin)
     assert 403 == denied.status_code
-    entered = web.client.post(
-        "/api/v1/metadata-policy/shadow/enter", headers=headers
-    )
+    entered = web.client.post("/api/v1/metadata-policy/shadow/enter", headers=headers)
     assert "preview" == entered.json()["posture"]
     assert "none" == entered.json()["authority"]
     validated = web.client.post(
@@ -720,22 +778,25 @@ def test_shadow_posture_and_sample_are_authenticated_non_authoritative(web: Revi
         },
     )
     assert 200 == activated.status_code, activated.text
-    assert "automatic" == web.client.get("/api/v1/metadata-policy/state").json()["profile"]["destinations"]["title_layout"]
-    sample = web.client.get(
-        "/api/v1/metadata-policy/shadow/outcomes?limit=10"
+    assert (
+        "automatic"
+        == web.client.get("/api/v1/metadata-policy/state").json()["profile"][
+            "destinations"
+        ]["title_layout"]
     )
+    sample = web.client.get("/api/v1/metadata-policy/shadow/outcomes?limit=10")
     assert "shadow-outcome-sample-v1" == sample.json()["schema_version"]
     assert [] == sample.json()["items"]
-    leaving = web.client.get(
-        "/api/v1/metadata-policy/shadow/leave-preview"
-    )
+    leaving = web.client.get("/api/v1/metadata-policy/shadow/leave-preview")
     assert leaving.json()["confirmation_required"]
     assert not leaving.json()["can_confirm"]
     assert "preview" == web.repository.shadow_mode
     assert "qualified_decision_only_unavailable" == leaving.json()["requested_posture"]
 
 
-def test_policy_draft_persistence_failure_is_unavailable_not_validation(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_policy_draft_persistence_failure_is_unavailable_not_validation(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     class _FailingDraftRepository(_CloseRecordingRepository):
         """The fake repository with only its draft write failing at the store."""
 
@@ -760,12 +821,16 @@ def test_policy_draft_persistence_failure_is_unavailable_not_validation(web: Rev
     headers = {**web.origin, "X-CSRF-Token": login["csrf_token"]}
     payload = web.client.get("/api/v1/metadata-policy/state").json()["profile"]
     del payload["schema_version"]
-    response = web.client.post("/api/v1/metadata-policy/drafts", headers=headers, json=payload)
+    response = web.client.post(
+        "/api/v1/metadata-policy/drafts", headers=headers, json=payload
+    )
     assert 503 == response.status_code
     assert "persistence" == response.json()["error"]["code"]
 
 
-def test_policy_activation_body_is_bounded_before_validation(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_policy_activation_body_is_bounded_before_validation(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     login = web.login()
     headers = {
         **web.origin,
@@ -790,7 +855,9 @@ def test_policy_activation_body_is_bounded_before_validation(web: ReviewWebConte
     assert before == web.repository.active_policy_id
 
 
-def test_automatic_detail_uses_a_closed_projection_without_human_commit(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_automatic_detail_uses_a_closed_projection_without_human_commit(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     # Durable automatic documents carry authority bindings that must never
     # cross the authenticated case read model.
     web.login()
@@ -803,7 +870,9 @@ def test_automatic_detail_uses_a_closed_projection_without_human_commit(web: Rev
             "proposal_id": web.case.proposals[0]["proposal_id"],
             "destination": "title",
             "outcome": "candidate",
-            "candidate_id": web.case.proposals[0]["result"]["alternatives"][0]["alternative_id"],
+            "candidate_id": web.case.proposals[0]["result"]["alternatives"][0][
+                "alternative_id"
+            ],
             "occurred_at": 7,
             "target_fingerprint": web.case.target_fingerprint,
             "report_id": "report_" + "b" * 64,
@@ -812,28 +881,48 @@ def test_automatic_detail_uses_a_closed_projection_without_human_commit(web: Rev
             "policy_option": "preserve",
             "qualification_manifest_sha256": "d" * 64,
             "idempotency_digest": "e" * 64,
-        }, separators=(",", ":"), sort_keys=True,
+        },
+        separators=(",", ":"),
+        sort_keys=True,
     )
     detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}")
     assert 200 == detail.status_code
-    field = next(value for value in detail.json()["fields"] if value["destination"] == "title")
+    field = next(
+        value for value in detail.json()["fields"] if value["destination"] == "title"
+    )
     assert field["human_decision"] is None
     assert not field["needs_attention"]
     assert {
-        "candidate_id", "decision_id", "destination", "occurred_at", "outcome",
-        "proposal_id", "review_case_id", "target_fingerprint",
+        "candidate_id",
+        "decision_id",
+        "destination",
+        "occurred_at",
+        "outcome",
+        "proposal_id",
+        "review_case_id",
+        "target_fingerprint",
         "selected_value",
     } == set(field["automatic_decision"])
     assert "actor" not in field["automatic_decision"]
     assert "candidate" == field["automatic_decision"]["outcome"]
-    assert web.case.proposals[0]["result"]["alternatives"][0]["alternative_id"] == field["automatic_decision"]["candidate_id"]
-    assert web.case.proposals[0]["result"]["alternatives"][0]["value"] == field["automatic_decision"]["selected_value"]
+    assert (
+        web.case.proposals[0]["result"]["alternatives"][0]["alternative_id"]
+        == field["automatic_decision"]["candidate_id"]
+    )
+    assert (
+        web.case.proposals[0]["result"]["alternatives"][0]["value"]
+        == field["automatic_decision"]["selected_value"]
+    )
     recommended = [
-        context for context in field["choice_contexts"]
+        context
+        for context in field["choice_contexts"]
         if context["recommendation"] == "recommended"
     ]
     assert 1 == len(recommended)
-    assert web.case.proposals[0]["result"]["alternatives"][0]["alternative_id"] == recommended[0]["alternative_id"]
+    assert (
+        web.case.proposals[0]["result"]["alternatives"][0]["alternative_id"]
+        == recommended[0]["alternative_id"]
+    )
     assert "qualification_manifest_sha256" not in field["automatic_decision"]
     ignored = json.loads(web.repository.decisions["title"])
     ignored["outcome"] = "ignore"
@@ -841,12 +930,11 @@ def test_automatic_detail_uses_a_closed_projection_without_human_commit(web: Rev
     web.repository.decisions["title"] = json.dumps(
         ignored, separators=(",", ":"), sort_keys=True
     )
-    ignored_detail = web.client.get(
-        f"/api/v1/review-cases/{web.case.review_case_id}"
-    )
+    ignored_detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}")
     assert 200 == ignored_detail.status_code
     ignored_field = next(
-        value for value in ignored_detail.json()["fields"]
+        value
+        for value in ignored_detail.json()["fields"]
         if value["destination"] == "title"
     )
     assert all(
@@ -856,11 +944,18 @@ def test_automatic_detail_uses_a_closed_projection_without_human_commit(web: Rev
     malformed = json.loads(web.repository.decisions["title"])
     malformed["outcome"] = "candidate"
     malformed["candidate_id"] = "alternative_" + "f" * 64
-    web.repository.decisions["title"] = json.dumps(malformed, separators=(",", ":"), sort_keys=True)
-    assert 404 == web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}").status_code
+    web.repository.decisions["title"] = json.dumps(
+        malformed, separators=(",", ":"), sort_keys=True
+    )
+    assert (
+        404
+        == web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}").status_code
+    )
 
 
-def test_choice_contexts_build_the_evidence_index_once(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_choice_contexts_build_the_evidence_index_once(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     proposal = web.case.proposals[0]
     result = cast(dict[str, Any], proposal["result"])
     alternatives = json.loads(json.dumps(result["alternatives"]))
@@ -893,22 +988,32 @@ def test_choice_contexts_build_the_evidence_index_once(web: ReviewWebContext[_Cl
         {"outcome": "ignore", "candidate_id": None},
     )
     assert all(
-        context["recommendation"] == "no_recommendation"
-        for context in ignored_contexts
+        context["recommendation"] == "no_recommendation" for context in ignored_contexts
     )
 
 
 @pytest.mark.parametrize(
     ("path", "payload"),
     (
-        ("/api/v1/metadata-policy/automatic-safety/pause", {"paused": True, "extra": True}),
-        ("/api/v1/metadata-policy/automatic-safety/recover", {"category": None, "extra": True}),
-        ("/api/v1/metadata-policy/automatic-safety/suspend", {"reason": "test", "extra": True}),
+        (
+            "/api/v1/metadata-policy/automatic-safety/pause",
+            {"paused": True, "extra": True},
+        ),
+        (
+            "/api/v1/metadata-policy/automatic-safety/recover",
+            {"category": None, "extra": True},
+        ),
+        (
+            "/api/v1/metadata-policy/automatic-safety/suspend",
+            {"reason": "test", "extra": True},
+        ),
     ),
     ids=("pause", "recover", "suspend"),
 )
 def test_automatic_safety_bodies_are_closed_before_control_access(
-    web: ReviewWebContext[_CloseRecordingRepository], path: str, payload: dict[str, object]
+    web: ReviewWebContext[_CloseRecordingRepository],
+    path: str,
+    payload: dict[str, object],
 ) -> None:
     login = web.login()
     headers = {**web.origin, "X-CSRF-Token": login["csrf_token"]}
@@ -931,18 +1036,21 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
         "source_ordinal": 0,
         "value": "Second edition",
     }
-    rich_reference = "evidence_" + hashlib.sha256(
-        json.dumps(
-            {
-                "candidate": "candidate-1",
-                "evidence": provider_evidence,
-                "provider": "catalogue",
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-    ).hexdigest()
+    rich_reference = (
+        "evidence_"
+        + hashlib.sha256(
+            json.dumps(
+                {
+                    "candidate": "candidate-1",
+                    "evidence": provider_evidence,
+                    "provider": "catalogue",
+                },
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+    )
     provider_claim_reference = "provider_" + "a" * 64
     sibling_claim_reference = "provider_" + "d" * 64
     identifier_reference = "provider_identifier_" + "e" * 64
@@ -1070,29 +1178,41 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
 
 
 def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -> None:
-    observation = _choice_observation({
-        "fact": json.dumps({
-            "kind": "title\x00private",
-            "value": "\x00" + "hostile-value" * 40,
-        }),
-        "provider": "private-connection-name",
-        "source": "provider_claim",
-    })
+    observation = _choice_observation(
+        {
+            "fact": json.dumps(
+                {
+                    "kind": "title\x00private",
+                    "value": "\x00" + "hostile-value" * 40,
+                }
+            ),
+            "provider": "private-connection-name",
+            "source": "provider_claim",
+        }
+    )
     assert len(observation) <= 188
     assert "\x00" not in observation
     assert "private" not in observation
     assert observation.startswith("Metadata: ")
-    assert _choice_source_label({
-        "fact": "{}",
-        "provider": "private-connection-name",
-        "source": "provider_claim",
-    }) == "Provider evidence (name unavailable)"
+    assert (
+        _choice_source_label(
+            {
+                "fact": "{}",
+                "provider": "private-connection-name",
+                "source": "provider_claim",
+            }
+        )
+        == "Provider evidence (name unavailable)"
+    )
     replacing = {
         "assessment": "replaces_target",
         "scope": "edition",
         "correlations": ["correlation_" + "a" * 64],
     }
-    assert _choice_rationale(replacing, True) == "This alternative replaces the local value using edition-specific evidence with retained supporting evidence."
+    assert (
+        _choice_rationale(replacing, True)
+        == "This alternative replaces the local value using edition-specific evidence with retained supporting evidence."
+    )
     assert _current_value_present("Present title")
     assert _current_value_present(["Ada Example"])
     assert _current_value_present("2024-01-01")
@@ -1101,14 +1221,22 @@ def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -
     assert not _current_value_present([])
 
 
-def test_provider_comparison_notices_keep_only_safe_material_failures(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_provider_comparison_notices_keep_only_safe_material_failures(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     source = _report()
     report = MetadataReport.create(
-        target=source.target, file=source.file, local_claims=source.local_claims,
+        target=source.target,
+        file=source.file,
+        local_claims=source.local_claims,
         local_reasons=source.local_reasons,
         providers=(
-            ProviderObservation("hardcover-main", ProviderStatus.DISABLED, authority="hardcover"),
-            ProviderObservation("open-library-main", ProviderStatus.NO_MATCH, authority="open_library"),
+            ProviderObservation(
+                "hardcover-main", ProviderStatus.DISABLED, authority="hardcover"
+            ),
+            ProviderObservation(
+                "open-library-main", ProviderStatus.NO_MATCH, authority="open_library"
+            ),
             ProviderObservation("private-connection", ProviderStatus.UNAVAILABLE),
         ),
     )
@@ -1121,9 +1249,7 @@ def test_provider_comparison_notices_keep_only_safe_material_failures(web: Revie
         FakeReviewRepository(affected_case, report)
     ).run(affected_case.review_case_id)
     assert _provider_comparison_notices(report) == projected["comparison_notices"]
-    unaffected = InspectCurrentReviewCase(web.repository).run(
-        web.case.review_case_id
-    )
+    unaffected = InspectCurrentReviewCase(web.repository).run(web.case.review_case_id)
     assert [] == unaffected["comparison_notices"]
     assert "Google Books" == _provider_label("google_books")
     assert "Provider (name unavailable)" == _provider_label(None)
@@ -1148,27 +1274,42 @@ def test_provider_comparison_notices_keep_only_safe_material_failures(web: Revie
         ] == _provider_comparison_notices(spoofed)
 
 
-def test_choice_limitations_leave_multi_alternative_global_reasons_field_scoped() -> None:
+def test_choice_limitations_leave_multi_alternative_global_reasons_field_scoped() -> (
+    None
+):
     first = {"alternative_id": "alternative-a"}
-    result: dict[str, Any] = {"alternatives": [first, {"alternative_id": "alternative-b"}], "reasons": ["competing_evidence"]}
+    result: dict[str, Any] = {
+        "alternatives": [first, {"alternative_id": "alternative-b"}],
+        "reasons": ["competing_evidence"],
+    }
     assert [] == _choice_limitations(first, result)
     assert "competing_evidence" in result["reasons"]
 
 
 def test_choice_limitations_attach_only_single_exact_choice_reason() -> None:
     alternative = {"alternative_id": "alternative-a"}
-    result = {"alternatives": [alternative], "reasons": ["insufficient_independent_corroboration"]}
-    assert ["insufficient_independent_corroboration"] == _choice_limitations(alternative, result)
+    result = {
+        "alternatives": [alternative],
+        "reasons": ["insufficient_independent_corroboration"],
+    }
+    assert ["insufficient_independent_corroboration"] == _choice_limitations(
+        alternative, result
+    )
     assert [] == _choice_limitations({"alternative_id": "alternative-b"}, result)
 
 
 def test_choice_limitations_do_not_invent_provider_terminal_attribution() -> None:
     alternative = {"alternative_id": "alternative-a"}
-    result = {"alternatives": [alternative], "reasons": ["provider_no_match", "provider_unavailable"]}
+    result = {
+        "alternatives": [alternative],
+        "reasons": ["provider_no_match", "provider_unavailable"],
+    }
     assert [] == _choice_limitations(alternative, result)
 
 
-def test_attention_first_library_lenses_queue_and_cursor_binding(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_attention_first_library_lenses_queue_and_cursor_binding(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     providers = tuple(
         _proposal_provider(
             name,
@@ -1193,9 +1334,7 @@ def test_attention_first_library_lenses_queue_and_cursor_binding(web: ReviewWebC
     automatic_case = ReviewCase.create(
         evaluate_report(automatic_report), automatic_report
     )
-    web.repository.browse_cases.append(
-        (automatic_case, automatic_report)
-    )
+    web.repository.browse_cases.append((automatic_case, automatic_report))
     web.login()
 
     attention_first = web.client.get("/api/v1/library?limit=1")
@@ -1213,9 +1352,7 @@ def test_attention_first_library_lenses_queue_and_cursor_binding(web: ReviewWebC
     all_first = web.client.get("/api/v1/library?lens=all&limit=1")
     cursor = all_first.json()["next_cursor"]
     assert cursor is not None
-    all_second = web.client.get(
-        f"/api/v1/library?lens=all&limit=1&cursor={cursor}"
-    )
+    all_second = web.client.get(f"/api/v1/library?lens=all&limit=1&cursor={cursor}")
     assert all_second.status_code == 200
     assert all_second.json()["items"][0]["attention_state"] == "no_attention_needed"
     rebound = web.client.get(
@@ -1223,11 +1360,12 @@ def test_attention_first_library_lenses_queue_and_cursor_binding(web: ReviewWebC
     )
     assert rebound.status_code == 400
 
-    no_attention = web.client.get(
-        "/api/v1/library?lens=no_attention_needed"
-    )
+    no_attention = web.client.get("/api/v1/library?lens=no_attention_needed")
     assert len(no_attention.json()["items"]) == 1
-    assert no_attention.json()["items"][0]["review_case_id"] == automatic_case.review_case_id
+    assert (
+        no_attention.json()["items"][0]["review_case_id"]
+        == automatic_case.review_case_id
+    )
     queue = web.client.get("/api/v1/attention")
     assert queue.status_code == 200
     assert queue.json()["total"] == 1
@@ -1241,14 +1379,14 @@ def test_attention_first_library_lenses_queue_and_cursor_binding(web: ReviewWebC
     assert web.client.get("/attention").status_code == 200
 
 
-def test_complete_library_includes_current_report_without_review_lineage(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_complete_library_includes_current_report_without_review_lineage(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     current = _report(title="In-progress report", actionable=False)
     web.repository.browse_without_cases.append(current)
     web.login()
 
-    response = web.client.get(
-        "/api/v1/library?lens=all&q=In-progress"
-    )
+    response = web.client.get("/api/v1/library?lens=all&q=In-progress")
 
     assert response.status_code == 200, response.text
     assert response.json()["counts"] == {
@@ -1309,7 +1447,9 @@ def test_row_projection_refuses_every_document_the_parsers_cannot_read() -> None
         assert surfaced.value is fault
 
 
-def test_attention_cursor_keeps_the_complete_work_field_count(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_attention_cursor_keeps_the_complete_work_field_count(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     report = _bibliographic_report(
         current_title="Mistborn Secret History",
         providers=(
@@ -1330,14 +1470,14 @@ def test_attention_cursor_keeps_the_complete_work_field_count(web: ReviewWebCont
     assert first.json()["items"][0]["work_attention_count"] == 3
     cursor = first.json()["next_cursor"]
     assert cursor is not None
-    second = web.client.get(
-        f"/api/v1/attention?limit=1&cursor={cursor}"
-    )
+    second = web.client.get(f"/api/v1/attention?limit=1&cursor={cursor}")
     assert second.status_code == 200, second.text
     assert second.json()["items"][0]["work_attention_count"] == 3
 
 
-def test_attention_reads_the_automatic_outcome_and_cause_columns(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_attention_reads_the_automatic_outcome_and_cause_columns(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     """The queue classifies from all six declared attention columns.
 
     The reader consumed the last two positionally behind `len(row)`
@@ -1368,8 +1508,13 @@ def test_attention_reads_the_automatic_outcome_and_cause_columns(web: ReviewWebC
         item["destination"]: item["classification_reason"]
         for item in response.json()["items"]
     }
-    assert reasons["title"] == "Automatic handling is suspended pending a safety recovery."
-    assert reasons["series"] == "Automatic handling abstained, so this field needs your review."
+    assert (
+        reasons["title"] == "Automatic handling is suspended pending a safety recovery."
+    )
+    assert (
+        reasons["series"]
+        == "Automatic handling abstained, so this field needs your review."
+    )
     # The third row carries neither column, so the two above prove the
     # reader read them rather than a constant the double always emits.
     assert reasons["subtitle"] == "This field needs your review."
@@ -1384,7 +1529,9 @@ def test_cursor_encoder_never_emits_an_unreachable_offset() -> None:
         _encode_cursor(True, "library", "all", None)
 
 
-def test_large_library_payload_and_dom_inputs_remain_page_bounded(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+def test_large_library_payload_and_dom_inputs_remain_page_bounded(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
     web.repository.browse_cases = [
         (web.case, web.repository.report) for _ in range(2_001)
     ]

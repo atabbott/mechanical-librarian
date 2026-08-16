@@ -212,7 +212,9 @@ def _read_exact(request: EpubPackageRequest, offset: int, size: int) -> bytes:
     return value
 
 
-def _zip64_values(extra: bytes, wanted: tuple[bool, bool, bool]) -> tuple[int | None, ...]:
+def _zip64_values(
+    extra: bytes, wanted: tuple[bool, bool, bool]
+) -> tuple[int | None, ...]:
     cursor = 0
     payload = None
     while cursor + 4 <= len(extra):
@@ -266,7 +268,10 @@ def _valid_member_name(raw: bytes, flags: int, limits: EpubPackageLimits) -> str
         or name.startswith("/")
         or "\\" in name
         or any(part in {"", ".", ".."} for part in parts)
-        or any(len(part.encode("utf-8")) > limits.COMPONENT_NAME_UTF8_BYTES_HARD_CAP for part in parts)
+        or any(
+            len(part.encode("utf-8")) > limits.COMPONENT_NAME_UTF8_BYTES_HARD_CAP
+            for part in parts
+        )
     ):
         raise _Rejected(EpubInspectionOutcome.MALFORMED)
     return name
@@ -292,12 +297,19 @@ def _central_directory(request: EpubPackageRequest) -> tuple[_Entry, ...]:
     if relative < 0 or relative + 22 > len(tail):
         raise _Rejected(EpubInspectionOutcome.UNSUPPORTED_FORMAT)
     eocd_offset = tail_offset + relative
-    disk, central_disk, disk_entries, entries, central_size, central_offset, comment = struct.unpack_from(
-        "<4H2LH", tail, relative + 4
+    disk, central_disk, disk_entries, entries, central_size, central_offset, comment = (
+        struct.unpack_from("<4H2LH", tail, relative + 4)
     )
-    if eocd_offset + 22 + comment != length or disk or central_disk or disk_entries != entries:
+    if (
+        eocd_offset + 22 + comment != length
+        or disk
+        or central_disk
+        or disk_entries != entries
+    ):
         raise _Rejected(EpubInspectionOutcome.MALFORMED)
-    zip64 = entries == 0xFFFF or central_size == 0xFFFFFFFF or central_offset == 0xFFFFFFFF
+    zip64 = (
+        entries == 0xFFFF or central_size == 0xFFFFFFFF or central_offset == 0xFFFFFFFF
+    )
     central_boundary = eocd_offset
     if zip64:
         if eocd_offset < 20:
@@ -316,13 +328,17 @@ def _central_directory(request: EpubPackageRequest) -> tuple[_Entry, ...]:
             raise _Rejected(EpubInspectionOutcome.MALFORMED)
         record = _read_exact(request, zip64_offset, 12 + record_size)
         disk, central_disk = struct.unpack_from("<LL", record, 16)
-        disk_entries, entries, central_size, central_offset = struct.unpack_from("<4Q", record, 24)
+        disk_entries, entries, central_size, central_offset = struct.unpack_from(
+            "<4Q", record, 24
+        )
         if disk or central_disk or disk_entries != entries:
             raise _Rejected(EpubInspectionOutcome.MALFORMED)
         central_boundary = zip64_offset
     if entries == 0 or entries > limits.archive_entries:
         raise _Rejected(
-            EpubInspectionOutcome.RESOURCE_LIMIT if entries > limits.archive_entries else EpubInspectionOutcome.UNSUPPORTED_FORMAT
+            EpubInspectionOutcome.RESOURCE_LIMIT
+            if entries > limits.archive_entries
+            else EpubInspectionOutcome.UNSUPPORTED_FORMAT
         )
     if central_offset + central_size != central_boundary:
         raise _Rejected(EpubInspectionOutcome.MALFORMED)
@@ -353,7 +369,9 @@ def _central_directory(request: EpubPackageRequest) -> tuple[_Entry, ...]:
             _external,
             local_offset,
         ) = struct.unpack_from("<6H3L5H2L", header, 4)
-        variable = _read_exact(request, cursor + 46, name_length + extra_length + comment_length)
+        variable = _read_exact(
+            request, cursor + 46, name_length + extra_length + comment_length
+        )
         raw_name = variable[:name_length]
         extra = variable[name_length : name_length + extra_length]
         name = _valid_member_name(raw_name, flags, limits)
@@ -365,9 +383,7 @@ def _central_directory(request: EpubPackageRequest) -> tuple[_Entry, ...]:
         # both stored and Deflated entries. Accept that complete pattern only;
         # the selected method remains authoritative and every adjacent unknown
         # or capability-bearing flag remains rejected.
-        compatibility_flags = (
-            flags & 0x0016 == 0x0016 and flags & ~0x081E == 0
-        )
+        compatibility_flags = flags & 0x0016 == 0x0016 and flags & ~0x081E == 0
         if flags & ~_canonical_zip_flags(method) and not compatibility_flags:
             raise _Rejected(EpubInspectionOutcome.MALFORMED)
         if disk_start != 0:
@@ -379,7 +395,11 @@ def _central_directory(request: EpubPackageRequest) -> tuple[_Entry, ...]:
         )
         zip_expanded, zip_compressed, zip_offset = _zip64_values(
             extra,
-            (expanded == 0xFFFFFFFF, compressed == 0xFFFFFFFF, local_offset == 0xFFFFFFFF),
+            (
+                expanded == 0xFFFFFFFF,
+                compressed == 0xFFFFFFFF,
+                local_offset == 0xFFFFFFFF,
+            ),
         )
         expanded = expanded if zip_expanded is None else zip_expanded
         compressed = compressed if zip_compressed is None else zip_compressed
@@ -393,7 +413,10 @@ def _central_directory(request: EpubPackageRequest) -> tuple[_Entry, ...]:
         )
         if not minimum_version <= needed <= 45:
             raise _Rejected(EpubInspectionOutcome.MALFORMED)
-        if compressed > limits.compressed_bytes_per_member or expanded > limits.expanded_bytes_per_member:
+        if (
+            compressed > limits.compressed_bytes_per_member
+            or expanded > limits.expanded_bytes_per_member
+        ):
             raise _Rejected(EpubInspectionOutcome.RESOURCE_LIMIT)
         declared_expanded += expanded
         if declared_expanded > limits.expanded_bytes_per_archive:
@@ -412,7 +435,9 @@ def _central_directory(request: EpubPackageRequest) -> tuple[_Entry, ...]:
         if local[:4] != b"PK\x03\x04":
             raise _Rejected(EpubInspectionOutcome.MALFORMED)
         local_needed, local_flags, local_method = struct.unpack_from("<3H", local, 4)
-        local_crc, local_compressed, local_expanded = struct.unpack_from("<3L", local, 14)
+        local_crc, local_compressed, local_expanded = struct.unpack_from(
+            "<3L", local, 14
+        )
         local_name_length, local_extra_length = struct.unpack_from("<2H", local, 26)
         local_variable = _read_exact(
             request, local_offset + 30, local_name_length + local_extra_length
@@ -447,9 +472,8 @@ def _central_directory(request: EpubPackageRequest) -> tuple[_Entry, ...]:
                 False,
             ),
         )
-        if (
-            (local_zip_expanded is not None and local_zip_expanded != expanded)
-            or (local_zip_compressed is not None and local_zip_compressed != compressed)
+        if (local_zip_expanded is not None and local_zip_expanded != expanded) or (
+            local_zip_compressed is not None and local_zip_compressed != compressed
         ):
             raise _Rejected(EpubInspectionOutcome.INTEGRITY_FAILURE)
         data_offset = local_offset + 30 + local_name_length + local_extra_length
@@ -479,9 +503,7 @@ def _central_directory(request: EpubPackageRequest) -> tuple[_Entry, ...]:
                 candidate_compressed = int.from_bytes(
                     descriptor_sizes[:width], "little"
                 )
-                candidate_expanded = int.from_bytes(
-                    descriptor_sizes[width:], "little"
-                )
+                candidate_expanded = int.from_bytes(descriptor_sizes[width:], "little")
                 if (
                     candidate_crc == crc
                     and candidate_compressed == compressed
@@ -512,7 +534,9 @@ def _central_directory(request: EpubPackageRequest) -> tuple[_Entry, ...]:
         cursor += 46 + name_length + extra_length + comment_length
     if cursor != central_offset + central_size:
         raise _Rejected(EpubInspectionOutcome.MALFORMED)
-    for previous, current in zip(sorted(intervals), sorted(intervals)[1:], strict=False):
+    for previous, current in zip(
+        sorted(intervals), sorted(intervals)[1:], strict=False
+    ):
         if previous[1] > current[0]:
             raise _Rejected(EpubInspectionOutcome.MALFORMED)
     if not any(entry.name == _MIMETYPE for entry in result):
@@ -532,9 +556,9 @@ def _parse_xml(
     root: _Node | None = None
     try:
         parser = expat.ParserCreate(namespace_separator="}")
-        if not hasattr(parser, "SetParamEntityParsing") or not parser.SetParamEntityParsing(
-            expat.XML_PARAM_ENTITY_PARSING_NEVER
-        ):
+        if not hasattr(
+            parser, "SetParamEntityParsing"
+        ) or not parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER):
             raise _Rejected(EpubInspectionOutcome.UNAVAILABLE_SOURCE)
     except MemoryError:
         raise _Rejected(EpubInspectionOutcome.RESOURCE_LIMIT) from None
@@ -556,7 +580,11 @@ def _parse_xml(
             or depth > limits.xml_depth
         ):
             raise _Rejected(EpubInspectionOutcome.RESOURCE_LIMIT)
-        node = _Node(expanded(name), {expanded(key): value for key, value in attributes.items()}, ordinal=usage.nodes)
+        node = _Node(
+            expanded(name),
+            {expanded(key): value for key, value in attributes.items()},
+            ordinal=usage.nodes,
+        )
         if node.name.startswith("{" + _XINCLUDE_NS + "}"):
             raise _Rejected(EpubInspectionOutcome.MALFORMED)
         if stack:
@@ -646,7 +674,9 @@ def _children(node: _Node, local: str, namespace: str) -> list[_Node]:
 
 
 def _attribute(node: _Node, local: str, namespace: str | None = None) -> str | None:
-    return node.attributes.get(local if namespace is None else f"{{{namespace}}}{local}")
+    return node.attributes.get(
+        local if namespace is None else f"{{{namespace}}}{local}"
+    )
 
 
 def _percent_decode_path(reference: str) -> str:
@@ -688,7 +718,9 @@ def _normalize_member_reference(base: str, reference: str) -> str:
     decoded_reference = _percent_decode_path(reference)
     if decoded_reference.endswith("/"):
         raise _InvalidReferenceSyntax
-    joined = posixpath.normpath(posixpath.join(posixpath.dirname(base), decoded_reference))
+    joined = posixpath.normpath(
+        posixpath.join(posixpath.dirname(base), decoded_reference)
+    )
     if joined.startswith("../") or joined in {".", ".."}:
         raise _Rejected(EpubInspectionOutcome.MALFORMED)
     encoded = joined.encode("utf-8")
@@ -716,12 +748,14 @@ def _declared_resource_identity(
             raise _Rejected(EpubInspectionOutcome.RESOURCE_LIMIT)
         if len(parts) < 3 or not parts[2]:
             raise _InvalidReferenceSyntax
-        if any(
-            ord(character) < 0x20 or character == "\\"
-            for character in reference
-        ) or "@" in parts[2]:
+        if (
+            any(ord(character) < 0x20 or character == "\\" for character in reference)
+            or "@" in parts[2]
+        ):
             raise _Rejected(EpubInspectionOutcome.MALFORMED)
-        return hashlib.sha256(("remote\x00" + reference).encode("utf-8")).hexdigest(), None
+        return hashlib.sha256(
+            ("remote\x00" + reference).encode("utf-8")
+        ).hexdigest(), None
     resolved = _normalize_member_reference(base, reference)
     return epub_resource_identity(resolved), resolved
 
@@ -755,7 +789,12 @@ def _normalize_identifier(
             return doi.group(1), EpubObservationApplicability.EDITION, "DOI", False
         asin = _ASIN.fullmatch(stripped)
         if asin and declared_scheme_key == "asin":
-            return asin.group(1).upper(), EpubObservationApplicability.EDITION, "ASIN", False
+            return (
+                asin.group(1).upper(),
+                EpubObservationApplicability.EDITION,
+                "ASIN",
+                False,
+            )
         return stripped, EpubObservationApplicability.UNKNOWN, None, False
     match = _ISBN.fullmatch(candidate)
     if not match:
@@ -778,21 +817,30 @@ def _normalize_identifier(
             return doi.group(1), EpubObservationApplicability.EDITION, "DOI", False
         asin = _ASIN.fullmatch(stripped)
         if asin:
-            return asin.group(1).upper(), EpubObservationApplicability.EDITION, "ASIN", False
+            return (
+                asin.group(1).upper(),
+                EpubObservationApplicability.EDITION,
+                "ASIN",
+                False,
+            )
         if stripped.casefold().startswith("urn:"):
             return stripped, EpubObservationApplicability.UNKNOWN, "URN", False
         return stripped, EpubObservationApplicability.UNKNOWN, None, False
     labelled_scheme = None if match.group(1) is None else match.group(1).upper()
     required_scheme = (
-        labelled_scheme
-        if labelled_scheme in {"ISBN-10", "ISBN-13"}
-        else declared_isbn
+        labelled_scheme if labelled_scheme in {"ISBN-10", "ISBN-13"} else declared_isbn
     )
     compact = re.sub(r"[ -]", "", match.group(2)).upper()
-    if required_scheme != "ISBN-13" and len(compact) == 10 and compact[:9].isdigit() and (
-        compact[-1].isdigit() or compact[-1] == "X"
+    if (
+        required_scheme != "ISBN-13"
+        and len(compact) == 10
+        and compact[:9].isdigit()
+        and (compact[-1].isdigit() or compact[-1] == "X")
     ):
-        total = sum((10 - index) * (10 if value == "X" else int(value)) for index, value in enumerate(compact))
+        total = sum(
+            (10 - index) * (10 if value == "X" else int(value))
+            for index, value in enumerate(compact)
+        )
         if total % 11 == 0:
             return compact, EpubObservationApplicability.UNKNOWN, "ISBN-10", False
     if (
@@ -801,7 +849,10 @@ def _normalize_identifier(
         and compact.isdigit()
         and compact.startswith(("978", "979"))
     ):
-        total = sum(int(value) * (1 if index % 2 == 0 else 3) for index, value in enumerate(compact[:-1]))
+        total = sum(
+            int(value) * (1 if index % 2 == 0 else 3)
+            for index, value in enumerate(compact[:-1])
+        )
         if (10 - total % 10) % 10 == int(compact[-1]):
             return compact, EpubObservationApplicability.UNKNOWN, "ISBN-13", False
     return raw.strip(), EpubObservationApplicability.UNKNOWN, "ISBN", True
@@ -872,7 +923,9 @@ def _resolved_property(value: str | None, prefixes: dict[str, str]) -> str | Non
 
 def _public_text(value: str, maximum: int) -> tuple[str, bool]:
     if len(value) > maximum:
-        return _OVERSIZED_MARKER + hashlib.sha256(value.encode("utf-8")).hexdigest(), True
+        return _OVERSIZED_MARKER + hashlib.sha256(
+            value.encode("utf-8")
+        ).hexdigest(), True
     try:
         return validate_projection_text(value, "public EPUB metadata", maximum), False
     except EvidenceValueError:
@@ -945,7 +998,9 @@ def _observation(
 ) -> EpubPackageObservation:
     raw = node.text
     safe_raw, raw_redacted = _public_text(raw, request.limits.MAX_RAW_VALUE_CHARACTERS)
-    normalized_value = None if preserve_only else raw.strip() if normalized is None else normalized
+    normalized_value = (
+        None if preserve_only else raw.strip() if normalized is None else normalized
+    )
     safe_normalized = None
     if normalized_value is not None:
         safe_normalized, normalized_redacted = _public_text(
@@ -959,7 +1014,9 @@ def _observation(
         safe_raw,
         safe_normalized,
         applicability,
-        _citation(request, resource, EpubPackageCitationSection.METADATA, node, selector),
+        _citation(
+            request, resource, EpubPackageCitationSection.METADATA, node, selector
+        ),
         _OBSERVATION_SCHEMA,
         _EXTRACTOR_VERSION,
         _compatibility(version),
@@ -1120,7 +1177,10 @@ def _package_frame(request: EpubPackageRequest, root: _Node) -> _PackageFrame:
         raise _Rejected(EpubInspectionOutcome.MALFORMED)
     if len(metadata_nodes) > request.limits.metadata_nodes:
         raise _Rejected(EpubInspectionOutcome.RESOURCE_LIMIT)
-    if len(manifest.children) > request.limits.manifest_items or len(spine.children) > request.limits.spine_items:
+    if (
+        len(manifest.children) > request.limits.manifest_items
+        or len(spine.children) > request.limits.spine_items
+    ):
         raise _Rejected(EpubInspectionOutcome.RESOURCE_LIMIT)
     return _PackageFrame(
         version,
@@ -1172,7 +1232,9 @@ def _container_declarations(
         EpubPackageDeclaration(
             EpubPackageDeclarationKind.ROOTFILE,
             rootfile_node.ordinal,
-            _citation(request, _CONTAINER, EpubPackageCitationSection.PACKAGE, rootfile_node),
+            _citation(
+                request, _CONTAINER, EpubPackageCitationSection.PACKAGE, rootfile_node
+            ),
             epub_resource_identity(package_name),
             media_type="application/oebps-package+xml",
         ),
@@ -1221,7 +1283,9 @@ def _identifier_registry(
             warnings.append(
                 EpubPackageWarning(
                     "invalid_package_id",
-                    _citation(request, package_name, EpubPackageCitationSection.PACKAGE, node),
+                    _citation(
+                        request, package_name, EpubPackageCitationSection.PACKAGE, node
+                    ),
                 )
             )
             continue
@@ -1232,7 +1296,6 @@ def _identifier_registry(
             continue
         id_registry[identifier] = node
     return id_registry, warnings
-
 
 
 @dataclass(frozen=True)
@@ -1460,9 +1523,7 @@ def _dublin_core_value(
             "modification": EpubPackageField.MODIFICATION_DATE,
             "copyright": EpubPackageField.COPYRIGHT_DATE,
         }
-        target_field = date_fields.get(
-            event or "", EpubPackageField.PUBLICATION_DATE
-        )
+        target_field = date_fields.get(event or "", EpubPackageField.PUBLICATION_DATE)
         supported_event = event is None or event in date_fields
         valid_date = (
             _valid_publication_date(normalized)
@@ -1474,7 +1535,9 @@ def _dublin_core_value(
             warnings.append(
                 EpubPackageWarning(
                     "invalid_date",
-                    _citation(request, package_name, EpubPackageCitationSection.METADATA, node),
+                    _citation(
+                        request, package_name, EpubPackageCitationSection.METADATA, node
+                    ),
                 )
             )
             applicability = EpubObservationApplicability.INAPPLICABLE
@@ -1483,7 +1546,9 @@ def _dublin_core_value(
         warnings.append(
             EpubPackageWarning(
                 "invalid_language",
-                _citation(request, package_name, EpubPackageCitationSection.METADATA, node),
+                _citation(
+                    request, package_name, EpubPackageCitationSection.METADATA, node
+                ),
             )
         )
         applicability = EpubObservationApplicability.INAPPLICABLE
@@ -1501,9 +1566,7 @@ def _dublin_core_value(
             display = title_sequence[0]
         selector_parts = []
         if title_type is not None:
-            selector_parts.append(
-                f"title-type-{title_type[0]}@{title_type[1].ordinal}"
-            )
+            selector_parts.append(f"title-type-{title_type[0]}@{title_type[1].ordinal}")
         if title_sequence is not None:
             selector_parts.append(f"display-seq@{title_sequence[1].ordinal}")
         selector = ";".join(selector_parts) or None
@@ -1556,7 +1619,9 @@ def _dublin_core_observations(
         warnings.append(
             EpubPackageWarning(
                 "invalid_language",
-                _citation(request, package_name, EpubPackageCitationSection.METADATA, node),
+                _citation(
+                    request, package_name, EpubPackageCitationSection.METADATA, node
+                ),
             )
         )
         language = None
@@ -1597,7 +1662,13 @@ def _dublin_core_observations(
             )
         )
     qualifiers = (
-        ("role", _OPF_NS, EpubPackageField.CREATOR_ROLE if local == "creator" else EpubPackageField.CONTRIBUTOR_ROLE),
+        (
+            "role",
+            _OPF_NS,
+            EpubPackageField.CREATOR_ROLE
+            if local == "creator"
+            else EpubPackageField.CONTRIBUTOR_ROLE,
+        ),
         ("file-as", _OPF_NS, EpubPackageField.SORT_KEY),
         ("scheme", _OPF_NS, EpubPackageField.IDENTIFIER_SCHEME),
         ("event", _OPF_NS, EpubPackageField.DATE_EVENT),
@@ -1608,13 +1679,19 @@ def _dublin_core_observations(
             continue
         if attribute_name == "role" and local not in {"creator", "contributor"}:
             continue
-        if attribute_name == "file-as" and local not in {"creator", "contributor", "title"}:
+        if attribute_name == "file-as" and local not in {
+            "creator",
+            "contributor",
+            "title",
+        }:
             continue
         if attribute_name == "scheme" and local != "identifier":
             continue
         if attribute_name == "event" and local != "date":
             continue
-        qualifier_node = _Node(node.name, node.attributes, text_parts=[qualifier], ordinal=node.ordinal)
+        qualifier_node = _Node(
+            node.name, node.attributes, text_parts=[qualifier], ordinal=node.ordinal
+        )
         observations.append(
             _observation(
                 request,
@@ -1652,7 +1729,9 @@ def _meta_observations(
     content = _attribute(node, "content")
     value = node.text or content or ""
     if resolved_property == "dcterms:modified" and value:
-        synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
+        synthetic = _Node(
+            node.name, node.attributes, text_parts=[value], ordinal=node.ordinal
+        )
         valid_modified = _valid_modified_date(value)
         observations.append(
             _observation(
@@ -1673,31 +1752,41 @@ def _meta_observations(
             warnings.append(
                 EpubPackageWarning(
                     "invalid_date",
-                    _citation(request, package_name, EpubPackageCitationSection.METADATA, node),
+                    _citation(
+                        request, package_name, EpubPackageCitationSection.METADATA, node
+                    ),
                 )
             )
     elif resolved_property in {"belongs-to-collection", "group-position"} and value:
         if resolved_property == "group-position" and not _valid_group_position(value):
             warnings.append(EpubPackageWarning("invalid_metadata_refinement"))
             return observations, warnings
-        synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
+        synthetic = _Node(
+            node.name, node.attributes, text_parts=[value], ordinal=node.ordinal
+        )
         observations.append(
             _observation(
                 request,
                 package_name,
                 version,
                 synthetic,
-                EpubPackageField.COLLECTION if resolved_property == "belongs-to-collection" else EpubPackageField.COLLECTION_POSITION,
+                EpubPackageField.COLLECTION
+                if resolved_property == "belongs-to-collection"
+                else EpubPackageField.COLLECTION_POSITION,
                 applicability=EpubObservationApplicability.EDITION,
             )
         )
     elif resolved_property in {"title-type", "display-seq"}:
         return observations, warnings
-    elif resolved_property in {
-        "role",
-        "file-as",
-        "identifier-type",
-    } and value:
+    elif (
+        resolved_property
+        in {
+            "role",
+            "file-as",
+            "identifier-type",
+        }
+        and value
+    ):
         refines = _attribute(node, "refines") or ""
         referenced = id_registry.get(refines[1:]) if refines.startswith("#") else None
         if referenced is None:
@@ -1720,7 +1809,9 @@ def _meta_observations(
             return observations, warnings
         # Associate an EPUB3 refinement with its explicit DC target so
         # projection never attaches it to a merely preceding person.
-        synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=referenced.ordinal)
+        synthetic = _Node(
+            node.name, node.attributes, text_parts=[value], ordinal=referenced.ordinal
+        )
         observations.append(
             _observation(
                 request,
@@ -1741,12 +1832,18 @@ def _meta_observations(
                 selector=f"{resolved_property}-{node.ordinal}",
             )
         )
-    elif resolved_property in {
-        "schema:bookEdition",
-        "schema:bookFormat",
-        "schema:contentLocation",
-    } and value:
-        synthetic = _Node(node.name, node.attributes, text_parts=[value], ordinal=node.ordinal)
+    elif (
+        resolved_property
+        in {
+            "schema:bookEdition",
+            "schema:bookFormat",
+            "schema:contentLocation",
+        }
+        and value
+    ):
+        synthetic = _Node(
+            node.name, node.attributes, text_parts=[value], ordinal=node.ordinal
+        )
         observations.append(
             _observation(
                 request,
@@ -1763,10 +1860,16 @@ def _meta_observations(
         )
     elif property_name or (
         legacy_name
-        and legacy_name
-        not in {"calibre:series", "calibre:series_index", "cover"}
+        and legacy_name not in {"calibre:series", "calibre:series_index", "cover"}
     ):
-        warnings.append(EpubPackageWarning("unsupported_vendor_metadata", _citation(request, package_name, EpubPackageCitationSection.METADATA, node)))
+        warnings.append(
+            EpubPackageWarning(
+                "unsupported_vendor_metadata",
+                _citation(
+                    request, package_name, EpubPackageCitationSection.METADATA, node
+                ),
+            )
+        )
     return observations, warnings
 
 
@@ -1886,7 +1989,11 @@ def _required_field_warnings(
     field synthesized by a later stage never satisfies a metadata requirement.
     """
     warnings: list[EpubPackageWarning] = []
-    required = {EpubPackageField.TITLE, EpubPackageField.LANGUAGE, EpubPackageField.IDENTIFIER}
+    required = {
+        EpubPackageField.TITLE,
+        EpubPackageField.LANGUAGE,
+        EpubPackageField.IDENTIFIER,
+    }
     applicable_fields = {
         item.field
         for item in observations
@@ -1943,8 +2050,22 @@ def _package_identity_observations(
                 selector="primary-identifier",
             )
         )
-    version_node = _Node(root.name, root.attributes, text_parts=[frame.declared_version], ordinal=root.ordinal)
-    observations.append(_observation(request, package_name, version, version_node, EpubPackageField.PACKAGE_VERSION, applicability=EpubObservationApplicability.FILE))
+    version_node = _Node(
+        root.name,
+        root.attributes,
+        text_parts=[frame.declared_version],
+        ordinal=root.ordinal,
+    )
+    observations.append(
+        _observation(
+            request,
+            package_name,
+            version,
+            version_node,
+            EpubPackageField.PACKAGE_VERSION,
+            applicability=EpubObservationApplicability.FILE,
+        )
+    )
     return observations, warnings
 
 
@@ -2012,14 +2133,14 @@ def _manifest_item(
         validate_projection_text(media_type, "public manifest media type", 128)
         for property_value in properties:
             validate_code(property_value, "manifest property")
-            validate_projection_text(
-                property_value, "public manifest property", 64
-            )
+            validate_projection_text(property_value, "public manifest property", 64)
     except EvidenceValueError:
         warnings.append(
             EpubPackageWarning(
                 "unsafe_manifest_item",
-                _citation(request, package_name, EpubPackageCitationSection.MANIFEST, item),
+                _citation(
+                    request, package_name, EpubPackageCitationSection.MANIFEST, item
+                ),
             )
         )
         return [], warnings
@@ -2034,7 +2155,9 @@ def _manifest_item(
         warnings.append(
             EpubPackageWarning(
                 "missing_manifest_resource",
-                _citation(request, package_name, EpubPackageCitationSection.MANIFEST, item),
+                _citation(
+                    request, package_name, EpubPackageCitationSection.MANIFEST, item
+                ),
             )
         )
         return [], warnings
@@ -2087,7 +2210,9 @@ def _manifest_item(
             EpubPackageDeclaration(
                 EpubPackageDeclarationKind.NAVIGATION,
                 item.ordinal,
-                _citation(request, package_name, EpubPackageCitationSection.NAVIGATION, item),
+                _citation(
+                    request, package_name, EpubPackageCitationSection.NAVIGATION, item
+                ),
                 resource_identity,
                 identifier,
                 media_type,
@@ -2099,7 +2224,9 @@ def _manifest_item(
             EpubPackageDeclaration(
                 EpubPackageDeclarationKind.COVER,
                 item.ordinal,
-                _citation(request, package_name, EpubPackageCitationSection.COVER, item),
+                _citation(
+                    request, package_name, EpubPackageCitationSection.COVER, item
+                ),
                 resource_identity,
                 identifier,
                 media_type,
@@ -2109,9 +2236,7 @@ def _manifest_item(
     return declarations, warnings
 
 
-def _manifest_integrity(
-    manifest: _Manifest, version: str
-) -> list[EpubPackageWarning]:
+def _manifest_integrity(manifest: _Manifest, version: str) -> list[EpubPackageWarning]:
     """Check the manifest's cross-item relationships once every item is known.
 
     Prunes fallbacks that resolve to nothing, so the spine stage can never
@@ -2308,7 +2433,20 @@ def _ncx_declaration(
         ):
             warnings.append(EpubPackageWarning("invalid_ncx_declaration"))
         else:
-            declarations.append(EpubPackageDeclaration(EpubPackageDeclarationKind.NCX, spine.ordinal, _citation(request, package_name, EpubPackageCitationSection.NAVIGATION, spine), manifest.ids[toc], toc))
+            declarations.append(
+                EpubPackageDeclaration(
+                    EpubPackageDeclarationKind.NCX,
+                    spine.ordinal,
+                    _citation(
+                        request,
+                        package_name,
+                        EpubPackageCitationSection.NAVIGATION,
+                        spine,
+                    ),
+                    manifest.ids[toc],
+                    toc,
+                )
+            )
     return declarations, warnings
 
 
@@ -2421,7 +2559,20 @@ def _guide_declarations(
             except EvidenceValueError:
                 warnings.append(EpubPackageWarning("invalid_guide_reference"))
                 continue
-            declarations.append(EpubPackageDeclaration(EpubPackageDeclarationKind.GUIDE_REFERENCE, reference.ordinal, _citation(request, package_name, EpubPackageCitationSection.GUIDE, reference), resource_identity, reference_type))
+            declarations.append(
+                EpubPackageDeclaration(
+                    EpubPackageDeclarationKind.GUIDE_REFERENCE,
+                    reference.ordinal,
+                    _citation(
+                        request,
+                        package_name,
+                        EpubPackageCitationSection.GUIDE,
+                        reference,
+                    ),
+                    resource_identity,
+                    reference_type,
+                )
+            )
     return declarations, warnings
 
 
@@ -2470,7 +2621,13 @@ def _selected_cover(
                 not legacy_id
                 or legacy_id not in manifest.local_ids
                 or manifest.media_types.get(legacy_id)
-                not in {"image/gif", "image/jpeg", "image/png", "image/svg+xml", "image/webp"}
+                not in {
+                    "image/gif",
+                    "image/jpeg",
+                    "image/png",
+                    "image/svg+xml",
+                    "image/webp",
+                }
             ):
                 warnings.append(EpubPackageWarning("invalid_cover_declaration"))
                 continue
@@ -2533,13 +2690,32 @@ def _cover_observations(
         # and every selected id came from the accepted manifest, so the node
         # that declared it is always present.
         assert cover_node is not None
-        observations.append(_observation(request, package_name, frame.version, _Node(cover_node.name, cover_node.attributes, text_parts=[selected_cover], ordinal=cover_node.ordinal), EpubPackageField.COVER, applicability=EpubObservationApplicability.FILE))
+        observations.append(
+            _observation(
+                request,
+                package_name,
+                frame.version,
+                _Node(
+                    cover_node.name,
+                    cover_node.attributes,
+                    text_parts=[selected_cover],
+                    ordinal=cover_node.ordinal,
+                ),
+                EpubPackageField.COVER,
+                applicability=EpubObservationApplicability.FILE,
+            )
+        )
         if not manifest.cover_ids:
             declarations.append(
                 EpubPackageDeclaration(
                     EpubPackageDeclarationKind.COVER,
                     cover_node.ordinal,
-                    _citation(request, package_name, EpubPackageCitationSection.COVER, cover_node),
+                    _citation(
+                        request,
+                        package_name,
+                        EpubPackageCitationSection.COVER,
+                        cover_node,
+                    ),
                     selected_cover,
                     selected_cover_id,
                     manifest.media_types[cast(str, selected_cover_id)],
@@ -2581,7 +2757,8 @@ def _consistency_warnings(
         if len(values_by_field.get(field_name, set())) > 1:
             warnings.append(EpubPackageWarning(warning_code))
     if any(
-        observation.field in {EpubPackageField.IDENTIFIER, EpubPackageField.PACKAGE_IDENTIFIER}
+        observation.field
+        in {EpubPackageField.IDENTIFIER, EpubPackageField.PACKAGE_IDENTIFIER}
         and observation.applicability is EpubObservationApplicability.UNKNOWN
         for observation in observations
     ):
@@ -2655,7 +2832,9 @@ def _bounded_report(
         )
     ):
         raise _Rejected(EpubInspectionOutcome.RESOURCE_LIMIT)
-    observations.sort(key=lambda value: (value.citation.source_ordinal, value.citation.identity))
+    observations.sort(
+        key=lambda value: (value.citation.source_ordinal, value.citation.identity)
+    )
     declarations.sort(key=lambda value: (value.source_ordinal, value.citation.identity))
     warnings.sort(key=lambda value: value.sort_key)
     try:
@@ -2763,7 +2942,9 @@ def _package_report(
 
 def _expat_supported() -> bool:
     try:
-        return tuple(int(part) for part in expat.EXPAT_VERSION.split("_")[-1].split(".")) >= (2, 7, 2)
+        return tuple(
+            int(part) for part in expat.EXPAT_VERSION.split("_")[-1].split(".")
+        ) >= (2, 7, 2)
     except (AttributeError, TypeError, ValueError):
         return False
 
@@ -2785,8 +2966,15 @@ class EpubPackageExtractor:
     def extract(
         self, request: EpubPackageRequest, archive: zipfile.ZipFile | None = None
     ) -> EpubPackageReport:
-        if type(request) is not EpubPackageRequest or request.capability is not EpubPackageCapability.PACKAGE:
-            return EpubPackageReport(EpubInspectionOutcome.INTERNAL_FAILURE, EpubPackageCapability.PACKAGE, EpubPackageLimits())
+        if (
+            type(request) is not EpubPackageRequest
+            or request.capability is not EpubPackageCapability.PACKAGE
+        ):
+            return EpubPackageReport(
+                EpubInspectionOutcome.INTERNAL_FAILURE,
+                EpubPackageCapability.PACKAGE,
+                EpubPackageLimits(),
+            )
         try:
             _check_request(request)
             if datetime.now(timezone.utc) >= request.deadline:
@@ -2807,7 +2995,9 @@ class EpubPackageExtractor:
             # `own_archive` is `archive is None`, and the block above binds a
             # real `ZipFile` in exactly that case, so `archive` is non-None
             # for the whole `with` body below.
-            with (cast(zipfile.ZipFile, archive) if own_archive else nullcontext(archive)):
+            with (
+                cast(zipfile.ZipFile, archive) if own_archive else nullcontext(archive)
+            ):
                 marker = entries[_MIMETYPE]
                 noncanonical_mimetype = (
                     entries_tuple[0].name != _MIMETYPE
@@ -2818,14 +3008,30 @@ class EpubPackageExtractor:
                     or bool(marker.central_extra_length)
                     or marker.expanded_size != len(_MIMETYPE_VALUE)
                 )
-                mimetype = _member_bytes(request, cast(zipfile.ZipFile, archive), entries, _MIMETYPE, 64)
+                mimetype = _member_bytes(
+                    request, cast(zipfile.ZipFile, archive), entries, _MIMETYPE, 64
+                )
                 if mimetype != _MIMETYPE_VALUE:
-                    if mimetype.removeprefix(b"\xef\xbb\xbf").strip() != _MIMETYPE_VALUE:
+                    if (
+                        mimetype.removeprefix(b"\xef\xbb\xbf").strip()
+                        != _MIMETYPE_VALUE
+                    ):
                         raise _Rejected(EpubInspectionOutcome.UNSUPPORTED_FORMAT)
                     noncanonical_mimetype = True
-                container_bytes = _member_bytes(request, cast(zipfile.ZipFile, archive), entries, _CONTAINER, request.limits.container_xml_bytes)
-                container_root, container_usage = _parse_xml(container_bytes, request.limits, request)
-                if container_root.name != "{" + _CONTAINER_NS + "}container" or _attribute(container_root, "version") != "1.0":
+                container_bytes = _member_bytes(
+                    request,
+                    cast(zipfile.ZipFile, archive),
+                    entries,
+                    _CONTAINER,
+                    request.limits.container_xml_bytes,
+                )
+                container_root, container_usage = _parse_xml(
+                    container_bytes, request.limits, request
+                )
+                if (
+                    container_root.name != "{" + _CONTAINER_NS + "}container"
+                    or _attribute(container_root, "version") != "1.0"
+                ):
                     raise _Rejected(EpubInspectionOutcome.MALFORMED)
                 rootfiles_groups = _children(container_root, "rootfiles", _CONTAINER_NS)
                 container_child_names = [node.name for node in container_root.children]
@@ -2856,14 +3062,24 @@ class EpubPackageExtractor:
                 if len(paths) != len(set(paths)):
                     raise _Rejected(EpubInspectionOutcome.MALFORMED)
                 if len(paths) > 1:
-                    raise _Rejected(EpubInspectionOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS)
+                    raise _Rejected(
+                        EpubInspectionOutcome.UNSUPPORTED_MULTIPLE_RENDITIONS
+                    )
                 package_name = paths[0]
                 encryption_names: set[str] = set()
                 encryption_declarations: list[tuple[str, _Node]] = []
                 encryption_usage = _XmlUsage()
                 if _ENCRYPTION in entries:
-                    encryption_bytes = _member_bytes(request, cast(zipfile.ZipFile, archive), entries, _ENCRYPTION, request.limits.container_xml_bytes)
-                    encryption_root, encryption_usage = _parse_xml(encryption_bytes, request.limits, request)
+                    encryption_bytes = _member_bytes(
+                        request,
+                        cast(zipfile.ZipFile, archive),
+                        entries,
+                        _ENCRYPTION,
+                        request.limits.container_xml_bytes,
+                    )
+                    encryption_root, encryption_usage = _parse_xml(
+                        encryption_bytes, request.limits, request
+                    )
                     if encryption_root.name != f"{{{_ENC_NS}}}encryption":
                         raise _Rejected(EpubInspectionOutcome.MALFORMED)
                     encrypted_data_name = f"{{{_XMLENC_NS}}}EncryptedData"
@@ -2889,9 +3105,16 @@ class EpubPackageExtractor:
                         )
                         child_names = [node.name for node in encrypted_data.children]
                         if (
-                            any(name not in allowed_encrypted_children for name in child_names)
-                            or any(child_names.count(name) > 1 for name in allowed_encrypted_children)
-                            or child_names != sorted(
+                            any(
+                                name not in allowed_encrypted_children
+                                for name in child_names
+                            )
+                            or any(
+                                child_names.count(name) > 1
+                                for name in allowed_encrypted_children
+                            )
+                            or child_names
+                            != sorted(
                                 child_names,
                                 key=allowed_encrypted_children.index,
                             )
@@ -2915,28 +3138,55 @@ class EpubPackageExtractor:
                             raise _Rejected(EpubInspectionOutcome.MALFORMED)
                         normalized_uri = _resolve_member("", uri, entries)
                         encryption_names.add(normalized_uri)
-                        encryption_declarations.append(
-                            (normalized_uri, reference)
-                        )
+                        encryption_declarations.append((normalized_uri, reference))
                 if package_name in encryption_names:
                     raise _Rejected(EpubInspectionOutcome.ENCRYPTED)
-                package_bytes = _member_bytes(request, cast(zipfile.ZipFile, archive), entries, package_name, request.limits.opf_package_bytes)
-                package_root, package_usage = _parse_xml(package_bytes, request.limits, request)
+                package_bytes = _member_bytes(
+                    request,
+                    cast(zipfile.ZipFile, archive),
+                    entries,
+                    package_name,
+                    request.limits.opf_package_bytes,
+                )
+                package_root, package_usage = _parse_xml(
+                    package_bytes, request.limits, request
+                )
             usage = EpubPackageUsage(
                 archive_entries=len(entries),
                 opened_members=3 + (_ENCRYPTION in entries),
-                compressed_bytes=sum(entry.compressed_size for entry in entries.values()),
+                compressed_bytes=sum(
+                    entry.compressed_size for entry in entries.values()
+                ),
                 expanded_bytes=sum(entry.expanded_size for entry in entries.values()),
-                xml_nodes=container_usage.nodes + encryption_usage.nodes + package_usage.nodes,
-                xml_attributes=container_usage.attributes + encryption_usage.attributes + package_usage.attributes,
-                xml_text_characters=container_usage.text_characters + encryption_usage.text_characters + package_usage.text_characters,
+                xml_nodes=container_usage.nodes
+                + encryption_usage.nodes
+                + package_usage.nodes,
+                xml_attributes=container_usage.attributes
+                + encryption_usage.attributes
+                + package_usage.attributes,
+                xml_text_characters=container_usage.text_characters
+                + encryption_usage.text_characters
+                + package_usage.text_characters,
                 metadata_nodes=0,
-                manifest_items=sum(len(node.children) for node in _children(package_root, "manifest", _OPF_NS)),
-                spine_items=sum(len(node.children) for node in _children(package_root, "spine", _OPF_NS)),
-                guide_references=sum(len(node.children) for node in _children(package_root, "guide", _OPF_NS)),
-                prefix_mappings=len((_attribute(package_root, "prefix") or "").split()) // 2,
+                manifest_items=sum(
+                    len(node.children)
+                    for node in _children(package_root, "manifest", _OPF_NS)
+                ),
+                spine_items=sum(
+                    len(node.children)
+                    for node in _children(package_root, "spine", _OPF_NS)
+                ),
+                guide_references=sum(
+                    len(node.children)
+                    for node in _children(package_root, "guide", _OPF_NS)
+                ),
+                prefix_mappings=len((_attribute(package_root, "prefix") or "").split())
+                // 2,
             )
-            if usage.expanded_bytes > request.limits.expanded_bytes_per_archive or usage.prefix_mappings > request.limits.prefix_mappings:
+            if (
+                usage.expanded_bytes > request.limits.expanded_bytes_per_archive
+                or usage.prefix_mappings > request.limits.prefix_mappings
+            ):
                 raise _Rejected(EpubInspectionOutcome.RESOURCE_LIMIT)
             return _package_report(
                 request,
@@ -2951,15 +3201,33 @@ class EpubPackageExtractor:
                 noncanonical_mimetype,
             )
         except _Rejected as rejected:
-            return EpubPackageReport(rejected.outcome, EpubPackageCapability.PACKAGE, request.limits)
+            return EpubPackageReport(
+                rejected.outcome, EpubPackageCapability.PACKAGE, request.limits
+            )
         except EpubPackageSourceError:
-            return EpubPackageReport(EpubInspectionOutcome.UNAVAILABLE_SOURCE, EpubPackageCapability.PACKAGE, request.limits)
+            return EpubPackageReport(
+                EpubInspectionOutcome.UNAVAILABLE_SOURCE,
+                EpubPackageCapability.PACKAGE,
+                request.limits,
+            )
         except MemoryError:
-            return EpubPackageReport(EpubInspectionOutcome.RESOURCE_LIMIT, EpubPackageCapability.PACKAGE, request.limits)
+            return EpubPackageReport(
+                EpubInspectionOutcome.RESOURCE_LIMIT,
+                EpubPackageCapability.PACKAGE,
+                request.limits,
+            )
         except EvidenceValueError:
-            return EpubPackageReport(EpubInspectionOutcome.MALFORMED, EpubPackageCapability.PACKAGE, request.limits)
+            return EpubPackageReport(
+                EpubInspectionOutcome.MALFORMED,
+                EpubPackageCapability.PACKAGE,
+                request.limits,
+            )
         except Exception:
-            return EpubPackageReport(EpubInspectionOutcome.INTERNAL_FAILURE, EpubPackageCapability.PACKAGE, request.limits)
+            return EpubPackageReport(
+                EpubInspectionOutcome.INTERNAL_FAILURE,
+                EpubPackageCapability.PACKAGE,
+                request.limits,
+            )
 
 
 __all__ = ["EpubPackageExtractor"]

@@ -30,17 +30,30 @@ def _configuration(
     override: dict[str, dict[str, str]] | None = None,
 ) -> ApplicationConfiguration:
     return ApplicationConfiguration(
-        (TargetConnectionConfiguration("primary", "https://example.invalid", "/run/token"),),
+        (
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/run/token"
+            ),
+        ),
         (
             LibraryConfiguration(
-                "books", "primary", "library-1", "ebook", None, ("catalogue",),
+                "books",
+                "primary",
+                "library-1",
+                "ebook",
+                None,
+                ("catalogue",),
                 policy_override=override,
             ),
         ),
         (),
         (
             ProviderConnectionConfiguration(
-                "catalogue", True, False, None, "open_library",
+                "catalogue",
+                True,
+                False,
+                None,
+                "open_library",
                 "owner@example.invalid",
             ),
         ),
@@ -48,12 +61,16 @@ def _configuration(
 
 
 class _Repository:
-    def __init__(self, persisted: ResolvedMetadataPolicy | None, bound: str | None = None) -> None:
+    def __init__(
+        self, persisted: ResolvedMetadataPolicy | None, bound: str | None = None
+    ) -> None:
         self._persisted = persisted
         self._bound = bound
         self.bindings: list[str] = []
 
-    def current_resolved_metadata_policy(self, library: str) -> ResolvedMetadataPolicy | None:
+    def current_resolved_metadata_policy(
+        self, library: str
+    ) -> ResolvedMetadataPolicy | None:
         del library
         return self._persisted
 
@@ -67,7 +84,9 @@ class _Repository:
         return ResolvedMetadataPolicy.from_data(json.loads(document)).resolved_id
 
 
-def _configured(override: dict[str, dict[str, str]] | None = None) -> ResolvedMetadataPolicy:
+def _configured(
+    override: dict[str, dict[str, str]] | None = None,
+) -> ResolvedMetadataPolicy:
     return resolve_policy(MetadataPolicyProfile.builtin(), "books", override)
 
 

@@ -183,4 +183,5 @@ def _validate_proposal_row(row: tuple[object, ...]) -> str:
         raise MetadataReportError("persisted proposal envelope disagrees")
     return document
 
+
 __all__ = ["SQLiteProposalSetRepository", "_validate_proposal_row"]
