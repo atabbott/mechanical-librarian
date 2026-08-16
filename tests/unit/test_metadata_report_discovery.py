@@ -19,6 +19,7 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.application.metadata_report import (
     GenerateMetadataReport,
     InspectionResult,
+    MetadataDiscoveryLane,
     MetadataLookup,
     MetadataProvider,
     ProviderBinding,
@@ -259,7 +260,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
 
 
 @pytest.fixture(scope="module")
-def aggregate_lanes():
+def aggregate_lanes() -> tuple[MetadataDiscoveryLane, ...]:
     claims = tuple(
         LocalClaim.create(
             kind=ClaimKind.ISBN,
@@ -282,7 +283,7 @@ def aggregate_lanes():
     ).lanes
 
 
-def _overflow_lane_results(lanes):
+def _overflow_lane_results(lanes: tuple[MetadataDiscoveryLane, ...]) -> tuple[ProviderLaneResult, ...]:
     candidates = tuple(
         ProviderCandidate(f"edition-{index}", f"work-{index}", ())
         for index in range(MAX_CANDIDATES + 1)
@@ -299,7 +300,7 @@ def _overflow_lane_results(lanes):
     )
 
 
-def _conflicting_lane_results(lanes):
+def _conflicting_lane_results(lanes: tuple[MetadataDiscoveryLane, ...]) -> tuple[ProviderLaneResult, ...]:
     return (
         ProviderLaneResult(
             lanes[0],
@@ -330,7 +331,9 @@ def _conflicting_lane_results(lanes):
     ),
 )
 def test_aggregate_candidate_failures_preserve_independent_lane_statuses(
-    aggregate_lanes, build, expected
+    aggregate_lanes: tuple[MetadataDiscoveryLane, ...],
+    build: Callable[[tuple[MetadataDiscoveryLane, ...]], tuple[ProviderLaneResult, ...]],
+    expected: ProviderStatus,
 ) -> None:
     lanes = aggregate_lanes
     results = build(lanes)

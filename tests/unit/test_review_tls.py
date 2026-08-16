@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -164,7 +165,7 @@ def test_encrypted_envelopes_fail_before_ssl_parsing() -> None:
 
 
 @pytest.fixture
-def protocol_environment():
+def protocol_environment() -> Iterator[tuple[Config, asyncio.AbstractEventLoop]]:
     """One loaded uvicorn config over its own event loop, closed after use."""
 
     loop = asyncio.new_event_loop()
@@ -178,7 +179,10 @@ def protocol_environment():
     loop.close()
 
 
-def _protocol(environment, state: ServerState | None = None):
+def _protocol(
+    environment: tuple[Config, asyncio.AbstractEventLoop],
+    state: ServerState | None = None,
+) -> tuple[BoundedReviewH11Protocol, Mock]:
     config, loop = environment
     protocol = BoundedReviewH11Protocol(
         config, state or ServerState(), {}, _loop=loop
@@ -193,7 +197,9 @@ def _protocol(environment, state: ServerState | None = None):
     return protocol, transport
 
 
-def test_incomplete_headers_are_closed_on_the_fixed_timeout(protocol_environment) -> None:
+def test_incomplete_headers_are_closed_on_the_fixed_timeout(
+    protocol_environment: tuple[Config, asyncio.AbstractEventLoop],
+) -> None:
     protocol, transport = _protocol(protocol_environment)
     protocol.connection_made(transport)
     assert REVIEW_HEADER_TIMEOUT_SECONDS == 10.0
@@ -205,7 +211,7 @@ def test_incomplete_headers_are_closed_on_the_fixed_timeout(protocol_environment
 
 
 def test_excess_connections_are_closed_before_request_processing(
-    protocol_environment,
+    protocol_environment: tuple[Config, asyncio.AbstractEventLoop],
 ) -> None:
     state = ServerState()
     state.connections.update(Mock() for _ in range(MAX_REVIEW_CONNECTIONS))

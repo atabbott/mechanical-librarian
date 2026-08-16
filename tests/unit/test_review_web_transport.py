@@ -8,9 +8,8 @@ from __future__ import annotations
 import json
 import os
 import re
-import tempfile
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -33,14 +32,13 @@ from mechanical_librarian.application.review_web import (
 )
 from mechanical_librarian.bootstrap.composition import run_review_server
 from mechanical_librarian.domain.field_effect import FieldEffectError
-from mechanical_librarian.domain.proposal_set import evaluate_report
-from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_OPTION_DISPOSITIONS,
 )
-from tests.support.review_cases import _report
 from tests.support.review_web_doubles import (
     FakeReviewRepository,
+    ReviewWebContext,
+    review_web_context,
 )
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
@@ -48,68 +46,12 @@ from tests.unit.review_app_fixture import (
 )
 
 
-class _ReviewWebContext:
-    """One authenticated transport-test application over the fake repository.
-
-    A local stand-in for `ReviewWebTestCase`, whose members this cohort used
-    through `self`. That base still serves
-    `tests/unit/test_review_web_read_models.py`, which a later stage of #697
-    owns, so `tests/support/review_web_doubles.py` is left unchanged and the
-    two converge when that stage retires the base class.
-    """
-
-    def __init__(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory()
-        root = Path(self.temporary.name)
-        self.hash_path = root / "owner.hash"
-        self.hash_path.write_text(
-            PasswordHasher().hash("correct horse"), encoding="utf-8"
-        )
-        os.chmod(self.hash_path, 0o600)
-        report = _report()
-        self.case = ReviewCase.create(evaluate_report(report), report)
-        self.repository = FakeReviewRepository(self.case, report)
-        self.now = 1_000
-        self.cleanup = ExitStack()
-        configuration = ReviewWebConfiguration(
-            canonical_origin="https://review.test",
-            owner_password_hash_file=str(self.hash_path),
-            session_lifetime_seconds=600,
-        )
-        self.client = TestClient(
-            create_transport_test_app(
-                self.repository, configuration, clock=lambda: self.now
-            ),
-            base_url="https://review.test",
-        )
-        self.origin = {"Origin": "https://review.test"}
-
-    def login(self) -> dict[str, object]:
-        response = self.client.post(
-            "/api/v1/session/login",
-            headers=self.origin,
-            json={"password": "correct horse"},
-        )
-        assert response.status_code == 200, response.text
-        self.client.headers["x-ml-build-identity"] = TEST_REACT_BUILD_IDENTITY
-        return response.json()
-
-    def close(self) -> None:
-        # The stack exits any client a test entered before the field is
-        # replaced, so a substituted application still shuts down.
-        self.cleanup.close()
-        self.client.close()
-        self.temporary.cleanup()
-
-
 @pytest.fixture
-def web():
-    context = _ReviewWebContext()
-    yield context
-    context.close()
+def web() -> Iterator[ReviewWebContext[FakeReviewRepository]]:
+    yield from review_web_context(FakeReviewRepository)
 
 
-def test_only_liveness_and_login_are_anonymous(web: _ReviewWebContext) -> None:
+def test_only_liveness_and_login_are_anonymous(web: ReviewWebContext[FakeReviewRepository]) -> None:
     live = web.client.get("/health/live")
     assert live.status_code == 200
     assert len(live.content) <= 3
@@ -122,7 +64,7 @@ def test_only_liveness_and_login_are_anonymous(web: _ReviewWebContext) -> None:
     assert denied.headers["cache-control"] == "no-store, private"
 
 
-def test_operational_status_and_support_are_authenticated_bounded_surfaces(web: _ReviewWebContext) -> None:
+def test_operational_status_and_support_are_authenticated_bounded_surfaces(web: ReviewWebContext[FakeReviewRepository]) -> None:
     web.repository.operational_snapshot = lambda: {"signals": [{
         "kind": "backup_failure", "cause": "backup", "scope": "field",
         "connection": "primary", "library": "fiction", "category": None,
@@ -166,7 +108,7 @@ def test_operational_status_and_support_are_authenticated_bounded_surfaces(web: 
     assert failed.json()["error"]["code"] == "operations_unavailable"
 
 
-def test_trust_boundary_failures_match_declared_api_statuses(web: _ReviewWebContext) -> None:
+def test_trust_boundary_failures_match_declared_api_statuses(web: ReviewWebContext[FakeReviewRepository]) -> None:
     bad_host = web.client.get(
         f"/api/v1/review-cases/{web.case.review_case_id}",
         headers={"Host": "elsewhere.invalid"},
@@ -182,7 +124,7 @@ def test_trust_boundary_failures_match_declared_api_statuses(web: _ReviewWebCont
     assert bad_origin.json()["error"]["code"] == "origin"
 
 
-def test_host_header_cannot_relabel_a_routed_path_as_a_health_probe(web: _ReviewWebContext) -> None:
+def test_host_header_cannot_relabel_a_routed_path_as_a_health_probe(web: ReviewWebContext[FakeReviewRepository]) -> None:
     # `request.url` is reconstructed from the `Host` header, so a header
     # carrying a path plus a `#` terminator reads as an exact health path
     # on a request the router dispatched somewhere else entirely
@@ -221,7 +163,7 @@ def test_host_header_cannot_relabel_a_routed_path_as_a_health_probe(web: _Review
     assert web.client.get("/library").status_code == 200
 
 
-def test_an_encoded_fragment_cannot_borrow_the_health_exemption(web: _ReviewWebContext) -> None:
+def test_an_encoded_fragment_cannot_borrow_the_health_exemption(web: ReviewWebContext[FakeReviewRepository]) -> None:
     # `%23` decodes into the routed ASGI path but still terminates the
     # reconstructed URL's path component, so `/health/live%23x` routes
     # nowhere while `request.url.path` reads as the health endpoint. The
@@ -237,7 +179,7 @@ def test_an_encoded_fragment_cannot_borrow_the_health_exemption(web: _ReviewWebC
     assert probe.text == "ok\n"
 
 
-def test_build_identity_gate_reads_the_routed_path_behind_a_trusted_proxy(web: _ReviewWebContext) -> None:
+def test_build_identity_gate_reads_the_routed_path_behind_a_trusted_proxy(web: ReviewWebContext[FakeReviewRepository]) -> None:
     # Behind a trusted proxy the origin decision moves to `X-Forwarded-Host`
     # while `request.url` keeps following the raw `Host` header, so the two
     # path-based decisions have to be pinned separately: here the trust
@@ -292,7 +234,7 @@ def test_build_identity_gate_reads_the_routed_path_behind_a_trusted_proxy(web: _
     assert accepted.status_code == 204, accepted.text
 
 
-def test_decision_authentication_precedes_required_input_validation(web: _ReviewWebContext) -> None:
+def test_decision_authentication_precedes_required_input_validation(web: ReviewWebContext[FakeReviewRepository]) -> None:
     web.client.cookies.set("ml_session", "malformed")
     denied = web.client.post(
         f"/api/v1/review-cases/{web.case.review_case_id}/decisions",
@@ -303,7 +245,7 @@ def test_decision_authentication_precedes_required_input_validation(web: _Review
     assert denied.json()["error"]["code"] == "unauthorized"
 
 
-def test_login_case_evidence_history_and_logout_round_trip(web: _ReviewWebContext) -> None:
+def test_login_case_evidence_history_and_logout_round_trip(web: ReviewWebContext[FakeReviewRepository]) -> None:
     login = web.login()
     cookie = web.client.cookies.get("ml_session")
     assert cookie is not None
@@ -366,7 +308,7 @@ def test_login_case_evidence_history_and_logout_round_trip(web: _ReviewWebContex
     assert denied.status_code == 401
 
 
-def test_logout_persistence_failure_keeps_the_session_active(web: _ReviewWebContext) -> None:
+def test_logout_persistence_failure_keeps_the_session_active(web: ReviewWebContext[FakeReviewRepository]) -> None:
     login = web.login()
     web.repository.revoke_failure = True
     failed = web.client.post(
@@ -382,7 +324,7 @@ def test_logout_persistence_failure_keeps_the_session_active(web: _ReviewWebCont
     assert detail.status_code == 200
 
 
-def test_logout_concurrent_revocation_is_unauthorized_not_an_outage(web: _ReviewWebContext) -> None:
+def test_logout_concurrent_revocation_is_unauthorized_not_an_outage(web: ReviewWebContext[FakeReviewRepository]) -> None:
     login = web.login()
     web.repository.revoke_result = "unauthorized"
     failed = web.client.post(
@@ -394,7 +336,7 @@ def test_logout_concurrent_revocation_is_unauthorized_not_an_outage(web: _Review
     assert "set-cookie" not in failed.headers
 
 
-def test_logout_maps_expired_and_malformed_sessions_to_unauthorized(web: _ReviewWebContext) -> None:
+def test_logout_maps_expired_and_malformed_sessions_to_unauthorized(web: ReviewWebContext[FakeReviewRepository]) -> None:
     web.login()
     web.now += 601
     expired = web.client.post(
@@ -416,7 +358,7 @@ def test_logout_maps_expired_and_malformed_sessions_to_unauthorized(web: _Review
     assert "set-cookie" not in malformed.headers
 
 
-def test_absent_decision_case_is_not_a_persistence_outage(web: _ReviewWebContext) -> None:
+def test_absent_decision_case_is_not_a_persistence_outage(web: ReviewWebContext[FakeReviewRepository]) -> None:
     login = web.login()
     detail = web.client.get(
         f"/api/v1/review-cases/{web.case.review_case_id}"
@@ -447,7 +389,7 @@ def test_absent_decision_case_is_not_a_persistence_outage(web: _ReviewWebContext
 
 
 def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
-    web: _ReviewWebContext,
+    web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
     timings = LocalTimingStore(
         Path(web.temporary.name) / "private" / "decision-timings.json",
@@ -533,7 +475,7 @@ def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
     assert len(web.repository.decisions) == 1
 
 
-def test_review_page_rotates_one_memory_only_csrf_token(web: _ReviewWebContext) -> None:
+def test_review_page_rotates_one_memory_only_csrf_token(web: ReviewWebContext[FakeReviewRepository]) -> None:
     login = web.login()
     inactive = web.client.get("/api/v1/review-preparation")
     assert inactive.status_code == 200, inactive.text
@@ -590,7 +532,7 @@ def test_review_page_rotates_one_memory_only_csrf_token(web: _ReviewWebContext) 
 
 
 def test_authenticated_page_preserves_csrf_rotation_persistence_failure(
-    web: _ReviewWebContext,
+    web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
     web.login()
     web.repository.rotate_failure = True
@@ -605,7 +547,7 @@ def test_authenticated_page_preserves_csrf_rotation_persistence_failure(
 
 
 def test_authenticated_page_preserves_expired_rotation_as_unauthorized(
-    web: _ReviewWebContext,
+    web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
     web.login()
     web.repository.rotate_result = "unauthorized"
@@ -619,7 +561,7 @@ def test_authenticated_page_preserves_expired_rotation_as_unauthorized(
         assert denied.json()["error"]["code"] == "unauthorized", path
 
 
-def test_malformed_case_decision_body_is_bounded_before_validation(web: _ReviewWebContext) -> None:
+def test_malformed_case_decision_body_is_bounded_before_validation(web: ReviewWebContext[FakeReviewRepository]) -> None:
     oversized = b'{' + b'"private":"' + b'x' * 9_000 + b'"}'
     declared = web.client.post(
         "/api/v1/review-cases/not-a-case/decisions",
@@ -637,7 +579,7 @@ def test_malformed_case_decision_body_is_bounded_before_validation(web: _ReviewW
     assert b"private" not in streamed.content
 
 
-def test_origin_host_proxy_expiry_and_throttle_fail_closed(web: _ReviewWebContext) -> None:
+def test_origin_host_proxy_expiry_and_throttle_fail_closed(web: ReviewWebContext[FakeReviewRepository]) -> None:
     invalid_origin = web.client.post(
         "/api/v1/session/login",
         headers={"Origin": "https://evil.test"},
@@ -682,7 +624,7 @@ def test_origin_host_proxy_expiry_and_throttle_fail_closed(web: _ReviewWebContex
     assert expired.status_code == 401
 
 
-def test_openapi_is_deterministic_and_secret_free(web: _ReviewWebContext) -> None:
+def test_openapi_is_deterministic_and_secret_free(web: ReviewWebContext[FakeReviewRepository]) -> None:
     anonymous = web.client.get("/api/v1/openapi.json")
     assert anonymous.status_code == 401
     web.login()
@@ -878,7 +820,7 @@ def test_openapi_is_deterministic_and_secret_free(web: _ReviewWebContext) -> Non
     assert b"private-value" not in invalid.content
 
 
-def test_parallel_failures_reserve_the_five_attempt_bound(web: _ReviewWebContext) -> None:
+def test_parallel_failures_reserve_the_five_attempt_bound(web: ReviewWebContext[FakeReviewRepository]) -> None:
     def attempt(_: int) -> int:
         return web.client.post(
             "/api/v1/session/login",
@@ -892,7 +834,7 @@ def test_parallel_failures_reserve_the_five_attempt_bound(web: _ReviewWebContext
     assert len(web.repository.failures) == 5
 
 
-def test_login_body_is_bounded_before_json_parsing_or_throttling(web: _ReviewWebContext) -> None:
+def test_login_body_is_bounded_before_json_parsing_or_throttling(web: ReviewWebContext[FakeReviewRepository]) -> None:
     oversized = web.client.post(
         "/api/v1/session/login",
         headers=web.origin,
@@ -910,7 +852,7 @@ def test_login_body_is_bounded_before_json_parsing_or_throttling(web: _ReviewWeb
     assert web.repository.failures == []
 
 
-def test_browser_asset_loads_all_read_models_without_html_injection(web: _ReviewWebContext) -> None:
+def test_browser_asset_loads_all_read_models_without_html_injection(web: ReviewWebContext[FakeReviewRepository]) -> None:
     script = web.client.get(
         "/assets/review-app/assets/index-deadbeef.js"
     )
@@ -918,7 +860,7 @@ def test_browser_asset_loads_all_read_models_without_html_injection(web: _Review
     assert script.headers["content-type"].startswith("text/javascript")
 
 
-def test_argon2i_hash_file_is_rejected(web: _ReviewWebContext) -> None:
+def test_argon2i_hash_file_is_rejected(web: ReviewWebContext[FakeReviewRepository]) -> None:
     web.client.close()
     web.hash_path.write_text(
         PasswordHasher(type=Type.I).hash("correct horse"), encoding="utf-8"
@@ -932,7 +874,7 @@ def test_argon2i_hash_file_is_rejected(web: _ReviewWebContext) -> None:
         create_transport_test_app(web.repository, configuration)
 
 
-def test_composition_opens_the_single_database_for_worker_threads(web: _ReviewWebContext) -> None:
+def test_composition_opens_the_single_database_for_worker_threads(web: ReviewWebContext[FakeReviewRepository]) -> None:
     from tests.support.tls import synthetic_tls_identity
 
     repository = Mock()
@@ -984,7 +926,7 @@ def test_composition_opens_the_single_database_for_worker_threads(web: _ReviewWe
     )
 
 
-def test_served_composition_keeps_automatic_safety_reachable(web: _ReviewWebContext) -> None:
+def test_served_composition_keeps_automatic_safety_reachable(web: ReviewWebContext[FakeReviewRepository]) -> None:
     # Every other test in this suite hands `compose_review_application` a
     # repository directly, so nothing exercised what the server actually
     # composes. `AutomaticSafetyControls` duck-types through `object` and

@@ -4,6 +4,7 @@ import json
 import re
 import tomllib
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -54,8 +55,8 @@ def _effective_policy(
     return effective
 
 
-def test_supported_managers_and_bounded_schedule_are_explicit(config) -> None:
-    assert set(config["enabledManagers"]) == {
+def test_supported_managers_and_bounded_schedule_are_explicit(config: dict[str, object]) -> None:
+    assert set(cast("list[str]", config["enabledManagers"])) == {
         "dockerfile",
         "github-actions",
         "npm",
@@ -73,7 +74,7 @@ def test_supported_managers_and_bounded_schedule_are_explicit(config) -> None:
     assert config["automergeStrategy"] == "squash"
 
 
-def test_only_named_low_risk_classes_enable_platform_automerge(config) -> None:
+def test_only_named_low_risk_classes_enable_platform_automerge(config: dict[str, object]) -> None:
     assert not config["automerge"]
     assert config["platformAutomerge"]
     assert not config["ignoreTests"]
@@ -91,7 +92,7 @@ def test_only_named_low_risk_classes_enable_platform_automerge(config) -> None:
     }
 
 
-def test_project_python_compatibility_range_is_not_managed(config) -> None:
+def test_project_python_compatibility_range_is_not_managed(config: dict[str, object]) -> None:
     ignored = [
         rule
         for rule in config["packageRules"]
@@ -102,7 +103,7 @@ def test_project_python_compatibility_range_is_not_managed(config) -> None:
     assert not ignored[0]["enabled"]
 
 
-def test_only_major_and_replacement_updates_require_dashboard_approval(config) -> None:
+def test_only_major_and_replacement_updates_require_dashboard_approval(config: dict[str, object]) -> None:
     manual = [
         rule
         for rule in config["packageRules"]
@@ -114,10 +115,11 @@ def test_only_major_and_replacement_updates_require_dashboard_approval(config) -
     }
 
 
-def test_protected_classes_override_earlier_automerge_rules(config) -> None:
+def test_protected_classes_override_earlier_automerge_rules(config: dict[str, object]) -> None:
+    rules = cast("list[dict[str, object]]", config["packageRules"])
     positions = {
         rule["description"]: index
-        for index, rule in enumerate(config["packageRules"])
+        for index, rule in enumerate(rules)
     }
     protected = {
         "Prevent automatic merging of pre-1.0 minor updates",
@@ -215,7 +217,7 @@ def test_protected_classes_override_earlier_automerge_rules(config) -> None:
     ),
 )
 def test_effective_update_classification_preserves_manual_boundaries(
-    config,
+    config: dict[str, object],
     manager: str,
     package: str,
     current: str,

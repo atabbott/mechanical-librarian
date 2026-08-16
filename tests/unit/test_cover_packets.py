@@ -96,6 +96,7 @@ from mechanical_librarian.application.cover_observation import (  # noqa: E402
 )
 from mechanical_librarian.application.cover_packets import (  # noqa: E402
     MAX_COVER_PREVIEWS,
+    PreparedCoverPacket,
     prepare_cover_packet,
 )
 from mechanical_librarian.application.cover_policy import (  # noqa: E402
@@ -227,7 +228,7 @@ def _report(sources: tuple[CoverSource, ...]) -> MetadataReport:
     )
 
 
-def _packet_case(count: int = 2):
+def _packet_case(count: int = 2) -> tuple[PreparedCoverPacket, tuple[tuple[str, str, bytes], ...]]:
     payloads = tuple(_preview(index) for index in range(1, count + 1))
     sources = tuple(_source(index, payload) for index, payload in enumerate(payloads, 1))
     report = _report(sources)
@@ -772,14 +773,16 @@ def test_cover_retry_is_hard_capped_and_rejects_other_failures(code: str) -> Non
 
 
 @pytest.fixture(scope="module")
-def exact_preview_packet():
+def exact_preview_packet() -> tuple[PreparedCoverPacket, tuple[tuple[str, str, bytes], ...]]:
     """One single-candidate cover packet and its exactly bound transport image."""
 
     return _packet_case(1)
 
 
 @pytest.fixture(scope="module")
-def malformed_preview_bindings(exact_preview_packet) -> dict[str, tuple[str, tuple[tuple[str, str, bytes], ...]]]:
+def malformed_preview_bindings(
+    exact_preview_packet: tuple[PreparedCoverPacket, tuple[tuple[str, str, bytes], ...]],
+) -> dict[str, tuple[str, tuple[tuple[str, str, bytes], ...]]]:
     """A rebound `(document, images)` pair per malformed preview case name."""
 
     packet, packet_images = exact_preview_packet
@@ -981,7 +984,9 @@ def test_admission_rejects_every_malformed_rgba_png_preview(
         admit_cover_review_request("Inspect.", document, schema, images)
 
 
-def test_admission_fully_decodes_exact_rgba_png_preview(exact_preview_packet) -> None:
+def test_admission_fully_decodes_exact_rgba_png_preview(
+    exact_preview_packet: tuple[PreparedCoverPacket, tuple[tuple[str, str, bytes], ...]],
+) -> None:
     packet, _packet_images = exact_preview_packet
     admitted_document = json.loads(packet.document)
     assert (

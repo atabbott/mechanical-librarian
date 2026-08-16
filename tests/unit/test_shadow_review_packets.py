@@ -171,7 +171,7 @@ def _rebuild(document: dict[str, object]) -> ShadowReviewPacket:
         ('proposal_ids', 'appended_integer'),
     ),
 )
-def test_correlation_identity_lists_reject_non_string_members(key, invalid_form, correlation_packet) -> None:
+def test_correlation_identity_lists_reject_non_string_members(key, invalid_form, correlation_packet: ShadowReviewPacket) -> None:
     packet = correlation_packet
     assert packet == _rebuild(json.loads(packet.to_json()))
     identities = json.loads(packet.to_json())['correlations'][0][key]

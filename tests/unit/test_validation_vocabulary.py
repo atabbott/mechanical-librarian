@@ -163,26 +163,26 @@ def valid() -> dict[str, object]:
     }
 
 
-def test_the_canonical_document_is_accepted(check, valid) -> None:
+def test_the_canonical_document_is_accepted(check: Callable[[object], bool], valid: dict[str, object]) -> None:
     assert check(valid)
 
 
-def test_an_unknown_field_is_rejected(check, valid) -> None:
+def test_an_unknown_field_is_rejected(check: Callable[[object], bool], valid: dict[str, object]) -> None:
     assert not check({**valid, "extra": 1})
 
 
-def test_a_missing_field_is_rejected(check, valid) -> None:
+def test_a_missing_field_is_rejected(check: Callable[[object], bool], valid: dict[str, object]) -> None:
     assert not check({key: value for key, value in valid.items()
                       if key != "state"})
 
 
-def test_an_unconstrained_field_is_required_but_unchecked(check, valid) -> None:
+def test_an_unconstrained_field_is_required_but_unchecked(check: Callable[[object], bool], valid: dict[str, object]) -> None:
     assert check({**valid, "plan_id": 42})
     assert not check({key: value for key, value in valid.items()
                       if key != "plan_id"})
 
 
-def test_each_declared_check_is_applied(check, valid) -> None:
+def test_each_declared_check_is_applied(check: Callable[[object], bool], valid: dict[str, object]) -> None:
     assert not check({**valid, "schema_version": "v2"})
     assert not check({**valid, "attempt": 4})
     assert not check({**valid, "attempt": True})
@@ -200,11 +200,11 @@ def test_each_declared_check_is_applied(check, valid) -> None:
         pytest.param(object(), id="object"),
     ),
 )
-def test_a_non_dict_is_rejected_without_raising(check, value: object) -> None:
+def test_a_non_dict_is_rejected_without_raising(check: Callable[[object], bool], value: object) -> None:
     assert not check(value)
 
 
-def test_a_dict_subclass_is_rejected(check, valid) -> None:
+def test_a_dict_subclass_is_rejected(check: Callable[[object], bool], valid: dict[str, object]) -> None:
     assert not check(_Mapping(valid))
 
 

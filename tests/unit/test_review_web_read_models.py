@@ -7,17 +7,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import tempfile
 from collections.abc import Iterator
-from dataclasses import dataclass
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import Mock, patch
 
 import pytest
-from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
@@ -71,6 +66,8 @@ from tests.support.review_web_doubles import (
     FakeActivityApplication,
     FakePreparation,
     FakeReviewRepository,
+    ReviewWebContext,
+    review_web_context,
 )
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
@@ -110,59 +107,9 @@ class _CloseRecordingRepository(FakeReviewRepository):
         self.closes.append(True)
 
 
-@dataclass
-class _ReviewWeb:
-    """One authenticated transport-test application over the fake repository."""
-
-    hash_path: Path
-    case: ReviewCase
-    repository: _CloseRecordingRepository
-    now: int
-    client: TestClient
-    origin: dict[str, str]
-
-
 @pytest.fixture
-def web() -> Iterator[_ReviewWeb]:
-    with tempfile.TemporaryDirectory() as directory:
-        hash_path = Path(directory) / "owner.hash"
-        hash_path.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
-        os.chmod(hash_path, 0o600)
-        report = _report()
-        case = ReviewCase.create(evaluate_report(report), report)
-        repository = _CloseRecordingRepository(case, report)
-        now = 1_000
-        configuration = ReviewWebConfiguration(
-            canonical_origin="https://review.test",
-            owner_password_hash_file=str(hash_path),
-            session_lifetime_seconds=600,
-        )
-        instance = _ReviewWeb(
-            hash_path=hash_path,
-            case=case,
-            repository=repository,
-            now=now,
-            client=TestClient(
-                create_transport_test_app(
-                    repository, configuration, clock=lambda: now
-                ),
-                base_url="https://review.test",
-            ),
-            origin={"Origin": "https://review.test"},
-        )
-        yield instance
-        instance.client.close()
-
-
-def _login(web: _ReviewWeb) -> dict[str, object]:
-    response = web.client.post(
-        "/api/v1/session/login",
-        headers=web.origin,
-        json={"password": "correct horse"},
-    )
-    assert response.status_code == 200, response.text
-    web.client.headers["x-ml-build-identity"] = TEST_REACT_BUILD_IDENTITY
-    return response.json()
+def web() -> Iterator[ReviewWebContext[_CloseRecordingRepository]]:
+    yield from review_web_context(_CloseRecordingRepository)
 
 
 def test_cover_omission_response_models_every_valid_shape() -> None:
@@ -188,7 +135,7 @@ def test_cover_omission_response_models_every_valid_shape() -> None:
     assert unavailable.preview_bytes is None
 
 
-def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(web: _ReviewWeb) -> None:
+def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     payloads = (_cover_preview(1), _cover_preview(2))
     sources = (
         _cover_source(1, payloads[0], incumbent=True),
@@ -300,7 +247,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(web: _
         f"/cover-considerations/{consideration_id}/images/{candidate_reference}"
     )
     assert web.client.get(image_path).status_code == 401
-    login = _login(web)
+    login = web.login()
     image = web.client.get(image_path)
     assert 200 == image.status_code
     assert "image/png" == image.headers["content-type"]
@@ -351,7 +298,7 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(web: _
     covers.validate_decision.assert_called_once()
 
 
-def test_shutdown_timeout_preserves_shared_repository_for_live_worker(web: _ReviewWeb) -> None:
+def test_shutdown_timeout_preserves_shared_repository_for_live_worker(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     class _DrainingApplication:
         started = False
 
@@ -383,7 +330,7 @@ def test_shutdown_timeout_preserves_shared_repository_for_live_worker(web: _Revi
 
 @pytest.mark.parametrize("failing_worker", ("field", "preparation"))
 def test_shutdown_closes_both_admissions_before_one_shared_deadline(
-    web: _ReviewWeb, failing_worker: str
+    web: ReviewWebContext[_CloseRecordingRepository], failing_worker: str
 ) -> None:
     configuration = ReviewWebConfiguration(
         canonical_origin="https://review.test",
@@ -449,7 +396,7 @@ def test_shutdown_closes_both_admissions_before_one_shared_deadline(
     assert web.repository.closes == []
 
 
-def test_activity_is_permanent_and_consent_is_csrf_bound(web: _ReviewWeb) -> None:
+def test_activity_is_permanent_and_consent_is_csrf_bound(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     application = FakeActivityApplication()
     configuration = ReviewWebConfiguration(
         canonical_origin="https://review.test",
@@ -464,7 +411,7 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(web: _ReviewWeb) -> Non
         ),
         base_url="https://review.test",
     )
-    login = _login(web)
+    login = web.login()
     page = web.client.get("/activity")
     assert page.status_code == 200
     assert f'data-build-identity="{TEST_REACT_BUILD_IDENTITY}"' in page.text
@@ -488,7 +435,7 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(web: _ReviewWeb) -> Non
         json={"grants": [{"library": "fiction", "destinations": ["title"]}]},
     )
     assert denied.status_code == 403
-    login = _login(web)
+    login = web.login()
     enabled = web.client.post(
         "/api/v1/activity/consent",
         headers={**web.origin, "X-CSRF-Token": login["csrf_token"]},
@@ -511,7 +458,7 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(web: _ReviewWeb) -> Non
     assert [item["library"] for item in revoked.json()["enabled_libraries"]] == ["history"]
 
 
-def test_review_preparation_is_authenticated_csrf_bound_and_bounded(web: _ReviewWeb) -> None:
+def test_review_preparation_is_authenticated_csrf_bound_and_bounded(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     configuration = ReviewWebConfiguration(
         canonical_origin="https://review.test",
         owner_password_hash_file=str(web.hash_path),
@@ -529,7 +476,7 @@ def test_review_preparation_is_authenticated_csrf_bound_and_bounded(web: _Review
     )
     anonymous = web.client.get("/api/v1/review-preparation")
     assert anonymous.status_code == 401
-    session = _login(web)
+    session = web.login()
     status = web.client.get("/api/v1/review-preparation")
     assert status.status_code == 200
     assert preparation.status_calls == 1
@@ -601,9 +548,9 @@ def test_review_preparation_is_authenticated_csrf_bound_and_bounded(web: _Review
     ids=("scan", "retry", "pause", "resume"),
 )
 def test_unconfigured_review_preparation_controls_remain_unavailable(
-    web: _ReviewWeb, path: str
+    web: ReviewWebContext[_CloseRecordingRepository], path: str
 ) -> None:
-    session = _login(web)
+    session = web.login()
     headers = {**web.origin, "x-csrf-token": session["csrf_token"]}
     response = web.client.post(path, headers=headers)
     assert response.status_code == 503
@@ -621,7 +568,7 @@ def test_unconfigured_review_preparation_controls_remain_unavailable(
     ids=("scan", "retry", "pause", "resume"),
 )
 def test_review_preparation_control_runtime_failures_remain_persistence(
-    web: _ReviewWeb, path: str, method: str
+    web: ReviewWebContext[_CloseRecordingRepository], path: str, method: str
 ) -> None:
     configuration = ReviewWebConfiguration(
         canonical_origin="https://review.test",
@@ -638,7 +585,7 @@ def test_review_preparation_control_runtime_failures_remain_persistence(
         ),
         base_url="https://review.test",
     )
-    session = _login(web)
+    session = web.login()
     headers = {**web.origin, "x-csrf-token": session["csrf_token"]}
     with patch.object(preparation, method, side_effect=RuntimeError):
         response = web.client.post(path, headers=headers)
@@ -646,10 +593,10 @@ def test_review_preparation_control_runtime_failures_remain_persistence(
     assert response.json()["error"]["code"] == "persistence"
 
 
-def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(web: _ReviewWeb) -> None:
+def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     anonymous = web.client.post("/api/v1/metadata-policy/validate", headers=web.origin, json={})
     assert 401 == anonymous.status_code
-    login = _login(web)
+    login = web.login()
     headers = {**web.origin, "X-CSRF-Token": login["csrf_token"]}
     active = web.client.get("/api/v1/metadata-policy/state")
     payload = active.json()["profile"]
@@ -668,8 +615,8 @@ def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(web: 
     assert "csrf" == denied.json()["error"]["code"]
 
 
-def test_policy_routes_are_closed_read_only_and_schema_deterministic(web: _ReviewWeb) -> None:
-    login = _login(web)
+def test_policy_routes_are_closed_read_only_and_schema_deterministic(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+    login = web.login()
     headers = {**web.origin, "X-CSRF-Token": login["csrf_token"]}
     active = web.client.get("/api/v1/metadata-policy/state")
     assert 200 == active.status_code
@@ -715,10 +662,10 @@ def test_policy_routes_are_closed_read_only_and_schema_deterministic(web: _Revie
     assert [] == web.repository.policy_count_calls
 
 
-def test_shadow_posture_and_sample_are_authenticated_non_authoritative(web: _ReviewWeb) -> None:
+def test_shadow_posture_and_sample_are_authenticated_non_authoritative(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     anonymous = web.client.get("/api/v1/metadata-policy/shadow")
     assert 401 == anonymous.status_code
-    login = _login(web)
+    login = web.login()
     headers = {**web.origin, "X-CSRF-Token": login["csrf_token"]}
     state = web.client.get("/api/v1/metadata-policy/shadow")
     assert {
@@ -788,7 +735,7 @@ def test_shadow_posture_and_sample_are_authenticated_non_authoritative(web: _Rev
     assert "qualified_decision_only_unavailable" == leaving.json()["requested_posture"]
 
 
-def test_policy_draft_persistence_failure_is_unavailable_not_validation(web: _ReviewWeb) -> None:
+def test_policy_draft_persistence_failure_is_unavailable_not_validation(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     class _FailingDraftRepository(_CloseRecordingRepository):
         """The fake repository with only its draft write failing at the store."""
 
@@ -809,7 +756,7 @@ def test_policy_draft_persistence_failure_is_unavailable_not_validation(web: _Re
         ),
         base_url="https://review.test",
     )
-    login = _login(web)
+    login = web.login()
     headers = {**web.origin, "X-CSRF-Token": login["csrf_token"]}
     payload = web.client.get("/api/v1/metadata-policy/state").json()["profile"]
     del payload["schema_version"]
@@ -818,8 +765,8 @@ def test_policy_draft_persistence_failure_is_unavailable_not_validation(web: _Re
     assert "persistence" == response.json()["error"]["code"]
 
 
-def test_policy_activation_body_is_bounded_before_validation(web: _ReviewWeb) -> None:
-    login = _login(web)
+def test_policy_activation_body_is_bounded_before_validation(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
+    login = web.login()
     headers = {
         **web.origin,
         "Content-Type": "application/json",
@@ -843,10 +790,10 @@ def test_policy_activation_body_is_bounded_before_validation(web: _ReviewWeb) ->
     assert before == web.repository.active_policy_id
 
 
-def test_automatic_detail_uses_a_closed_projection_without_human_commit(web: _ReviewWeb) -> None:
+def test_automatic_detail_uses_a_closed_projection_without_human_commit(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     # Durable automatic documents carry authority bindings that must never
     # cross the authenticated case read model.
-    _login(web)
+    web.login()
     web.repository.decisions["title"] = json.dumps(
         {
             "origin": "automatic_policy",
@@ -913,7 +860,7 @@ def test_automatic_detail_uses_a_closed_projection_without_human_commit(web: _Re
     assert 404 == web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}").status_code
 
 
-def test_choice_contexts_build_the_evidence_index_once(web: _ReviewWeb) -> None:
+def test_choice_contexts_build_the_evidence_index_once(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     proposal = web.case.proposals[0]
     result = cast(dict[str, Any], proposal["result"])
     alternatives = json.loads(json.dumps(result["alternatives"]))
@@ -961,9 +908,9 @@ def test_choice_contexts_build_the_evidence_index_once(web: _ReviewWeb) -> None:
     ids=("pause", "recover", "suspend"),
 )
 def test_automatic_safety_bodies_are_closed_before_control_access(
-    web: _ReviewWeb, path: str, payload: dict[str, object]
+    web: ReviewWebContext[_CloseRecordingRepository], path: str, payload: dict[str, object]
 ) -> None:
-    login = _login(web)
+    login = web.login()
     headers = {**web.origin, "X-CSRF-Token": login["csrf_token"]}
     response = web.client.post(path, headers=headers, json=payload)
     assert 422 == response.status_code
@@ -1154,7 +1101,7 @@ def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -
     assert not _current_value_present([])
 
 
-def test_provider_comparison_notices_keep_only_safe_material_failures(web: _ReviewWeb) -> None:
+def test_provider_comparison_notices_keep_only_safe_material_failures(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     source = _report()
     report = MetadataReport.create(
         target=source.target, file=source.file, local_claims=source.local_claims,
@@ -1221,7 +1168,7 @@ def test_choice_limitations_do_not_invent_provider_terminal_attribution() -> Non
     assert [] == _choice_limitations(alternative, result)
 
 
-def test_attention_first_library_lenses_queue_and_cursor_binding(web: _ReviewWeb) -> None:
+def test_attention_first_library_lenses_queue_and_cursor_binding(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     providers = tuple(
         _proposal_provider(
             name,
@@ -1249,7 +1196,7 @@ def test_attention_first_library_lenses_queue_and_cursor_binding(web: _ReviewWeb
     web.repository.browse_cases.append(
         (automatic_case, automatic_report)
     )
-    _login(web)
+    web.login()
 
     attention_first = web.client.get("/api/v1/library?limit=1")
     assert attention_first.status_code == 200, attention_first.text
@@ -1294,10 +1241,10 @@ def test_attention_first_library_lenses_queue_and_cursor_binding(web: _ReviewWeb
     assert web.client.get("/attention").status_code == 200
 
 
-def test_complete_library_includes_current_report_without_review_lineage(web: _ReviewWeb) -> None:
+def test_complete_library_includes_current_report_without_review_lineage(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     current = _report(title="In-progress report", actionable=False)
     web.repository.browse_without_cases.append(current)
-    _login(web)
+    web.login()
 
     response = web.client.get(
         "/api/v1/library?lens=all&q=In-progress"
@@ -1362,7 +1309,7 @@ def test_row_projection_refuses_every_document_the_parsers_cannot_read() -> None
         assert surfaced.value is fault
 
 
-def test_attention_cursor_keeps_the_complete_work_field_count(web: _ReviewWeb) -> None:
+def test_attention_cursor_keeps_the_complete_work_field_count(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     report = _bibliographic_report(
         current_title="Mistborn Secret History",
         providers=(
@@ -1376,7 +1323,7 @@ def test_attention_cursor_keeps_the_complete_work_field_count(web: _ReviewWeb) -
     )
     case = ReviewCase.create(evaluate_report(report), report)
     web.repository.browse_cases = [(case, report)]
-    _login(web)
+    web.login()
 
     first = web.client.get("/api/v1/attention?limit=1")
     assert first.status_code == 200, first.text
@@ -1390,7 +1337,7 @@ def test_attention_cursor_keeps_the_complete_work_field_count(web: _ReviewWeb) -
     assert second.json()["items"][0]["work_attention_count"] == 3
 
 
-def test_attention_reads_the_automatic_outcome_and_cause_columns(web: _ReviewWeb) -> None:
+def test_attention_reads_the_automatic_outcome_and_cause_columns(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     """The queue classifies from all six declared attention columns.
 
     The reader consumed the last two positionally behind `len(row)`
@@ -1412,7 +1359,7 @@ def test_attention_reads_the_automatic_outcome_and_cause_columns(web: _ReviewWeb
     web.repository.browse_cases = [(case, report)]
     web.repository.attention_causes["title"] = "automatic_safety_suspended"
     web.repository.attention_dispositions["series"] = "abstention"
-    _login(web)
+    web.login()
 
     response = web.client.get("/api/v1/attention?limit=10")
 
@@ -1437,11 +1384,11 @@ def test_cursor_encoder_never_emits_an_unreachable_offset() -> None:
         _encode_cursor(True, "library", "all", None)
 
 
-def test_large_library_payload_and_dom_inputs_remain_page_bounded(web: _ReviewWeb) -> None:
+def test_large_library_payload_and_dom_inputs_remain_page_bounded(web: ReviewWebContext[_CloseRecordingRepository]) -> None:
     web.repository.browse_cases = [
         (web.case, web.repository.report) for _ in range(2_001)
     ]
-    _login(web)
+    web.login()
     library = web.client.get("/api/v1/library?lens=all&limit=50")
     assert library.status_code == 200, library.text
     assert len(library.json()["items"]) == 50

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from types import SimpleNamespace
 from typing import cast
 
 import pytest
@@ -18,6 +18,8 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.metadata_report import (
     CredentialError,
+    MetadataDiscoveryLane,
+    MetadataDiscoveryPlan,
     ProviderBinding,
     ProviderLaneResult,
     ReportRepository,
@@ -29,6 +31,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.application.provider_retry_successor import (
     ConfiguredProviderRetry,
     GenerateProviderRetrySuccessor,
+    ProviderRetryResolver,
     ProviderRetrySharedFailure,
     ProviderRetrySuccessorError,
 )
@@ -101,8 +104,52 @@ class _Provider:
         return self.observation
 
 
+@dataclass
+class _Retry:
+    """The published predecessor, its two lanes, its store, and its service.
+
+    Declared rather than a `SimpleNamespace` so every member keeps the type
+    the `setUp` attributes carried. An untyped namespace makes each attribute
+    access `Any`, which retires the site suppressions that depend on the real
+    signatures while ruff, mypy and the tests all stay silent.
+    """
+
+    claims: tuple[LocalClaim, ...]
+    snapshot: TargetSnapshot
+    plan: MetadataDiscoveryPlan
+    failed: MetadataDiscoveryLane
+    success: MetadataDiscoveryLane
+    report: MetadataReport
+    # Rebound by tests that need a different store; `service` reads it through
+    # `self` on every call, as `self.repository` was, so the service built
+    # beforehand still reaches the replacement.
+    repository: _Repository
+
+    def service(
+        self,
+        configured: ConfiguredProviderRetry | None,
+        *,
+        inspector: _Inspector | None = None,
+        after_publication: Callable[[ReportRepository, MetadataReport], object] = lambda *_args: None,
+        resolver: ProviderRetryResolver | None = None,
+    ) -> GenerateProviderRetrySuccessor:
+        return GenerateProviderRetrySuccessor(
+            target=_Target(self.snapshot),
+            inspector=_Inspector() if inspector is None else inspector,
+            repository_factory=lambda: cast(ReportRepository, self.repository),
+            provider_resolver=(
+                cast("ProviderRetryResolver", lambda *_args: configured)
+                if resolver is None
+                else resolver
+            ),
+            mount=MediaMountConfiguration("books", "/container", "/service", True),
+            limits=ReportLimits(),
+            after_publication=after_publication,
+        )
+
+
 @pytest.fixture
-def retry() -> SimpleNamespace:
+def retry() -> _Retry:
     """The published predecessor, its two lanes, its store, and its service."""
 
     first = LocalClaim.create(kind=ClaimKind.ISBN, observed="9780306406157", canonical="9780306406157", excerpt="9780306406157", applicability="ebook", checksum="valid_isbn_13", applicability_basis="ebook")
@@ -116,27 +163,13 @@ def retry() -> SimpleNamespace:
         ProviderLaneResult(success, ProviderStatus.CANDIDATES, (ProviderCandidate("old", "work", ()),)),
     ), authority="open_library")
     report = MetadataReport.create(target=TargetFacts("primary", "ebooks", "item", snapshot.fields), file=FileFacts(0, "b" * 64, "c" * 64), local_claims=claims, local_reasons=("opening_matter_isbn",), providers=(original,))
-    bound = SimpleNamespace(
+    return _Retry(
         claims=claims, snapshot=snapshot, plan=plan, failed=failed, success=success,
         report=report, repository=_Repository(report),
     )
 
-    # `repository` is read through `bound` on every call, as `self.repository`
-    # was: a test that rebinds it must reach the service built afterwards.
-    def service(configured, *, inspector=None, after_publication=lambda *_args: None, resolver=None):
-        return GenerateProviderRetrySuccessor(
-            target=_Target(bound.snapshot), inspector=_Inspector() if inspector is None else inspector,
-            repository_factory=lambda: cast(ReportRepository, bound.repository),
-            provider_resolver=(lambda *_args: configured) if resolver is None else resolver,
-            mount=MediaMountConfiguration("books", "/container", "/service", True),
-            limits=ReportLimits(), after_publication=after_publication,
-        )
 
-    bound.service = service
-    return bound
-
-
-def test_retries_only_selected_failed_lane_and_preserves_sibling(retry):
+def test_retries_only_selected_failed_lane_and_preserves_sibling(retry: _Retry) -> None:
     replacement = provider_observation("catalogue", (ProviderLaneResult(retry.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),), authority="open_library")
     provider = _Provider(replacement)
     service = retry.service(ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2))
@@ -149,7 +182,7 @@ def test_retries_only_selected_failed_lane_and_preserves_sibling(retry):
     assert retry.report.report_id == retry.repository.package[1]
 
 
-def test_observe_wrapped_credential_error_remains_authentication_for_recovery(retry):
+def test_observe_wrapped_credential_error_remains_authentication_for_recovery(retry: _Retry) -> None:
     class CredentialProvider:
         def observe(self, _plan, *, deadline=None):
             del deadline
@@ -166,7 +199,7 @@ def test_observe_wrapped_credential_error_remains_authentication_for_recovery(re
     assert ("authentication", None) == _classify_provider_recovery_failure(raised.value)
 
 
-def test_generation_wake_alone_admits_authentication_lane_and_reclassifies_result(retry):
+def test_generation_wake_alone_admits_authentication_lane_and_reclassifies_result(retry: _Retry) -> None:
     original = provider_observation("catalogue", (
         ProviderLaneResult(retry.failed, ProviderStatus.AUTHENTICATION),
         ProviderLaneResult(retry.success, ProviderStatus.CANDIDATES, (ProviderCandidate("old", "work", ()),)),
@@ -217,14 +250,14 @@ def test_generation_wake_alone_admits_authentication_lane_and_reclassifies_resul
     assert report.report_id == retry.repository.current_id
 
 
-def test_none_returning_staging_receipt_succeeds(retry):
+def test_none_returning_staging_receipt_succeeds(retry: _Retry) -> None:
     replacement = provider_observation("catalogue", (ProviderLaneResult(retry.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),), authority="open_library")
     provider = _Provider(replacement)
     service = retry.service(ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2))
     assert MetadataReport.from_json(service.run(retry.report.report_id, (retry.failed.identity,), provider_name="catalogue", adapter="open_library", generation=2)).report_id == retry.repository.current_id
 
 
-def test_raw_adapter_authority_is_bound_and_retry_has_deadline(retry):
+def test_raw_adapter_authority_is_bound_and_retry_has_deadline(retry: _Retry) -> None:
     replacement = provider_observation("catalogue", (ProviderLaneResult(retry.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),))
     provider = _Provider(replacement)
     successor = MetadataReport.from_json(retry.service(
@@ -235,7 +268,7 @@ def test_raw_adapter_authority_is_bound_and_retry_has_deadline(retry):
     assert provider.deadlines[0] > 0.0
 
 
-def test_final_source_drift_prevents_factory_dispatch(retry):
+def test_final_source_drift_prevents_factory_dispatch(retry: _Retry) -> None:
     replacement = provider_observation("catalogue", (), authority="open_library")
     provider = _Provider(replacement)
 
@@ -259,7 +292,7 @@ def test_final_source_drift_prevents_factory_dispatch(retry):
     assert [] == provider.plans
 
 
-def test_same_report_package_advancement_prevents_factory_dispatch(retry):
+def test_same_report_package_advancement_prevents_factory_dispatch(retry: _Retry) -> None:
     replacement = provider_observation("catalogue", (), authority="open_library")
     provider = _Provider(replacement)
 
@@ -285,7 +318,7 @@ def test_same_report_package_advancement_prevents_factory_dispatch(retry):
     assert [] == provider.plans
 
 
-def test_malformed_package_prevents_factory_dispatch(retry):
+def test_malformed_package_prevents_factory_dispatch(retry: _Retry) -> None:
     provider = _Provider(provider_observation("catalogue", (), authority="open_library"))
 
     class MalformedPackageRepository(_Repository):
@@ -307,7 +340,7 @@ def test_malformed_package_prevents_factory_dispatch(retry):
     assert [] == provider.plans
 
 
-def test_malformed_replacement_leaves_predecessor_current(retry):
+def test_malformed_replacement_leaves_predecessor_current(retry: _Retry) -> None:
     provider = _Provider(provider_observation(
         "catalogue", (ProviderLaneResult(retry.failed, ProviderStatus.MALFORMED),), authority="open_library"
     ))
@@ -319,7 +352,7 @@ def test_malformed_replacement_leaves_predecessor_current(retry):
     assert retry.report.report_id == retry.repository.current_id
 
 
-def test_malformed_aggregate_with_clean_lane_leaves_predecessor_current(retry):
+def test_malformed_aggregate_with_clean_lane_leaves_predecessor_current(retry: _Retry) -> None:
     clean_lane = provider_observation(
         "catalogue", (ProviderLaneResult(retry.failed, ProviderStatus.NO_MATCH),), authority="open_library"
     )
@@ -350,7 +383,7 @@ def test_malformed_aggregate_with_clean_lane_leaves_predecessor_current(retry):
         "incomplete",
     ),
 )
-def test_shared_terminal_matrix_is_typed_before_publication(retry, status, failure):
+def test_shared_terminal_matrix_is_typed_before_publication(retry: _Retry, status, failure) -> None:
     retry.repository = _Repository(retry.report)
     provider = _Provider(provider_observation(
         "catalogue", (ProviderLaneResult(retry.failed, status),),
@@ -370,7 +403,7 @@ def test_shared_terminal_matrix_is_typed_before_publication(retry, status, failu
     assert retry.report.report_id == retry.repository.package[1]
 
 
-def test_validated_final_retry_after_is_carried_by_shared_failure(retry):
+def test_validated_final_retry_after_is_carried_by_shared_failure(retry: _Retry) -> None:
     record = ProviderAttemptRecord(
         "catalogue", 1, "http_429", 37.0, 0.1, "exhausted"
     )
@@ -392,7 +425,7 @@ def test_validated_final_retry_after_is_carried_by_shared_failure(retry):
     )
 
 
-def test_merge_uses_one_timestamp_and_retains_bounded_evidence(retry):
+def test_merge_uses_one_timestamp_and_retains_bounded_evidence(retry: _Retry) -> None:
     diagnostic = FailureDiagnostic(
         FailureCategory.UNKNOWN, FailureComponent.PROVIDER, FailureStage.RESPONSE
     )
@@ -410,7 +443,7 @@ def test_merge_uses_one_timestamp_and_retains_bounded_evidence(retry):
     assert ProviderRequestAccounting(3, 3) == merged.request_accounting
 
 
-def test_retained_work_overflow_survives_selected_isbn_no_match(retry):
+def test_retained_work_overflow_survives_selected_isbn_no_match(retry: _Retry) -> None:
     plan, work, isbn, original = _overflow_source(retry)
     replacement = provider_observation("catalogue", (
         ProviderLaneResult(isbn, ProviderStatus.NO_MATCH),
@@ -419,7 +452,7 @@ def test_retained_work_overflow_survives_selected_isbn_no_match(retry):
     assert original.edition_enrichment_overflow == merged.edition_enrichment_overflow
 
 
-def test_retry_that_erases_retained_work_overflow_fails_closed(retry):
+def test_retry_that_erases_retained_work_overflow_fails_closed(retry: _Retry) -> None:
     plan, work, isbn, original = _overflow_source(retry)
     replacement = provider_observation("catalogue", (
         ProviderLaneResult(isbn, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),
@@ -430,7 +463,7 @@ def test_retry_that_erases_retained_work_overflow_fails_closed(retry):
     assert before == original.to_data()
 
 
-def _overflow_source(retry):
+def _overflow_source(retry: _Retry):
     title = LocalClaim.create(
         kind=ClaimKind.TITLE, observed="Current title", canonical="Current title",
         excerpt="Current title", applicability="not_applicable", basis="target_metadata",
@@ -467,7 +500,7 @@ def _overflow_source(retry):
     ), authority="open_library")
 
 
-def test_real_sqlite_successor_staging_retains_the_source_package(retry):
+def test_real_sqlite_successor_staging_retains_the_source_package(retry: _Retry) -> None:
     replacement = provider_observation("catalogue", (ProviderLaneResult(retry.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),), authority="open_library")
     provider = _Provider(replacement)
     with TemporaryDirectory() as directory:
@@ -503,7 +536,7 @@ def test_real_sqlite_successor_staging_retains_the_source_package(retry):
             repository.close()
 
 
-def test_recreated_equivalent_resolver_factory_is_current(retry):
+def test_recreated_equivalent_resolver_factory_is_current(retry: _Retry) -> None:
     replacement = provider_observation("catalogue", (ProviderLaneResult(retry.failed, ProviderStatus.CANDIDATES, (ProviderCandidate("new", "work", ()),)),), authority="open_library")
     provider = _Provider(replacement)
     def resolver(*_args):
@@ -514,7 +547,7 @@ def test_recreated_equivalent_resolver_factory_is_current(retry):
     assert retry.report.report_id != MetadataReport.from_json(successor).report_id
 
 
-def test_full_currentness_failure_prevents_provider_factory_dispatch(retry):
+def test_full_currentness_failure_prevents_provider_factory_dispatch(retry: _Retry) -> None:
     provider = _Provider(provider_observation("catalogue", (), authority="open_library"))
     service = retry.service(
         ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2),
@@ -525,7 +558,7 @@ def test_full_currentness_failure_prevents_provider_factory_dispatch(retry):
     assert [] == provider.plans
 
 
-def test_rejects_successful_lane_before_provider_dispatch(retry):
+def test_rejects_successful_lane_before_provider_dispatch(retry: _Retry) -> None:
     provider = _Provider(provider_observation("catalogue", (), authority="open_library"))
     service = retry.service(ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2))
     with pytest.raises(ProviderRetrySuccessorError, match="lane"):
@@ -533,7 +566,7 @@ def test_rejects_successful_lane_before_provider_dispatch(retry):
     assert [] == provider.plans
 
 
-def test_rebound_generation_and_provider_failure_leave_predecessor_current(retry):
+def test_rebound_generation_and_provider_failure_leave_predecessor_current(retry: _Retry) -> None:
     provider = _Provider(provider_observation("catalogue", (), authority="open_library"))
     service = retry.service(ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2))
     with pytest.raises(ProviderRetrySuccessorError, match="configuration"):
@@ -548,7 +581,7 @@ def test_rebound_generation_and_provider_failure_leave_predecessor_current(retry
     assert retry.report.report_id == retry.repository.current_id
 
 
-def test_rejects_report_current_but_not_current_package_before_dispatch(retry):
+def test_rejects_report_current_but_not_current_package_before_dispatch(retry: _Retry) -> None:
     provider = _Provider(provider_observation("catalogue", (), authority="open_library"))
     retry.repository.package = ("proposal", "not-the-source", "case", 2, "admitted")
     service = retry.service(ConfiguredProviderRetry(ProviderBinding("catalogue", True, lambda: provider, "open_library"), "open_library", 2))
