@@ -115,6 +115,114 @@ class ReviewWebTransportTests(ReviewWebTestCase):
         self.assertEqual(bad_origin.status_code, 403)
         self.assertEqual(bad_origin.json()["error"]["code"], "origin")
 
+    def test_host_header_cannot_relabel_a_routed_path_as_a_health_probe(self) -> None:
+        # `request.url` is reconstructed from the `Host` header, so a header
+        # carrying a path plus a `#` terminator reads as an exact health path
+        # on a request the router dispatched somewhere else entirely
+        # (GHSA-86qp-5c8j-p5mr). The trust boundary exempts the two health
+        # endpoints from origin validation, so a decision taken on that
+        # reconstructed value skips origin and CSRF checking for the real
+        # route. Every path-based decision reads the routed ASGI path instead.
+        poisoned = {"Host": "review.test/health/live#"}
+        self.assertEqual(self.client.get("/health/live").status_code, 200)
+        read = self.client.get(
+            f"/api/v1/review-cases/{self.case.review_case_id}", headers=poisoned
+        )
+        self.assertEqual(read.status_code, 400)
+        self.assertEqual(read.json()["error"]["code"], "invalid_origin")
+        # Login is the one mutating route with no CSRF-token requirement of its
+        # own, so the origin check is the whole of its cross-site defence.
+        forged_login = self.client.post(
+            "/api/v1/session/login",
+            headers=poisoned,
+            json={"password": "correct horse"},
+        )
+        self.assertEqual(forged_login.status_code, 400)
+        self.assertEqual(forged_login.json()["error"]["code"], "invalid_origin")
+        self.assertIsNone(self.client.cookies.get("ml_session"))
+        self._login()
+        page = self.client.get("/library")
+        csrf = re.search(r'data-csrf-token="([A-Za-z0-9_-]+)"', page.text)
+        assert csrf is not None
+        del self.client.headers["x-ml-build-identity"]
+        forged_logout = self.client.post(
+            "/api/v1/session/logout",
+            headers={**poisoned, "X-CSRF-Token": csrf.group(1)},
+        )
+        self.assertEqual(forged_logout.status_code, 400)
+        self.assertEqual(forged_logout.json()["error"]["code"], "invalid_origin")
+        self.assertEqual(self.client.get("/library").status_code, 200)
+
+    def test_an_encoded_fragment_cannot_borrow_the_health_exemption(self) -> None:
+        # `%23` decodes into the routed ASGI path but still terminates the
+        # reconstructed URL's path component, so `/health/live%23x` routes
+        # nowhere while `request.url.path` reads as the health endpoint. The
+        # divergence here comes from the request path rather than the `Host`
+        # header, so no amount of header validation in the framework closes
+        # it and this keeps the routed-path decision pinned on its own.
+        for path in ("/health/live%23x", "/health/live%3Fx"):
+            refused = self.client.get(path, headers={"Host": "elsewhere.invalid"})
+            self.assertEqual(refused.status_code, 400, refused.text)
+            self.assertEqual(refused.json()["error"]["code"], "invalid_origin")
+        probe = self.client.get("/health/live", headers={"Host": "elsewhere.invalid"})
+        self.assertEqual(probe.status_code, 200)
+        self.assertEqual(probe.text, "ok\n")
+
+    def test_build_identity_gate_reads_the_routed_path_behind_a_trusted_proxy(self) -> None:
+        # Behind a trusted proxy the origin decision moves to `X-Forwarded-Host`
+        # while `request.url` keeps following the raw `Host` header, so the two
+        # path-based decisions have to be pinned separately: here the trust
+        # boundary legitimately admits the request and the build-identity gate
+        # is the only remaining path-based check.
+        configuration = ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(self.hash_path),
+            session_lifetime_seconds=600,
+            trusted_proxy_ips=("127.0.0.1",),
+        )
+        self.client.close()
+        self.client = TestClient(
+            create_transport_test_app(
+                self.repository, configuration, clock=lambda: self.now
+            ),
+            base_url="https://review.test",
+            client=("127.0.0.1", 50_000),
+        )
+        self.client.__enter__()
+        self.addCleanup(self.client.__exit__, None, None, None)
+        proxied = {
+            "Origin": "https://review.test",
+            "X-Forwarded-Host": "review.test",
+            "X-Forwarded-Proto": "https",
+        }
+        login = self.client.post(
+            "/api/v1/session/login", headers=proxied, json={"password": "correct horse"}
+        )
+        self.assertEqual(login.status_code, 200, login.text)
+        for host, expected in (({}, 409), ({"Host": "review.test#"}, 409)):
+            page = self.client.get("/library", headers=proxied)
+            csrf = re.search(r'data-csrf-token="([A-Za-z0-9_-]+)"', page.text)
+            assert csrf is not None
+            denied = self.client.post(
+                "/api/v1/session/logout",
+                headers={**proxied, **host, "X-CSRF-Token": csrf.group(1)},
+            )
+            self.assertEqual(denied.status_code, expected, denied.text)
+            self.assertEqual(denied.json()["error"]["code"], "browser_build_mismatch")
+        page = self.client.get("/library", headers=proxied)
+        csrf = re.search(r'data-csrf-token="([A-Za-z0-9_-]+)"', page.text)
+        assert csrf is not None
+        accepted = self.client.post(
+            "/api/v1/session/logout",
+            headers={
+                **proxied,
+                "Host": "review.test#",
+                "X-CSRF-Token": csrf.group(1),
+                "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
+            },
+        )
+        self.assertEqual(accepted.status_code, 204, accepted.text)
+
     def test_decision_authentication_precedes_required_input_validation(self) -> None:
         self.client.cookies.set("ml_session", "malformed")
         denied = self.client.post(

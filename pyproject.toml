@@ -21,17 +21,32 @@ classifiers = [
 ]
 dependencies = [
   "argon2-cffi==25.1.0",
-  "fastapi==0.116.1",
+  "fastapi==0.141.1",
   "httpcore==1.0.9",
   "httpx==0.28.1",
   "pillow==12.3.0",
   "pydantic==2.13.4",
+  # `interfaces/web/app.py` imports `starlette.types` directly, so Starlette is
+  # a direct dependency and is pinned here rather than floating under FastAPI's
+  # open `starlette>=0.46.0`. The floor is what clears the last advisory
+  # affecting the locked closure: GHSA-82w8-qh3p-5jfq is fixed in 1.3.1, and
+  # GHSA-86qp-5c8j-p5mr -- the `Host`-header path poisoning this project's own
+  # trust boundary was decided on -- in 1.0.1.
+  "starlette==1.6.0",
   "uvicorn==0.35.0",
 ]
 
 [dependency-groups]
 dev = [
   "hypothesis==6.165.2",
+  # `starlette.testclient` prefers `httpx2` and warns on the
+  # `StarletteDeprecationWarning` class when it has to fall back to `httpx`.
+  # `scripts/qualify_exact_artifact.py` fails its installed-workspace probe on
+  # any stdout or stderr at all, so that warning is a hard qualification
+  # failure, not cosmetic. This is the transport the test client uses; the
+  # runtime `httpx==0.28.1` the adapters call remains a separate distribution
+  # with a separate import name and is unaffected by it.
+  "httpx2==2.10.0",
   "mypy==2.3.1",
   "playwright==1.61.0",
   "pytest==9.1.1",

@@ -64,6 +64,22 @@
   either would add or drop a type rather than name one. The helper's docstring
   names both and why, so the shared baseline is not mistaken for a module
   invariant and neither path is later widened into agreement with it. (#706)
+- Take every path-based security decision in the web layer on the routed path
+  rather than the URL rebuilt from the `Host` header, which a header or an
+  encoded `%23` can split from the path the router dispatched on
+  (GHSA-86qp-5c8j-p5mr). `Host: review.test/health/live#` made the trust
+  boundary read a mutating API request as a health probe and skip both origin
+  validation and the build-identity check. (#702)
+- Pin Starlette 1.6.0 and FastAPI 0.141.1, clearing the six advisories that had
+  left `dependency-audit` failing on `main` since `ecd70fcb`. Four reach no
+  surface this service has; the two that did are the `Host`-derived ones fixed
+  above, independently of version. Adds one transitive package,
+  `annotated-doc` (MIT). (#702)
+- Pin `httpx2` in the `dev` group so `starlette.testclient` stops emitting the
+  deprecation line that fails `qualify_exact_artifact.py`'s installed-workspace
+  probe, which treats any output as failure. Development scope only: absent
+  from the shipped wheel's metadata and the container image, and it does not
+  displace the runtime `httpx==0.28.1` the adapters call. (#702)
 - Report the failure that actually ended a provider-recovery transaction. Two
   of the store's transactional write paths abandoned theirs with an unguarded
   `ROLLBACK`, and SQLite can end a transaction itself when a statement fails
