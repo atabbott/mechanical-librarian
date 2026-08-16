@@ -969,7 +969,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             ).wait_for()
             self.assertEqual(ambiguous_decisions, 1)
             page.get_by_text("Mara Venn", exact=False).first.wait_for()
-            page.get_by_role("button", name="authors", exact=True).click()
+            page.get_by_role("button", name="Authors", exact=True).click()
             self.assertEqual(
                 page.locator("#field-authors .direct-choice-grid .value-choice").count(),
                 3,
@@ -979,7 +979,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             expect(author_notices).to_contain_text("Corroborated creator sources")
             expect(author_notices).to_contain_text("Hardcover · Open Library")
             self.assertNotIn("provider_", author_notices.inner_text())
-            page.get_by_role("button", name="subtitle", exact=True).click()
+            page.get_by_role("button", name="Subtitle", exact=True).click()
             subtitle = page.locator("#field-subtitle")
             subtitle.get_by_text(
                 "This field is unavailable for the current service capability.", exact=True
@@ -987,7 +987,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             self.assertIn("Unavailable", subtitle.inner_text())
             self.assertEqual(subtitle.locator(".direct-choice-grid").count(), 0)
             self.assertEqual(subtitle.get_by_text("Not set", exact=True).count(), 0)
-            self.assertEqual(page.get_by_role("button", name="subtitle", exact=True).count(), 1)
+            self.assertEqual(page.get_by_role("button", name="Subtitle", exact=True).count(), 1)
             page.get_by_role("button", name="Evidence", exact=True).click()
             page.get_by_role("heading", name="Evidence and source ledger").wait_for()
             page.locator(".evidence-item").first.wait_for()
@@ -1002,7 +1002,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.get_by_role("heading", name="Current-case history").wait_for()
             page.get_by_text("Case admitted", exact=False).wait_for()
             self.assertIn(
-                "human decision · title",
+                "Human decision · title",
                 page.locator(".progressive-panel").inner_text(),
             )
             page.goto("https://react-platform.invalid/review/case-stale?subview=review")
@@ -1013,7 +1013,7 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             )
             page.get_by_role("heading", name="Current review case").wait_for()
             for destination in ("title", "authors", "subtitle", "series"):
-                page.get_by_role("button", name=destination, exact=True).click()
+                page.get_by_role("button", name=destination.capitalize(), exact=True).click()
                 page.locator(f"#field-{destination}").get_by_text(
                     "There is no owner decision available for this field.", exact=True
                 ).wait_for()
@@ -1031,14 +1031,14 @@ class ReactPlatformArtifactTests(unittest.TestCase):
             page.get_by_role("heading", name="Current review case").wait_for()
             automatic_rail = page.locator(".detail-layout > .field-navigation")
             expect(automatic_rail.get_by_role("button")).to_have_count(4)
-            page.get_by_role("button", name="title", exact=True).click()
+            page.get_by_role("button", name="Title", exact=True).click()
             automatic_title = page.locator("#field-title")
             expect(automatic_title.locator(".direct-choice-grid .value-choice")).to_have_count(4)
             expect(automatic_title.locator(".current-value")).to_have_attribute("aria-pressed", "true")
             self.assertIn(
                 "is-selected", automatic_title.locator(".current-value").get_attribute("class")
             )
-            page.get_by_role("button", name="authors", exact=True).click()
+            page.get_by_role("button", name="Authors", exact=True).click()
             automatic_authors = page.locator("#field-authors")
             expect(automatic_authors.locator(".direct-choice-grid .value-choice")).to_have_count(3)
             expect(automatic_authors.locator(".current-value")).to_have_attribute("aria-pressed", "true")
