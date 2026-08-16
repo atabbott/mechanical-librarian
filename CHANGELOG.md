@@ -7,6 +7,30 @@
 
 ## Unreleased
 
+- Split the 9,943-line SQLite metadata-report repository along its aggregate
+  seams. Persistence is now nineteen focused modules over one shared
+  connection, transaction and schema spine: each owns one aggregate's tables
+  and validation, and no statement outside a module writes the tables that
+  module owns. `metadata_reports.py` keeps the factory, the read-only shadow
+  preview reader, and the compatibility surface every existing caller imports,
+  so no import statement, application port, or call site was rewritten, and the
+  composition root still wires the same object into the same protocol-typed
+  parameters it always did.
+  One behaviour deliberately changed, and only one. Transactions were
+  hand-rolled at 56 separate `BEGIN IMMEDIATE` sites, of which exactly one
+  handled nesting; a cross-module call inside an open transaction would either
+  raise or, worse, silently commit the enclosing caller's partial work. All of
+  them now share one re-entrant scope that uses a savepoint when a transaction
+  is already open, so a nested repository call undoes only its own writes.
+  Every `except` block, all 123 `sqlite3.Error` handlers and all 365 distinct
+  error messages, stayed verbatim at its own site, so which error surfaces from
+  a failure is unchanged. Everything else is mechanically equivalent and was
+  proven so after every commit: a freshly created database is byte-identical by
+  whole-file `sha256`, its 119 `sqlite_master` rows are unchanged, the multiset
+  of SQL string literals across the package is unchanged after the transaction
+  commit, and 120 forced-failure captures produce the same exception type and
+  message as before. (#658)
+
 - Express field validation once, as a shared vocabulary applied declaratively,
   instead of expanding the same checks longhand for every field. A new
   dependency-free `mechanical_librarian.domain.validation` module names the

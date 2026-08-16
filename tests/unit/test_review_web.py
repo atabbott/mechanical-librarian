@@ -2710,6 +2710,69 @@ class ReviewWebTests(unittest.TestCase):
             cross_thread=True,
         )
 
+    def test_served_composition_keeps_automatic_safety_reachable(self) -> None:
+        # Every other test in this suite hands `compose_review_application` a
+        # repository directly, so nothing exercised what the server actually
+        # composes. `AutomaticSafetyControls` duck-types through `object` and
+        # converts a missing member into "automatic safety is unavailable", so a
+        # composition that dropped the safety seam read as a domain error rather
+        # than a wiring fault and every safety read and mutation failed silently.
+        from tests.support.tls import synthetic_tls_identity
+
+        root = Path(self.temporary.name)
+        database = root / "application.sqlite3"
+        private = root / "private"
+        private.mkdir()
+        os.chmod(private, 0o700)
+        repository = open_repository(database)
+        certificate, private_key = synthetic_tls_identity(root)
+        configuration = ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(self.hash_path),
+            tls_certificate_file=str(certificate),
+            tls_private_key_file=str(private_key),
+        )
+        composed: list[object] = []
+        try:
+            with (
+                patch(
+                    "mechanical_librarian.bootstrap.composition.load_configuration_file",
+                    return_value=SimpleNamespace(review=configuration),
+                ),
+                patch(
+                    "mechanical_librarian.bootstrap.composition.open_repository",
+                    return_value=repository,
+                ),
+                patch(
+                    "mechanical_librarian.bootstrap.composition.create_review_app",
+                    side_effect=lambda application, _: composed.append(application),
+                ),
+                patch(
+                    "mechanical_librarian.bootstrap.composition.create_review_pipeline",
+                    return_value=Mock(),
+                ),
+                patch(
+                    "mechanical_librarian.bootstrap.composition.CoverArtifactStore",
+                    return_value=Mock(),
+                ),
+                patch("mechanical_librarian.bootstrap.composition.uvicorn.run"),
+            ):
+                run_review_server(
+                    Path("/config.json"),
+                    database,
+                    Path("/catalogue.sqlite3"),
+                    root / "artifacts",
+                    "127.0.0.1",
+                    8443,
+                )
+            application = composed[0]
+            safety = application.automatic_safety
+            self.assertFalse(safety.state().paused)
+            safety.pause(True, 5)
+            self.assertTrue(safety.state().paused)
+        finally:
+            repository.close()
+
     def test_argon2i_hash_file_is_rejected(self) -> None:
         self.client.close()
         self.hash_path.write_text(
