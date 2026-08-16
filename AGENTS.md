@@ -81,9 +81,10 @@ Run the static architecture-boundary test whenever imports or packages move.
   at the definition site.
 - A refactoring pull request reports its net line-count delta per changed
   module, attributing the lines to: code moved in or out unchanged, structure
-  the move required, copies consolidation removed, and checks newly added.
-  Those four reconcile to the net delta — a pure move shows the same figure
-  leaving one module and arriving in another. A site that gains a check it
+  the change required (a move's header, imports and parameters; an extraction's
+  declaration and call site), copies consolidation removed, and checks newly
+  added. Those four reconcile to the net delta — a pure move shows the same
+  figure leaving one module and arriving in another. A site that gains a check it
   never had is expected to grow, and that growth is a success. Never weaken,
   skip, or narrow a check to reach a line count, and never manufacture a helper
   to improve one.

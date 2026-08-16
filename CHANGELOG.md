@@ -24,8 +24,8 @@
   by carrying a meaningful name, exposing a directly testable contract, or
   creating an enforceable boundary — stated in the change rather than assumed.
   Refactoring pull requests attribute their line delta to moved code, structure
-  the move required, copies consolidation removed, and checks newly added, which
-  reconcile to the net figure. (#692)
+  the change required, copies consolidation removed, and checks newly added,
+  which reconcile to the net figure. (#692)
 
 - Declare the automatic-safety seam the served composition already binds.
   `compose_review_application` builds the policy notebook and the owner-only
