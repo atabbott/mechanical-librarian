@@ -64,85 +64,22 @@
   either would add or drop a type rather than name one. The helper's docstring
   names both and why, so the shared baseline is not mistaken for a module
   invariant and neither path is later widened into agreement with it. (#706)
-- Give the test client the transport Starlette now asks for, so the exact-
-  artifact qualifier stays a gate. `starlette.testclient` prefers `httpx2` and
-  warns on `StarletteDeprecationWarning` when it falls back to `httpx`, and
-  `scripts/qualify_exact_artifact.py` fails its installed-workspace probe if
-  that probe writes anything at all to stdout or stderr. One deprecation line
-  on an import is therefore a hard `exact-installed` failure, not an
-  annotation -- the Starlette upgrade below made the qualifier fail for a
-  reason that looked cosmetic and was not. `httpx2` is pinned in the `dev`
-  group, so it enters the qualified environment (which installs every group)
-  and not the shipped wheel's metadata or the container image. It does not
-  replace the runtime `httpx==0.28.1` the Audiobookshelf and metadata-provider
-  adapters call: separate distribution, separate import name, separate locked
-  closure, both installed side by side, and no adapter client, least-authority
-  `Auth` flow, or wrapped-disconnect classification moves. The closure gains
-  `httpcore2` (BSD-3-Clause) and `truststore` (MIT) at development scope, and
-  `httpx2-jsfetch`, which is gated on `sys_platform == 'emscripten'` and
-  installs on no supported platform. The qualifier's "any output fails" rule is
-  untouched; it was right, and it is what caught this.
-- Move the locked Python closure off every Starlette advisory and put
-  `dependency-audit` back to reporting something. The job has been failing on
-  `main` since at least `ecd70fcb` on one package, `starlette 0.47.3`, carrying
-  six advisories, and because it is not a required check it failed silently.
-  Four of them -- the `FileResponse` `Range` merge, `StaticFiles` UNC paths,
-  `request.form()` limits, and `HTTPEndpoint` method dispatch -- reach nothing
-  here, because this service builds its own responses and has no form, upload,
-  static-file, or `HTTPEndpoint` surface. The two that reached it are the two
-  about `Host`-derived values, and the path-based decisions they undermined are
-  fixed above, independently of any version.
-  Starlette moves to 1.6.0 and is pinned directly, because `app.py` imports
-  `starlette.types` and a direct import is a direct dependency; FastAPI moves
-  to 0.141.1 because 0.116.1 capped Starlette below 0.48.0 and 0.141.1 replaces
-  that cap with an open `starlette>=0.46.0`. The FastAPI major-line move and
-  Starlette's 0.x-to-1.x break cost nothing at this application's seams: the
-  middleware stack, `Security`/`Depends` wiring, exception handlers and
-  `RequestValidationError` shape are unchanged, the generated
-  `review-openapi-v1.json` regenerates byte-identical, and the browser tier
-  passes on the built artifact against a real Uvicorn process. The upgrade adds
-  one transitive package, `annotated-doc` (MIT), and installs no optional
-  extra.
-  Worth recording for whoever reads the fix above later: Starlette 1.x now
-  validates the `Host` header itself and falls back to the ASGI `server` value
-  when it does not match, so on this version the header can no longer split the
-  two path values at all. The application-level fix is not made redundant by
-  that -- it is what stops the decision depending on which version is installed
-  -- but a `Host`-header test alone would stop failing if the fix were reverted
-  on 1.x. The encoded-fragment case pinned above is the one that still fails,
-  which is why it is there.
-- Take every path-based security decision in the web layer on the path the
-  router dispatched on, not on the URL Starlette rebuilds from the `Host`
-  header. `request.url` is reconstructed as `scheme://<Host header><path>`, so
-  a `Host` carrying a path and a `#` terminator discards the real path into a
-  fragment and leaves `request.url.path` reading as something the request never
-  addressed (GHSA-86qp-5c8j-p5mr). One header did both bypasses at once: with
-  `Host: review.test/health/live#`, `request.url.path` was exactly
-  `/health/live`, so the trust boundary took the request for a health probe and
-  skipped origin validation and the cross-site `Origin` check entirely, while
-  the build-identity gate saw a path that does not start with `/api/v1/` and
-  skipped the browser-build check -- on a request the router had already sent
-  to a mutating API route. Against the assembled application that admitted a
-  `POST /api/v1/session/login` carrying no `Origin` at all, which issued a
-  session, and a `POST /api/v1/session/logout` carrying no `Origin` and no
-  `x-ml-build-identity`, which destroyed one. Behind a trusted proxy the two
-  decisions separate, because the origin decision moves to `X-Forwarded-Host`
-  while `request.url` keeps following the raw `Host`; both are pinned, together
-  and apart. The exception handler's `/api/v1/metadata-policy/` test read the
-  same reconstructed value and moved with them. A `%23` or `%3F` in the request
-  path splits the same two values without any help from the header -- it
-  decodes into the routed path and terminates the reconstructed one -- so that
-  case is pinned as well, and it is the case no amount of `Host` validation
-  upstream of the application can close.
-  Substituting one value for the other changes no outcome that was not the
-  defect: across the unit and integration cohorts the three decision sites were
-  evaluated 341 times and the two values agreed every time except on the nine
-  deliberately poisoned requests the new tests send. The one request set that
-  changes verdict is the mirror image of the same bug -- a request the router
-  sent to `/health/live` or `/health/ready` while carrying a path-bearing
-  `Host` was refused `invalid_origin` because the reconstructed path was not a
-  health path, and is now served, which is what exempting the health endpoints
-  always meant. Everything else the change touches is a tightening. (#702)
+- Take every path-based security decision in the web layer on the routed path
+  rather than the URL rebuilt from the `Host` header, which a header or an
+  encoded `%23` can split from the path the router dispatched on
+  (GHSA-86qp-5c8j-p5mr). `Host: review.test/health/live#` made the trust
+  boundary read a mutating API request as a health probe and skip both origin
+  validation and the build-identity check. (#702)
+- Pin Starlette 1.6.0 and FastAPI 0.141.1, clearing the six advisories that had
+  left `dependency-audit` failing on `main` since `ecd70fcb`. Four reach no
+  surface this service has; the two that did are the `Host`-derived ones fixed
+  above, independently of version. Adds one transitive package,
+  `annotated-doc` (MIT). (#702)
+- Pin `httpx2` in the `dev` group so `starlette.testclient` stops emitting the
+  deprecation line that fails `qualify_exact_artifact.py`'s installed-workspace
+  probe, which treats any output as failure. Development scope only: absent
+  from the shipped wheel's metadata and the container image, and it does not
+  displace the runtime `httpx==0.28.1` the adapters call. (#702)
 - Report the failure that actually ended a provider-recovery transaction. Two
   of the store's transactional write paths abandoned theirs with an unguarded
   `ROLLBACK`, and SQLite can end a transaction itself when a statement fails
