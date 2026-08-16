@@ -989,7 +989,12 @@ class _CommitFailingConnection:
 
 
 class TransactionEpilogueTests(unittest.TestCase):
-    """Pin the shared commit/rollback epilogue every write path reuses."""
+    """Pin the shared commit/rollback epilogue the helper's adopters reuse.
+
+    Not every write path is one.  ``resume_fanout`` and ``enqueue_jobs`` keep
+    their epilogue longhand, for the reasons ``_rollback_on_failure`` records,
+    and neither is covered here.
+    """
 
     @staticmethod
     def _store_over(

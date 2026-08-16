@@ -8,7 +8,7 @@
 ## Unreleased
 
 - Widen the provider-recovery transaction epilogue to the sites #662 left
-  longhand, with every site naming the extra exception types it admits.
+  longhand, with each adopting site naming the extra exception types it admits.
   `_rollback_on_failure` now takes them as `*wrapped` and concatenates them onto
   the `sqlite3.Error, OverflowError` pair its adopters share, so the six narrow
   sites keep their set by passing nothing, and a widening is visible in
