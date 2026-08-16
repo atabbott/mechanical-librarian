@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Iterator, cast
 from urllib.parse import quote
 
+from mechanical_librarian.adapters.persistence.transactions import TransactionScope
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
     TargetConnectionError,
@@ -993,6 +994,10 @@ class SQLiteMetadataReportRepository:
         self._current_cover_policy_reference: str | None = None
         self._current_cover_replay_reference: str | None = None
 
+    def _transaction(self, savepoint: str, *, deferred: bool = False) -> TransactionScope:
+        """Open one re-entrant scope over this repository's shared connection."""
+        return TransactionScope(self._connection, savepoint, deferred=deferred)
+
     def bind_current_cover_policy(self, reference: str) -> None:
         """Bind guarded cover effects to this process's validated policy."""
         if re.fullmatch(r"cover_policy_[0-9a-f]{64}", reference) is None:
@@ -1137,12 +1142,13 @@ class SQLiteMetadataReportRepository:
         """Atomically persist an equal automatic candidate without write authority."""
         if type(decision) is not AutomaticDecision or type(occurred_at) is not int or occurred_at < 0:
             raise FieldEffectError("authority_binding")
+        transaction = self._transaction("record_current_field_effect_no_change")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             source = self.field_effect_authority_source(decision)
             desired = project_decision_value(decision.destination, source["decision_value"])
             if desired != source["pre_value"]:
-                self._connection.commit()
+                transaction.commit()
                 return False
             record = FieldEffectNoChange.create(
                 decision_id=decision.decision_id, review_case_id=decision.review_case_id,
@@ -1184,10 +1190,10 @@ class SQLiteMetadataReportRepository:
                     record.target_version, record.origin, record.event_id,
                 ):
                     raise FieldEffectError("persistence")
-            self._connection.commit()
+            transaction.commit()
             return True
         except (sqlite3.Error, FieldEffectError, TypeError, ValueError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("authority_binding") from error
@@ -1237,8 +1243,9 @@ class SQLiteMetadataReportRepository:
                 or type(granted_at) is not int or granted_at < 0):
             raise FieldEffectError("invalid_consent")
         granted: list[EffectConsent] = []
+        transaction = self._transaction("grant_field_effect_consents")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             for library in libraries:
                 envelope_identity = self.field_effect_consent_envelope_identity(library)
                 for destination in destinations:
@@ -1285,11 +1292,11 @@ class SQLiteMetadataReportRepository:
                         (consent.consent_id, granted_at, document),
                     )
                     granted.append(consent)
-            self._connection.commit()
+            transaction.commit()
             return tuple(granted)
         except (json.JSONDecodeError, KeyError, sqlite3.Error, MetadataReportError,
                 FieldEffectError, TypeError, ValueError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
@@ -1309,8 +1316,9 @@ class SQLiteMetadataReportRepository:
                 or len({library for library, _ in grants}) != len(grants)):
             raise FieldEffectError("invalid_consent")
         granted: list[EffectConsent] = []
+        transaction = self._transaction("grant_field_effect_consent_matrix")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             for library, destinations in grants:
                 envelope_identity = self.field_effect_consent_envelope_identity(library)
                 eligible_destinations = set(destinations)
@@ -1377,11 +1385,11 @@ class SQLiteMetadataReportRepository:
                         })),
                     )
                     granted.append(consent)
-            self._connection.commit()
+            transaction.commit()
             return tuple(granted)
         except (json.JSONDecodeError, KeyError, sqlite3.Error, MetadataReportError,
                 FieldEffectError, TypeError, ValueError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
@@ -1456,8 +1464,9 @@ class SQLiteMetadataReportRepository:
                 or type(library) is not str or not library
                 or type(changed_at) is not int or changed_at < 0):
             raise FieldEffectError("invalid_consent")
+        transaction = self._transaction("revoke_library_field_effect_consents")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             rows = self._connection.execute(
                 "SELECT consent_id,document FROM field_effect_consents WHERE current=1 "
                 "AND json_extract(document,'$.consent.connection')=? "
@@ -1477,11 +1486,11 @@ class SQLiteMetadataReportRepository:
                     "WHERE consent_id=? AND current=1",
                     (changed_at, revoked, consent_id),
                 )
-            self._connection.commit()
+            transaction.commit()
             return len(rows)
         except (json.JSONDecodeError, KeyError, sqlite3.Error,
                 FieldEffectError, TypeError, ValueError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
@@ -1611,8 +1620,9 @@ class SQLiteMetadataReportRepository:
         if (type(review_case_id) is not str or type(destination) is not str
                 or type(changed_at) is not int or changed_at < 0):
             raise FieldEffectError("authority_binding")
+        transaction = self._transaction("field_effect_manual_override")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             rows = self._connection.execute(
                 "SELECT automatic.decision_id,human.decision_id FROM automatic_decisions automatic "
                 "JOIN human_decisions human ON human.review_case_id=automatic.review_case_id "
@@ -1633,10 +1643,10 @@ class SQLiteMetadataReportRepository:
                 )
                 for decision_id, _ in rows
             )
-            self._connection.commit()
+            transaction.commit()
             return superseded
         except (sqlite3.Error, FieldEffectError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
@@ -1701,20 +1711,21 @@ class SQLiteMetadataReportRepository:
             or type(changed_at) is not int or changed_at < 0
         ):
             raise FieldEffectError("invalid_manual_hold")
+        transaction = self._transaction("request_field_effect_manual_return")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             row = self._connection.execute(
                 "SELECT document FROM field_effect_manual_holds "
                 "WHERE review_case_id=? AND destination=? AND active=1",
                 (review_case_id, destination),
             ).fetchone()
             if row is None:
-                self._connection.rollback()
+                transaction.rollback()
                 return False
             active_document = row[0]
             raw = json.loads(active_document)
             if raw.get("decision_id") != hold_token:
-                self._connection.rollback()
+                transaction.rollback()
                 return False
             scan = self._connection.execute(
                 "SELECT scan.state FROM review_preparation_scans scan "
@@ -1726,7 +1737,7 @@ class SQLiteMetadataReportRepository:
                 (review_case_id, scan_id),
             ).fetchone()
             if scan is None:
-                self._connection.rollback()
+                transaction.rollback()
                 return False
             raw["pending_return"] = {
                 "requested_at": requested_at,
@@ -1740,7 +1751,7 @@ class SQLiteMetadataReportRepository:
                 (changed_at, document, review_case_id, destination, active_document),
             ).rowcount
             if updated != 1:
-                self._connection.rollback()
+                transaction.rollback()
                 return False
             if scan[0] == "completed_with_failures":
                 requeued = self._connection.execute(
@@ -1752,12 +1763,12 @@ class SQLiteMetadataReportRepository:
                     (requested_at, requested_at, changed_at, scan_id),
                 ).rowcount
                 if requeued != 1:
-                    self._connection.rollback()
+                    transaction.rollback()
                     return False
-            self._connection.commit()
+            transaction.commit()
             return True
         except (json.JSONDecodeError, KeyError, sqlite3.Error, TypeError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise FieldEffectError("persistence") from error
 
     def pending_field_effect_manual_returns(
@@ -1834,20 +1845,21 @@ class SQLiteMetadataReportRepository:
         context = self.field_effect_manual_hold_context(review_case_id, destination)
         if context is None:
             return None
+        transaction = self._transaction("clear_field_effect_manual_hold")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             hold = self._connection.execute(
                 "SELECT document FROM field_effect_manual_holds "
                 "WHERE review_case_id=? AND destination=? AND active=1",
                 (review_case_id, destination),
             ).fetchone()
             if hold is None:
-                self._connection.rollback()
+                transaction.rollback()
                 return None
             active_document = hold[0]
             raw = json.loads(active_document)
             if expected_hold_token is not None and raw.get("decision_id") != expected_hold_token:
-                self._connection.rollback()
+                transaction.rollback()
                 return None
             document = canonical_effect_json({
                 "active": False, "decision_id": raw["decision_id"],
@@ -1880,10 +1892,10 @@ class SQLiteMetadataReportRepository:
                         "WHERE decision_id=?",
                         (changed_at, canonical_effect_json(authority_document), automatic[0]),
                     )
-            self._connection.commit()
+            transaction.commit()
             return context if updated == 1 else None
         except (json.JSONDecodeError, KeyError, sqlite3.Error, TypeError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise FieldEffectError("persistence") from error
 
     def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool:
@@ -2131,10 +2143,9 @@ class SQLiteMetadataReportRepository:
         # The selected page and its joined report documents are validated
         # below.  Do not rescan every historical document on each poll: that
         # makes a bounded page read proportional to the whole durable corpus.
-        owns_snapshot = not self._connection.in_transaction
+        transaction = self._transaction("field_effect_activity_page", deferred=True)
         try:
-            if owns_snapshot:
-                self._connection.execute("BEGIN")
+            transaction.begin()
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
         # This is deliberately a read-only union over the existing immutable
@@ -2533,20 +2544,18 @@ class SQLiteMetadataReportRepository:
                 },
                 "total": total,
             }
-            if owns_snapshot:
-                self._connection.commit()
+            transaction.commit()
             return result
         except (json.JSONDecodeError, RecursionError, sqlite3.Error, TypeError, ValueError) as error:
-            if owns_snapshot and self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             raise FieldEffectError("persistence") from error
         except FieldEffectError:
-            if owns_snapshot and self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             raise
 
     def record_field_effect(self, operation: FieldEffectOperation) -> FieldEffectOperation:
         """Persist a deterministic plan and its first audit fact atomically."""
+        transaction = self._transaction("record_field_effect")
         try:
             if (operation.state != "planned" or operation.attempt != 0
                     or operation.failure is not None
@@ -2554,7 +2563,7 @@ class SQLiteMetadataReportRepository:
                     or operation.updated_at != operation.plan.created_at):
                 raise FieldEffectError("invalid_initial_operation")
             document = canonical_effect_json(operation.to_data())
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             existing = self._connection.execute(
                 "SELECT document FROM field_effects WHERE plan_id=?",
                 (operation.plan.plan_id,),
@@ -2581,9 +2590,9 @@ class SQLiteMetadataReportRepository:
                     self._record_field_effect_event(
                         operation, "planned", operation.updated_at
                     )
-                    self._connection.commit()
+                    transaction.commit()
                     return operation
-                self._connection.commit()
+                transaction.commit()
                 return persisted
             authority_document = canonical_effect_json({
                 "authority": operation.plan.to_data()["authority"], "current": True,
@@ -2637,10 +2646,10 @@ class SQLiteMetadataReportRepository:
                  operation.updated_at, document),
             )
             self._record_field_effect_event(operation, "planned", operation.updated_at)
-            self._connection.commit()
+            transaction.commit()
             return operation
         except (sqlite3.Error, FieldEffectError, TypeError, ValueError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
@@ -2726,8 +2735,9 @@ class SQLiteMetadataReportRepository:
             "scope": scope,
             "updated_at": changed_at,
         })
+        transaction = self._transaction("suspend_field_effect_capability")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             existing = self._connection.execute(
                 "SELECT updated_at FROM field_effect_suspensions "
                 "WHERE scope=? AND connection_name=? AND destination=?",
@@ -2743,9 +2753,9 @@ class SQLiteMetadataReportRepository:
                 "OR excluded.reason='unexpected_effect_behavior'",
                 (scope, connection, stored_destination, reason, changed_at, document),
             )
-            self._connection.commit()
+            transaction.commit()
         except (sqlite3.Error, FieldEffectError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
@@ -2778,22 +2788,25 @@ class SQLiteMetadataReportRepository:
                 or reason not in reasons
                 or type(observed_at) is not int or observed_at < 0):
             raise FieldEffectError("invalid_suspension")
+        transaction = self._transaction("clear_field_effect_capability_suspension")
         try:
+            transaction.begin()
             self._connection.execute(
                 "DELETE FROM field_effect_suspensions "
                 "WHERE scope=? AND connection_name=? AND destination=? "
                 "AND reason=? AND updated_at<?",
                 (scope, connection, destination, reason, observed_at),
             )
-            self._connection.commit()
+            transaction.commit()
         except sqlite3.Error as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise FieldEffectError("persistence") from error
 
     def claim_field_effect(self, plan_id: str, expected_state: str,
                            claim_token: str, claimed_at: int) -> FieldEffectOperation:
+        transaction = self._transaction("claim_field_effect")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             if self._connection.execute(
                 "SELECT paused FROM field_effect_control WHERE singleton=1"
             ).fetchone() != (0,):
@@ -2873,10 +2886,10 @@ class SQLiteMetadataReportRepository:
             )
             self._update_field_effect(operation, expected_state)
             self._record_field_effect_event(operation, "claimed", claimed_at)
-            self._connection.commit()
+            transaction.commit()
             return operation
         except (sqlite3.Error, FieldEffectError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
@@ -2889,8 +2902,9 @@ class SQLiteMetadataReportRepository:
                 plan_id, expected_state, changed_at,
                 "ambiguous" if failure is None else failure,
             )
+        transaction = self._transaction("transition_field_effect")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             row = self._connection.execute(
                 "SELECT document,state FROM field_effects WHERE plan_id=?", (plan_id,)
             ).fetchone()
@@ -2903,10 +2917,10 @@ class SQLiteMetadataReportRepository:
             self._record_field_effect_event(operation, state, changed_at)
             self._retire_stale_cover_consideration(operation, state, changed_at)
             self._schedule_field_effect_cleanup(operation, changed_at)
-            self._connection.commit()
+            transaction.commit()
             return operation
         except (sqlite3.Error, FieldEffectError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
@@ -2915,15 +2929,16 @@ class SQLiteMetadataReportRepository:
         return self.revoke_field_effect_authority(decision_id, superseded_at)
 
     def revoke_field_effect_authority(self, decision_id: str, changed_at: int) -> int:
+        transaction = self._transaction("revoke_field_effect_authority")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             count = self._revoke_field_effect_authority_in_transaction(
                 decision_id, changed_at, required=True
             )
-            self._connection.commit()
+            transaction.commit()
             return count
         except (sqlite3.Error, FieldEffectError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
@@ -2961,8 +2976,9 @@ class SQLiteMetadataReportRepository:
         return len(rows)
 
     def revoke_field_effect_consent(self, consent_id: str, changed_at: int) -> int:
+        transaction = self._transaction("revoke_field_effect_consent")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             row = self._connection.execute(
                 "SELECT document FROM field_effect_consents WHERE consent_id=?",
                 (consent_id,),
@@ -2987,10 +3003,10 @@ class SQLiteMetadataReportRepository:
                 self._update_field_effect(operation, state)
                 self._record_field_effect_event(operation, "superseded", changed_at)
                 self._schedule_field_effect_cleanup(operation, changed_at)
-            self._connection.commit()
+            transaction.commit()
             return len(rows)
         except (sqlite3.Error, FieldEffectError, json.JSONDecodeError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
@@ -2999,8 +3015,9 @@ class SQLiteMetadataReportRepository:
                                              expected_state: str,
                                              changed_at: int,
                                              failure: str = "ambiguous") -> FieldEffectOperation:
+        transaction = self._transaction("schedule_field_effect_reconciliation")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             row = self._connection.execute(
                 "SELECT document,state FROM field_effects WHERE plan_id=?", (plan_id,)
             ).fetchone()
@@ -3013,10 +3030,10 @@ class SQLiteMetadataReportRepository:
             self._record_field_effect_event(operation, "reconciling", changed_at)
             self._upsert_field_effect_action(operation, "targeted_read", "pending", 0,
                                              changed_at)
-            self._connection.commit()
+            transaction.commit()
             return operation
         except (sqlite3.Error, FieldEffectError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
@@ -3024,8 +3041,9 @@ class SQLiteMetadataReportRepository:
     def complete_field_effect_reconciliation(self, plan_id: str, state: str,
                                              failure: str | None, changed_at: int,
                                              reevaluate: bool = False) -> FieldEffectOperation:
+        transaction = self._transaction("complete_field_effect_reconciliation")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             row = self._connection.execute(
                 "SELECT document,state FROM field_effects WHERE plan_id=?", (plan_id,)
             ).fetchone()
@@ -3050,10 +3068,10 @@ class SQLiteMetadataReportRepository:
                 self._upsert_field_effect_action(operation, "forward_reevaluation",
                                                  "pending", 0, changed_at)
             self._schedule_field_effect_cleanup(operation, changed_at)
-            self._connection.commit()
+            transaction.commit()
             return operation
         except (sqlite3.Error, FieldEffectError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
@@ -3112,8 +3130,9 @@ class SQLiteMetadataReportRepository:
 
     def claim_next_field_effect_action(self, changed_at: int,
                                        plan_id: str | None = None) -> dict[str, object] | None:
+        transaction = self._transaction("claim_next_field_effect_action")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             parameters: tuple[object, ...] = () if plan_id is None else (plan_id,)
             where = "state IN ('pending','claimed')"
             if plan_id is not None:
@@ -3124,25 +3143,26 @@ class SQLiteMetadataReportRepository:
                 parameters,
             ).fetchone()
             if row is None:
-                self._connection.commit()
+                transaction.commit()
                 return None
             operation = self.get_field_effect(row[1])
             attempt = min(row[4] + (1 if row[3] == "pending" else 0), 3)
             self._upsert_field_effect_action(
                 operation, row[2], "claimed", attempt, changed_at
             )
-            self._connection.commit()
+            transaction.commit()
             return {"action_id": row[0], "plan_id": row[1],
                     "kind": row[2], "attempt": attempt}
         except (sqlite3.Error, FieldEffectError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
 
     def complete_forward_reevaluation(self, action_id: str, changed_at: int) -> None:
+        transaction = self._transaction("complete_forward_reevaluation")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             row = self._connection.execute(
                 "SELECT plan_id,attempt FROM field_effect_actions "
                 "WHERE action_id=? AND kind='forward_reevaluation' AND state='claimed'",
@@ -3154,9 +3174,9 @@ class SQLiteMetadataReportRepository:
             self._upsert_field_effect_action(
                 operation, "forward_reevaluation", "completed", row[1], changed_at
             )
-            self._connection.commit()
+            transaction.commit()
         except (sqlite3.Error, FieldEffectError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
@@ -3185,26 +3205,28 @@ class SQLiteMetadataReportRepository:
         ).fetchall())
 
     def complete_field_effect_cleanup(self, plan_id: str, changed_at: int) -> None:
+        transaction = self._transaction("complete_field_effect_cleanup")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             row = self._connection.execute(
                 "SELECT attempt FROM field_effect_cleanups WHERE plan_id=? AND state='pending'",
                 (plan_id,),
             ).fetchone()
             if row is None:
-                self._connection.commit()
+                transaction.commit()
                 return
             self._upsert_field_effect_cleanup(
                 plan_id, "completed", min(row[0] + 1, 3), changed_at
             )
-            self._connection.commit()
+            transaction.commit()
         except (sqlite3.Error, FieldEffectError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise FieldEffectError("persistence") from error
 
     def fail_field_effect_cleanup(self, plan_id: str, changed_at: int) -> None:
+        transaction = self._transaction("fail_field_effect_cleanup")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             row = self._connection.execute(
                 "SELECT attempt FROM field_effect_cleanups WHERE plan_id=? AND state='pending'",
                 (plan_id,),
@@ -3214,9 +3236,9 @@ class SQLiteMetadataReportRepository:
             self._upsert_field_effect_cleanup(
                 plan_id, "pending", min(row[0] + 1, 3), changed_at
             )
-            self._connection.commit()
+            transaction.commit()
         except (sqlite3.Error, FieldEffectError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, FieldEffectError):
                 raise
             raise FieldEffectError("persistence") from error
@@ -3224,15 +3246,16 @@ class SQLiteMetadataReportRepository:
     def set_field_effect_paused(self, paused: bool, changed_at: int) -> None:
         if type(paused) is not bool or type(changed_at) is not int or changed_at < 0:
             raise FieldEffectError("invalid_control")
+        transaction = self._transaction("set_field_effect_paused")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             self._connection.execute(
                 "UPDATE field_effect_control SET paused=?,updated_at=? WHERE singleton=1",
                 (int(paused), changed_at),
             )
-            self._connection.commit()
+            transaction.commit()
         except sqlite3.Error as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise FieldEffectError("persistence") from error
 
     def field_effect_paused(self) -> bool:
@@ -3473,8 +3496,9 @@ class SQLiteMetadataReportRepository:
             or requested_at < 0
         ):
             raise MetadataReportError("review preparation request is invalid")
+        transaction = self._transaction("request_review_scan")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             control = self._connection.execute(
                 "SELECT paused FROM review_preparation_control WHERE singleton=1"
             ).fetchone()
@@ -3520,7 +3544,7 @@ class SQLiteMetadataReportRepository:
                         ),
                     )
                 self._refresh_target_connection_affected(connection)
-                self._connection.commit()
+                transaction.commit()
                 progress = self.review_pipeline_progress(connection, library)
                 if progress is None:
                     raise MetadataReportError("review preparation state is invalid")
@@ -3542,13 +3566,12 @@ class SQLiteMetadataReportRepository:
                 ),
             )
             self._refresh_target_connection_affected(connection)
-            self._connection.commit()
+            transaction.commit()
             return PipelineProgress(
                 scan_id, connection, library, "queued", 0, 0, 0, 0, False, requested_at
             )
         except (sqlite3.Error, MetadataReportError, ReviewPipelineError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, (MetadataReportError, ReviewPipelineError)):
                 raise
             raise MetadataReportError("review preparation persistence failed") from error
@@ -3604,8 +3627,9 @@ class SQLiteMetadataReportRepository:
             )
         ):
             raise MetadataReportError("review preparation scope is invalid")
+        transaction = self._transaction("review_pipeline_status", deferred=True)
         try:
-            self._connection.execute("BEGIN")
+            transaction.begin()
             control = self._connection.execute(
                 "SELECT paused FROM review_preparation_control WHERE singleton=1"
             ).fetchone()
@@ -3631,7 +3655,7 @@ class SQLiteMetadataReportRepository:
                 "s.rescan_requested,s.updated_at",
                 tuple(value for library in libraries for value in library),
             ).fetchall()
-            self._connection.commit()
+            transaction.commit()
             progress = {
                 (row[1], row[2]): PipelineProgress(
                     row[0], row[1], row[2], row[3], row[7], row[4], row[8], row[9],
@@ -3641,8 +3665,7 @@ class SQLiteMetadataReportRepository:
             }
             return tuple(progress.get(library) for library in libraries), bool(control[0])
         except (sqlite3.Error, MetadataReportError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("review preparation persistence failed") from error
@@ -3661,20 +3684,23 @@ class SQLiteMetadataReportRepository:
     def set_review_pipeline_paused(self, paused: bool, updated_at: int) -> None:
         if type(paused) is not bool or type(updated_at) is not int or updated_at < 0:
             raise MetadataReportError("review preparation control is invalid")
+        transaction = self._transaction("set_review_pipeline_paused")
         try:
+            transaction.begin()
             self._connection.execute(
                 "UPDATE review_preparation_control SET paused=?,updated_at=? WHERE singleton=1",
                 (paused, updated_at),
             )
-            self._connection.commit()
+            transaction.commit()
         except sqlite3.Error as error:
             raise MetadataReportError("review preparation persistence failed") from error
 
     def recover_review_pipeline(
         self, producers: tuple[tuple[str, str, str, str], ...]
     ) -> None:
+        transaction = self._transaction("recover_review_pipeline")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             self._connection.execute(
                 "UPDATE review_preparation_scans SET state='queued' WHERE state='discovering'"
             )
@@ -3748,9 +3774,9 @@ class SQLiteMetadataReportRepository:
                         "WHERE scan_id=?",
                         (library_id, producer_fingerprint, row[0]),
                     )
-            self._connection.commit()
+            transaction.commit()
         except sqlite3.Error as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("review preparation recovery failed") from error
 
     def target_connection_conditions(self) -> tuple[TargetConnectionCondition, ...]:
@@ -3766,14 +3792,15 @@ class SQLiteMetadataReportRepository:
 
     def guard_target_connection(self, action: PipelineAction, checked_at: int) -> bool:
         """Return a claimed action to queue when its connection is held."""
+        transaction = self._transaction("guard_target_connection")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             condition = self._connection.execute(
                 "SELECT state FROM review_preparation_connection_conditions "
                 "WHERE connection_name=?", (action.connection,)
             ).fetchone()
             if condition is None or condition[0] not in {"paused", "checking"}:
-                self._connection.commit()
+                transaction.commit()
                 return True
             if action.stage == "discovery":
                 updated = self._connection.execute(
@@ -3789,11 +3816,10 @@ class SQLiteMetadataReportRepository:
                 ).rowcount
             if updated != 1:
                 raise MetadataReportError("review preparation state changed")
-            self._connection.commit()
+            transaction.commit()
             return False
         except (sqlite3.Error, MetadataReportError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("target connection condition is unavailable") from error
@@ -3816,8 +3842,9 @@ class SQLiteMetadataReportRepository:
         """Persist successful preflight authority before target enumeration."""
         if action.stage != "discovery":
             raise MetadataReportError("review preparation state changed")
+        transaction = self._transaction("qualify_review_discovery")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             condition = self._connection.execute(
                 "SELECT state,epoch FROM review_preparation_connection_conditions "
                 "WHERE connection_name=?", (action.connection,)
@@ -3829,7 +3856,7 @@ class SQLiteMetadataReportRepository:
                 ).rowcount
                 if updated != 1:
                     raise MetadataReportError("review preparation state changed")
-                self._connection.commit()
+                transaction.commit()
                 return False
             epoch = 0 if condition is None else condition[1]
             updated = self._connection.execute(
@@ -3839,11 +3866,10 @@ class SQLiteMetadataReportRepository:
             ).rowcount
             if updated != 1:
                 raise MetadataReportError("review preparation state changed")
-            self._connection.commit()
+            transaction.commit()
             return True
         except (sqlite3.Error, MetadataReportError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("target connection condition is unavailable") from error
@@ -3853,8 +3879,9 @@ class SQLiteMetadataReportRepository:
     ) -> None:
         if code not in {"tls", "authentication", "authorization", "unavailable"}:
             raise MetadataReportError("target connection condition is invalid")
+        transaction = self._transaction("defer_for_target_connection")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             current = self._connection.execute(
                 "SELECT epoch,state FROM review_preparation_connection_conditions "
                 "WHERE connection_name=?", (action.connection,)
@@ -3885,10 +3912,9 @@ class SQLiteMetadataReportRepository:
                 "UPDATE review_preparation_connection_conditions SET affected=? "
                 "WHERE connection_name=?", (affected, action.connection)
             )
-            self._connection.commit()
+            transaction.commit()
         except (sqlite3.Error, MetadataReportError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("target connection condition is unavailable") from error
@@ -3897,8 +3923,9 @@ class SQLiteMetadataReportRepository:
         """Persist a connection-wide hold without changing a retry checkpoint."""
         if code not in {"tls", "authentication", "authorization", "unavailable"}:
             raise MetadataReportError("target connection condition is invalid")
+        transaction = self._transaction("hold_target_connection")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             current = self._connection.execute(
                 "SELECT epoch,state FROM review_preparation_connection_conditions "
                 "WHERE connection_name=?", (connection,)
@@ -3911,10 +3938,9 @@ class SQLiteMetadataReportRepository:
                 "epoch=excluded.epoch,affected=excluded.affected,updated_at=excluded.updated_at",
                 (connection, code, epoch, self._target_connection_affected(connection), updated_at),
             )
-            self._connection.commit()
+            transaction.commit()
         except sqlite3.Error as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("target connection condition is unavailable") from error
 
     def _target_connection_affected(self, connection: str) -> int:
@@ -3940,14 +3966,15 @@ class SQLiteMetadataReportRepository:
     def begin_target_connection_check(
         self, connection: str, checked_at: int
     ) -> TargetConnectionCondition | None:
+        transaction = self._transaction("begin_target_connection_check")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             row = self._connection.execute(
                 "SELECT code,state,epoch,affected,updated_at FROM review_preparation_connection_conditions "
                 "WHERE connection_name=?", (connection,)
             ).fetchone()
             if row is None or row[1] != "paused":
-                self._connection.commit()
+                transaction.commit()
                 return None
             epoch = row[2] + 1
             if self._connection.execute(
@@ -3956,11 +3983,10 @@ class SQLiteMetadataReportRepository:
                 (epoch, checked_at, connection, row[2]),
             ).rowcount != 1:
                 raise MetadataReportError("target connection check changed")
-            self._connection.commit()
+            transaction.commit()
             return TargetConnectionCondition(connection, row[0], "checking", epoch, row[3], checked_at)
         except (sqlite3.Error, MetadataReportError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("target connection condition is unavailable") from error
@@ -3970,8 +3996,9 @@ class SQLiteMetadataReportRepository:
     ) -> bool:
         if code is not None and code not in {"tls", "authentication", "authorization", "unavailable"}:
             raise MetadataReportError("target connection condition is invalid")
+        transaction = self._transaction("finish_target_connection_check")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             affected = self._target_connection_affected(connection)
             updated = self._connection.execute(
                 "UPDATE review_preparation_connection_conditions SET state=?,code=COALESCE(?,code),"
@@ -3985,25 +4012,22 @@ class SQLiteMetadataReportRepository:
                     "AND qualification_epoch IS NULL",
                     (epoch, checked_at, connection),
                 )
-            self._connection.commit()
+            transaction.commit()
             return updated == 1
         except sqlite3.Error as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("target connection condition is unavailable") from error
 
     def claim_review_pipeline_action(self, claimed_at: int) -> PipelineAction | None:
-        owns_transaction = not self._connection.in_transaction
+        transaction = self._transaction("claim_review_pipeline_action")
         try:
-            if owns_transaction:
-                self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             active = self._connection.execute(
                 "SELECT (SELECT COUNT(*) FROM review_preparation_scans WHERE state='discovering')+"
                 "(SELECT COUNT(*) FROM review_preparation_work WHERE state='running')"
             ).fetchone()[0]
             if active >= 2:
-                if owns_transaction:
-                    self._connection.commit()
+                transaction.commit()
                 return None
             control = self._connection.execute(
                 "SELECT claim_sequence,last_library,circuit_open_until "
@@ -4030,8 +4054,7 @@ class SQLiteMetadataReportRepository:
                     "WHERE scan_id=? AND state='queued'",
                     (claimed_at, scan[0]),
                 )
-                if owns_transaction:
-                    self._connection.commit()
+                transaction.commit()
                 return PipelineAction(
                     scan[0],
                     scan[0],
@@ -4102,8 +4125,7 @@ class SQLiteMetadataReportRepository:
                     "last_library=?,updated_at=? WHERE singleton=1",
                     (work[5], claimed_at),
                 )
-                if owns_transaction:
-                    self._connection.commit()
+                transaction.commit()
                 return PipelineAction(
                     work[0],
                     work[1],
@@ -4189,12 +4211,10 @@ class SQLiteMetadataReportRepository:
                         "UPDATE review_preparation_scans SET state=?,updated_at=? WHERE scan_id=?",
                         (state, claimed_at, scan_id),
                     )
-            if owns_transaction:
-                self._connection.commit()
+            transaction.commit()
             return None
         except (sqlite3.Error, MetadataReportError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("review preparation claim failed") from error
@@ -4205,10 +4225,9 @@ class SQLiteMetadataReportRepository:
         """Claim one named queued successor without bypassing stage handling."""
         if type(work_id) is not str or type(claimed_at) is not int or claimed_at < 0:
             raise MetadataReportError("review preparation state is invalid")
-        owns_transaction = not self._connection.in_transaction
+        transaction = self._transaction("claim_review_pipeline_work")
         try:
-            if owns_transaction:
-                self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             work = self._connection.execute(
                 "SELECT work_id,scan_id,stage,attempt,connection_name,library_name,library_id,"
                 "producer_fingerprint,catalogue_generation,catalogue_fingerprint,item_id,"
@@ -4227,8 +4246,7 @@ class SQLiteMetadataReportRepository:
                 (work_id, claimed_at),
             ).fetchone()
             if work is None:
-                if owns_transaction:
-                    self._connection.execute("COMMIT")
+                transaction.commit()
                 return None
             attempt = work[3] + 1
             if self._connection.execute(
@@ -4237,16 +4255,14 @@ class SQLiteMetadataReportRepository:
                 (attempt, claimed_at, work_id),
             ).rowcount != 1:
                 raise MetadataReportError("review preparation claim changed")
-            if owns_transaction:
-                self._connection.execute("COMMIT")
+            transaction.commit()
             return PipelineAction(
                 work[0], work[1], work[2], attempt, work[4], work[5], work[6],
                 work[7], work[8], work[9], work[10], work[11], work[12], work[13],
                 work[14], work[15], work[16], work[17], work[18],
             )
         except (sqlite3.Error, MetadataReportError) as error:
-            if owns_transaction and self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("review preparation claim failed") from error
@@ -4359,8 +4375,9 @@ class SQLiteMetadataReportRepository:
         )
         present_items = {entry.item_id for entry in selected}
         eligible_items = {entry.item_id for entry in eligible}
+        transaction = self._transaction("complete_review_discovery")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             current = self._connection.execute(
                 "SELECT state FROM review_preparation_scans WHERE scan_id=?",
                 (action.scan_id,),
@@ -4558,10 +4575,9 @@ class SQLiteMetadataReportRepository:
                     action.scan_id,
                 ),
             )
-            self._connection.commit()
+            transaction.commit()
         except (sqlite3.Error, MetadataReportError, ReviewCaseValueError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("review preparation discovery failed") from error
@@ -4945,9 +4961,10 @@ class SQLiteMetadataReportRepository:
         completed_at: int,
         failure_root: str | None = None,
     ) -> None:
+        transaction = self._transaction("fail_review_pipeline_action")
         if action.stage == "discovery":
             try:
-                self._connection.execute("BEGIN IMMEDIATE")
+                transaction.begin()
                 pending_manual_return = (
                     self._has_pending_field_effect_manual_return(action.scan_id)
                 )
@@ -4966,11 +4983,10 @@ class SQLiteMetadataReportRepository:
                 ).rowcount
                 if updated != 1:
                     raise MetadataReportError("review preparation state changed")
-                self._connection.commit()
+                transaction.commit()
                 return
             except (sqlite3.Error, MetadataReportError) as error:
-                if self._connection.in_transaction:
-                    self._connection.rollback()
+                transaction.rollback()
                 if isinstance(error, MetadataReportError):
                     raise
                 raise MetadataReportError("review preparation persistence failed") from error
@@ -4998,7 +5014,7 @@ class SQLiteMetadataReportRepository:
             "stale" if code in {"stale", "currentness"} else "failed"
         )
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             if code == "transient" and retryable:
                 updated = self._connection.execute(
                     "UPDATE review_preparation_work SET stage='extraction',"
@@ -5056,10 +5072,9 @@ class SQLiteMetadataReportRepository:
                         ("stale" if state == "stale" else "failed", completed_at, transition_row[0], action.action_id),
                     )
                     self._refresh_metadata_policy_transition(transition_row[0], completed_at)
-            self._connection.commit()
+            transaction.commit()
         except (sqlite3.Error, MetadataReportError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("review preparation persistence failed") from error
@@ -5067,24 +5082,23 @@ class SQLiteMetadataReportRepository:
     @contextmanager
     def _consistent_review_read(self) -> Iterator[None]:
         """Keep one review projection on one authoritative SQLite snapshot."""
+        transaction = self._transaction("consistent_review_read", deferred=True)
         try:
             if self._binding is not None:
                 self._binding.require_current()
-            self._connection.execute("BEGIN")
+            transaction.begin()
             yield
-            self._connection.execute("COMMIT")
+            transaction.commit()
             if self._binding is not None:
                 self._binding.require_current()
         except TargetConnectionError:
-            self._connection.rollback()
+            transaction.rollback()
             raise
         except MetadataReportError:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
+            transaction.rollback()
             raise
         except Exception as error:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
+            transaction.rollback()
             raise MetadataReportError("review snapshot is unavailable") from error
 
     def publish(
@@ -5111,12 +5125,13 @@ class SQLiteMetadataReportRepository:
             digest,
             document,
         )
+        transaction = self._transaction("publish")
         try:
             if self._binding is not None:
                 self._binding.require_current()
             if currentness() is not True:
                 raise MetadataReportError("target or media changed")
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             if self._binding is not None:
                 self._binding.require_current()
             if expected_package is not None and self.current_review_package(
@@ -5192,19 +5207,19 @@ class SQLiteMetadataReportRepository:
                 after_publication(self, report)
             if self._binding is not None:
                 self._binding.require_current()
-            self._connection.commit()
+            transaction.commit()
             return self.get(report.report_id)
         except TargetConnectionError:
-            self._connection.rollback()
+            transaction.rollback()
             raise
         except MetadataReportError:
-            self._connection.rollback()
+            transaction.rollback()
             raise
         except sqlite3.Error as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("report publication failed") from error
         except Exception as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("report publication precondition failed") from error
 
     def get(self, report_id: str) -> str:
@@ -5233,10 +5248,9 @@ class SQLiteMetadataReportRepository:
             proposal_set.policy_version,
             document,
         )
-        owns_transaction = not self._connection.in_transaction
+        transaction = self._transaction("publish_proposal")
         try:
-            if owns_transaction:
-                self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             if self._binding is not None:
                 self._binding.require_current()
             existing = self._connection.execute(
@@ -5301,17 +5315,16 @@ class SQLiteMetadataReportRepository:
                 )
             if self._binding is not None:
                 self._binding.require_current()
-            if owns_transaction:
-                self._connection.commit()
+            transaction.commit()
             return self.get_proposal(proposal_set.proposal_set_id)
         except MetadataReportError:
-            self._connection.rollback()
+            transaction.rollback()
             raise
         except (sqlite3.Error, ProposalValueError, ReportValueError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("proposal publication failed") from error
         except Exception as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError(
                 "proposal publication precondition failed"
             ) from error
@@ -5336,9 +5349,9 @@ class SQLiteMetadataReportRepository:
         if type(proposal_set) is not ProposalSet:
             raise MetadataReportError("review admission failed")
         owns_transaction = not self._connection.in_transaction
+        transaction = self._transaction("admit_review_case")
         try:
-            if owns_transaction:
-                self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             if self._binding is not None:
                 self._binding.require_current()
             proposal_row = self._connection.execute("SELECT proposal_set_id,report_id,policy_version,document FROM proposal_sets WHERE proposal_set_id=?", (proposal_set.proposal_set_id,)).fetchone()
@@ -5408,8 +5421,7 @@ class SQLiteMetadataReportRepository:
             ):
                 if self._binding is not None:
                     self._binding.require_current()
-                if owns_transaction:
-                    self._connection.commit()
+                transaction.commit()
                 replay_status = (
                     "replayed"
                     if cast(_ReviewPointer, validated)[5] in {"admitted", "superseded"}
@@ -5429,8 +5441,7 @@ class SQLiteMetadataReportRepository:
                     )
                 if self._binding is not None:
                     self._binding.require_current()
-                if owns_transaction:
-                    self._connection.commit()
+                transaction.commit()
                 return _admission_json(outcome, None)
             case = ReviewCase.create(proposal_set, report)
             existing = self._connection.execute("SELECT document FROM review_cases WHERE review_case_id=?", (case.review_case_id,)).fetchone()
@@ -5450,18 +5461,17 @@ class SQLiteMetadataReportRepository:
                 )
             if self._binding is not None:
                 self._binding.require_current()
-            if owns_transaction:
-                self._connection.commit()
+            transaction.commit()
             return _admission_json(outcome, case.review_case_id)
         except (
             MetadataReportError,
             ReviewAdmissionIncompatibleError,
             ReviewAdmissionStaleError,
         ):
-            self._connection.rollback()
+            transaction.rollback()
             raise
         except (sqlite3.Error, ProposalValueError, ReportValueError, ReviewCaseValueError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("review admission failed") from error
 
     def review_case_exists(self, review_case_id: str) -> bool:
@@ -6033,8 +6043,9 @@ class SQLiteMetadataReportRepository:
     def begin_login(
         self, now: int, window_seconds: int, maximum_failures: int
     ) -> bool:
+        transaction = self._transaction("begin_login")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             self._connection.execute(
                 "DELETE FROM review_login_failures WHERE occurred_at<?",
                 (now - window_seconds,),
@@ -6057,13 +6068,13 @@ class SQLiteMetadataReportRepository:
                     "VALUES(?,?)",
                     (identity, now),
                 )
-            self._connection.commit()
+            transaction.commit()
             return permitted
         except MetadataReportError:
-            self._connection.rollback()
+            transaction.rollback()
             raise
         except sqlite3.Error as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("review login is unavailable") from error
 
     def shadow_posture(self) -> str:
@@ -6082,8 +6093,9 @@ class SQLiteMetadataReportRepository:
         """Enter Preview and reconcile the exact-current cohort when leaving automatic."""
         if type(updated_at) is not int or updated_at < 0:
             raise MetadataReportError("shadow posture request is invalid")
+        transaction = self._transaction("enter_shadow_preview")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             row = self._connection.execute(
                 "SELECT active_policy_id,generation,posture FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
@@ -6132,11 +6144,10 @@ class SQLiteMetadataReportRepository:
             self._connection.execute(
                 "UPDATE metadata_policy_state SET posture='preview' WHERE singleton=1"
             )
-            self._connection.commit()
+            transaction.commit()
             return "preview"
         except (sqlite3.Error, MetadataReportError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("shadow posture persistence failed") from error
@@ -6145,8 +6156,9 @@ class SQLiteMetadataReportRepository:
         """Confirm Preview only when every requested automatic option is sealed."""
         if type(updated_at) is not int or updated_at < 0:
             raise MetadataReportError("automatic posture request is invalid")
+        transaction = self._transaction("activate_qualified_automatic")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             row = self._connection.execute(
                 "SELECT s.posture,d.document FROM metadata_policy_state s JOIN metadata_policy_drafts d ON d.policy_id=s.active_policy_id WHERE s.singleton=1"
             ).fetchone()
@@ -6168,11 +6180,10 @@ class SQLiteMetadataReportRepository:
             ):
                 raise MetadataReportError("automatic posture confirmation is unavailable")
             self._connection.execute("UPDATE metadata_policy_state SET posture='automatic' WHERE singleton=1")
-            self._connection.commit()
+            transaction.commit()
             return "automatic"
         except (sqlite3.Error, MetadataReportError, MetadataPolicyError, ValueError, TypeError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("automatic posture persistence failed") from error
@@ -6371,11 +6382,10 @@ class SQLiteMetadataReportRepository:
             or (staged_action is not None and type(staged_action) is not PipelineAction)
         ):
             raise MetadataReportError("shadow outcome request is invalid")
-        owns_transaction = not self._connection.in_transaction
         case_for_recovery: ReviewCase | None = None
+        transaction = self._transaction("persist_shadow_outcome")
         try:
-            if owns_transaction:
-                self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             raw_case = self._connection.execute(
                 "SELECT document FROM review_cases WHERE review_case_id=?",
                 (review_case_id,),
@@ -6397,8 +6407,7 @@ class SQLiteMetadataReportRepository:
             if state is None or state[1] not in {"review", "preview", "automatic"}:
                 raise MetadataReportError("shadow posture is unavailable")
             if state[1] == "review":
-                if owns_transaction:
-                    self._connection.commit()
+                transaction.commit()
                 return "inactive"
             case, packet, report, proposal = self._persisted_shadow_sources(
                 review_case_id, include_policy_ignored=True
@@ -6457,15 +6466,15 @@ class SQLiteMetadataReportRepository:
             if state[1] == "automatic":
                 attempted_categories: set[str] = set()
                 while True:
-                    self._connection.execute("SAVEPOINT automatic_admission")
+                    admission = self._transaction("automatic_admission")
+                    admission.begin()
                     try:
                         self._record_automatic_outcomes(outcome, evaluated_at)
                     except AutomaticDecisionError as error:
                         # Keep the outer report/case/outcome projection intact.
                         # A category defect is suspended, then unaffected
                         # categories are retried from the same exact outcome.
-                        self._connection.execute("ROLLBACK TO automatic_admission")
-                        self._connection.execute("RELEASE automatic_admission")
+                        admission.rollback()
                         current = self.automatic_safety_state()
                         message = str(error)
                         category = (
@@ -6491,12 +6500,11 @@ class SQLiteMetadataReportRepository:
                             self._set_automatic_safety_state(safety, evaluated_at)
                         break
                     else:
-                        self._connection.execute("RELEASE automatic_admission")
+                        admission.commit()
                         break
             if self._binding is not None:
                 self._binding.require_current()
-            if owns_transaction:
-                self._connection.commit()
+            transaction.commit()
             return serialized
         except ReviewAdmissionStaleError:
             try:
@@ -6504,12 +6512,10 @@ class SQLiteMetadataReportRepository:
                     self._schedule_current_shadow_work(
                         case_for_recovery, evaluated_at
                     )
-                if owns_transaction:
-                    self._connection.commit()
+                transaction.commit()
                 return "stale"
             except (sqlite3.Error, MetadataReportError) as error:
-                if self._connection.in_transaction:
-                    self._connection.rollback()
+                transaction.rollback()
                 if isinstance(error, MetadataReportError):
                     raise
                 raise MetadataReportError(
@@ -6522,8 +6528,7 @@ class SQLiteMetadataReportRepository:
             ReviewCaseValueError,
             ShadowOutcomeError,
         ) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("shadow outcome persistence failed") from error
@@ -6683,11 +6688,12 @@ class SQLiteMetadataReportRepository:
 
     def create_metadata_policy_draft(self, document: str) -> str:
         """Persist an exact canonical draft; there is intentionally no update."""
+        transaction = self._transaction("create_metadata_policy_draft")
         try:
             profile = MetadataPolicyProfile.from_data(json.loads(document))
             if profile.canonical_json != document:
                 raise MetadataPolicyError("policy document is not canonical")
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             posture = self._connection.execute(
                 "SELECT posture FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
@@ -6712,7 +6718,7 @@ class SQLiteMetadataReportRepository:
             ).fetchone()
             if row != (document,):
                 raise MetadataReportError("metadata policy draft is unavailable")
-            self._connection.commit()
+            transaction.commit()
             return profile.policy_id
         except (
             MetadataReportError,
@@ -6721,8 +6727,7 @@ class SQLiteMetadataReportRepository:
             TypeError,
             sqlite3.Error,
         ) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("metadata policy draft is unavailable") from error
@@ -6880,17 +6885,12 @@ class SQLiteMetadataReportRepository:
 
     def bind_initial_metadata_policy_resolution(self, document: str) -> str:
         """Bind one exact configured resolution while generation one is active."""
-        nested_transaction = self._connection.in_transaction
-        savepoint = "bind_initial_metadata_policy_resolution"
-        scope_started = False
+        transaction = self._transaction("bind_initial_metadata_policy_resolution")
         try:
             resolved = ResolvedMetadataPolicy.from_data(json.loads(document))
             if resolved.canonical_json != document:
                 raise MetadataPolicyError("policy resolution is not canonical")
-            self._connection.execute(
-                f"SAVEPOINT {savepoint}" if nested_transaction else "BEGIN IMMEDIATE"
-            )
-            scope_started = True
+            transaction.begin()
             state = self._connection.execute(
                 "SELECT s.generation,s.active_policy_id,d.document "
                 "FROM metadata_policy_state s JOIN metadata_policy_drafts d "
@@ -6926,18 +6926,10 @@ class SQLiteMetadataReportRepository:
                 raise MetadataReportError(
                     "active metadata policy resolution is unavailable"
                 )
-            if nested_transaction:
-                self._connection.execute(f"RELEASE SAVEPOINT {savepoint}")
-            else:
-                self._connection.commit()
-            scope_started = False
+            transaction.commit()
             return resolved.resolved_id
         except (MetadataReportError, MetadataPolicyError, sqlite3.Error, TypeError, ValueError) as error:
-            if scope_started and nested_transaction:
-                self._connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
-                self._connection.execute(f"RELEASE SAVEPOINT {savepoint}")
-            elif scope_started and self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError(
@@ -6995,10 +6987,9 @@ class SQLiteMetadataReportRepository:
             or type(reconcile_current) is not bool
         ):
             raise MetadataReportError("metadata policy activation is invalid")
-        owns_transaction = not self._connection.in_transaction
+        transaction = self._transaction("activate_metadata_policy")
         try:
-            if owns_transaction:
-                self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             state = self._connection.execute(
                 "SELECT active_policy_id,generation,posture FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
@@ -7021,13 +7012,11 @@ class SQLiteMetadataReportRepository:
                         raise MetadataReportError(
                             "metadata policy transition is unavailable"
                         )
-                    if owns_transaction:
-                        self._connection.commit()
+                    transaction.commit()
                     return result
                 raise MetadataReportError("metadata policy activation is stale")
             if policy_id == state[0] and not reconcile_current:
-                if owns_transaction:
-                    self._connection.commit()
+                transaction.commit()
                 return None
             active_transition = self._connection.execute(
                 "SELECT state,acknowledged FROM metadata_policy_transitions WHERE generation=?",
@@ -7168,12 +7157,10 @@ class SQLiteMetadataReportRepository:
             result = self.metadata_policy_transition()
             if result is None or result.transition_id != transition_id:
                 raise MetadataReportError("metadata policy transition is unavailable")
-            if owns_transaction:
-                self._connection.commit()
+            transaction.commit()
             return result
         except (MetadataReportError, MetadataPolicyError, ReviewCaseValueError, sqlite3.Error, ValueError, TypeError) as error:
-            if owns_transaction and self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("metadata policy activation is unavailable") from error
@@ -7204,8 +7191,9 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("metadata policy transition is unavailable") from error
 
     def retry_metadata_policy_transition(self, transition_id: str, retried_at: int) -> PolicyTransition:
+        transaction = self._transaction("retry_metadata_policy_transition")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             row = self._connection.execute(
                 "SELECT generation,state FROM metadata_policy_transitions WHERE transition_id=?", (transition_id,)
             ).fetchone()
@@ -7258,18 +7246,18 @@ class SQLiteMetadataReportRepository:
             result = self.metadata_policy_transition()
             if result is None or result.transition_id != transition_id:
                 raise MetadataReportError("metadata policy transition is unavailable")
-            self._connection.commit()
+            transaction.commit()
             return result
         except (sqlite3.Error, MetadataReportError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("metadata policy transition is unavailable") from error
 
     def acknowledge_metadata_policy_transition(self, transition_id: str, acknowledged_at: int) -> PolicyTransition:
+        transaction = self._transaction("acknowledge_metadata_policy_transition")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             updated = self._connection.execute(
                 "UPDATE metadata_policy_transitions SET acknowledged=1,updated_at=? WHERE transition_id=? AND state IN ('completed','completed_with_failures')",
                 (acknowledged_at, transition_id),
@@ -7279,11 +7267,10 @@ class SQLiteMetadataReportRepository:
             result = self.metadata_policy_transition()
             if result is None or result.transition_id != transition_id:
                 raise MetadataReportError("metadata policy transition is unavailable")
-            self._connection.commit()
+            transaction.commit()
             return result
         except (sqlite3.Error, MetadataReportError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("metadata policy transition is unavailable") from error
@@ -7310,8 +7297,9 @@ class SQLiteMetadataReportRepository:
         """Return bounded exact current review pairs for a no-effect policy preview."""
         if type(library) is not str or not library or type(limit) is not int or not 1 <= limit <= 20:
             raise MetadataReportError("policy preview is unavailable")
+        transaction = self._transaction("current_policy_impact_pairs", deferred=True)
         try:
-            self._connection.execute("BEGIN")
+            transaction.begin()
             total_row = self._connection.execute(
                 "SELECT count(*) " + _CURRENT_REVIEW_FROM_SQL
                 + " WHERE c.library_name=?",
@@ -7348,15 +7336,13 @@ class SQLiteMetadataReportRepository:
             pairs = tuple(pairs_list)
             if len(pairs) > total_row[0]:
                 raise MetadataReportError("policy preview is unavailable")
-            self._connection.commit()
+            transaction.commit()
             return total_row[0], pairs
         except MetadataReportError:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             raise
         except (sqlite3.Error, TypeError, ValueError) as error:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("policy preview is unavailable") from error
 
     def create_review_session(
@@ -7366,16 +7352,17 @@ class SQLiteMetadataReportRepository:
         created_at: int,
         expires_at: int,
     ) -> None:
+        transaction = self._transaction("create_review_session")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             self._connection.execute(
                 "INSERT INTO review_sessions(session_digest,csrf_digest,actor,created_at,expires_at) VALUES(?,?,'owner',?,?)",
                 (session_digest, csrf_digest, created_at, expires_at),
             )
             self._connection.execute("DELETE FROM review_login_failures")
-            self._connection.commit()
+            transaction.commit()
         except sqlite3.Error as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("review session is unavailable") from error
 
     def authenticate_review_session(
@@ -7402,7 +7389,9 @@ class SQLiteMetadataReportRepository:
     def rotate_review_session_csrf(
         self, session_digest: str, csrf_digest: str, now: int
     ) -> str:
+        transaction = self._transaction("rotate_review_session_csrf")
         try:
+            transaction.begin()
             row = self._connection.execute(
                 "UPDATE review_sessions SET csrf_digest=? "
                 "WHERE session_digest=? AND revoked_at IS NULL AND expires_at>? "
@@ -7410,7 +7399,7 @@ class SQLiteMetadataReportRepository:
                 (csrf_digest, session_digest, now),
             ).fetchone()
             if row is None:
-                self._connection.rollback()
+                transaction.rollback()
                 return "unauthorized"
             if (
                 len(row) != 2
@@ -7418,20 +7407,21 @@ class SQLiteMetadataReportRepository:
                 or type(row[1]) is not int
             ):
                 raise MetadataReportError("review session is unavailable")
-            self._connection.commit()
+            transaction.commit()
             return "rotated"
         except MetadataReportError:
-            self._connection.rollback()
+            transaction.rollback()
             raise
         except sqlite3.Error as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("review session is unavailable") from error
 
     def revoke_review_session(
         self, session_digest: str, csrf_digest: str, now: int
     ) -> str:
+        transaction = self._transaction("revoke_review_session")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             cursor = self._connection.execute(
                 "UPDATE review_sessions SET revoked_at=? WHERE session_digest=? AND csrf_digest=? AND revoked_at IS NULL AND expires_at>?",
                 (now, session_digest, csrf_digest, now),
@@ -7441,12 +7431,12 @@ class SQLiteMetadataReportRepository:
                     "SELECT 1 FROM review_sessions WHERE session_digest=? AND revoked_at IS NULL AND expires_at>?",
                     (session_digest, now),
                 ).fetchone()
-                self._connection.rollback()
+                transaction.rollback()
                 return "csrf" if active is not None else "unauthorized"
-            self._connection.commit()
+            transaction.commit()
             return "revoked"
         except sqlite3.Error as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("review session is unavailable") from error
 
     def get_review_case_decisions(
@@ -7589,14 +7579,14 @@ class SQLiteMetadataReportRepository:
         """Serialize staged final-currentness and the durable consideration write."""
         if self._connection.in_transaction:
             return call()
+        transaction = self._transaction("atomic_cover_preparation")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             result = call()
-            self._connection.commit()
+            transaction.commit()
             return result
         except Exception:
-            if self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             raise
 
     def record_cover_consideration(
@@ -7627,10 +7617,9 @@ class SQLiteMetadataReportRepository:
             raise MetadataReportError("cover consideration is invalid") from error
         if preparation_kind not in {"automatic_prepared", "owner_retry_prepared"}:
             raise MetadataReportError("cover preparation kind is invalid")
-        owns_transaction = not self._connection.in_transaction
+        transaction = self._transaction("record_cover_consideration")
         try:
-            if owns_transaction:
-                self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             existing = self._connection.execute(
                 "SELECT document FROM cover_considerations WHERE consideration_id=?",
                 (consideration_id,),
@@ -7638,8 +7627,7 @@ class SQLiteMetadataReportRepository:
             if existing is not None:
                 if existing != (document,):
                     raise MetadataReportError("cover consideration disagrees")
-                if owns_transaction:
-                    self._connection.commit()
+                transaction.commit()
                 return document
             current = self._connection.execute(
                 "SELECT consideration_id FROM current_cover_considerations WHERE review_case_id=?",
@@ -7673,15 +7661,12 @@ class SQLiteMetadataReportRepository:
             self._record_cover_consideration_event(
                 consideration_id, review_case_id, preparation_kind, occurred_at
             )
-            if owns_transaction:
-                self._connection.commit()
+            transaction.commit()
         except sqlite3.Error as error:
-            if owns_transaction and self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("cover consideration is unavailable") from error
         except MetadataReportError:
-            if owns_transaction and self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             raise
         return document
 
@@ -7833,8 +7818,9 @@ class SQLiteMetadataReportRepository:
         *,
         cover_consideration_id: str | None = None,
     ) -> str:
+        transaction = self._transaction("record_human_decision")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             replay = self._connection.execute(
                 "SELECT request_digest,document FROM human_decisions "
                 "WHERE idempotency_digest=?",
@@ -7857,7 +7843,7 @@ class SQLiteMetadataReportRepository:
                 self._record_cover_decision_outcome(
                     stored, cover_consideration_id
                 )
-                self._connection.commit()
+                transaction.commit()
                 return stored.to_json()
             case_envelope = json.loads(self.get_review_case(decision.review_case_id))
             if (
@@ -7967,13 +7953,13 @@ class SQLiteMetadataReportRepository:
                 )
             if self._binding is not None:
                 self._binding.require_current()
-            self._connection.commit()
+            transaction.commit()
             return decision.to_json()
         except HumanDecisionError:
-            self._connection.rollback()
+            transaction.rollback()
             raise
         except MetadataReportError:
-            self._connection.rollback()
+            transaction.rollback()
             raise
         except (
             sqlite3.Error,
@@ -7981,7 +7967,7 @@ class SQLiteMetadataReportRepository:
             TypeError,
             ValueError,
         ) as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("human decision persistence failed") from error
 
     def _record_automatic_decision(self, decision: AutomaticDecision) -> str:
@@ -7994,8 +7980,9 @@ class SQLiteMetadataReportRepository:
         """
         if type(decision) is not AutomaticDecision:
             raise MetadataReportError("automatic decision persistence failed")
+        transaction = self._transaction("_record_automatic_decision")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             replay = self._connection.execute(
                 "SELECT document FROM automatic_decisions WHERE idempotency_digest=?",
                 (decision.idempotency_digest,),
@@ -8003,7 +7990,7 @@ class SQLiteMetadataReportRepository:
             if replay is not None:
                 if replay != (decision.to_json(),):
                     raise AutomaticDecisionError("idempotency_conflict")
-                self._connection.commit()
+                transaction.commit()
                 return decision.to_json()
             posture = self._connection.execute(
                 "SELECT posture FROM metadata_policy_state WHERE singleton=1"
@@ -8061,13 +8048,13 @@ class SQLiteMetadataReportRepository:
             )
             if self._binding is not None:
                 self._binding.require_current()
-            self._connection.commit()
+            transaction.commit()
             return decision.to_json()
         except AutomaticDecisionError:
-            self._connection.rollback()
+            transaction.rollback()
             raise
         except (sqlite3.Error, MetadataReportError, ShadowOutcomeError, TypeError, ValueError, json.JSONDecodeError) as error:
-            self._connection.rollback()
+            transaction.rollback()
             raise MetadataReportError("automatic decision persistence failed") from error
 
     def automatic_safety_state(self) -> AutomaticSafetyState:
@@ -8083,16 +8070,13 @@ class SQLiteMetadataReportRepository:
     def set_automatic_safety_state(self, state: AutomaticSafetyState, updated_at: int) -> None:
         if type(state) is not AutomaticSafetyState or type(updated_at) is not int or updated_at < 0:
             raise MetadataReportError("automatic safety state is invalid")
-        owns_transaction = not self._connection.in_transaction
+        transaction = self._transaction("set_automatic_safety_state")
         try:
-            if owns_transaction:
-                self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             self._set_automatic_safety_state(state, updated_at)
-            if owns_transaction:
-                self._connection.commit()
+            transaction.commit()
         except (sqlite3.Error, MetadataReportError) as error:
-            if owns_transaction and self._connection.in_transaction:
-                self._connection.rollback()
+            transaction.rollback()
             if isinstance(error, MetadataReportError):
                 raise
             raise MetadataReportError("automatic safety state is unavailable") from error
@@ -8542,8 +8526,9 @@ class SQLiteMetadataReportRepository:
         if (type(outbox_id) is not str or type(delivered_at) is not int
                 or delivered_at < 0):
             raise MetadataReportError("provider recovery outbox completion is invalid")
+        transaction = self._transaction("complete_provider_recovery_outbox")
         try:
-            self._connection.execute("BEGIN IMMEDIATE")
+            transaction.begin()
             row = self._connection.execute(
                 "SELECT outbox_id,connection_name,library_name,item_id,"
                 "proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at,"
@@ -8562,14 +8547,12 @@ class SQLiteMetadataReportRepository:
                     raise MetadataReportError("provider recovery outbox changed")
             elif type(row[10]) is not int or row[10] < row[9]:
                 raise MetadataReportError("provider recovery outbox changed")
-            self._connection.execute("COMMIT")
+            transaction.commit()
         except MetadataReportError:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
+            transaction.rollback()
             raise
         except sqlite3.Error as error:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
+            transaction.rollback()
             raise MetadataReportError(
                 "provider recovery outbox is unavailable"
             ) from error
@@ -8767,23 +8750,24 @@ class SQLiteShadowPreviewRepository:
         if self._closed:
             raise MetadataReportError("database is unavailable")
         self._require_current()
+        transaction = TransactionScope(
+            self._connection, "preview_shadow_packet", deferred=True
+        )
         try:
-            self._connection.execute("BEGIN")
+            transaction.begin()
             packet = self._reader._shadow_packet(review_case_id)
-            self._connection.execute("COMMIT")
+            transaction.commit()
             self._require_current()
             return packet
         except MetadataReportError:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
+            transaction.rollback()
             raise
         except (
             sqlite3.Error,
             ReviewCaseValueError,
             ShadowReviewValueError,
         ) as error:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
+            transaction.rollback()
             raise MetadataReportError("shadow decision preview failed") from error
 
     def close(self) -> None:
