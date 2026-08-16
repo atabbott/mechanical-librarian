@@ -7,6 +7,28 @@
 
 ## Unreleased
 
+- Decompose the 1,131-line `_package_report` EPUB extractor -- the largest
+  function in the codebase and the one that parses the most hostile input in
+  the system -- into twenty-eight named stages, each under 150 lines and each
+  carrying one documented contract. `_package_report` is now a linear
+  composition whose call order *is* the acceptance order, so what the extractor
+  accepts, rejects and bounds can be read in one place instead of inferred from
+  a 285-branch function. Each stage now has direct unit tests for the hostile
+  inputs previously reachable only through a whole archive: malformed XML,
+  unsupported versions, duplicate and ambiguous ids, refinement cycles,
+  container path escapes (`../`, `..%2f`, `\`, absolute), oversize references,
+  unsafe projection text, media-overlay and fallback abuse, and every
+  evidence-bound that must reject rather than truncate. Two hypothesis
+  properties cover the reference guard and the prefix vocabulary, with an
+  explicit coverage assertion so a strategy that stopped generating traversals
+  fails the suite rather than passing vacuously.
+  Nothing about extraction behaviour changed, and that was proven mechanically
+  rather than argued: a corpus-digest gate captured a canonical digest of every
+  `EpubPackageReport` the existing suites produce, plus the outcome and message
+  of every rejection, and required exact equality after every commit. The gate
+  was first proven able to fail -- a deliberately perturbed warning citation
+  passed the entire existing test suite while the gate caught it. (#659)
+
 - Split the 9,943-line SQLite metadata-report repository along its aggregate
   seams. Persistence is now nineteen focused modules over one shared
   connection, transaction and schema spine: each owns one aggregate's tables
