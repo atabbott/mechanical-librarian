@@ -157,15 +157,18 @@ responsive policy notebook. The private semantic corpus remains private; the
 public manifest is aggregate-only. The complete exact-artifact tier is the
 authoritative cumulative 1,000-work/no-write demonstration.
 
-The same job also gates the Python source on lint and strict typing before it
-runs any test, using the configuration committed in `pyproject.toml`:
+The same job also gates the Python source on formatting, lint, and strict
+typing before it runs any test, using the configuration committed in
+`pyproject.toml`:
 
 ```bash
+uv run ruff format --check src tests scripts
 uv run ruff check src tests scripts
 uv run mypy src tests scripts
 ```
 
-ruff selects pyflakes, pycodestyle, bugbear, and import ordering; mypy is
+`ruff format` is the line-width contract; ruff's lint side selects pyflakes,
+pycodestyle, bugbear, and import ordering; mypy is
 strict over `src/`. Narrowings are explicit configuration with a stated reason,
 and site suppressions are inline, named, and justified. See
 [CONTRIBUTING.md](../../CONTRIBUTING.md) for the contributor-facing contract.

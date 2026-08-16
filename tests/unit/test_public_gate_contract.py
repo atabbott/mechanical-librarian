@@ -47,12 +47,25 @@ def test_retains_the_three_independent_timeout_bounded_tiers(job: str) -> None:
     assert "needs:" not in workflow
 
 
-def test_every_job_is_bounded_on_the_pinned_runner() -> None:
+def test_every_job_is_bounded_and_the_source_job_gates_before_it_tests() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
     assert "  container-image:\n" in workflow
     assert "  dependency-audit:\n" in workflow
     assert workflow.count("runs-on: ubuntu-24.04") == 5
     assert workflow.count("timeout-minutes: 10") == 5
+    # The three commands CONTRIBUTING.md documents as reproducing this job.
+    # `ruff format --check` is the backend's line-width contract, so a tree
+    # that is not formatted has to fail here rather than pass unnoticed.
+    for command in (
+        "run: uv run ruff format --check src tests scripts",
+        "run: uv run ruff check src tests scripts",
+        "run: uv run mypy src tests scripts",
+    ):
+        assert command in workflow
+    # Formatting is gated before any test runs, as the tier ordering intends.
+    assert workflow.index("ruff format --check") < workflow.index(
+        "run_test_tier.py fast"
+    )
 
 
 def test_builds_the_shipped_container_from_the_exact_revision() -> None:

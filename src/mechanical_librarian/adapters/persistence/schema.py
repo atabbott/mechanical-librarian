@@ -7,7 +7,10 @@ and lives in `binding.py`.
 `sqlite_master` stores submitted DDL text verbatim, so no statement below may be
 reflowed and none may be reordered: either silently changes the persisted
 schema, and `_validate_schema` sorts before comparing, so it will not catch a
-reordering. `E501` is deliberately unenforced here for that reason.
+reordering. `ruff format` cannot reflow them because they are string literals
+and it never rewrites string contents; `E501` is unenforced across the whole
+backend rather than waived for this module, for the reasons `pyproject.toml`
+records beside it.
 
 Aggregate modules import from this module; this module imports from no aggregate
 module, so the spine stays acyclic.
