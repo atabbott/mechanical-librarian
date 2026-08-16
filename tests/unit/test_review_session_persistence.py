@@ -698,6 +698,82 @@ class ReviewSessionPersistenceTests(unittest.TestCase):
             finally:
                 reopened.close()
 
+    def test_decision_reports_persistence_only_where_the_store_was_asked(
+        self,
+    ) -> None:
+        """`persistence` is a finding about the store, not a catch-all.
+
+        The command's last resort converted everything it caught to
+        `persistence`, so the clock, the case parse, the domain decision and the
+        acknowledgement projection all reported a storage failure -- for a store
+        that had answered every call correctly, or had not been asked yet. Each
+        store call carries its own `persistence` handler now, and what is left
+        under the last resort touches no store and answers `unavailable` (#698).
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            repository = open_repository(Path(directory) / "application.sqlite3")
+            try:
+                report = _report()
+                repository.publish(report, lambda: True)
+                proposal_set = evaluate_report(report)
+                repository.publish_proposal(proposal_set)
+                case_id = json.loads(
+                    repository.admit_review_case(proposal_set)
+                )["review_case_id"]
+                case = ReviewCase.create_from_data(
+                    json.loads(repository.get_review_case(case_id))["case"]
+                )
+                proposal = next(
+                    value
+                    for value in case.proposals
+                    if value["result"]["outcome"] == "unresolved_choice"
+                )
+
+                def record(clock, key: str) -> ReviewWebError:
+                    with self.assertRaises(ReviewWebError) as raised:
+                        RecordHumanDecision(repository, clock).run(
+                            case_id,
+                            proposal_id=proposal["proposal_id"],
+                            target_fingerprint=case.target_fingerprint,
+                            destination=proposal["destination"],
+                            actor="owner",
+                            outcome="accept",
+                            selected_value=(
+                                proposal["result"]["alternatives"][0]["value"]
+                            ),
+                            idempotency_key=key,
+                        )
+                    return raised.exception
+
+                # The clock is this layer's own, and the store has answered two
+                # reads correctly by the time it is called.
+                clock_fault = ValueError("clock is broken")
+
+                def broken_clock() -> int:
+                    raise clock_fault
+
+                local = record(broken_clock, "decision-local-0001")
+                self.assertEqual(local.code, "unavailable")
+                self.assertIs(local.__cause__, clock_fault)
+                self.assertEqual(
+                    (0,),
+                    repository._connection.execute(
+                        "SELECT count(*) FROM human_decisions"
+                    ).fetchone(),
+                )
+
+                # The store's own failure keeps the identity that names it.
+                store_fault = OSError("database is gone")
+                with patch.object(
+                    type(repository), "record_human_decision",
+                    side_effect=store_fault,
+                ):
+                    stored = record(lambda: 1_000, "decision-store-0001")
+                self.assertEqual(stored.code, "persistence")
+                self.assertIs(stored.__cause__, store_fault)
+            finally:
+                repository.close()
+
     def test_session_survives_exact_current_reopen_and_prior_schema_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "application.sqlite3"

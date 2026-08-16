@@ -138,8 +138,17 @@ def observe_cover_packet(
     packet_payload: bytes,
     image_payloads: tuple[tuple[str, str, bytes], ...],
     reviewer: Reviewer,
+    *,
+    observed: Callable[[], None] = lambda: None,
 ) -> CoverObservationReport:
-    """Observe every admitted preview and bind one closed result to each candidate."""
+    """Observe every admitted preview and bind one closed result to each candidate.
+
+    ``observed`` marks the end of the reviewer's contribution: it is called once
+    the returned document has been loaded and validated against the request, so
+    a caller recording reviewer evidence can tell a reviewable outcome from a
+    fault in the report this function assembles afterwards. Everything past that
+    call reads only inputs this layer supplied.
+    """
     if type(profile_payload) is not bytes or type(packet_payload) is not bytes:
         raise ValueError("cover observation input is invalid")
     packet_document = packet_payload.decode("utf-8", errors="strict")
@@ -172,6 +181,7 @@ def observe_cover_packet(
         image_payloads,
     )
     observations = _validate_observations(result, references)
+    observed()
     by_reference = {value["reference"]: value for value in candidates}
     rows = []
     for observation in observations:

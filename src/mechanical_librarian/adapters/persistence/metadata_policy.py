@@ -46,7 +46,10 @@ from mechanical_librarian.adapters.persistence.schema import (
     _validate_review_browse_row,
 )
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
-from mechanical_librarian.application.metadata_policy import PolicyTransition
+from mechanical_librarian.application.metadata_policy import (
+    PolicyContentionError,
+    PolicyTransition,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.automatic_decision import QUALIFIED_POLICY_OPTIONS
 from mechanical_librarian.domain.metadata_policy import (
@@ -484,7 +487,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 "SELECT active_policy_id,generation,posture FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()
             if state is None or state[2] not in {"review", "preview", "automatic"}:
-                raise MetadataReportError("metadata policy activation is stale")
+                raise PolicyContentionError("stale", "metadata policy activation is stale")
             if state[0] != expected_active_policy_id:
                 replay = self._connection.execute(
                     "SELECT transition_id,from_policy_id,to_policy_id,generation,state,total,acknowledged "
@@ -504,7 +507,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                         )
                     transaction.commit()
                     return result
-                raise MetadataReportError("metadata policy activation is stale")
+                raise PolicyContentionError("stale", "metadata policy activation is stale")
             if policy_id == state[0] and not reconcile_current:
                 transaction.commit()
                 return None
@@ -519,7 +522,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                     and active_transition[1] == 0
                 )
             ):
-                raise MetadataReportError("metadata policy transition is processing")
+                raise PolicyContentionError(
+                    "processing", "metadata policy transition is processing"
+                )
             draft = self._connection.execute(
                 "SELECT document FROM metadata_policy_drafts WHERE policy_id=?", (policy_id,)
             ).fetchone()
@@ -537,8 +542,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 state[2] not in {"preview", "automatic"}
                 or not automatic_options.issubset(QUALIFIED_POLICY_OPTIONS)
             ):
-                raise MetadataReportError(
-                    "metadata policy automatic intent is unqualified outside preview"
+                raise PolicyContentionError(
+                    "unqualified",
+                    "metadata policy automatic intent is unqualified outside preview",
                 )
             generation = state[1] + 1
             material = f"metadata-policy-transition-v1\0{state[0]}\0{policy_id}\0{generation}"
@@ -642,7 +648,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 (policy_id, generation, activated_at, state[0], state[1]),
             ).rowcount
             if changed != 1:
-                raise MetadataReportError("metadata policy activation is stale")
+                raise PolicyContentionError("stale", "metadata policy activation is stale")
             self._refresh_metadata_policy_transition(transition_id, activated_at)
             result = self.metadata_policy_transition()
             if result is None or result.transition_id != transition_id:
@@ -689,7 +695,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             ).fetchone()
             current = self._connection.execute("SELECT generation FROM metadata_policy_state WHERE singleton=1").fetchone()
             if row is None or current != (row[0],):
-                raise MetadataReportError("metadata policy transition is stale")
+                raise PolicyContentionError("stale", "metadata policy transition is stale")
             failed = self._connection.execute(
                 "SELECT connection_name,library_name,item_id,report_id,work_id FROM metadata_policy_transition_items WHERE transition_id=? AND state='failed'",
                 (transition_id,),

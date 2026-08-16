@@ -1531,6 +1531,58 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             supervisor.stop()
             repository.close()
 
+    def test_composed_projection_records_a_broken_factory_without_cover_effects(self) -> None:
+        """A broken consideration factory fails the stage and leaves nothing behind.
+
+        The factory `create_review_pipeline` binds is
+        `_compose_cover_considerations`, which writes through the repository
+        twice while it builds the service -- `bind_current_cover_policy` before
+        construction and `bind_current_cover_replay` after it. A fault it raises
+        is therefore not separable from the rest of the cover stage, and the
+        stage answers `persistence` for it like the rest of its body.
+        `review_preparation_work.failure_code` has no `persistence` in its
+        allow-list, so the durable record carries the anonymous `failed`: the
+        owner is told the action failed, not which side failed. Whichever code
+        it lands under, no consideration, package, or outbox row survives the
+        failure (#698).
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            report, proposal = self._qualified_cover_report(root)
+            recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
+            supervisor = composition.create_review_pipeline(
+                _pipeline_configuration(), database, root / "catalogue.sqlite",
+                root / "artifacts", database_authority=repository.authority,
+                provider_recovery=recovery,
+            )
+            pipeline = self._run_qualified_cover_pipeline(
+                repository, root, report, proposal, supervisor
+            )
+            self.assertEqual([True, True, True, True], [pipeline.run_next(1) for _ in range(4)])
+            with patch.object(
+                composition, "_compose_cover_considerations",
+                side_effect=TypeError("consideration service is broken"),
+            ):
+                self.assertTrue(pipeline.run_next(1))
+            self.assertEqual(
+                ("failed", "failed", None), repository._connection.execute(
+                    "SELECT state,failure_code,failure_root FROM review_preparation_work "
+                    "WHERE stage='projection'"
+                ).fetchone(),
+            )
+            for table in (
+                "cover_considerations", "current_cover_considerations",
+                "current_review_packages", "provider_recovery_outbox",
+            ):
+                self.assertEqual((0,), repository._connection.execute(
+                    f"SELECT count(*) FROM {table}"
+                ).fetchone())
+            self._assert_no_cover_effect_authority(repository)
+            supervisor.stop()
+            repository.close()
+
     def test_composed_cover_replay_reuses_exact_binding_and_profile_change_supersedes_once(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

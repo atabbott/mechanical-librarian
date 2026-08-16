@@ -28,6 +28,14 @@ def _report() -> MetadataReport:
     )
 
 
+def _raise(error: BaseException):
+    """A seam that fails, so a phase can be made to fail one at a time."""
+    def seam(*_arguments: object, **_keywords: object):
+        raise error
+
+    return seam
+
+
 class _Repository:
     def __init__(self, report: MetadataReport) -> None:
         self.report = report
@@ -98,6 +106,54 @@ class ProposalApplicationTests(unittest.TestCase):
         with self.assertRaises(ProposalCurrentnessError):
             CreateProposalSet(repository, stale).run(report.report_id)
         self.assertNotIn("publish", repository.events)
+
+    def test_each_phase_before_publication_reports_itself_not_publication(
+        self,
+    ) -> None:
+        """A phase that fails before publication no longer claims publication.
+
+        Policy resolution, evaluation and the currency check all ran inside the
+        block whose last resort said `proposal publication failed`, so an
+        injected resolver or a currency seam that raised reported a publication
+        that was never attempted -- and the repository proves it was not, since
+        nothing reached `publish` (#698).
+        """
+        report = _report()
+        fault = RuntimeError("seam is broken")
+
+        for phase, message, service in (
+            (
+                "policy",
+                "proposal policy resolution failed",
+                lambda repository: CreateProposalSet(
+                    repository,
+                    lambda _: True,
+                    resolve_policy_profile=_raise(fault),
+                ),
+            ),
+            (
+                "currency",
+                "proposal currency check failed",
+                lambda repository: CreateProposalSet(repository, _raise(fault)),
+            ),
+        ):
+            with self.subTest(phase=phase):
+                repository = _Repository(report)
+                with self.assertRaises(ProposalSetError) as raised:
+                    service(repository).run(report.report_id)
+                self.assertEqual(str(raised.exception), message)
+                self.assertIs(raised.exception.__cause__, fault)
+                self.assertNotIn("publish", repository.events)
+                self.assertEqual({}, repository.proposals)
+
+        # The publication pair keeps the identity it always had, and is now the
+        # only thing the last resort can be reporting.
+        repository = _Repository(report)
+        repository.publish_proposal = _raise(fault)  # type: ignore[method-assign]
+        with self.assertRaises(ProposalSetError) as raised:
+            CreateProposalSet(repository, lambda _: True).run(report.report_id)
+        self.assertEqual(str(raised.exception), "proposal publication failed")
+        self.assertIs(raised.exception.__cause__, fault)
 
     def test_nonvalue_title_states_create_without_current_title_failure(self) -> None:
         for state in (

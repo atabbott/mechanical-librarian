@@ -20,6 +20,7 @@ from mechanical_librarian.adapters.persistence.provider_recovery import (
 )
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
+    CatalogueReader,
     TargetConnectionError,
 )
 from mechanical_librarian.application.configuration import (
@@ -35,6 +36,9 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.application.proposal_sets import ProposalCurrentnessError
+from mechanical_librarian.application.provider_recovery_evidence import (
+    ProviderFailureObserver,
+)
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     PipelineProgress,
@@ -43,6 +47,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
 )
+from mechanical_librarian.application.review_pipeline_stages import ReviewPipelineStages
 from mechanical_librarian.application.review_web import BrowseReviewLibrary
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -474,6 +479,124 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "persistence")
         self.assertIsInstance(raised.exception.__cause__, MetadataReportError)
         self.assertEqual(closed, [True])
+
+    def test_every_remaining_bare_call_site_converts_and_still_releases(
+        self,
+    ) -> None:
+        """The seam's shape is universal, not one exception and three gaps.
+
+        `check_connection`'s two durable transitions, `hold_connection` and
+        `run_recovery_successor` released the handle on every path but converted
+        nothing, so the bound repository's own error reached their callers
+        untyped -- the recovery classifier and the web boundary both, neither of
+        which this layer had promised a raw adapter fault. Each converts now,
+        and the `finally` still runs (#698).
+        """
+        closed: list[str] = []
+        fault = MetadataReportError("durable transition is unavailable")
+
+        class _UnwritableRepository:
+            def __init__(self, seam: str) -> None:
+                self._seam = seam
+
+            def __getattr__(self, name: str):
+                def call(*_arguments: object, **_keywords: object):
+                    if name == self._seam:
+                        raise fault
+                    return None
+
+                return call
+
+            def close(self) -> None:
+                closed.append(self._seam)
+
+        def pipeline_for(seam: str) -> ReviewPreparationPipeline:
+            return ReviewPreparationPipeline(
+                repository_factory=lambda: cast(
+                    "ReviewPipelineRepository", _UnwritableRepository(seam)
+                ),
+                libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+                discover=lambda *_: (_ for _ in ()).throw(AssertionError),
+                extract=lambda *_: (_ for _ in ()).throw(AssertionError),
+                providers=lambda *_: (), propose=lambda *_: "",
+                admit=lambda *_: ("", None), project=lambda *_: True,
+                check_connection=lambda _: None, clock=lambda: 6,
+            )
+
+        for seam, run in (
+            (
+                "begin_target_connection_check",
+                lambda pipeline: pipeline.check_connection("primary"),
+            ),
+            (
+                "hold_target_connection",
+                lambda pipeline: pipeline.hold_connection("primary", "transient"),
+            ),
+            (
+                "provider_retry_work_id",
+                lambda pipeline: pipeline.run_recovery_successor("report_1"),
+            ),
+        ):
+            with self.subTest(seam=seam):
+                closed.clear()
+                with self.assertRaises(ReviewPipelineError) as raised:
+                    run(pipeline_for(seam))
+                self.assertEqual(raised.exception.code, "persistence")
+                self.assertIs(raised.exception.__cause__, fault)
+                self.assertEqual(closed, [seam])
+
+    def test_cover_consideration_factory_fault_is_recorded_as_persistence(self) -> None:
+        """The factory is not separable from the rest of the cover stage.
+
+        The bound factory is `composition._compose_cover_considerations`, which
+        writes twice through the repository while it builds the service --
+        `bind_current_cover_policy` before construction and
+        `bind_current_cover_replay` after it. So a store failure can reach
+        `prepare_cover` from the factory call, and `persistence` is the identity
+        the stage answers with for every part of itself it cannot attribute
+        (#698).
+        """
+        fault = MetadataReportError("binding the current cover policy failed")
+
+        class _StagedRepository:
+            def read_staged_cover_preparation(
+                self, _action: PipelineAction
+            ) -> tuple[str, str, bool]:
+                return ("report_" + "1" * 64, "a" * 64, False)
+
+        def unreachable(*_arguments: object, **_keywords: object):
+            raise AssertionError
+
+        stages = ReviewPipelineStages(
+            configuration=ApplicationConfiguration((), (), (), ()),
+            catalogue=unreachable,
+            catalogue_reader=cast("CatalogueReader", unreachable),
+            probe_connection=unreachable,
+            connections=frozenset(),
+            repository_factory=unreachable,
+            recover_artifacts=unreachable,
+            generate_report=unreachable,
+            create_proposal_set=unreachable,
+            admit_review_case=unreachable,
+            cover_considerations=lambda _repository: (_ for _ in ()).throw(fault),
+            recovery_observer=cast("ProviderFailureObserver", unreachable),
+            drain_outbox=unreachable,
+            discovery_lock=threading.Lock(),
+            clock=lambda: 7,
+        )
+        action = PipelineAction(
+            "review_work_" + "a" * 64, "review_scan_" + "b" * 64, "projection", 1,
+            "primary", "fiction", "lib-1", _PRODUCER, 1, "c" * 64, "item-1",
+            "d" * 64, 1, review_case_id="review_case_" + "e" * 64,
+            source_fingerprint="f" * 64,
+        )
+
+        with self.assertRaises(ReviewPipelineError) as raised:
+            stages.prepare_cover(
+                cast("ReviewPipelineRepository", _StagedRepository()), action
+            )
+        self.assertEqual(raised.exception.code, "persistence")
+        self.assertIs(raised.exception.__cause__, fault)
 
     def test_checking_condition_allows_admission_replay_and_rejects_stale_finish_epoch(self) -> None:
         repository = open_repository(self.path)

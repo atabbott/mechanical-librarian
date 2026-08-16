@@ -354,16 +354,21 @@ class ReviewPipelineStages:
             raise ReviewPipelineError("stale") from error
         except ReviewApplicationError as error:
             raise ReviewPipelineError(error.code) from error
+        except ReviewPipelineError:
+            raise
         except Exception as error:
-            # Last resort over the whole cover stage. Staleness and the
-            # application's own codes are carried through above, so what
-            # remains is a cover preparation that failed for a reason nothing
-            # here can name -- from the untyped repository seam, from the
-            # injected consideration factory, or from the application's own
-            # preparation between them, none of which this handler can tell
-            # apart. ``persistence`` is the code this stage answers with in
-            # that case rather than a finding about which of the three failed.
-            # It must still raise: an unprepared cover cannot be advanced past.
+            # Last resort over the rest of the cover stage. Staleness and the
+            # application's own codes are carried through above, so what remains
+            # is the staged read, the consideration-service factory, the durable
+            # gate, and a preparation that reaches the repository through the
+            # service's own handle inside that gate. None of those is separable
+            # from here. The factory the composition root binds writes through
+            # the repository while it builds the service, and the operation the
+            # gate runs both projects and persists, so a failure either raises
+            # has no attributable side. ``persistence`` is the code this stage
+            # answers with for that remainder rather than a finding about which
+            # of them failed. It must still raise: an unprepared cover cannot be
+            # advanced past.
             raise ReviewPipelineError("persistence") from error
 
     def after_advance(
