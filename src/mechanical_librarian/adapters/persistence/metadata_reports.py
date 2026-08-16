@@ -29,14 +29,19 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _automatic_decision_value,
 )
+from mechanical_librarian.adapters.persistence.recovery_outbox import (
+    SQLiteRecoveryOutboxRepository,
+)
 from mechanical_librarian.adapters.persistence.schema import (
     _create_schema,
     _provider_recovery_outbox_id,
     _validate_existing_read_only,
-    _validate_provider_recovery_outbox_row,
     _validate_schema,
 )
-from mechanical_librarian.adapters.persistence.transactions import TransactionScope
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    TransactionScope,
+)
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
     TargetConnectionError,
@@ -210,23 +215,20 @@ _REVIEW_SEARCH_SQL = (
 
 
 
-class SQLiteMetadataReportRepository:
+class SQLiteMetadataReportRepository(ConnectionScoped):
     def __init__(
         self,
         connection: sqlite3.Connection,
         binding: _LinuxDatabaseBinding | None = None,
         identity: tuple[int, int] | None = None,
     ) -> None:
-        self._connection = connection
+        super().__init__(connection)
         self._binding = binding
         self.identity = identity
+        self._recovery_outbox = SQLiteRecoveryOutboxRepository(connection)
         self._review_pipeline_claim: PipelineAction | None = None
         self._current_cover_policy_reference: str | None = None
         self._current_cover_replay_reference: str | None = None
-
-    def _transaction(self, savepoint: str, *, deferred: bool = False) -> TransactionScope:
-        """Open one re-entrant scope over this repository's shared connection."""
-        return TransactionScope(self._connection, savepoint, deferred=deferred)
 
     def bind_current_cover_policy(self, reference: str) -> None:
         """Bind guarded cover effects to this process's validated policy."""
@@ -3996,19 +3998,12 @@ class SQLiteMetadataReportRepository:
                     "review_case_id=excluded.review_case_id,checkpoint=excluded.checkpoint,outcome=excluded.outcome",
                     (action.connection, action.library, action.item_id, *pointer),
                 )
-                outbox_id = _provider_recovery_outbox_id(
+                self._recovery_outbox.enqueue(
                     # PipelineAction.item_id is optional on the dataclass, but
                     # the pointer lookup immediately above matched a lineage
                     # row on exactly this connection/library/item triple.
-                    action.connection, action.library, cast(str, action.item_id), *pointer,
-                )
-                self._connection.execute(
-                    "INSERT INTO provider_recovery_outbox(outbox_id,connection_name,"
-                    "library_name,item_id,proposal_set_id,report_id,review_case_id,"
-                    "checkpoint,outcome,created_at,delivered_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,NULL) ON CONFLICT(outbox_id) DO NOTHING",
-                    (outbox_id, action.connection, action.library, action.item_id,
-                     *pointer, completed_at),
+                    action.connection, action.library, cast(str, action.item_id),
+                    pointer, completed_at,
                 )
             if target[0] == "complete":
                 transition_row = self._connection.execute(
@@ -7730,62 +7725,15 @@ class SQLiteMetadataReportRepository:
         self, *, limit: int = 100,
     ) -> tuple[tuple[object, ...], ...]:
         """Return bounded exact package cutovers awaiting recovery enqueue."""
-        if type(limit) is not int or not 1 <= limit <= 100:
-            raise MetadataReportError("provider recovery outbox query is invalid")
-        try:
-            rows = self._connection.execute(
-                "SELECT outbox_id,connection_name,library_name,item_id,"
-                "proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at "
-                "FROM provider_recovery_outbox WHERE delivered_at IS NULL "
-                "ORDER BY created_at,outbox_id LIMIT ?", (limit,),
-            ).fetchall()
-            for row in rows:
-                _validate_provider_recovery_outbox_row(row)
-            return tuple(rows)
-        except MetadataReportError:
-            raise
-        except sqlite3.Error as error:
-            raise MetadataReportError(
-                "provider recovery outbox is unavailable"
-            ) from error
+        return self._recovery_outbox.pending_provider_recovery_outbox(limit=limit)
 
     def complete_provider_recovery_outbox(
         self, outbox_id: str, *, delivered_at: int,
     ) -> None:
         """Mark one exact cutover delivered only after idempotent enqueue."""
-        if (type(outbox_id) is not str or type(delivered_at) is not int
-                or delivered_at < 0):
-            raise MetadataReportError("provider recovery outbox completion is invalid")
-        transaction = self._transaction("complete_provider_recovery_outbox")
-        try:
-            transaction.begin()
-            row = self._connection.execute(
-                "SELECT outbox_id,connection_name,library_name,item_id,"
-                "proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at,"
-                "delivered_at FROM provider_recovery_outbox WHERE outbox_id=?",
-                (outbox_id,),
-            ).fetchone()
-            if row is None:
-                raise MetadataReportError("provider recovery outbox changed")
-            _validate_provider_recovery_outbox_row(row[:10])
-            if row[10] is None:
-                if delivered_at < row[9] or self._connection.execute(
-                    "UPDATE provider_recovery_outbox SET delivered_at=? "
-                    "WHERE outbox_id=? AND delivered_at IS NULL",
-                    (delivered_at, outbox_id),
-                ).rowcount != 1:
-                    raise MetadataReportError("provider recovery outbox changed")
-            elif type(row[10]) is not int or row[10] < row[9]:
-                raise MetadataReportError("provider recovery outbox changed")
-            transaction.commit()
-        except MetadataReportError:
-            transaction.rollback()
-            raise
-        except sqlite3.Error as error:
-            transaction.rollback()
-            raise MetadataReportError(
-                "provider recovery outbox is unavailable"
-            ) from error
+        self._recovery_outbox.complete_provider_recovery_outbox(
+            outbox_id, delivered_at=delivered_at
+        )
 
     def current_optional(self, connection: str, library: str, item: str, file_identity: str) -> str | None:
         try:

@@ -80,3 +80,21 @@ class TransactionScope:
         elif self._connection.in_transaction:
             self._connection.rollback()
         self._started = False
+
+
+class ConnectionScoped:
+    """Share one SQLite connection and the scope factory over it.
+
+    Every aggregate repository composes over one connection owned by one
+    filesystem binding, so this carries the reference and the one line that
+    opens a scope on it rather than repeating both in each module.
+    """
+
+    def __init__(self, connection: sqlite3.Connection) -> None:
+        self._connection = connection
+
+    def _transaction(
+        self, savepoint: str, *, deferred: bool = False
+    ) -> TransactionScope:
+        """Open one re-entrant scope over this repository's shared connection."""
+        return TransactionScope(self._connection, savepoint, deferred=deferred)
