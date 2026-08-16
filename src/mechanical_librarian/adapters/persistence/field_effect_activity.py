@@ -197,17 +197,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         if lineage is None:
             raise FieldEffectError("authority_binding")
         target_fields = case.target.get("fields")
+        if type(target_fields) is not list:
+            raise FieldEffectError("authority_binding")
         target_field = next(
             (
-                # ReviewCase.target is always TargetFacts.to_data(), whose
-                # "fields" key is a list of field objects.
-                item for item in cast("list[object] | None", target_fields) or ()
+                item for item in target_fields
                 if type(item) is dict
                 and item.get("destination") == decision.destination
             ),
             None,
         )
-        if (type(target_fields) is not list or type(target_field) is not dict
+        if (type(target_field) is not dict
                 or target_field.get("state") not in {
                     "value", "null", "empty", "missing",
                 }):

@@ -8,7 +8,9 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
+from unittest.mock import patch
 
+from mechanical_librarian.adapters.persistence import field_effect_activity
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     SQLiteMetadataReportRepository,
@@ -36,6 +38,30 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report
+
+
+class _CaseWithTargetFields:
+    """Decode review cases whose target projects a malformed `fields` value.
+
+    `ReviewCase` validates and canonicalises its own document, so a target
+    this shape cannot be persisted. Substituting the decoder the repository
+    calls reaches the projection reader without weakening that validation.
+    """
+
+    def __init__(self, fields: object) -> None:
+        self._fields = fields
+
+    def from_json(self, serialized: str) -> object:
+        case = ReviewCase.from_json(serialized)
+        fields = self._fields
+        class _Case:
+            def __getattr__(self, name: str) -> object:
+                return getattr(case, name)
+
+            @property
+            def target(self) -> dict[str, object]:
+                return {**case.target, "fields": fields}
+        return _Case()
 
 
 def _draft() -> MetadataPolicyProfile:
@@ -929,6 +955,29 @@ class MetadataPolicyActivationTests(unittest.TestCase):
         self.assertFalse(repository._review_case_accepts_authority(case_id))
         with self.assertRaisesRegex(FieldEffectError, "authority_binding"):
             repository.field_effect_authority_source(decision)
+        repository.close()
+
+    def test_field_effect_authority_rejects_a_non_list_fields_projection(self) -> None:
+        """Reject a malformed projection before iterating it, not while."""
+        repository, _, _, case_id = self._current_case_with_completed_work()
+        decision = self._human_decision(
+            repository, case_id, "fields-projection-0001"
+        )
+        repository.record_human_decision(decision)
+        self.assertEqual(
+            repository.field_effect_authority_source(decision)["review_case_id"],
+            case_id,
+        )
+        # Each of these is rejected today; only the last is unreachable while
+        # `type(target_fields) is not list` runs after the iteration that
+        # `next(...)` performs, because iterating an integer raises `TypeError`
+        # out of the repository instead of the bound failure.
+        for fields in ((), {}, "", 0, {"destination": "title"}, "title", 7):
+            with self.subTest(fields=fields), patch.object(
+                field_effect_activity, "ReviewCase",
+                _CaseWithTargetFields(fields),
+            ), self.assertRaisesRegex(FieldEffectError, "authority_binding"):
+                repository.field_effect_authority_source(decision)
         repository.close()
 
     def test_invisible_stale_case_is_not_in_activation_cohort(self) -> None:
