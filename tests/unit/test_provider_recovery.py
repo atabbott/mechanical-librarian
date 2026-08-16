@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import sqlite3
 import tempfile
 import threading
@@ -955,16 +956,20 @@ class ProviderRecoveryTests(unittest.TestCase):
 
 
 class _CommitFailingConnection:
-    """Delegate to a real connection while refusing every ``COMMIT``.
+    """Delegate to a real connection while failing ``COMMIT`` on demand.
 
     The store's connection is the seam the transaction epilogue must cross, so
     substituting it at construction keeps the failure forced from outside the
-    store rather than by replacing one of its own members.
+    store rather than by replacing one of its own members.  ``commit_error`` is
+    writable after construction so a test can set a claim up through the same
+    proxy and only then arm the failure it wants the epilogue to meet.
     """
 
-    def __init__(self, connection: sqlite3.Connection, *, fail_commit: bool) -> None:
+    def __init__(
+        self, connection: sqlite3.Connection, *, commit_error: BaseException | None
+    ) -> None:
         self._connection = connection
-        self._fail_commit = fail_commit
+        self.commit_error = commit_error
         self.statements: list[str] = []
 
     @property
@@ -975,8 +980,8 @@ class _CommitFailingConnection:
         self, statement: str, parameters: tuple[object, ...] = ()
     ) -> sqlite3.Cursor:
         self.statements.append(statement)
-        if self._fail_commit and statement == "COMMIT":
-            raise sqlite3.OperationalError("disk I/O error")
+        if self.commit_error is not None and statement == "COMMIT":
+            raise self.commit_error
         return self._connection.execute(statement, parameters)
 
     def close(self) -> None:
@@ -984,11 +989,16 @@ class _CommitFailingConnection:
 
 
 class TransactionEpilogueTests(unittest.TestCase):
-    """Pin the shared commit/rollback epilogue the six write paths reuse."""
+    """Pin the shared commit/rollback epilogue the helper's adopters reuse.
+
+    Not every write path is one.  ``resume_fanout`` and ``enqueue_jobs`` keep
+    their epilogue longhand, for the reasons ``_rollback_on_failure`` records,
+    and neither is covered here.
+    """
 
     @staticmethod
     def _store_over(
-        directory: str, *, generation: int, fail_commit: bool
+        directory: str, *, generation: int, commit_error: BaseException | None
     ) -> tuple[SQLiteProviderRecoveryStore, _CommitFailingConnection]:
         path = Path(directory) / "recovery.sqlite"
         prepared = SQLiteProviderRecoveryStore.open(path)
@@ -1002,12 +1012,15 @@ class TransactionEpilogueTests(unittest.TestCase):
         prepared.close()
         connection = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         connection.execute("PRAGMA foreign_keys=ON")
-        proxy = _CommitFailingConnection(connection, fail_commit=fail_commit)
+        proxy = _CommitFailingConnection(connection, commit_error=commit_error)
         return SQLiteProviderRecoveryStore(cast(sqlite3.Connection, proxy)), proxy
 
     def test_commit_failure_rolls_back_and_reports_persistence_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            store, proxy = self._store_over(directory, generation=1, fail_commit=True)
+            store, proxy = self._store_over(
+                directory, generation=1,
+                commit_error=sqlite3.OperationalError("disk I/O error"),
+            )
             with self.assertRaises(ProviderRecoveryStoreError) as raised:
                 store.reconcile_generation(generation=2, now=10)
             self.assertEqual(
@@ -1020,7 +1033,7 @@ class TransactionEpilogueTests(unittest.TestCase):
 
     def test_store_failure_rolls_back_and_keeps_its_own_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            store, proxy = self._store_over(directory, generation=2, fail_commit=False)
+            store, proxy = self._store_over(directory, generation=2, commit_error=None)
             with self.assertRaises(ProviderRecoveryStoreError) as raised:
                 store.reconcile_generation(generation=1, now=10)
             self.assertEqual(
@@ -1031,6 +1044,150 @@ class TransactionEpilogueTests(unittest.TestCase):
             self.assertNotIn("COMMIT", proxy.statements)
             self.assertFalse(proxy.in_transaction)
             store.close()
+
+
+class EpilogueCaughtSetTests(unittest.TestCase):
+    """Prove each caught set is the one its sites wrapped before the widening.
+
+    ``_rollback_on_failure`` now takes the extra types explicitly, so there are
+    three distinct sets in the module and one test per set below.  Each drives
+    a real write path over the commit seam and asserts both halves: that the
+    named types are wrapped and rolled back, and that the types the set does
+    *not* name still escape untouched.  Without the negative half a widening
+    could re-scope the six narrow sites and every assertion would still pass.
+    """
+
+    _store_over = staticmethod(TransactionEpilogueTests._store_over)
+
+    def test_narrow_set_lets_a_domain_failure_escape_unwrapped(self) -> None:
+        """``_rollback_on_failure()`` — the six sites #662 consolidated."""
+        with tempfile.TemporaryDirectory() as directory:
+            store, proxy = self._store_over(
+                directory, generation=1,
+                commit_error=ProviderRecoveryError("domain rejection"),
+            )
+            with self.assertRaises(ProviderRecoveryError):
+                store.reconcile_generation(generation=2, now=10)
+            self.assertNotIn("ROLLBACK", proxy.statements)
+            store.close()
+
+    def test_domain_set_wraps_a_domain_failure_and_rolls_back(self) -> None:
+        """``_rollback_on_failure(ProviderRecoveryError)`` — the ten sites."""
+        with tempfile.TemporaryDirectory() as directory:
+            store, proxy = self._store_over(
+                directory, generation=1,
+                commit_error=ProviderRecoveryError("domain rejection"),
+            )
+            with self.assertRaises(ProviderRecoveryStoreError) as raised:
+                store.observe_failure(
+                    connection="google", adapter="google_books", scope="books",
+                    generation=1, failure="transient", now=10,
+                )
+            self.assertEqual(
+                "provider recovery persistence is unavailable", str(raised.exception)
+            )
+            self.assertIsInstance(raised.exception.__cause__, ProviderRecoveryError)
+            # ``observe_failure``'s own outer handler wraps the same type but
+            # never rolls back, so the ROLLBACK is what proves the shared
+            # epilogue — not the caller — admitted this failure.
+            self.assertIn("ROLLBACK", proxy.statements)
+            self.assertFalse(proxy.in_transaction)
+            store.close()
+
+    def test_domain_set_lets_an_attribute_error_escape_unwrapped(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            store, proxy = self._store_over(
+                directory, generation=1, commit_error=AttributeError("no such member"),
+            )
+            with self.assertRaises(AttributeError):
+                store.observe_failure(
+                    connection="google", adapter="google_books", scope="books",
+                    generation=1, failure="transient", now=10,
+                )
+            self.assertNotIn("ROLLBACK", proxy.statements)
+            store.close()
+
+    def test_attribute_set_wraps_an_attribute_error_and_rolls_back(self) -> None:
+        """``_rollback_on_failure(ProviderRecoveryError, AttributeError)``."""
+        with tempfile.TemporaryDirectory() as directory:
+            store, proxy = self._store_over(
+                directory, generation=1, commit_error=None
+            )
+            claimed = store.claim_one(generation=1, now=10, token="token")
+            assert claimed is not None
+            proxy.commit_error = AttributeError("no such member")
+            with self.assertRaises(ProviderRecoveryStoreError) as raised:
+                store.complete_success(token="token", recovery=claimed, now=11)
+            self.assertEqual(
+                "provider recovery persistence is unavailable", str(raised.exception)
+            )
+            self.assertIsInstance(raised.exception.__cause__, AttributeError)
+            self.assertIn("ROLLBACK", proxy.statements)
+            self.assertFalse(proxy.in_transaction)
+            store.close()
+
+    def test_every_call_site_names_the_set_it_wrapped_before(self) -> None:
+        """Pin every ``_rollback_on_failure`` call, not merely every caller.
+
+        The behavioural tests above cover one representative site per set; this
+        covers the rest, so adopting the helper somewhere new — or adding a type
+        to an existing call — cannot quietly re-scope a site under them.  Each
+        value is a list of argument lists rather than one argument list: a
+        function may hold more than one call, and keying by function alone
+        would let a second call overwrite the first and assert nothing about
+        it.
+        """
+        module = ast.parse(Path(recovery_persistence.__file__).read_text())
+
+        def adopts(node: ast.AST) -> bool:
+            return (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "_rollback_on_failure"
+            )
+
+        sites: dict[str, list[list[str]]] = {}
+        for parent in ast.walk(module):
+            if not isinstance(parent, ast.FunctionDef):
+                continue
+            for node in ast.walk(parent):
+                if adopts(node):
+                    sites.setdefault(parent.name, []).append(
+                        [ast.unparse(argument) for argument in node.args]
+                    )
+        # Every call must be attributed to exactly one function. Walking each
+        # function separately counts a call inside a nested function twice and
+        # a call outside any function not at all; the module has neither today,
+        # and this is what fails if either arrives.
+        self.assertEqual(
+            len([node for node in ast.walk(module) if adopts(node)]),
+            sum(len(calls) for calls in sites.values()),
+        )
+        self.assertEqual(
+            {
+                # The six #662 consolidated. Their set stays narrow.
+                "_reconcile_generation": [[]],
+                "claim_job": [[]],
+                "renew_job": [[]],
+                "complete_job": [[]],
+                "complete_stale_job": [[]],
+                "release_target_hold": [[]],
+                # The ten this change adopted.
+                "complete_missing_jobs": [["ProviderRecoveryError"]],
+                "_complete": [["ProviderRecoveryError"]],
+                "_record": [["ProviderRecoveryError"]],
+                "_observe_failure": [["ProviderRecoveryError"]],
+                "_claim_one": [["ProviderRecoveryError"]],
+                "complete_exhausted_scope": [["ProviderRecoveryError"]],
+                "complete_canary_failure": [["ProviderRecoveryError"]],
+                "authorize_fanout": [["ProviderRecoveryError"]],
+                "finish_fanout": [["ProviderRecoveryError"]],
+                "interrupt_fanout": [["ProviderRecoveryError"]],
+                # The one that also admits a positional row unpack.
+                "complete_success": [["ProviderRecoveryError", "AttributeError"]],
+            },
+            sites,
+        )
 
 
 def _full_store(directory: str) -> SQLiteProviderRecoveryStore:

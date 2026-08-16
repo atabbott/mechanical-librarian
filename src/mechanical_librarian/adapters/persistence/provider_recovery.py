@@ -97,16 +97,26 @@ class SQLiteProviderRecoveryStore:
             self._connection.close()
 
     @contextmanager
-    def _rollback_on_failure(self) -> Iterator[None]:
+    def _rollback_on_failure(self, *wrapped: type[Exception]) -> Iterator[None]:
         """Abandon an open transaction and normalise the escaping failure.
 
-        Six write paths shared this epilogue byte for byte.  It deliberately
-        wraps only ``sqlite3.Error`` and ``OverflowError``: the remaining
-        epilogues in this module admit ``ProviderRecoveryError`` or
-        ``AttributeError`` as well, and widening the set here would change
-        which failures these six report as a store failure rather than let
-        escape.  The rollback is guarded because a handler may run after the
-        transaction has already ended.
+        Every caller of this helper wraps ``sqlite3.Error`` and
+        ``OverflowError``; past those the set belongs to the caller, so each
+        one names the extra types it admits — ``ProviderRecoveryError`` where a
+        domain value can still be rejected inside the transaction, and
+        ``AttributeError`` additionally where a row is unpacked positionally.
+        Passing nothing keeps the narrow set, which is what makes a widening
+        visible at the call site rather than implied by which copy was pasted.
+
+        That baseline binds the adopters and is not an invariant of the module.
+        ``resume_fanout`` wraps ``ProviderRecoveryError`` but not
+        ``OverflowError``, and ``enqueue_jobs`` wraps this exact pair but lets a
+        ``ProviderRecoveryStoreError`` past without a rollback.  Both keep their
+        epilogue longhand because adopting this one would change what they
+        report, so neither should be widened to match the paragraph above.
+
+        The rollback is guarded because a handler may run after the transaction
+        has already ended.
         """
         try:
             yield
@@ -114,7 +124,7 @@ class SQLiteProviderRecoveryStore:
             if self._connection.in_transaction:
                 self._connection.execute("ROLLBACK")
             raise
-        except (sqlite3.Error, OverflowError) as error:
+        except (sqlite3.Error, OverflowError) + wrapped as error:
             if self._connection.in_transaction:
                 self._connection.execute("ROLLBACK")
             raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
@@ -217,7 +227,7 @@ class SQLiteProviderRecoveryStore:
         if (type(token) is not str or not 1 <= len(token) <= 128
                 or type(now) is not int or not 0 <= now <= MAX_TIMESTAMP):
             raise ProviderRecoveryStoreError("provider recovery claim is invalid")
-        try:
+        with self._rollback_on_failure(ProviderRecoveryError, AttributeError):
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 current = self._connection.execute("SELECT generation,state,attempt,claim_token,claim_expires_at FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=?", (recovery.connection, recovery.adapter, recovery.scope)).fetchone()
@@ -241,14 +251,6 @@ class SQLiteProviderRecoveryStore:
                      recovery.generation, token), None,
                 )
                 return successor
-        except ProviderRecoveryStoreError:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise
-        except (sqlite3.Error, OverflowError, ProviderRecoveryError, AttributeError) as error:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
     def complete_missing_jobs(
         self, *, token: str, recovery: ProviderRecovery, now: int,
@@ -258,7 +260,7 @@ class SQLiteProviderRecoveryStore:
         if (type(token) is not str or not 1 <= len(token) <= 128
                 or type(now) is not int or not 0 <= now <= MAX_TIMESTAMP):
             raise ProviderRecoveryStoreError("provider recovery claim is invalid")
-        try:
+        with self._rollback_on_failure(ProviderRecoveryError):
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 current = self._connection.execute(
@@ -333,19 +335,9 @@ class SQLiteProviderRecoveryStore:
                      recovery.generation, token), None,
                 )
                 return successor
-        except ProviderRecoveryStoreError:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise
-        except (sqlite3.Error, OverflowError, ProviderRecoveryError) as error:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise ProviderRecoveryStoreError(
-                "provider recovery persistence is unavailable"
-            ) from error
 
     def _complete(self, token: str, recovery: ProviderRecovery, now: int, failure: str, retry_after: int | None) -> ProviderRecovery:
-        try:
+        with self._rollback_on_failure(ProviderRecoveryError):
             self._connection.execute("BEGIN IMMEDIATE")
             current = self._connection.execute("SELECT generation,state,attempt,claim_token,claim_expires_at FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=?", (recovery.connection, recovery.adapter, recovery.scope)).fetchone()
             if current is None or current[:3] != (recovery.generation, "checking", recovery.attempt) or current[3] != token or current[4] <= now:
@@ -357,14 +349,6 @@ class SQLiteProviderRecoveryStore:
             self._connection.execute("INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)", (successor.connection, successor.adapter, successor.scope, successor.generation, successor.state, successor.attempt, successor.next_eligible_at, now))
             self._connection.execute("COMMIT")
             return successor
-        except ProviderRecoveryStoreError:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise
-        except (sqlite3.Error, OverflowError, ProviderRecoveryError) as error:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
     def record(self, recovery: ProviderRecovery, *, occurred_at: int) -> None:
         if type(occurred_at) is not int or occurred_at < 0:
@@ -379,7 +363,7 @@ class SQLiteProviderRecoveryStore:
             raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
     def _record(self, recovery: ProviderRecovery, occurred_at: int) -> None:
-        try:
+        with self._rollback_on_failure(ProviderRecoveryError):
             self._connection.execute("BEGIN IMMEDIATE")
             current = self._connection.execute("SELECT generation,state,attempt,next_eligible_at,claim_token,claim_expires_at FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=?", (recovery.connection, recovery.adapter, recovery.scope)).fetchone()
             if current is not None:
@@ -402,14 +386,6 @@ class SQLiteProviderRecoveryStore:
                 if self._connection.in_transaction:
                     self._connection.execute("ROLLBACK")
                 raise
-        except ProviderRecoveryStoreError:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise
-        except (sqlite3.Error, OverflowError, ProviderRecoveryError) as error:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
     def observe_failure(self, *, connection: str, adapter: str, scope: str, generation: int, failure: str, now: int) -> None:
         """Atomically fold one terminal F22 observation into closed health."""
@@ -426,7 +402,7 @@ class SQLiteProviderRecoveryStore:
             raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
     def _observe_failure(self, observed: ProviderRecovery, now: int) -> None:
-        try:
+        with self._rollback_on_failure(ProviderRecoveryError):
             self._connection.execute("BEGIN IMMEDIATE")
             current = self._connection.execute("SELECT generation,state,attempt,next_eligible_at FROM provider_recovery_health WHERE connection=? AND adapter=? AND scope=?", (observed.connection, observed.adapter, observed.scope)).fetchone()
             if current is not None and current[0] > observed.generation:
@@ -448,14 +424,6 @@ class SQLiteProviderRecoveryStore:
             self._connection.execute("INSERT INTO provider_recovery_health(connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at) VALUES(?,?,?,?,?,?,?,NULL,NULL) ON CONFLICT(connection,adapter,scope) DO UPDATE SET generation=excluded.generation,state=excluded.state,attempt=excluded.attempt,next_eligible_at=excluded.next_eligible_at,claim_token=NULL,claim_expires_at=NULL", (successor.connection, successor.adapter, successor.scope, successor.generation, successor.state, successor.attempt, successor.next_eligible_at))
             self._connection.execute("INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)", (successor.connection, successor.adapter, successor.scope, successor.generation, successor.state, successor.attempt, successor.next_eligible_at, now))
             self._connection.execute("COMMIT")
-        except ProviderRecoveryStoreError:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise
-        except (sqlite3.Error, OverflowError, ProviderRecoveryError) as error:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
     def claim_one(self, *, generation: int, now: int, token: str, blocked_targets: frozenset[str] = frozenset(), lease_seconds: int = 300) -> ProviderRecovery | None:
         if type(generation) is not int or generation < 1 or type(now) is not int or now < 0 or type(token) is not str or not 1 <= len(token) <= 128 or type(lease_seconds) is not int or not 1 <= lease_seconds <= 900:
@@ -489,7 +457,7 @@ class SQLiteProviderRecoveryStore:
         method here writes one, so the cost is one lease period per row some
         other writer put in the table.
         """
-        try:
+        with self._rollback_on_failure(ProviderRecoveryError):
             self._connection.execute("BEGIN IMMEDIATE")
             try:
                 excluded, parameters = _blocked_targets(blocked_targets)
@@ -508,10 +476,6 @@ class SQLiteProviderRecoveryStore:
                 raise
             self._claim_snapshots[(*row[:4], token)] = (row[4:], None, None)
             return ProviderRecovery(*cast(_HealthIdentity, row[:4]), "checking", row[5], None)
-        except (sqlite3.Error, OverflowError, ProviderRecoveryError) as error:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
     def snapshot(self, *, limit: int = 32) -> tuple[ProviderRecovery, ...]:
         if type(limit) is not int or not 1 <= limit <= 100:
@@ -756,7 +720,7 @@ class SQLiteProviderRecoveryStore:
         recovery: ProviderRecovery, now: int,
     ) -> ProviderRecovery:
         """Close a nonretryable canary without admitting sibling egress."""
-        try:
+        with self._rollback_on_failure(ProviderRecoveryError):
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 current = self._connection.execute(
@@ -797,14 +761,6 @@ class SQLiteProviderRecoveryStore:
                      recovery.generation, token), None,
                 )
                 return successor
-        except ProviderRecoveryStoreError:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise
-        except (sqlite3.Error, OverflowError, ProviderRecoveryError) as error:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
     def complete_canary_failure(
         self, *, job: ProviderRecoveryJob, token: str,
@@ -817,7 +773,7 @@ class SQLiteProviderRecoveryStore:
             "authorization", "configuration",
         }:
             raise ProviderRecoveryStoreError("provider recovery claim is invalid")
-        try:
+        with self._rollback_on_failure(ProviderRecoveryError):
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 current = self._connection.execute(
@@ -866,19 +822,11 @@ class SQLiteProviderRecoveryStore:
                 )
                 self._connection.execute("COMMIT")
                 return successor
-        except ProviderRecoveryStoreError:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise
-        except (sqlite3.Error, OverflowError, ProviderRecoveryError) as error:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
     def authorize_fanout(self, *, job: ProviderRecoveryJob, token: str,
                          recovery: ProviderRecovery, now: int) -> ProviderRecovery:
         """Commit canary success before siblings receive independent leases."""
-        try:
+        with self._rollback_on_failure(ProviderRecoveryError):
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 current = self._connection.execute(
@@ -922,18 +870,10 @@ class SQLiteProviderRecoveryStore:
                      recovery.generation, token), None,
                 )
                 return successor
-        except ProviderRecoveryStoreError:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise
-        except (sqlite3.Error, OverflowError, ProviderRecoveryError) as error:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
     def finish_fanout(self, *, recovery: ProviderRecovery, token: str, now: int) -> ProviderRecovery:
         """Close only after the exact generation has no eligible work."""
-        try:
+        with self._rollback_on_failure(ProviderRecoveryError):
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 active = self._connection.execute(
@@ -973,14 +913,6 @@ class SQLiteProviderRecoveryStore:
                 )
                 self._connection.execute("COMMIT")
                 return successor
-        except ProviderRecoveryStoreError:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise
-        except (sqlite3.Error, OverflowError, ProviderRecoveryError) as error:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
     def interrupt_fanout(
         self, *, job: ProviderRecoveryJob, token: str,
@@ -993,7 +925,7 @@ class SQLiteProviderRecoveryStore:
             "authorization", "configuration",
         }:
             raise ProviderRecoveryStoreError("provider recovery claim is invalid")
-        try:
+        with self._rollback_on_failure(ProviderRecoveryError):
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
                 state = self._connection.execute(
@@ -1040,14 +972,6 @@ class SQLiteProviderRecoveryStore:
                 )
                 self._connection.execute("COMMIT")
                 return successor
-        except ProviderRecoveryStoreError:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise
-        except (sqlite3.Error, OverflowError, ProviderRecoveryError) as error:
-            if self._connection.in_transaction:
-                self._connection.execute("ROLLBACK")
-            raise ProviderRecoveryStoreError("provider recovery persistence is unavailable") from error
 
 
 def _validate(connection: sqlite3.Connection) -> None:
