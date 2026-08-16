@@ -9,6 +9,7 @@ from dataclasses import replace
 from multiprocessing import Event, Process
 from multiprocessing.synchronize import Event as EventType
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 from mechanical_librarian.adapters.persistence.catalogue import (
@@ -19,6 +20,7 @@ from mechanical_librarian.application.catalogue import (
     CatalogueBusyError,
     CatalogueEntry,
     CatalogueError,
+    CatalogueRepository,
     CatalogueStaleError,
     RefreshCurrentCatalogue,
     catalogue_fingerprint,
@@ -177,6 +179,62 @@ class CatalogueRepositoryTests(unittest.TestCase):
             repository.close()
 
         self.assertEqual(tuple(entry.library for entry in entries), ("books",))
+
+    def test_refresh_cleanup_failure_never_replaces_the_refresh_failure(self) -> None:
+        """A lock release that fails must not become the failure the caller sees.
+
+        Both refresh lanes release the lock in a cleanup-only handler annotated
+        as re-raising the failure exactly as it arrived. `abort_refresh` is as
+        undeclared as the reader and the publish it guards, so a release that
+        raised replaced the active exception and the bare `raise` never ran:
+        the caller was told the lock broke rather than why the refresh did
+        (#698).
+        """
+        deep = CatalogueError("deep read failed")
+        library = CatalogueError("library read failed")
+
+        class Repository:
+            def __init__(self) -> None:
+                self.aborted = 0
+
+            def acquire_refresh(self) -> None:
+                return None
+
+            def abort_refresh(self) -> None:
+                self.aborted += 1
+                raise RuntimeError("refresh lock is wedged")
+
+            def inspect(self, fingerprint):
+                raise library
+
+            def publish(self, fingerprint, entries) -> int:
+                raise AssertionError("publication is unreachable here")
+
+        class Reader:
+            def read_library(self, connection, library_configuration, remaining):
+                raise deep
+
+        configuration = _configuration()
+        repository = Repository()
+        service = RefreshCurrentCatalogue(
+            Reader(), cast("CatalogueRepository", repository)
+        )
+
+        for expected, run in (
+            (deep, lambda: service.refresh(configuration)),
+            (
+                library,
+                lambda: service.refresh_library(configuration, "primary", "books"),
+            ),
+        ):
+            with self.assertRaises(CatalogueError) as raised:
+                run()
+            self.assertIs(raised.exception, expected)
+            self.assertEqual(
+                ["refresh lock release failed: RuntimeError('refresh lock is wedged')"],
+                list(getattr(raised.exception, "__notes__", [])),
+            )
+        self.assertEqual(repository.aborted, 2)
 
     def test_atomic_current_switch_and_stale_fingerprint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -7,6 +7,12 @@
 
 ## Unreleased
 
+- Sweep the application layer's 94 broad exception handlers so none can turn a
+  fault into a benign domain outcome: two narrow to the type their seam
+  declares, the rest record the invariant that makes breadth correct. Five
+  fixes carry tests -- a verifier fault read as a wrong password, a broken
+  factory blamed on the stored credential, a read-back as a failed activation,
+  later shutdown failures dropped, a lane ended by an unconverted read. (#698)
 - State that a single-caller extraction is not judged on line count, and give
   the documentation an acceptance demands a fifth reporting bucket. The five
   reconcile to the net delta except where a formatting reflow forced by the

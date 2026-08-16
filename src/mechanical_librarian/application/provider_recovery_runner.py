@@ -123,6 +123,12 @@ class ScopedProviderRecoveryRunner:
                 try:
                     self._retry(claimed, canary, renew_canary)
                 except Exception as error:
+                    # ``_classify_failure`` is the narrowing: it inspects the
+                    # error and names the transaction outcome, so breadth here
+                    # hands it every failure rather than pre-filtering by a type
+                    # the injected retry seam never declared. A failure allowed
+                    # to escape instead would leave the canary job claimed and
+                    # its target hold unreleased.
                     failure, retry_after = self._classify_failure(error)
                     current = self._current(current)
                     if failure == "target_held":
@@ -184,6 +190,14 @@ class ScopedProviderRecoveryRunner:
                 )
                 fanout += 1
             except Exception as error:
+                # ``_classify_failure`` does the naming here as it does in the
+                # canary lane, but this block is wider than that one: it also
+                # covers the clock reading and the store write that completes a
+                # member that succeeded, so a completion that fails is settled
+                # through the same path as a retry that fails. That is the
+                # invariant the breadth serves -- every claimed member reaches
+                # ``_classify_failure`` -- because a member whose failure
+                # escaped would be left claimed with its target hold unreleased.
                 current = self._current(current)
                 failure, retry_after = self._classify_failure(error)
                 if failure == "target_held":

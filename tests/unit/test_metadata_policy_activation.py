@@ -18,6 +18,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.application.metadata_policy import (
     MetadataPolicyApplicationError,
+    PolicyImpactRepository,
     PolicyNotebook,
 )
 from mechanical_librarian.bootstrap import composition
@@ -204,6 +205,49 @@ class MetadataPolicyActivationTests(unittest.TestCase):
                 reconcile_current=True,
             )
         repository.close()
+
+    def test_confirm_automatic_keeps_the_read_back_refusal_distinct(self) -> None:
+        """An activation that succeeded is not reported as one that failed.
+
+        `confirm_automatic` activates durably and then returns `shadow_state()`,
+        which raises `shadow posture is unavailable` of its own. The broad
+        handler caught that refusal and replaced it with `automatic posture is
+        unavailable`, so after the durable write a caller could not tell an
+        activation that never happened from one that happened and whose
+        read-back did not. `enter_preview` beside it already re-raised (#698).
+        """
+        activations: list[int] = []
+
+        class ReadBackFails:
+            def activate_qualified_automatic(self, updated_at: int) -> str:
+                activations.append(updated_at)
+                return "automatic"
+
+            def shadow_posture(self) -> str:
+                raise RuntimeError("posture read failed")
+
+        notebook = PolicyNotebook(
+            cast("PolicyImpactRepository", ReadBackFails()), (), {}
+        )
+        with self.assertRaises(MetadataPolicyApplicationError) as raised:
+            notebook.confirm_automatic(2)
+        self.assertEqual(str(raised.exception), "shadow posture is unavailable")
+        self.assertEqual(activations, [2])
+
+        class ActivationFails:
+            def activate_qualified_automatic(self, updated_at: int) -> str:
+                raise RuntimeError("activation did not commit")
+
+            def shadow_posture(self) -> str:
+                return "automatic"
+
+        # The activation lane keeps its own identity unchanged.
+        notebook = PolicyNotebook(
+            cast("PolicyImpactRepository", ActivationFails()), (), {}
+        )
+        with self.assertRaises(MetadataPolicyApplicationError) as raised:
+            notebook.confirm_automatic(2)
+        self.assertEqual(str(raised.exception), "automatic posture is unavailable")
 
     def test_library_override_cannot_turn_an_unqualified_option_automatic(self) -> None:
         repository = open_repository(self.path)

@@ -141,6 +141,18 @@ class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
 
 
 class OwnerSessionService:
+    """Owner login, authentication, rotation, and revocation over one store.
+
+    ``ReviewSessionStore`` is a protocol the composition root binds to an
+    arbitrary adapter, and the password verifier is an injected callable, so
+    neither declares an error type and no call below has an enumerable raisable
+    set. Every handler in this class therefore stays broad over the one call it
+    guards and converts the failure into a ``ReviewWebError`` with the cause
+    chained: none discards a failure, and none reads a fault as an answer the
+    store or the verifier gave. The two that answer with something other than
+    ``persistence`` say why where they stand.
+    """
+
     def __init__(
         self,
         repository: ReviewSessionStore,
@@ -167,8 +179,13 @@ class OwnerSessionService:
             raise ReviewWebError("throttled")
         try:
             verified = self._verify_password(password)
-        except Exception:
-            verified = False
+        except Exception as error:
+            # The verifier answers with a bool, and a wrong password is
+            # ``False`` rather than a raise. A raise is therefore a fault in the
+            # hasher or the stored digest, and reporting it as
+            # ``invalid_credentials`` told the owner their password was wrong
+            # for a condition no password can satisfy.
+            raise ReviewWebError("runtime") from error
         if not verified:
             raise ReviewWebError("invalid_credentials")
         session_token = self._token_factory(32)
@@ -192,6 +209,11 @@ class OwnerSessionService:
                 _digest(session_token), self._clock()
             )
         except Exception as error:
+            # Authentication is fail-closed, so the departure from this class's
+            # persistence invariant is deliberate: no answer from the store is
+            # not a session, whatever withheld the answer. The cause stays
+            # chained, so a store fault remains legible in the traceback while
+            # never being read as an authenticated actor.
             raise ReviewWebError("unauthorized") from error
         if csrf_token is not None and (
             not _bounded_token(csrf_token)
@@ -280,6 +302,13 @@ class InspectCurrentReviewCase:
         except ReviewWebError:
             raise
         except Exception as error:
+            # The block spans an undeclared repository read, the domain parsers
+            # that reject the documents it returns, and this layer's own
+            # projection of those documents into the read model, so nothing
+            # reaching here has an enumerable origin. Every one of them is the
+            # same outcome: one snapshot the surface cannot show. The codes
+            # chosen above are re-raised untouched first, and the cause is
+            # chained.
             raise ReviewWebError("unavailable") from error
         target_fields = {
             value["destination"]: value
@@ -509,7 +538,17 @@ class InspectCurrentReviewCase:
 
 
 class RecordHumanDecision:
-    """Record one explicit owner decision without granting apply authority."""
+    """Record one explicit owner decision without granting apply authority.
+
+    ``HumanDecisionStore`` is a protocol with no declared error type, so the
+    handlers over its individual calls stay broad and convert to a
+    ``ReviewWebError`` with the cause chained. ``HumanDecisionError`` and the
+    codes chosen here are re-raised ahead of every conversion so a domain
+    refusal is never relabelled as storage. Two handlers depart from that shape
+    and say so where they stand: the advisory readiness read, the only one that
+    discards its failure, and the last resort over the whole command, which is
+    not over a store call at all and covers this layer's own projection too.
+    """
 
     def __init__(
         self,
@@ -574,6 +613,10 @@ class RecordHumanDecision:
             try:
                 case_document = self._repository.get_review_case(review_case_id)
             except Exception as error:
+                # The store cannot say why the read failed, so a second read
+                # settles absence against fault. A failure of that second read
+                # proves nothing about the case and stays ``persistence``
+                # rather than being resolved as ``not_found``.
                 try:
                     exists = self._repository.review_case_exists(review_case_id)
                 except Exception as persistence_error:
@@ -592,7 +635,10 @@ class RecordHumanDecision:
             try:
                 ready_at = self._repository.review_case_ready_at(review_case_id)
             except Exception:
-                # This timestamp is advisory and cannot gate an owner decision.
+                # This timestamp is advisory and cannot gate an owner decision,
+                # so every failure of the read -- including a fault the store
+                # cannot name -- must leave the decision itself unaffected. The
+                # only consequence is that no ``human_wait`` sample is recorded.
                 ready_at = None
             decision = HumanDecision.create(
                 case,
@@ -630,6 +676,16 @@ class RecordHumanDecision:
         except HumanDecisionError as error:
             raise ReviewWebError(error.code) from None
         except Exception as error:
+            # Last resort over the whole command, and it narrows nothing. The
+            # two record-and-read-back store calls above are unguarded, but so
+            # is everything between them -- the idempotency digest, the case
+            # parse and projection, the clock reading, and the decision the
+            # domain builds from them -- and none of that is separable from a
+            # store fault without an error type the store never declared.
+            # ``persistence`` is what this layer answers with for a cause it
+            # cannot name, not a finding about where the fault was. Domain
+            # refusals and the codes chosen above keep their own identity, and
+            # the cause is chained, so the origin stays legible.
             raise ReviewWebError("persistence") from error
 
 class BrowseReviewLibrary:
@@ -667,6 +723,10 @@ class BrowseReviewLibrary:
                 terminal_document = row[6] if len(row) >= 7 else None
                 items.append(_library_item(case_document, report_document, decision_documents, automatic_attention_destinations, suspended_destinations, shadow_abstention_destinations, terminal_document))
         except Exception as error:
+            # The undeclared page read and the row projection are one outcome:
+            # a page this surface cannot render. Row width is read defensively
+            # above, so a shape the adapter no longer supplies fails the page
+            # rather than silently dropping a work from the library.
             raise ReviewWebError("unavailable") from error
         return {
             "counts": {
@@ -751,6 +811,10 @@ class BrowseReviewLibrary:
             if snapshot is None:
                 raise ValueError
         except Exception as error:
+            # As in ``library``: the undeclared page reads and the row
+            # projection they feed are one outcome. The ``ValueError`` above is
+            # this scan's own unreachable-state guard and is deliberately
+            # caught here rather than escaping as a bare fault.
             raise ReviewWebError("unavailable") from error
         return {
             "items": items,
@@ -1164,7 +1228,13 @@ def _case_and_report(
         ):
             raise ValueError
         return case, report
-    except Exception as error:
+    except ValueError as error:
+        # Every malformed-document outcome both parsers have is a ``ValueError``
+        # -- ``ReviewCaseValueError``, ``ReportValueError``, and the
+        # ``UnicodeEncodeError`` that ``MetadataReport.from_json`` lets past its
+        # own conversion -- and the agreement check below raises a bare one. So
+        # ``ValueError`` covers the documents a caller supplied, while a fault
+        # in this projection itself is not one and now surfaces as itself.
         raise ReviewWebError("unavailable") from error
 
 
@@ -1257,6 +1327,12 @@ def _library_item(
     try:
         report = MetadataReport.from_json(report_document)
     except Exception as error:
+        # ``from_json`` does not funnel into one declared type: its length guard
+        # encodes the document outside the block that converts ``UnicodeError``
+        # to ``ReportValueError``, so an unpaired surrogate in a stored row
+        # escapes as ``UnicodeEncodeError``. Breadth is what keeps a row this
+        # surface cannot render one ``unavailable`` page rather than a raw codec
+        # fault, and the cause stays chained.
         raise ReviewWebError("unavailable") from error
     case = None
     if case_document is not None:

@@ -263,17 +263,59 @@ class CoverConsiderationService:
     ) -> _ReviewerEvidence:
         if self._reviewer_profile is None or self._reviewer is None:
             return _ReviewerEvidence(replay_digest, None, "unavailable", None)
+        reviewer = self._reviewer
+        dispatched = False
+
+        def dispatch(
+            profile: bytes,
+            instruction: bytes,
+            packet: bytes,
+            schema: bytes,
+            images: tuple[tuple[str, str, bytes], ...],
+        ) -> str:
+            # Marks the boundary between this layer's own projection and the
+            # contained process, so the handler below can tell which of the two
+            # failed. Set before the call, so a reviewer that raises counts as
+            # dispatched.
+            nonlocal dispatched
+            dispatched = True
+            return reviewer(profile, instruction, packet, schema, images)
+
         try:
             observation_document = observe_cover_packet(
                 self._reviewer_profile,
                 packet_payload,
                 image_payloads,
-                self._reviewer,
+                dispatch,
             ).document
             return _ReviewerEvidence(
                 replay_digest, observation_document, "completed", None
             )
         except Exception as error:
+            if not dispatched:
+                # ``observe_cover_packet`` binds the packet, loads it, and builds
+                # the request schema before it reaches the reviewer, and this
+                # layer produced every one of those inputs. A failure there is a
+                # fault in our own projection, not an outcome of the contained
+                # process, so it must surface instead of being recorded as
+                # reviewer failure evidence the owner is asked to read.
+                raise
+            # Past dispatch this is a last resort over the rest of the
+            # observation, and the flag narrows it no further than that. The
+            # reviewer is a contained process reached through an injected
+            # profile, so its failures are transport, container, and protocol
+            # faults it does not declare, and a result document that will not
+            # parse or validate is the same reviewable outcome: no observation,
+            # recorded as failure evidence the owner can see. But
+            # ``observe_cover_packet`` also assembles the report after the
+            # reviewer returns -- binding rows to candidates from our own
+            # packet, sorting, hashing the instruction and schema, and
+            # canonicalising -- and a fault in that projection is recorded as
+            # reviewer failure too. That is this handler's known cost, not a
+            # claim it can narrow: the boundary the flag can see is dispatch,
+            # and the reviewer's return is not visible from here. Nothing is
+            # discarded -- the attempts and the failure code carried by the
+            # error are read off it and persisted below.
             attempts = getattr(error, "attempts", ())
             failure: dict[str, object] = {
                 "attempts": [
@@ -598,6 +640,10 @@ class CoverConsiderationService:
         try:
             payload = self._read_preview_digest(str(candidate["preview_sha256"]))
         except Exception as error:
+            # An injected artifact reader over the cover store, with no declared
+            # error type. A preview that could not be read is unavailable
+            # whatever stopped it, and the digest is still verified below, so
+            # breadth here never lets an unverified payload through.
             raise CoverConsiderationError("unavailable") from error
         if hashlib.sha256(payload).hexdigest() != candidate["preview_sha256"]:
             raise CoverConsiderationError("unavailable")
