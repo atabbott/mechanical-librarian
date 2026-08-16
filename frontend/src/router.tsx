@@ -12,6 +12,7 @@ import { Suspense, useEffect, useRef, useState } from 'react'
 
 import type { createMemoryHistory } from '@tanstack/react-router'
 import { BuildMismatchError } from './api/http'
+import { labelWords } from './labels'
 import type {
   ActivitySearch,
   AttentionSearch,
@@ -759,7 +760,7 @@ export const ProgressiveCasePanel = ({ id, identity }: { id: string; identity?: 
       <h2>{identity?.title ?? 'Selected work'}</h2>
       <p>
         {identity
-          ? `${identity.authors.join(', ') || 'Author details unavailable'} · ${identity.library} · ${identity.mediaKind.replaceAll('_', ' ')}`
+          ? `${identity.authors.join(', ') || 'Author details unavailable'} · ${identity.library} · ${labelWords(identity.mediaKind)}`
           : 'Readable work identity is not available on this Library page.'}
       </p>
       <Link to="/review/$reviewCaseId" params={{ reviewCaseId: id }} search={{ subview: 'review' }}>

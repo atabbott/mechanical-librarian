@@ -15,7 +15,10 @@ from typing import Callable, TypeVar
 import httpcore
 import httpx
 
-from mechanical_librarian.domain.metadata_report import ProviderRequestAccounting
+from mechanical_librarian.domain.metadata_report import (
+    ProviderRequestAccounting,
+    ProviderStatus,
+)
 
 _SAFE_OS_ERRNOS = frozenset(
     {
@@ -204,6 +207,30 @@ class ProviderAttemptRecord:
     outcome: str
 
 
+class ProviderFailure(Exception):
+    """One provider dispatch's terminal outcome, carried out of its retry loop.
+
+    Each metadata adapter raises and catches this locally.  The identity is
+    shared so the three adapters cannot drift on what a provider failure
+    carries; which statuses, categories and bounds an adapter attaches to it
+    remain that adapter's own and are unchanged.
+    """
+
+    def __init__(
+        self,
+        status: ProviderStatus,
+        *,
+        category: str = "provider_failure",
+        retryable: bool = False,
+        retry_after: float | None = None,
+    ) -> None:
+        super().__init__(status.value)
+        self.status = status
+        self.category = category
+        self.retryable = retryable
+        self.retry_after = retry_after
+
+
 def transient_transport_failure(error: BaseException) -> str | None:
     """Classify only transport failures whose types prove transientness."""
 
@@ -305,6 +332,7 @@ def _is_safe_cause(cause: BaseException) -> bool:
 __all__ = [
     "_DiscoveryRequestLedger",
     "ProviderAttemptRecord",
+    "ProviderFailure",
     "ProviderIncompleteCause",
     "ProviderIncompleteCauseRecord",
     "bounded_attempt_elapsed",

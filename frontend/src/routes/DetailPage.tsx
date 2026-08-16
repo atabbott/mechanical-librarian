@@ -1,6 +1,6 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useRouterState } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 
 import { displayValue } from '../api/http'
 import type {
@@ -10,22 +10,16 @@ import type {
   EvidenceView,
   HistoryView,
 } from '../api/http'
+import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
+import { fieldLabel, labelWords, opaqueSource } from '../labels'
 import { detailRoute, PreparationNotice, useReviewContext } from '../router'
-import { useReviewDecisionController } from '../reviewDecisionController'
+import { requestKey, useReviewDecisionController } from '../reviewDecisionController'
 import { automaticChoiceSelected } from '../reviewAutomaticSelection'
 import { ownerChoiceCount } from '../reviewChoiceCounts'
 
-const friendly = (value: string) => value.replaceAll('_', ' ')
-const readable = (value: string) =>
-  `${friendly(value).slice(0, 1).toUpperCase()}${friendly(value).slice(1)}`
-const opaqueSource = /^(?:local|evidence|provider)_[0-9a-f]+$/iu
 const reviewedSource = (value: string, index: number) =>
-  opaqueSource.test(value) ? `Evidence record ${String(index + 1)}` : readable(value)
-const requestKey = () =>
-  typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `decision-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  opaqueSource.test(value) ? `Evidence record ${String(index + 1)}` : fieldLabel(value)
 const recordedValue = (value: unknown, current: string) =>
   value === null
     ? current
@@ -42,22 +36,22 @@ function HistoryItem({ item, index }: { item: HistoryView['items'][number]; inde
   if (!('consideration' in item))
     return (
       <p key={index}>
-        {friendly(item.kind)} · {'destination' in item ? item.destination : ''}
+        {fieldLabel(item.kind)} · {'destination' in item ? item.destination : ''}
       </p>
     )
   const policy = item.consideration.policy
   const recommendation = policy?.recommended_candidate_reference ?? null
   return (
     <article className="history-cover" key={index}>
-      <h3>Cover {friendly(item.kind)}</h3>
+      <h3>Cover {labelWords(item.kind)}</h3>
       <p>
         Consideration {item.consideration_id}. Observer status:{' '}
-        {friendly(item.consideration.reviewer_status)}.{' '}
+        {labelWords(item.consideration.reviewer_status)}.{' '}
         {item.consideration.current ? 'Current.' : 'Historical; it grants no current authority.'}
       </p>
       <p>
         Owner outcome:{' '}
-        {item.decision ? friendly(item.decision.outcome) : 'No owner outcome on this event'}
+        {item.decision ? labelWords(item.decision.outcome) : 'No owner outcome on this event'}
         {item.decision?.selected_value
           ? ` · ${displayValue(item.decision.selected_value.value)}`
           : ''}
@@ -65,20 +59,20 @@ function HistoryItem({ item, index }: { item: HistoryView['items'][number]; inde
       </p>
       <p>
         Policy {item.consideration.policy_reference}:{' '}
-        {policy ? friendly(policy.status) : 'observation unavailable'}; recommendation:{' '}
+        {policy ? labelWords(policy.status) : 'observation unavailable'}; recommendation:{' '}
         {recommendation ?? 'none'}.
       </p>
       {policy?.reasons.length ? (
-        <p>Policy reasons: {policy.reasons.map(readable).join(' · ')}</p>
+        <p>Policy reasons: {policy.reasons.map(fieldLabel).join(' · ')}</p>
       ) : null}
       <ul aria-label="Historical cover candidates">
         {item.consideration.candidates.map((candidate) => (
           <li key={candidate.reference}>
             <strong>{candidate.reference}</strong> ·{' '}
             {candidate.incumbent ? 'incumbent' : 'alternative'} · identity{' '}
-            {friendly(candidate.identity.outcome)} ·{' '}
+            {labelWords(candidate.identity.outcome)} ·{' '}
             {candidate.observation
-              ? `composition ${friendly(candidate.observation.composition)}, medium ${friendly(candidate.observation.medium)}, promotional text ${friendly(candidate.observation.promotional_text)}, tie-in branding ${friendly(candidate.observation.tie_in_branding)}`
+              ? `composition ${labelWords(candidate.observation.composition)}, medium ${labelWords(candidate.observation.medium)}, promotional text ${labelWords(candidate.observation.promotional_text)}, tie-in branding ${labelWords(candidate.observation.tie_in_branding)}`
               : 'visual observation unavailable'}
           </li>
         ))}
@@ -98,31 +92,25 @@ function CoverChoices({
   disabled: boolean
   submit: (outcome: DecisionOutcome, selectedValue?: DecisionCommand['selectedValue']) => void
 }) {
-  const { http } = useReviewContext()
-  const queryClient = useQueryClient()
+  const cover = useCoverChoiceData(reviewCaseId)
   const consideration = field.coverConsideration
   const coverSelected = (
     outcome: DecisionOutcome,
     value: DecisionCommand['selectedValue'] = null,
   ) => automaticChoiceSelected(field.automaticDecision, outcome, value)
-  const [failed, setFailed] = useState<ReadonlySet<string>>(new Set())
-  const retry = useMutation({
-    mutationFn: () => http.retryCoverConsideration(reviewCaseId),
-    retry: false,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['review-case', reviewCaseId] })
-    },
-  })
   if (!consideration)
     return (
       <section aria-label="Prepare cover comparison">
         <p role="status">
           No current cover consideration is available. The existing cover remains unchanged.
         </p>
-        <button disabled={disabled || retry.isPending} onClick={() => retry.mutate()}>
+        <button
+          disabled={disabled || cover.prepare.isPending}
+          onClick={() => cover.prepare.mutate()}
+        >
           Prepare cover comparison
         </button>
-        {retry.isError ? (
+        {cover.prepare.isError ? (
           <p role="alert">
             The comparison could not be prepared. The existing cover remains unchanged.
           </p>
@@ -162,7 +150,7 @@ function CoverChoices({
           {preferences.length ? preferences.join(' · ') : 'No optional visual preferences enabled'}
         </p>
         {reasons.map((reason) => (
-          <small key={reason}>{readable(reason)}</small>
+          <small key={reason}>{fieldLabel(reason)}</small>
         ))}
       </div>
       {consideration.incumbent.state === 'unavailable' ? (
@@ -192,7 +180,7 @@ function CoverChoices({
       ) : null}
       <div className="cover-grid">
         {consideration.candidates.map((candidate, index) => {
-          const src = `/api/v1/review-cases/${encodeURIComponent(reviewCaseId)}/cover-considerations/${encodeURIComponent(consideration.id)}/images/${encodeURIComponent(candidate.reference)}`
+          const src = cover.imageSource(consideration.id, candidate.reference)
           const observation = candidate.observation
           const alternativeNumber = consideration.candidates
             .slice(0, index + 1)
@@ -200,7 +188,7 @@ function CoverChoices({
           return (
             <article className={`cover-card cover-${candidate.state}`} key={candidate.reference}>
               <div className="cover-image-frame">
-                {failed.has(candidate.reference) ? (
+                {cover.imageFailed(candidate.reference) ? (
                   <p
                     role="img"
                     aria-label={`${candidate.incumbent ? 'Current' : 'Alternative'} cover unavailable`}
@@ -211,7 +199,7 @@ function CoverChoices({
                   <img
                     src={src}
                     alt={`${candidate.incumbent ? 'Current library' : `Alternative ${String(alternativeNumber)}`} cover`}
-                    onError={() => setFailed((values) => new Set(values).add(candidate.reference))}
+                    onError={() => cover.markImageFailed(candidate.reference)}
                   />
                 )}
               </div>
@@ -221,17 +209,17 @@ function CoverChoices({
                     ? 'Current cover'
                     : `Alternative ${String(alternativeNumber)}`}
                 </p>
-                <h3>{readable(candidate.state)}</h3>
+                <h3>{fieldLabel(candidate.state)}</h3>
                 <p>
                   {candidate.width} × {candidate.height} ·{' '}
-                  {candidate.sourceKinds.map(readable).join(', ')}
+                  {candidate.sourceKinds.map(fieldLabel).join(', ')}
                 </p>
                 {observation ? (
                   <p>
                     {['composition', 'medium', 'promotional_text', 'tie_in_branding']
                       .map((name) => {
                         const value = observation[name]
-                        return `${readable(name)}: ${readable(typeof value === 'string' ? value : 'unknown')}`
+                        return `${fieldLabel(name)}: ${fieldLabel(typeof value === 'string' ? value : 'unknown')}`
                       })
                       .join(' · ')}
                   </p>
@@ -281,13 +269,13 @@ function CoverChoices({
       consideration.reviewerStatus === 'unavailable' ? (
         <button
           className="secondary-action"
-          disabled={disabled || retry.isPending}
-          onClick={() => retry.mutate()}
+          disabled={disabled || cover.prepare.isPending}
+          onClick={() => cover.prepare.mutate()}
         >
           Retry advisory review
         </button>
       ) : null}
-      {retry.isError ? (
+      {cover.prepare.isError ? (
         <p role="alert">
           The advisory retry failed safely. The existing cover and manual choices are unchanged.
         </p>
@@ -445,7 +433,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                 aria-current={selected === field.destination}
                 onClick={() => void navigate({ search: { ...search, field: field.destination } })}
               >
-                {friendly(field.destination)}
+                {fieldLabel(field.destination)}
               </button>
             ))}
           </nav>
@@ -465,12 +453,12 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                   <div className="detail-field-heading">
                     <div>
                       <p className="eyebrow">{choicesVisible ? 'Your decision' : 'Field status'}</p>
-                      <h2>{friendly(field.destination)}</h2>
+                      <h2>{fieldLabel(field.destination)}</h2>
                     </div>
                     <div className="reviewer-facts" aria-label="Reviewer facts">
                       <span>
                         <small>Deterministic disposition</small>
-                        <strong>{readable(field.disposition)}</strong>
+                        <strong>{fieldLabel(field.disposition)}</strong>
                       </span>
                       <span>
                         <small>Available choices</small>
@@ -489,7 +477,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                     ) : (
                       <section
                         className="direct-choice"
-                        aria-label={`Choose a ${friendly(field.destination)} value`}
+                        aria-label={`Choose a ${labelWords(field.destination)} value`}
                       >
                         <p className="choice-intro">{field.classificationReason}</p>
                         <div
@@ -557,7 +545,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                   field.corroborationSources.length ? (
                     <section className="field-notices" aria-label="Reviewer notes">
                       {field.notices.map((notice) => (
-                        <p key={notice}>{readable(notice)}</p>
+                        <p key={notice}>{fieldLabel(notice)}</p>
                       ))}
                       {field.corroborationSources.length ? (
                         <p>
@@ -575,13 +563,13 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                   ) : null}
                   {field.humanDecision ? (
                     <p className="decision-recorded">
-                      Human decision: {friendly(field.humanDecision.outcome)} by{' '}
+                      Human decision: {labelWords(field.humanDecision.outcome)} by{' '}
                       {field.humanDecision.actor}. Recorded value:{' '}
                       {recordedValue(field.humanDecision.selected_value, field.currentValue)}.
                     </p>
                   ) : field.automaticDecision ? (
                     <p className="decision-recorded">
-                      Handled automatically: {friendly(field.automaticDecision.outcome)} · policy
+                      Handled automatically: {labelWords(field.automaticDecision.outcome)} · policy
                       origin.
                     </p>
                   ) : null}
@@ -620,7 +608,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
             <>
               {pages.map((item) => (
                 <article className="evidence-item" key={item.reference}>
-                  <h3>{friendly(item.kind)}</h3>
+                  <h3>{fieldLabel(item.kind)}</h3>
                   <pre>{item.fact}</pre>
                 </article>
               ))}

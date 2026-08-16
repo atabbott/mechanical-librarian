@@ -7,6 +7,7 @@ import type { ActivityEventType, ActivitySearch, ActivityView } from '../api/htt
 import { activityOutcome } from '../activityState'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
+import { fieldLabel } from '../labels'
 import { activityRoute, PreparationNotice, usePreparation, useReviewContext } from '../router'
 
 const records = (value: unknown): readonly Record<string, unknown>[] =>
@@ -19,9 +20,6 @@ const records = (value: unknown): readonly Record<string, unknown>[] =>
 const text = (value: unknown, fallback = '') => (typeof value === 'string' ? value : fallback)
 const count = (value: unknown) =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
-const words = (value: string) =>
-  value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
-const destinationLabel = (destination: string) => words(destination)
 const capabilityDestinations = (capability: Record<string, unknown> | undefined) =>
   records(capability?.destinations).map((destination) => ({
     destination: text(destination.destination),
@@ -549,7 +547,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             <span className="cm-activity-pulse" aria-hidden="true" />
             <div>
               <strong>
-                {waitingEvent.work_label} · {destinationLabel(waitingEvent.destination)} update
+                {waitingEvent.work_label} · {fieldLabel(waitingEvent.destination)} update
               </strong>
               <span>
                 {data.paused
@@ -648,8 +646,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   {suspensions.map((item, index) => (
                     <p key={`${text(item.connection)}:${text(item.destination)}:${String(index)}`}>
                       <strong>Recovery:</strong>{' '}
-                      {words(text(item.reason, 'A shared condition is being checked'))}. No accepted
-                      decision is retried blindly.
+                      {fieldLabel(text(item.reason, 'A shared condition is being checked'))}. No
+                      accepted decision is retried blindly.
                     </p>
                   ))}
                 </div>
@@ -783,7 +781,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     <div className="cm-activity-outcome">
                       <strong title={event.work_label}>{event.work_label}</strong>
                       <span>
-                        {destinationLabel(event.destination)} · {event.library}
+                        {fieldLabel(event.destination)} · {event.library}
                       </span>
                     </div>
                     <b>{stateLabel(event.state)}</b>
