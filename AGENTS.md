@@ -64,8 +64,16 @@ Run the static architecture-boundary test whenever imports or packages move.
   reported with the acceptance that required it. Structure costs the same for a
   good abstraction and a bad one, so charging it to the abstraction judges the
   module boundary instead, and rejects the small cross-file consolidations this
-  rule most wants: every one of them needs a shared home. The test bites at both
-  ends. A shared implementation fatter than the copies fails it, and so does a
+  rule most wants: every one of them needs a shared home. A line is
+  implementation where it carries any part of an executable expression, even
+  where it also carries a declaration, and structure only where it carries none
+  — an import, a header, a declaration's bare signature, a closing brace. So
+  `export const labelWords = (value: string) => value.replaceAll('_', ' ')` is
+  one line of implementation, and the same declaration wrapped across two is one
+  of each. Count both sides that way or the comparison is not a comparison: the
+  copies being deleted are counted the same, and a rule under which a
+  declaration could hide behaviour would let a helper pass on its formatting.
+  The test bites at both ends. A shared implementation fatter than the copies fails it, and so does a
   thin one that pushed its bulk out to the call sites. The generalised helper
   carrying a configuration switch for each former call site is the case it
   exists to stop — it removes no duplication, it relabels it: delete it and keep
