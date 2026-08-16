@@ -155,6 +155,33 @@
   the change required, copies consolidation removed, and checks newly added,
   which reconcile to the net figure. (#692)
 
+- Make four stale type declarations state what the code actually produces and
+  consumes, and delete the casts that carried the difference.
+  `ReviewAttentionSnapshot.rows` claimed four columns where the repository has
+  always returned six, which made the type checker prove the Attention
+  reader's two trailing columns permanently absent -- the automatic outcome
+  and the cause that decides whether a suspended field is shown as needing
+  review. `ReportRepository.publish` declared its `after_publication` hook to
+  receive the repository, while both adapters declared the same parameter as
+  `object`; parameter types are contravariant, so the adapter accepted fewer
+  callables than the contract promises and `SQLiteMetadataReportRepository` did
+  not structurally satisfy the protocol it implements. Twelve members of
+  `ContinuousFieldEffectRepository` were declared `*values: object`, so the
+  seam through which every consent grant, manual hold, capability suspension
+  and cover retirement passes constrained neither argument count nor argument
+  type. And `field_effect_authority_source` iterated a review case's
+  `target["fields"]` projection before checking it was a list, so a
+  projection that is neither a list nor iterable raised `TypeError` out of the
+  repository instead of the `authority_binding` failure its caller handles;
+  every projection the old order could classify is rejected identically. Four
+  casts and two block comments recording the mismatches are deleted, and
+  strict mypy proves what they asserted. No wiring, message, or runtime output
+  changed. The two `len(row)` guards in the Attention reader stay: removing
+  them fails nine existing tests whose stores report only the four columns, so
+  each still protects a short row. The fifth declaration in this report, three
+  `from_json` classmethods returning `Self` without constructing through
+  `cls`, was already corrected in #666 itself and needed no change. (#668)
+
 - Declare the automatic-safety seam the served composition already binds.
   `compose_review_application` builds the policy notebook and the owner-only
   automatic-safety controls from one `policy_store`, but

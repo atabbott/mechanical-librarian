@@ -77,7 +77,10 @@ from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
 )
 from mechanical_librarian.application.metadata_policy import PolicyTransition
-from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.metadata_report import (
+    MetadataReportError,
+    ReportRepository,
+)
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     PipelineProgress,
@@ -119,6 +122,7 @@ from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
 )
+from mechanical_librarian.domain.review_field_classification import ReviewFieldCause
 from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
 from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeError,
@@ -945,7 +949,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         report: MetadataReport,
         currentness: Callable[[], bool],
         expected_current: str | None = None,
-        after_publication: Callable[[object, MetadataReport], None] | None = None,
+        after_publication: Callable[[ReportRepository, MetadataReport], None] | None = None,
         *,
         expected_package: tuple[str | None, str, str | None, int | None, str] | None = None,
     ) -> str:
@@ -1030,7 +1034,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[tuple[str, str, str, int, str | None, str | None], ...]:
+    ) -> tuple[
+        tuple[str, str, str, int, str | None, ReviewFieldCause | None], ...
+    ]:
         return self._review_cases.list_current_attention_documents(
             search, limit, offset
         )
