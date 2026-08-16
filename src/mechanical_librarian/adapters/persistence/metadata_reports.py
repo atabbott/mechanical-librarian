@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -63,9 +62,6 @@ from mechanical_librarian.adapters.persistence.review_scans import (
 from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
-from mechanical_librarian.adapters.persistence.review_sql import (
-    _CURRENT_REVIEW_FROM_SQL,
-)
 from mechanical_librarian.adapters.persistence.schema import (
     _create_schema,
     _provider_recovery_outbox_id,
@@ -102,9 +98,6 @@ from mechanical_librarian.domain.field_effect import (
     EffectConsent,
     FieldEffectError,
     FieldEffectOperation,
-)
-from mechanical_librarian.domain.field_effect import (
-    canonical_json as canonical_effect_json,
 )
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
@@ -173,7 +166,20 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._metadata_policy = SQLiteMetadataPolicyRepository(
             connection,
             binding,
-            restart_metadata_policy_work=self._restart_metadata_policy_work,
+            restart_metadata_policy_work=(
+                lambda work_id, work_stage, report_id, updated_at: (
+                    self._restart_metadata_policy_work(
+                        work_id, work_stage, report_id, updated_at
+                    )
+                )
+            ),
+            activate_metadata_policy=(
+                lambda policy_id, expected, resolutions, activated_at, *,
+                reconcile_current=False: self.activate_metadata_policy(
+                    policy_id, expected, resolutions, activated_at,
+                    reconcile_current=reconcile_current,
+                )
+            ),
         )
         self._review_sessions = SQLiteReviewSessionRepository(connection)
         self._review_scans = SQLiteReviewScanRepository(connection)
@@ -766,25 +772,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def _record_field_effect_event(self, operation: FieldEffectOperation,
                                    kind: str, occurred_at: int) -> None:
-        sequence = self._connection.execute(
-            "SELECT count(*)+1 FROM field_effect_events WHERE plan_id=?",
-            (operation.plan.plan_id,),
-        ).fetchone()[0]
-        content = {
-            "schema_version": "field-effect-event-v1", "plan_id": operation.plan.plan_id,
-            "decision_id": operation.plan.authority.decision_id,
-            "origin": operation.plan.authority.origin, "destination": operation.plan.destination,
-            "pre_value": operation.plan.pre_value, "desired_value": operation.plan.desired_value,
-            "state": operation.state, "attempt": operation.attempt, "failure": operation.failure,
-            "occurred_at": occurred_at, "kind": kind, "sequence": sequence,
-        }
-        event_id = "effect_event_" + hashlib.sha256(
-            canonical_effect_json(content).encode()
-        ).hexdigest()
-        document = canonical_effect_json({**content, "event_id": event_id})
-        self._connection.execute(
-            "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,document) VALUES(?,?,?,?,?,?)",
-            (event_id, operation.plan.plan_id, sequence, kind, occurred_at, document),
+        self._field_effects._append_field_effect_event(
+            operation, kind, occurred_at
         )
 
     @property
@@ -1060,67 +1049,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._metadata_policy.shadow_posture()
 
     def enter_shadow_preview(self, updated_at: int) -> str:
-        """Enter Preview and reconcile the exact-current cohort when leaving automatic."""
-        if type(updated_at) is not int or updated_at < 0:
-            raise MetadataReportError("shadow posture request is invalid")
-        transaction = self._transaction("enter_shadow_preview")
-        try:
-            transaction.begin()
-            row = self._connection.execute(
-                "SELECT active_policy_id,generation,posture FROM metadata_policy_state WHERE singleton=1"
-            ).fetchone()
-            if row is None or row[2] not in {"review", "preview", "automatic"}:
-                raise MetadataReportError("shadow posture is unavailable")
-            # Automatic decisions must never survive a posture change without
-            # re-projecting the exact-current cohort through the established
-            # F09 transition/work protocol.  A fresh generation makes both the
-            # bounded progress signal and the later confirmation check durable.
-            if row[2] == "automatic":
-                active_document = self._connection.execute(
-                    "SELECT document FROM metadata_policy_drafts WHERE policy_id=?",
-                    (row[0],),
-                ).fetchone()
-                if active_document is None or type(active_document[0]) is not str:
-                    raise MetadataReportError("shadow posture reconciliation is unavailable")
-                active_profile = MetadataPolicyProfile.from_data(json.loads(active_document[0]))
-                # A policy with no automatic destination has no affected
-                # automatic cohort.  Preserve the ordinary Preview workflow.
-                affected = (
-                    self._connection.execute("SELECT 1 FROM automatic_decisions LIMIT 1").fetchone()
-                    if any(value == "automatic" for _, value in active_profile.destinations)
-                    else None
-                )
-                # There is no prior automatic authority to reconcile until a
-                # current cohort has actually received an automatic decision.
-                # Initial Preview remains a harmless report-only entry.
-                if affected is not None:
-                    resolutions = tuple(self._connection.execute(
-                        "SELECT library_name,resolved_policy_id,document FROM metadata_policy_resolutions WHERE generation=? ORDER BY library_name",
-                        (row[1],),
-                    ).fetchall())
-                    if not resolutions:
-                        profile = active_profile
-                        libraries = self._connection.execute(
-                            "SELECT DISTINCT c.library_name " + _CURRENT_REVIEW_FROM_SQL + " ORDER BY c.library_name"
-                        ).fetchall()
-                        resolutions = tuple(
-                            (library[0], resolved.resolved_id, resolved.canonical_json)
-                            for library in libraries
-                            for resolved in (resolve_policy(profile, library[0]),)
-                        )
-                    self.activate_metadata_policy(
-                        row[0], row[0], resolutions, updated_at, reconcile_current=True
-                    )
-            self._connection.execute(
-                "UPDATE metadata_policy_state SET posture='preview' WHERE singleton=1"
-            )
-            transaction.commit()
-            return "preview"
-        except (sqlite3.Error, MetadataReportError) as error:
-            transaction.rollback()
-            if isinstance(error, MetadataReportError):
-                raise
-            raise MetadataReportError("shadow posture persistence failed") from error
+        return self._metadata_policy.enter_shadow_preview(updated_at)
 
     def activate_qualified_automatic(self, updated_at: int) -> str:
         return self._metadata_policy.activate_qualified_automatic(updated_at)

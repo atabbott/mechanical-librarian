@@ -19,14 +19,17 @@ instance or on the class, to force a failure or drift a value, and a captured
 bound method would bypass the substitution and leave those tests passing while
 testing nothing.
 
-- `_record_field_effect_event` writes `field_effect_events`, so it belongs
-  here, and it is deliberately still on the composing repository.
-  `test_guarded_faults_are_classified_by_cause` patches it on the repository
-  *class* and drives it through `service.apply`; once the six callers moved
-  here, resolving `self._record_field_effect_event` inside this module would
-  find this class instead and the forced disk failure would never happen. It
-  moves when the composition root owns dispatch. `claim_field_effect`, which
-  also calls it, is still on the composing repository for its own reasons.
+- `_record_field_effect_event` writes `field_effect_events`, so the statement
+  now lives here as `_append_field_effect_event`. The six callers in this
+  module, and `claim_field_effect` in `field_effect_activity.py`, still resolve
+  it through the injected `_record_field_effect_event` -- deliberately bouncing
+  out to the composing repository's delegating stub and back in, because
+  `test_guarded_faults_are_classified_by_cause` patches that name on the
+  repository *class* and drives it through `service.apply`. Calling the method
+  below directly would find this class instead and the forced disk failure
+  would never happen. The two names are distinct for the same reason: binding
+  the injected callable under the method's own name would shadow it and make
+  the delegating stub recurse.
 - `field_effect_consent_envelope_identity` binds consent to the exact current
   automatic policy semantics and reads the policy aggregate to do it.
   `test_semantic_consent_drift_wins_the_atomic_claim_race` patches it on the
@@ -1227,3 +1230,27 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         )
         if cursor.rowcount != 1:
             raise FieldEffectError("transition_conflict")
+
+    def _append_field_effect_event(self, operation: FieldEffectOperation,
+                                   kind: str, occurred_at: int) -> None:
+        """Append one immutable field-effect event inside the caller's scope."""
+        sequence = self._connection.execute(
+            "SELECT count(*)+1 FROM field_effect_events WHERE plan_id=?",
+            (operation.plan.plan_id,),
+        ).fetchone()[0]
+        content = {
+            "schema_version": "field-effect-event-v1", "plan_id": operation.plan.plan_id,
+            "decision_id": operation.plan.authority.decision_id,
+            "origin": operation.plan.authority.origin, "destination": operation.plan.destination,
+            "pre_value": operation.plan.pre_value, "desired_value": operation.plan.desired_value,
+            "state": operation.state, "attempt": operation.attempt, "failure": operation.failure,
+            "occurred_at": occurred_at, "kind": kind, "sequence": sequence,
+        }
+        event_id = "effect_event_" + hashlib.sha256(
+            canonical_effect_json(content).encode()
+        ).hexdigest()
+        document = canonical_effect_json({**content, "event_id": event_id})
+        self._connection.execute(
+            "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,document) VALUES(?,?,?,?,?,?)",
+            (event_id, operation.plan.plan_id, sequence, kind, occurred_at, document),
+        )

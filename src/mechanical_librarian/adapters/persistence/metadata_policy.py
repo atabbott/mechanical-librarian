@@ -14,13 +14,13 @@ Three seams cross this aggregate's boundary, and each is resolved differently:
   transaction. Those writes travel with it until the aggregates that own those
   tables are extracted; the transaction is this method's own, so they stay
   atomic with the activation either way.
-- `enter_shadow_preview` writes `metadata_policy_state` and belongs here, but
-  it is deliberately still on the composing repository. It calls
-  `activate_metadata_policy` to reconcile the automatic cohort, and a unit test
-  replaces that call on the repository to prove the posture rolls back when
-  reconciliation fails. Moving the method turns that call into an internal one
-  and silently disarms the assertion, so it moves when the composition root
-  owns dispatch and the substitution point is real again.
+- `enter_shadow_preview` writes `metadata_policy_state` and now lives here. It
+  calls `activate_metadata_policy` to reconcile the automatic cohort, and a
+  unit test replaces that call on the composing repository to prove the posture
+  rolls back when reconciliation fails; the call therefore travels as an
+  injected callable resolved through that repository at call time, so the
+  substitution point is still real. Calling this class's own method directly
+  would have silently disarmed the assertion.
 
 The shared current-review join lives in `review_sql.py` and the browse-row
 validator in `schema.py`, so neither is copied here.
@@ -74,11 +74,19 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         binding: _LinuxDatabaseBinding | None = None,
         *,
         restart_metadata_policy_work: Callable[[str, str, str, int], None],
+        activate_metadata_policy: Callable[..., PolicyTransition | None],
     ) -> None:
         super().__init__(connection, binding)
         # Review preparation owns `review_preparation_work`, so the restart it
         # performs is injected under the name the moved call sites already use.
         self._restart_metadata_policy_work = restart_metadata_policy_work
+        # `enter_shadow_preview` reconciles through the composing repository
+        # rather than calling this class's own `activate_metadata_policy`,
+        # because a unit test replaces that call on the repository to prove the
+        # posture rolls back when reconciliation fails. The hook cannot carry
+        # the public name: binding it there would shadow the definition below
+        # and make the composing repository's delegating stub recurse.
+        self._activate_metadata_policy = activate_metadata_policy
 
     def shadow_posture(self) -> str:
         """Return the closed global posture without implying authority."""
@@ -92,6 +100,68 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         except sqlite3.Error as error:
             raise MetadataReportError("shadow posture is unavailable") from error
 
+    def enter_shadow_preview(self, updated_at: int) -> str:
+        """Enter Preview and reconcile the exact-current cohort when leaving automatic."""
+        if type(updated_at) is not int or updated_at < 0:
+            raise MetadataReportError("shadow posture request is invalid")
+        transaction = self._transaction("enter_shadow_preview")
+        try:
+            transaction.begin()
+            row = self._connection.execute(
+                "SELECT active_policy_id,generation,posture FROM metadata_policy_state WHERE singleton=1"
+            ).fetchone()
+            if row is None or row[2] not in {"review", "preview", "automatic"}:
+                raise MetadataReportError("shadow posture is unavailable")
+            # Automatic decisions must never survive a posture change without
+            # re-projecting the exact-current cohort through the established
+            # F09 transition/work protocol.  A fresh generation makes both the
+            # bounded progress signal and the later confirmation check durable.
+            if row[2] == "automatic":
+                active_document = self._connection.execute(
+                    "SELECT document FROM metadata_policy_drafts WHERE policy_id=?",
+                    (row[0],),
+                ).fetchone()
+                if active_document is None or type(active_document[0]) is not str:
+                    raise MetadataReportError("shadow posture reconciliation is unavailable")
+                active_profile = MetadataPolicyProfile.from_data(json.loads(active_document[0]))
+                # A policy with no automatic destination has no affected
+                # automatic cohort.  Preserve the ordinary Preview workflow.
+                affected = (
+                    self._connection.execute("SELECT 1 FROM automatic_decisions LIMIT 1").fetchone()
+                    if any(value == "automatic" for _, value in active_profile.destinations)
+                    else None
+                )
+                # There is no prior automatic authority to reconcile until a
+                # current cohort has actually received an automatic decision.
+                # Initial Preview remains a harmless report-only entry.
+                if affected is not None:
+                    resolutions = tuple(self._connection.execute(
+                        "SELECT library_name,resolved_policy_id,document FROM metadata_policy_resolutions WHERE generation=? ORDER BY library_name",
+                        (row[1],),
+                    ).fetchall())
+                    if not resolutions:
+                        profile = active_profile
+                        libraries = self._connection.execute(
+                            "SELECT DISTINCT c.library_name " + _CURRENT_REVIEW_FROM_SQL + " ORDER BY c.library_name"
+                        ).fetchall()
+                        resolutions = tuple(
+                            (library[0], resolved.resolved_id, resolved.canonical_json)
+                            for library in libraries
+                            for resolved in (resolve_policy(profile, library[0]),)
+                        )
+                    self._activate_metadata_policy(
+                        row[0], row[0], resolutions, updated_at, reconcile_current=True
+                    )
+            self._connection.execute(
+                "UPDATE metadata_policy_state SET posture='preview' WHERE singleton=1"
+            )
+            transaction.commit()
+            return "preview"
+        except (sqlite3.Error, MetadataReportError) as error:
+            transaction.rollback()
+            if isinstance(error, MetadataReportError):
+                raise
+            raise MetadataReportError("shadow posture persistence failed") from error
 
     def activate_qualified_automatic(self, updated_at: int) -> str:
         """Confirm Preview only when every requested automatic option is sealed."""
