@@ -96,7 +96,7 @@ class ReviewFieldClassificationTests(unittest.TestCase):
 
             def read_review_attention(self, search, limit, offset):
                 self.offsets.append(offset)
-                rows = tuple(("case", "report", f"invalid-{index}", 1)
+                rows = tuple(("case", "report", f"invalid-{index}", 1, None, None)
                              for index in range(offset, offset + limit))
                 return ReviewAttentionSnapshot(rows, 99)
 
@@ -123,9 +123,9 @@ class ReviewFieldClassificationTests(unittest.TestCase):
 
     def test_attention_backfills_a_valid_successor_and_ends_honestly(self) -> None:
         rows = (
-            ("case", "report", "invalid", 1),
-            ("case", "report", "also-invalid", 1),
-            ("case", "report", "valid", 1),
+            ("case", "report", "invalid", 1, None, None),
+            ("case", "report", "also-invalid", 1, None, None),
+            ("case", "report", "valid", 1, None, None),
         )
 
         class Repository:
@@ -144,7 +144,7 @@ class ReviewFieldClassificationTests(unittest.TestCase):
         self.assertIsNone(page["next_cursor"])
 
     def test_attention_last_valid_raw_row_has_no_cursor_and_stable_raw_total(self) -> None:
-        rows = (("case", "report", "stale", 1), ("case", "report", "valid", 1))
+        rows = (("case", "report", "stale", 1, None, None), ("case", "report", "valid", 1, None, None))
 
         class Repository:
             def read_review_attention(self, search, limit, offset):
@@ -161,10 +161,10 @@ class ReviewFieldClassificationTests(unittest.TestCase):
 
     def test_attention_exact_boundary_all_contradictory_rows_proves_exhaustion(self) -> None:
         rows = (
-            ("case", "report", "stale-1", 1),
-            ("case", "report", "stale-2", 1),
-            ("case", "report", "stale-3", 1),
-            ("case", "report", "stale-4", 1),
+            ("case", "report", "stale-1", 1, None, None),
+            ("case", "report", "stale-2", 1, None, None),
+            ("case", "report", "stale-3", 1, None, None),
+            ("case", "report", "stale-4", 1, None, None),
         )
 
         class Repository:
@@ -184,7 +184,7 @@ class ReviewFieldClassificationTests(unittest.TestCase):
         self.assertEqual([0, 2], repository.offsets)
 
     def test_attention_terminal_contradictory_lookahead_has_no_empty_successor(self) -> None:
-        rows = (("case", "report", "valid", 1), ("case", "report", "invalid", 1))
+        rows = (("case", "report", "valid", 1, None, None), ("case", "report", "invalid", 1, None, None))
 
         class Repository:
             def read_review_attention(self, search, limit, offset):
@@ -202,7 +202,7 @@ class ReviewFieldClassificationTests(unittest.TestCase):
         self.assertEqual(2, page["total"])
 
     def test_attention_visible_successor_remains_at_next_cursor(self) -> None:
-        rows = (("case", "report", "valid-1", 1), ("case", "report", "invalid", 1), ("case", "report", "valid-2", 1))
+        rows = (("case", "report", "valid-1", 1, None, None), ("case", "report", "invalid", 1, None, None), ("case", "report", "valid-2", 1, None, None))
 
         class Repository:
             def __init__(self) -> None:

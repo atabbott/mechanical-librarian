@@ -1276,6 +1276,49 @@ class ReviewWebReadModelTests(ReviewWebTestCase):
         self.assertEqual(second.status_code, 200, second.text)
         self.assertEqual(second.json()["items"][0]["work_attention_count"], 3)
 
+    def test_attention_reads_the_automatic_outcome_and_cause_columns(self) -> None:
+        """The queue classifies from all six declared attention columns.
+
+        The reader consumed the last two positionally behind `len(row)`
+        guards, so a store that stopped at four columns produced a plain
+        "needs your review" queue with no failure anywhere (#703).
+        """
+        report = _bibliographic_report(
+            current_title="Mistborn Secret History",
+            providers=(
+                _bibliographic_source(
+                    "catalogue",
+                    "edition-1",
+                    titles=(),
+                    series="Mistborn",
+                ),
+            ),
+        )
+        case = ReviewCase.create(evaluate_report(report), report)
+        self.repository.browse_cases = [(case, report)]
+        self.repository.attention_causes["title"] = "automatic_safety_suspended"
+        self.repository.attention_dispositions["series"] = "abstention"
+        self._login()
+
+        response = self.client.get("/api/v1/attention?limit=10")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        reasons = {
+            item["destination"]: item["classification_reason"]
+            for item in response.json()["items"]
+        }
+        self.assertEqual(
+            reasons["title"],
+            "Automatic handling is suspended pending a safety recovery.",
+        )
+        self.assertEqual(
+            reasons["series"],
+            "Automatic handling abstained, so this field needs your review.",
+        )
+        # The third row carries neither column, so the two above prove the
+        # reader read them rather than a constant the double always emits.
+        self.assertEqual(reasons["subtitle"], "This field needs your review.")
+
     def test_cursor_encoder_never_emits_an_unreachable_offset(self) -> None:
         boundary = _encode_cursor(100_000, "library", "all", None)
         self.assertEqual(
