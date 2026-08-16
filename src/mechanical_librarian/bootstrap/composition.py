@@ -253,9 +253,6 @@ if TYPE_CHECKING:
         ReviewWebConfiguration,
         TargetConnectionConfiguration,
     )
-    from mechanical_librarian.application.continuous_field_effects import (
-        ContinuousFieldEffectRepository,
-    )
     from mechanical_librarian.application.field_effects import CapabilityObserver
     from mechanical_librarian.application.metadata_report import (
         EpubInspector,
@@ -442,10 +439,7 @@ def compose_continuous_guarded_application(
     if provider_recovery is None:
         raise ConfigurationError("provider recovery store is unavailable")
     return ContinuousGuardedApplication(
-        # The concrete repository implements every member of this contract; the
-        # protocol declares several of them with ``*values``/``**values``
-        # placeholders that no exact implementation can structurally satisfy.
-        cast("ContinuousFieldEffectRepository", repository),
+        repository,
         applications,
         capabilities,
         authority,
@@ -474,9 +468,7 @@ def compose_field_effect_activity_projection(
     if not configured:
         raise ConfigurationError("guarded application has no configured library")
     return ContinuousGuardedApplication(
-        # See ``compose_continuous_guarded_application`` for why this contract
-        # cannot be satisfied structurally.
-        cast("ContinuousFieldEffectRepository", repository),
+        repository,
         {},
         {},
         PersistedFieldEffectAuthority(repository),
