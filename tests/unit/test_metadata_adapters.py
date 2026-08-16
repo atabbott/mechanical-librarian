@@ -18,7 +18,7 @@ from unittest.mock import patch
 
 import httpx
 
-import mechanical_librarian.adapters.persistence.metadata_reports as metadata_persistence
+import mechanical_librarian.adapters.persistence.schema as persistence_schema
 import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
     AudiobookshelfItemReader,
@@ -172,13 +172,13 @@ def _target_snapshot(metadata: dict[str, object]) -> TargetSnapshot:
 
 def _create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
-        metadata_persistence._REPORTS_SQL.replace(
+        persistence_schema._REPORTS_SQL.replace(
             "= 'metadata-report-v26'", "= 'metadata-report-v1'"
         )
     )
-    connection.execute(metadata_persistence._CURRENT_SQL)
-    connection.execute(metadata_persistence._NO_UPDATE_SQL)
-    connection.execute(metadata_persistence._NO_DELETE_SQL)
+    connection.execute(persistence_schema._CURRENT_SQL)
+    connection.execute(persistence_schema._NO_UPDATE_SQL)
+    connection.execute(persistence_schema._NO_DELETE_SQL)
 
 
 def _create_prior_schema(
@@ -187,31 +187,31 @@ def _create_prior_schema(
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
     statements = (
-        metadata_persistence._REPORTS_SQL.replace(
+        persistence_schema._REPORTS_SQL.replace(
             "= 'metadata-report-v26'", f"= '{version}'"
         ),
-        metadata_persistence._CURRENT_SQL,
-        metadata_persistence._CURRENT_LINEAGE_SQL,
-        metadata_persistence._COVER_REFERENCES_SQL,
-        metadata_persistence._COVER_ARTIFACT_INDEX_SQL,
-        metadata_persistence._COVER_PREVIEW_INDEX_SQL,
-        metadata_persistence._PROPOSAL_SETS_SQL.replace(
+        persistence_schema._CURRENT_SQL,
+        persistence_schema._CURRENT_LINEAGE_SQL,
+        persistence_schema._COVER_REFERENCES_SQL,
+        persistence_schema._COVER_ARTIFACT_INDEX_SQL,
+        persistence_schema._COVER_PREVIEW_INDEX_SQL,
+        persistence_schema._PROPOSAL_SETS_SQL.replace(
             f"= '{POLICY_VERSION}'",
             f"= '{proposal_policy}'",
         ),
-        metadata_persistence._REVIEW_CASES_SQL,
-        metadata_persistence._REVIEW_POINTERS_SQL,
-        metadata_persistence._REVIEW_TRANSITIONS_SQL,
-        metadata_persistence._NO_UPDATE_SQL,
-        metadata_persistence._COVER_NO_UPDATE_SQL,
-        metadata_persistence._COVER_NO_DELETE_SQL,
-        metadata_persistence._PROPOSAL_NO_UPDATE_SQL,
-        metadata_persistence._PROPOSAL_NO_DELETE_SQL,
-        metadata_persistence._REVIEW_NO_UPDATE_SQL,
-        metadata_persistence._REVIEW_NO_DELETE_SQL,
-        metadata_persistence._REVIEW_TRANSITION_NO_UPDATE_SQL,
-        metadata_persistence._REVIEW_TRANSITION_NO_DELETE_SQL,
-        metadata_persistence._NO_DELETE_SQL,
+        persistence_schema._REVIEW_CASES_SQL,
+        persistence_schema._REVIEW_POINTERS_SQL,
+        persistence_schema._REVIEW_TRANSITIONS_SQL,
+        persistence_schema._NO_UPDATE_SQL,
+        persistence_schema._COVER_NO_UPDATE_SQL,
+        persistence_schema._COVER_NO_DELETE_SQL,
+        persistence_schema._PROPOSAL_NO_UPDATE_SQL,
+        persistence_schema._PROPOSAL_NO_DELETE_SQL,
+        persistence_schema._REVIEW_NO_UPDATE_SQL,
+        persistence_schema._REVIEW_NO_DELETE_SQL,
+        persistence_schema._REVIEW_TRANSITION_NO_UPDATE_SQL,
+        persistence_schema._REVIEW_TRANSITION_NO_DELETE_SQL,
+        persistence_schema._NO_DELETE_SQL,
     )
     for statement in statements:
         connection.execute(statement)
@@ -484,46 +484,46 @@ class MetadataPersistenceTests(unittest.TestCase):
                 "F09k report schema",
                 lambda connection: (
                     connection.execute(
-                        metadata_persistence._REPORTS_SQL.replace(
+                        persistence_schema._REPORTS_SQL.replace(
                             "= 'metadata-report-v6'",
                             "= 'metadata-report-v5'",
                         )
                     ),
-                    connection.execute(metadata_persistence._CURRENT_SQL),
-                    connection.execute(metadata_persistence._NO_UPDATE_SQL),
-                    connection.execute(metadata_persistence._NO_DELETE_SQL),
+                    connection.execute(persistence_schema._CURRENT_SQL),
+                    connection.execute(persistence_schema._NO_UPDATE_SQL),
+                    connection.execute(persistence_schema._NO_DELETE_SQL),
                 ),
             ),
             (
                 "F09i document bound",
                 lambda connection: (
                     connection.execute(
-                        metadata_persistence._REPORTS_SQL.replace(
+                        persistence_schema._REPORTS_SQL.replace(
                             "BETWEEN 2 AND 2097152", "BETWEEN 2 AND 262144"
                         )
                     ),
-                    connection.execute(metadata_persistence._CURRENT_SQL),
-                    connection.execute(metadata_persistence._NO_UPDATE_SQL),
-                    connection.execute(metadata_persistence._NO_DELETE_SQL),
+                    connection.execute(persistence_schema._CURRENT_SQL),
+                    connection.execute(persistence_schema._NO_UPDATE_SQL),
+                    connection.execute(persistence_schema._NO_DELETE_SQL),
                 ),
             ),
             (
                 "F09j one mebibyte bound",
                 lambda connection: (
                     connection.execute(
-                        metadata_persistence._REPORTS_SQL.replace(
+                        persistence_schema._REPORTS_SQL.replace(
                             "BETWEEN 2 AND 2097152", "BETWEEN 2 AND 1048576"
                         )
                     ),
-                    connection.execute(metadata_persistence._CURRENT_SQL),
-                    connection.execute(metadata_persistence._NO_UPDATE_SQL),
-                    connection.execute(metadata_persistence._NO_DELETE_SQL),
+                    connection.execute(persistence_schema._CURRENT_SQL),
+                    connection.execute(persistence_schema._NO_UPDATE_SQL),
+                    connection.execute(persistence_schema._NO_DELETE_SQL),
                 ),
             ),
             (
                 "intermediate extra column",
                 lambda connection: (
-                    connection.execute(metadata_persistence._REPORTS_SQL),
+                    connection.execute(persistence_schema._REPORTS_SQL),
                     connection.execute("ALTER TABLE metadata_reports ADD COLUMN intermediate TEXT"),
                 ),
             ),
@@ -618,7 +618,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             repository = open_repository(path)
             report = _report()
             repository.publish(report, lambda: True)
-            outbox_id = metadata_persistence._provider_recovery_outbox_id(
+            outbox_id = persistence_schema._provider_recovery_outbox_id(
                 report.target.connection, report.target.library,
                 report.target.item, None, report.report_id, None, None,
                 "report_only",
@@ -852,7 +852,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             connection.execute("DROP TRIGGER metadata_reports_no_update")
             document = "{}"
             connection.execute("UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?", (document, hashlib.sha256(document.encode()).hexdigest(), other.report_id))
-            connection.execute(metadata_persistence._NO_UPDATE_SQL)
+            connection.execute(persistence_schema._NO_UPDATE_SQL)
             connection.commit()
             connection.close()
             repository = open_repository(path)
@@ -984,7 +984,7 @@ class MetadataPersistenceTests(unittest.TestCase):
 
             try:
                 with patch.object(
-                    metadata_persistence.sqlite3,
+                    persistence_schema.sqlite3,
                     "connect",
                     side_effect=swapping_connect,
                 ), self.assertRaises(MetadataReportError):
@@ -1025,7 +1025,7 @@ class MetadataPersistenceTests(unittest.TestCase):
 
             try:
                 with patch.object(
-                    metadata_persistence.sqlite3,
+                    persistence_schema.sqlite3,
                     "connect",
                     side_effect=double_swapping_connect,
                 ):
@@ -1106,7 +1106,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             try:
                 # A journal descriptor may close between the connection proof's
                 # setup and SQLite opening its exact database descriptor.
-                connection = metadata_persistence._connect_bound(
+                connection = persistence_schema._connect_bound(
                     path,
                     descriptor,
                     lambda: os.close(churned_descriptor),
@@ -1140,7 +1140,7 @@ class MetadataPersistenceTests(unittest.TestCase):
                 return real_connect(database, *args, **kwargs)
 
             with patch.object(
-                metadata_persistence.sqlite3,
+                persistence_schema.sqlite3,
                 "connect",
                 side_effect=racing_connect,
             ), self.assertRaises(MetadataReportError):
@@ -1195,7 +1195,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             binding = repository._binding
             self.assertIsNotNone(binding)
             require_current = cast(
-                "metadata_persistence._LinuxDatabaseBinding", binding
+                "persistence_schema._LinuxDatabaseBinding", binding
             ).require_current
             calls = 0
 
