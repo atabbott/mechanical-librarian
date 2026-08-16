@@ -122,7 +122,6 @@ from mechanical_librarian.application.metadata_report import (
     CoverReadError,
     CoverSourceChangedError,
     CoverTimeoutError,
-    CredentialError,
     CurrentnessError,
     GenerateMetadataReport,
     InspectionResult,
@@ -151,10 +150,7 @@ from mechanical_librarian.application.provider_recovery_evidence import (
 from mechanical_librarian.application.provider_recovery_evidence import (  # noqa: F401  # reason: the composition root keeps this established private alias so tests/integration/test_provider_recovery_composition.py reaches the relocated helper unchanged
     provider_recovery_jobs as _provider_recovery_jobs,
 )
-from mechanical_librarian.application.provider_recovery_evidence import (
-    provider_statuses as _provider_statuses,
-)
-from mechanical_librarian.application.provider_recovery_evidence import (
+from mechanical_librarian.application.provider_recovery_evidence import (  # noqa: F401  # reason: the composition root keeps this established private alias so tests/unit/test_provider_recovery.py reaches the relocated helper unchanged
     record_provider_recovery_observations as _record_provider_recovery_observations,
 )
 from mechanical_librarian.application.provider_recovery_runner import (
@@ -166,9 +162,7 @@ from mechanical_librarian.application.provider_retry_successor import (
     ProviderRetrySuccessorError,
 )
 from mechanical_librarian.application.review_application import (
-    ReviewApplicationError,
     compose_review_application,
-    prepare_cover_consideration,
 )
 from mechanical_librarian.application.review_cases import (
     AdmitReviewCase,
@@ -180,6 +174,9 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
     ReviewPreparationPipeline,
     ReviewPreparationSupervisor,
+)
+from mechanical_librarian.application.review_pipeline_stages import (
+    ReviewPipelineStages,
 )
 from mechanical_librarian.bootstrap.contained_reviewer import run_cover_packet_reviewer
 from mechanical_librarian.domain.cover_evidence import (
@@ -212,10 +209,6 @@ from mechanical_librarian.domain.metadata_report import (
     claim_scope,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet
-from mechanical_librarian.domain.review_case import (
-    ReviewAdmissionResult,
-    ReviewAdmissionStaleError,
-)
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from mechanical_librarian.infrastructure.local_media import (
     LocalMediaError,
@@ -271,7 +264,6 @@ if TYPE_CHECKING:
     )
     from mechanical_librarian.application.operations import StageTimer
     from mechanical_librarian.application.provider_recovery_runner import RecoveryRun
-    from mechanical_librarian.application.review_application import SerializedGate
     from mechanical_librarian.application.review_pipeline import (
         ReviewPipelineRepository,
     )
@@ -1286,110 +1278,51 @@ def create_review_pipeline(
                 repository.close()
 
     # The pipeline hands every stage callback back exactly the repository
-    # ``repository_factory`` above created, so each callback narrows the seam's
+    # ``repository_factory`` above created, so each of these narrows the seam's
     # ``ReviewPipelineRepository`` to that concrete adapter where it needs a
     # capability the seam does not name.
-    def extract(
-        pipeline_repository: ReviewPipelineRepository, action: PipelineAction,
-        claim_next: bool,
-    ) -> tuple[str, bool]:
-        catalogue = open_catalogue(catalogue_path, create=False)
-        try:
-            entry = catalogue.latest_entry(
-                action.catalogue_fingerprint or "",
-                (
-                    action.connection,
-                    action.library,
-                    action.library_id,
-                    action.item_id or "",
-                ),
-            )
-        except CatalogueError as error:
-            raise ReviewPipelineError("stale") from error
-        finally:
-            catalogue.close()
-        if (
-            entry is None
-            or entry.file_identity != action.file_identity
-            or entry.source_fingerprint != action.source_fingerprint
-            or not entry.eligible
-        ):
-            raise ReviewPipelineError("stale")
-        recover_artifacts_once()
-        try:
-            serialized = run_metadata_report_loaded(
-                configuration,
-                database_path,
-                artifact_store_path,
-                action.connection,
-                action.library,
-                action.item_id or "",
-                0,
-                expected_file_identity=action.file_identity,
-                open_library_pacer=open_library_pacer,
-                hardcover_pacer=hardcover_pacer,
-                review_action=action,
-                recover_artifacts=False,
-                repository_authority=database_authority,
-                pipeline_repository=cast("SQLiteMetadataReportRepository", pipeline_repository),
-                review_claim_next=claim_next,
-                timing=timing,
-            )
-        except CredentialError as error:
-            if error.provider is None:
-                raise ReviewPipelineError("authentication") from error
-            provider = next(
-                (value for value in configuration.providers if value.name == error.provider),
-                None,
-            )
-            if provider is None:
-                raise ReviewPipelineError("configuration") from error
-            provider_recovery.observe_failure(
-                connection=provider.name, adapter=provider.adapter,
-                scope=action.library,
-                generation=configuration.provider_recovery_generation,
-                failure="authentication", now=int(time.time()),
-            )
-            raise ReviewPipelineError(
-                "authentication", root=error.provider
-            ) from error
-        except (CurrentnessError, TargetNotFoundError) as error:
-            raise ReviewPipelineError("stale") from error
-        value = MetadataReport.from_json(serialized)
-        return value.report_id, True
+    def catalogue_repository(create: bool) -> SQLiteCatalogueRepository:
+        return open_catalogue(catalogue_path, create=create)
 
-    def providers(
-        pipeline_repository: ReviewPipelineRepository, report_id: str
-    ) -> tuple[ProviderStatus, ...]:
-        value = MetadataReport.from_json(cast("SQLiteMetadataReportRepository", pipeline_repository).get(report_id))
-        _record_provider_recovery_observations(
-            provider_recovery, value,
-            adapters={provider.name: provider.adapter for provider in configuration.providers},
-            scope=value.target.library,
-            generation=configuration.provider_recovery_generation, now=int(time.time()),
-        )
-        return _provider_statuses(value)
-
-    def propose(
-        pipeline_repository: ReviewPipelineRepository, report_id: str
+    def generate_report(
+        action: PipelineAction, claim_next: bool,
+        pipeline_repository: ReviewPipelineRepository,
     ) -> str:
-        try:
-            serialized = create_proposal_set_loaded(
-                configuration,
-                database_path,
-                artifact_store_path,
-                report_id,
-                database_authority,
-                cast("SQLiteMetadataReportRepository", pipeline_repository),
-            )
-        except ProposalCurrentnessError as error:
-            raise ReviewPipelineError("stale") from error
-        return ProposalSet.from_json(serialized).proposal_set_id
+        return run_metadata_report_loaded(
+            configuration,
+            database_path,
+            artifact_store_path,
+            action.connection,
+            action.library,
+            action.item_id or "",
+            0,
+            expected_file_identity=action.file_identity,
+            open_library_pacer=open_library_pacer,
+            hardcover_pacer=hardcover_pacer,
+            review_action=action,
+            recover_artifacts=False,
+            repository_authority=database_authority,
+            pipeline_repository=cast("SQLiteMetadataReportRepository", pipeline_repository),
+            review_claim_next=claim_next,
+            timing=timing,
+        )
 
-    def admit(
-        pipeline_repository: ReviewPipelineRepository, proposal_set_id: str
-    ) -> tuple[str, str | None]:
-        serialized = admit_review_case_loaded(
+    def create_proposal_set_for(
+        report_id: str, pipeline_repository: ReviewPipelineRepository
+    ) -> str:
+        return create_proposal_set_loaded(
+            configuration,
+            database_path,
+            artifact_store_path,
+            report_id,
+            database_authority,
+            cast("SQLiteMetadataReportRepository", pipeline_repository),
+        )
+
+    def admit_review_case_for(
+        proposal_set_id: str, pipeline_repository: ReviewPipelineRepository
+    ) -> str:
+        return admit_review_case_loaded(
             configuration,
             database_path,
             artifact_store_path,
@@ -1397,134 +1330,37 @@ def create_review_pipeline(
             database_authority,
             cast("SQLiteMetadataReportRepository", pipeline_repository),
         )
-        result = ReviewAdmissionResult.from_json(serialized)
-        if result.status == "stale":
-            raise ReviewPipelineError("stale")
-        return result.status, result.review_case_id
 
-    def project(
+    def cover_considerations(
         pipeline_repository: ReviewPipelineRepository,
-        action: PipelineAction | str,
-    ) -> str:
-        try:
-            if type(action) is str:
-                outcome = pipeline_repository.persist_shadow_outcome(
-                    action, int(time.time())
-                )
-                return "stale" if outcome == "stale" else "complete"
-            # The branch above already returned for an exact ``str``; mypy keeps
-            # ``str`` in the union here only because a ``str`` subclass would
-            # fail that exact test, which this seam never supplies.
-            staged = cast("PipelineAction", action)
-            if staged.review_case_id is None:
-                raise ReviewPipelineError("state")
-            outcome = pipeline_repository.persist_shadow_outcome(
-                staged.review_case_id, int(time.time()), staged_action=staged
-            )
-            if outcome == "stale":
-                return "stale"
-            return "complete"
-        except Exception as error:
-            raise ReviewPipelineError("projection") from error
-
-    def prepare_cover(
-        pipeline_repository: ReviewPipelineRepository, action: PipelineAction
-    ) -> None:
-        if action.review_case_id is None:
-            return
-        try:
-            def snapshot() -> tuple[str, str, bool] | None:
-                return cast(
-                    "SQLiteMetadataReportRepository", pipeline_repository
-                ).read_staged_cover_preparation(action)
-
-            if snapshot() is None:
-                return
-            considerations = _compose_cover_considerations(
-                cast("SQLiteMetadataReportRepository", pipeline_repository),
-                artifact_store_path,
-                # Callers reject an absent review configuration before composing.
-                cast("ReviewWebConfiguration", configuration.review),
-            )
-            prepare_cover_consideration(
-                None,
-                considerations,
-                action.review_case_id,
-                serialized=lambda call: call(),
-                snapshot=snapshot,
-                # The adapter's gate is not written generically, so it cannot
-                # structurally satisfy the return-type-preserving protocol.
-                finalize=cast(
-                    "SerializedGate",
-                    cast(
-                        "SQLiteMetadataReportRepository", pipeline_repository
-                    ).atomic_cover_preparation,
-                ),
-            )
-        except ReviewAdmissionStaleError as error:
-            raise ReviewPipelineError("stale") from error
-        except ReviewApplicationError as error:
-            raise ReviewPipelineError(error.code) from error
-        except Exception as error:
-            raise ReviewPipelineError("persistence") from error
-
-    def after_advance(
-        pipeline_repository: ReviewPipelineRepository, action: PipelineAction,
-        output_id: str | None,
-    ) -> None:
-        """Drain the durable cutover outbox after every final advancement."""
-        if not (
-            action.stage == "projection"
-            or (action.stage == "admission" and output_id is None)
-        ) or action.report_id is None:
-            return
-        activation.drain_outbox(
-            cast("ProviderRecoveryRepository", pipeline_repository)
+    ) -> CoverConsiderationService:
+        return _compose_cover_considerations(
+            cast("SQLiteMetadataReportRepository", pipeline_repository),
+            artifact_store_path,
+            # Callers reject an absent review configuration before composing.
+            cast("ReviewWebConfiguration", configuration.review),
         )
 
-    def check_connection(connection: str) -> None:
-        if connection not in clients:
-            raise ReviewPipelineError("library")
-        reader.probe_connection(
-            connection,
-            tuple(value for value in configuration.libraries if value.connection == connection),
-        )
-
-    pipeline = ReviewPreparationPipeline(
+    stages = ReviewPipelineStages(
+        configuration=configuration,
+        catalogue=catalogue_repository,
+        catalogue_reader=reader,
+        probe_connection=reader.probe_connection,
+        connections=frozenset(clients),
         repository_factory=repository_factory,
-        libraries=tuple(
-            (
-                library.connection,
-                library.name,
-                library.library_id,
-                batch_fingerprint(
-                    configuration,
-                    (
-                        BatchSelection(
-                            library.connection,
-                            library.name,
-                            library.library_id,
-                            "producer",
-                            None,
-                            "producer",
-                            False,
-                        ),
-                    ),
-                ),
-            )
-            for library in configuration.libraries
+        recover_artifacts=recover_artifacts_once,
+        generate_report=generate_report,
+        create_proposal_set=create_proposal_set_for,
+        admit_review_case=admit_review_case_for,
+        cover_considerations=cover_considerations,
+        recovery_observer=provider_recovery,
+        drain_outbox=lambda repository: activation.drain_outbox(
+            cast("ProviderRecoveryRepository", repository)
         ),
-        discover=discover,
-        extract=extract,
-        providers=providers,
-        propose=propose,
-        admit=admit,
-        project=project,
-        before_projection=prepare_cover,
-        after_advance=after_advance,
-        check_connection=check_connection,
-        timing=timing,
+        discovery_lock=discovery_lock,
+        clock=lambda: int(time.time()),
     )
+    pipeline = stages.pipeline(timing)
     pipeline_holder["pipeline"] = pipeline
     provider_recovery.require_generation_compatible(
         generation=configuration.provider_recovery_generation
