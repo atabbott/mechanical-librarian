@@ -246,7 +246,6 @@ if TYPE_CHECKING:
         ContinuousFieldEffectRepository,
     )
     from mechanical_librarian.application.field_effects import CapabilityObserver
-    from mechanical_librarian.application.metadata_policy import PolicyTransition
     from mechanical_librarian.application.metadata_report import (
         MetadataProvider,
         ReportRepository,
@@ -257,12 +256,6 @@ if TYPE_CHECKING:
     from mechanical_librarian.application.review_pipeline import (
         ReviewPipelineRepository,
     )
-    from mechanical_librarian.application.review_web import (
-        CurrentReviewCaseSnapshot,
-        ReviewAttentionSnapshot,
-        ReviewLibrarySnapshot,
-    )
-    from mechanical_librarian.domain.human_decision import HumanDecision
     from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
     from mechanical_librarian.domain.provider_recovery import ProviderRecovery
 
@@ -942,227 +935,6 @@ class _NonClosingRepository:
 
     def close(self) -> None:
         return None
-
-
-# The six review ports below used to receive one object: the whole SQLite
-# repository, whose public surface is now the compatibility face of thirteen
-# aggregate modules. These facades give each port exactly the members its
-# protocol names, so the type checker can no longer let an application service
-# reach a capability its port never declared.
-#
-# Each facade forwards to the composing repository rather than to the aggregate
-# behind it, and that is deliberate. Repository-level substitution is how a
-# dozen tests force an interleaving, a stale read or a disk failure at an exact
-# statement; dispatching straight to an aggregate would step around every one of
-# them and leave those tests passing while testing nothing. Narrowing what the
-# application can see is the point here -- not shortening the call chain.
-
-
-class _BrowserStateOwnerPort:
-    """Expose only the lifecycle and status members `BrowserStateOwner` names."""
-
-    def __init__(self, repository: SQLiteMetadataReportRepository) -> None:
-        self._repository = repository
-
-    def close(self) -> None:
-        self._repository.close()
-
-    def operational_snapshot(self) -> dict[str, object]:
-        return self._repository.operational_snapshot()
-
-    def field_effect_capability_suspension(
-        self, connection: str, destination: str
-    ) -> str | None:
-        return self._repository.field_effect_capability_suspension(
-            connection, destination
-        )
-
-
-class _ReviewSessionPort:
-    """Expose only the five members `ReviewSessionStore` names."""
-
-    def __init__(self, repository: SQLiteMetadataReportRepository) -> None:
-        self._repository = repository
-
-    def begin_login(
-        self, now: int, window_seconds: int, maximum_failures: int
-    ) -> bool:
-        return self._repository.begin_login(now, window_seconds, maximum_failures)
-
-    def create_review_session(
-        self,
-        session_digest: str,
-        csrf_digest: str,
-        created_at: int,
-        expires_at: int,
-    ) -> None:
-        self._repository.create_review_session(
-            session_digest, csrf_digest, created_at, expires_at
-        )
-
-    def authenticate_review_session(
-        self, session_digest: str, now: int
-    ) -> tuple[str, str, int]:
-        return self._repository.authenticate_review_session(session_digest, now)
-
-    def rotate_review_session_csrf(
-        self, session_digest: str, csrf_digest: str, now: int
-    ) -> str:
-        return self._repository.rotate_review_session_csrf(
-            session_digest, csrf_digest, now
-        )
-
-    def revoke_review_session(
-        self, session_digest: str, csrf_digest: str, now: int
-    ) -> str:
-        return self._repository.revoke_review_session(
-            session_digest, csrf_digest, now
-        )
-
-
-class _CurrentReviewCasePort:
-    """Expose only the four members `CurrentReviewCaseStore` names."""
-
-    def __init__(self, repository: SQLiteMetadataReportRepository) -> None:
-        self._repository = repository
-
-    def review_case_exists(self, review_case_id: str) -> bool:
-        return self._repository.review_case_exists(review_case_id)
-
-    def get_review_case(self, review_case_id: str) -> str:
-        return self._repository.get_review_case(review_case_id)
-
-    def review_case_ready_at(self, review_case_id: str) -> int | None:
-        return self._repository.review_case_ready_at(review_case_id)
-
-    def read_current_review_case(
-        self, review_case_id: str, history_limit: int | None
-    ) -> "CurrentReviewCaseSnapshot":
-        return self._repository.read_current_review_case(
-            review_case_id, history_limit
-        )
-
-
-class _HumanDecisionPort(_CurrentReviewCasePort):
-    """Add only the two writes `HumanDecisionStore` names to the case port."""
-
-    def find_human_decision(self, idempotency_digest: str) -> str | None:
-        return self._repository.find_human_decision(idempotency_digest)
-
-    def record_human_decision(
-        self,
-        decision: "HumanDecision",
-        *,
-        cover_consideration_id: str | None = None,
-    ) -> str:
-        return self._repository.record_human_decision(
-            decision, cover_consideration_id=cover_consideration_id
-        )
-
-
-class _ReviewLibraryPort:
-    """Expose only the two projections `ReviewLibraryStore` names."""
-
-    def __init__(self, repository: SQLiteMetadataReportRepository) -> None:
-        self._repository = repository
-
-    def read_review_library(
-        self,
-        search: str | None,
-        limit: int,
-        offset: int,
-        attention: bool | None,
-    ) -> "ReviewLibrarySnapshot":
-        return self._repository.read_review_library(
-            search, limit, offset, attention
-        )
-
-    def read_review_attention(
-        self, search: str | None, limit: int, offset: int
-    ) -> "ReviewAttentionSnapshot":
-        return self._repository.read_review_attention(search, limit, offset)
-
-
-class _PolicyImpactPort:
-    """Expose only the policy and posture members `PolicyImpactRepository` names."""
-
-    def __init__(self, repository: SQLiteMetadataReportRepository) -> None:
-        self._repository = repository
-
-    def current_unapplied_count(self, library: str) -> int:
-        return self._repository.current_unapplied_count(library)
-
-    def current_policy_impact_pairs(
-        self, library: str, limit: int
-    ) -> tuple[int, tuple[tuple[MetadataReport, ProposalSet], ...]]:
-        return self._repository.current_policy_impact_pairs(library, limit)
-
-    def create_metadata_policy_draft(self, document: str) -> str:
-        return self._repository.create_metadata_policy_draft(document)
-
-    def get_metadata_policy_draft(self, policy_id: str) -> str:
-        return self._repository.get_metadata_policy_draft(policy_id)
-
-    def active_metadata_policy(self) -> str:
-        return self._repository.active_metadata_policy()
-
-    def activate_metadata_policy(
-        self,
-        policy_id: str,
-        expected_active_policy_id: str,
-        resolutions: tuple[tuple[str, str, str], ...],
-        activated_at: int,
-    ) -> "PolicyTransition | None":
-        return self._repository.activate_metadata_policy(
-            policy_id, expected_active_policy_id, resolutions, activated_at
-        )
-
-    def metadata_policy_transition(self) -> "PolicyTransition | None":
-        return self._repository.metadata_policy_transition()
-
-    def retry_metadata_policy_transition(
-        self, transition_id: str, retried_at: int
-    ) -> "PolicyTransition":
-        return self._repository.retry_metadata_policy_transition(
-            transition_id, retried_at
-        )
-
-    def acknowledge_metadata_policy_transition(
-        self, transition_id: str, acknowledged_at: int
-    ) -> "PolicyTransition":
-        return self._repository.acknowledge_metadata_policy_transition(
-            transition_id, acknowledged_at
-        )
-
-    def current_resolved_policy_id(self, library: str) -> str:
-        return self._repository.current_resolved_policy_id(library)
-
-    def current_resolved_metadata_policy(
-        self, library: str
-    ) -> "ResolvedMetadataPolicy | None":
-        return self._repository.current_resolved_metadata_policy(library)
-
-    def metadata_policy_resolution_for_preview(
-        self, library: str
-    ) -> "ResolvedMetadataPolicy | None":
-        return self._repository.metadata_policy_resolution_for_preview(library)
-
-    def metadata_policy_preview_baseline(
-        self, libraries: tuple[str, ...]
-    ) -> tuple[str, tuple[tuple[str, "ResolvedMetadataPolicy | None"], ...]]:
-        return self._repository.metadata_policy_preview_baseline(libraries)
-
-    def shadow_posture(self) -> str:
-        return self._repository.shadow_posture()
-
-    def enter_shadow_preview(self, updated_at: int) -> str:
-        return self._repository.enter_shadow_preview(updated_at)
-
-    def activate_qualified_automatic(self, updated_at: int) -> str:
-        return self._repository.activate_qualified_automatic(updated_at)
-
-    def list_shadow_outcomes(self, limit: int) -> tuple[tuple[str, int], ...]:
-        return self._repository.list_shadow_outcomes(limit)
 
 
 def run_metadata_report_loaded(configuration: ApplicationConfiguration, database_path: Path, artifact_store_path: Path, connection_name: str, library_name: str, item: str, file_index: int, expected_file_identity: str | None = None, credentials: dict[str, str] | None = None, repository_identity: tuple[int, int] | None = None, artifact_identity: tuple[int, int] | None = None, open_library_pacer: OpenLibraryPacer | None = None, hardcover_pacer: HardcoverPacer | None = None, review_action: PipelineAction | None = None, recover_artifacts: bool = True, repository_authority: object | None = None, pipeline_repository: SQLiteMetadataReportRepository | None = None, review_claim_next: bool = False, timing: StageTimer | None = None) -> str:
@@ -2350,12 +2122,12 @@ def run_review_server(
                 repository, artifact_store_path, review
             )
             review_application = compose_review_application(
-                state_owner=_BrowserStateOwnerPort(repository),
-                session_store=_ReviewSessionPort(repository),
-                case_store=_CurrentReviewCasePort(repository),
-                decision_store=_HumanDecisionPort(repository),
-                library_store=_ReviewLibraryPort(repository),
-                policy_store=_PolicyImpactPort(repository),
+                state_owner=repository,
+                session_store=repository,
+                case_store=repository,
+                decision_store=repository,
+                library_store=repository,
+                policy_store=repository,
                 verify_password=load_owner_password_verifier(
                     Path(review.owner_password_hash_file)
                 ),
@@ -2459,12 +2231,12 @@ def run_cover_review(
             repository, artifact_store_path, configuration.review
         )
         application = compose_review_application(
-            state_owner=_BrowserStateOwnerPort(repository),
-            session_store=_ReviewSessionPort(repository),
-            case_store=_CurrentReviewCasePort(repository),
-            decision_store=_HumanDecisionPort(repository),
-            library_store=_ReviewLibraryPort(repository),
-            policy_store=_PolicyImpactPort(repository),
+            state_owner=repository,
+            session_store=repository,
+            case_store=repository,
+            decision_store=repository,
+            library_store=repository,
+            policy_store=repository,
             verify_password=lambda _: False,
             clock=lambda: int(time.time()),
             session_lifetime_seconds=1,

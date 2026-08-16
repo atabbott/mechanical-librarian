@@ -13,10 +13,9 @@
   and validation, and no statement outside a module writes the tables that
   module owns. `metadata_reports.py` keeps the factory, the read-only shadow
   preview reader, and the compatibility surface every existing caller imports,
-  so no import statement, application port, or call site was rewritten. The
-  composition root now hands each of the six review ports its own narrow
-  object, so an application service can no longer reach a persistence
-  capability its port never declared.
+  so no import statement, application port, or call site was rewritten, and the
+  composition root still wires the same object into the same protocol-typed
+  parameters it always did.
   One behaviour deliberately changed, and only one. Transactions were
   hand-rolled at 56 separate `BEGIN IMMEDIATE` sites, of which exactly one
   handled nesting; a cross-module call inside an open transaction would either
