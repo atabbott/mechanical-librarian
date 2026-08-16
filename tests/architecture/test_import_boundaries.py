@@ -143,21 +143,41 @@ def test_http_interface_receives_only_composed_review_application() -> None:
     assert "class ReviewWebRepository" not in review_services
 
 
+def _registered_commands(path: Path) -> list[str]:
+    """Every command name passed to `add_parser`, read from the syntax tree.
+
+    A text search for `add_parser("name"` finds a registration only while it
+    stays on one physical line, so it silently stops finding one the moment a
+    formatter wraps the call -- which is how a command could be re-added
+    without this proof noticing. The names are read as literals instead, so the
+    proof holds whatever shape the source takes.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    return [
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "add_parser"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ]
+
+
 def test_runtime_has_one_cli_command_and_no_write_authority() -> None:
-    cli = (PACKAGE_ROOT / "interfaces" / "cli" / "__init__.py").read_text(
-        encoding="utf-8"
-    )
-    assert cli.count('add_parser("review-serve"') == 1
+    commands = _registered_commands(PACKAGE_ROOT / "interfaces" / "cli" / "__init__.py")
+    assert commands.count("review-serve") == 1
     for unsupported in (
-        'add_parser("metadata-report"',
-        'add_parser("proposal-set',
-        'add_parser("review-case',
-        'add_parser("catalogue"',
-        'add_parser("batch"',
-        'add_parser("shadow-review',
-        'add_parser("reviewer-auth',
+        "metadata-report",
+        "proposal-set",
+        "review-case",
+        "catalogue",
+        "batch",
+        "shadow-review",
+        "reviewer-auth",
     ):
-        assert unsupported not in cli
+        assert not [name for name in commands if name.startswith(unsupported)]
     source = "\n".join(
         path.read_text(encoding="utf-8") for path in PACKAGE_ROOT.rglob("*.py")
     )
