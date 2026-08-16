@@ -5,9 +5,10 @@ import json
 import os
 import re
 import tempfile
-import unittest
+from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
@@ -68,8 +69,10 @@ def _write_bundle(root: Path) -> str:
     return identity
 
 
-class ReactActivationTests(unittest.TestCase):
-    def setUp(self) -> None:
+class _Case:
+    """The temporary tree, repository and client a `setUp` used to carry."""
+
+    def __init__(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name)
         password_hash = root / "owner.hash"
@@ -101,119 +104,131 @@ class ReactActivationTests(unittest.TestCase):
         )
         self.origin = {"Origin": "https://review.test"}
 
-    def tearDown(self) -> None:
+    def close(self) -> None:
         self.client.close()
         self.temporary.cleanup()
 
-    def _login(self) -> dict[str, object]:
-        response = self.client.post(
-            "/api/v1/session/login",
-            headers=self.origin,
-            json={"password": "correct horse"},
+
+@pytest.fixture
+def case() -> Iterator[_Case]:
+    prepared = _Case()
+    try:
+        yield prepared
+    finally:
+        prepared.close()
+
+
+def _login(case: _Case) -> dict[str, object]:
+    response = case.client.post(
+        "/api/v1/session/login",
+        headers=case.origin,
+        json={"password": "correct horse"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_authenticated_routes_share_shell_and_rotate_csrf(case: _Case) -> None:
+    login = _login(case)
+    paths = (
+        "/library",
+        "/attention",
+        f"/review/{case.case_id}",
+        "/policy",
+        "/activity",
+    )
+    normalized: list[str] = []
+    tokens: list[str] = []
+    for path in paths:
+        response = case.client.get(path)
+        assert response.status_code == 200, response.text
+        assert f'data-build-identity="{case.identity}"' in response.text
+        match = re.search(
+            r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', response.text
         )
-        self.assertEqual(response.status_code, 200, response.text)
-        return response.json()
-
-    def test_authenticated_routes_share_shell_and_rotate_csrf(self) -> None:
-        login = self._login()
-        paths = (
-            "/library",
-            "/attention",
-            f"/review/{self.case_id}",
-            "/policy",
-            "/activity",
+        assert match is not None
+        tokens.append(match.group(1))
+        normalized.append(
+            re.sub(r'data-csrf-token="[A-Za-z0-9_-]+"', "data-csrf-token", response.text)
         )
-        normalized: list[str] = []
-        tokens: list[str] = []
-        for path in paths:
-            response = self.client.get(path)
-            self.assertEqual(response.status_code, 200, response.text)
-            self.assertIn(f'data-build-identity="{self.identity}"', response.text)
-            match = re.search(
-                r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', response.text
-            )
-            self.assertIsNotNone(match)
-            assert match is not None
-            tokens.append(match.group(1))
-            normalized.append(
-                re.sub(r'data-csrf-token="[A-Za-z0-9_-]+"', "data-csrf-token", response.text)
-            )
-        self.assertEqual(len(set(normalized)), 1)
-        self.assertEqual(len(set(tokens)), len(paths))
-        self.assertNotIn(login["csrf_token"], tokens)
-
-    def test_root_and_unknown_review_entry_preserve_client_recovery(self) -> None:
-        root = self.client.get("/", follow_redirects=False)
-        self.assertEqual(root.status_code, 303)
-        self.assertEqual(root.headers["location"], "/login")
-
-        self._login()
-        for _ in range(2):
-            page = self.client.get("/review/case-1")
-            self.assertEqual(page.status_code, 200, page.text)
-            self.assertIn(f'data-build-identity="{self.identity}"', page.text)
-
-        missing = self.client.get("/api/v1/review-cases/case-1")
-        self.assertEqual(missing.status_code, 404, missing.text)
-        self.assertEqual(missing.json()["error"]["code"], "not_found")
-
-    def test_only_manifest_admitted_non_shell_assets_are_served(self) -> None:
-        script = self.client.get(
-            "/assets/review-app/assets/index-deadbeef.js"
-        )
-        self.assertEqual(script.status_code, 200)
-        self.assertEqual(script.content, b"window.reviewReady=true;")
-        self.assertTrue(script.headers["content-type"].startswith("text/javascript"))
-        self.assertEqual(self.client.get("/assets/review-app/index.html").status_code, 404)
-        self.assertEqual(self.client.get("/assets/review-app/assets/other.js").status_code, 404)
-        for retired in ("activity.js", "policy.js", "review.js"):
-            self.assertEqual(self.client.get(f"/assets/{retired}").status_code, 404)
-
-    def test_build_identity_fails_closed_before_logout_authority(self) -> None:
-        self._login()
-        page = self.client.get("/library")
-        csrf = re.search(r'data-csrf-token="([A-Za-z0-9_-]+)"', page.text)
-        assert csrf is not None
-        base_headers = {**self.origin, "X-CSRF-Token": csrf.group(1)}
-        missing = self.client.post("/api/v1/session/logout", headers=base_headers)
-        self.assertEqual(missing.status_code, 409)
-        self.assertEqual(missing.json()["error"]["code"], "browser_build_mismatch")
-        self.assertEqual(self.client.get("/library").status_code, 200)
-        mismatch = self.client.post(
-            "/api/v1/session/logout",
-            headers={**base_headers, "x-ml-build-identity": "0" * 64},
-        )
-        self.assertEqual(mismatch.status_code, 409)
-        current_page = self.client.get("/library")
-        current_csrf = re.search(
-            r'data-csrf-token="([A-Za-z0-9_-]+)"', current_page.text
-        )
-        assert current_csrf is not None
-        accepted = self.client.post(
-            "/api/v1/session/logout",
-            headers={
-                **self.origin,
-                "X-CSRF-Token": current_csrf.group(1),
-                "x-ml-build-identity": self.identity,
-            },
-        )
-        self.assertEqual(accepted.status_code, 204, accepted.text)
-
-    def test_deep_corrupt_manifest_is_one_stable_workspace_recovery(self) -> None:
-        (self.asset_root / "review-assets-v1.json").write_text(
-            "[" * 20_000 + "]" * 20_000,
-            encoding="utf-8",
-        )
-        self._login()
-
-        first = self.client.get("/library")
-        second = self.client.get("/library")
-
-        self.assertEqual(first.status_code, 503)
-        self.assertEqual(second.status_code, 503)
-        self.assertEqual(first.text, second.text)
-        self.assertIn("Review workspace unavailable", first.text)
+    assert len(set(normalized)) == 1
+    assert len(set(tokens)) == len(paths)
+    assert login["csrf_token"] not in tokens
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_root_and_unknown_review_entry_preserve_client_recovery(case: _Case) -> None:
+    root = case.client.get("/", follow_redirects=False)
+    assert root.status_code == 303
+    assert root.headers["location"] == "/login"
+
+    _login(case)
+    for _ in range(2):
+        page = case.client.get("/review/case-1")
+        assert page.status_code == 200, page.text
+        assert f'data-build-identity="{case.identity}"' in page.text
+
+    missing = case.client.get("/api/v1/review-cases/case-1")
+    assert missing.status_code == 404, missing.text
+    assert missing.json()["error"]["code"] == "not_found"
+
+
+@pytest.mark.parametrize("retired", ("activity.js", "policy.js", "review.js"))
+def test_only_manifest_admitted_non_shell_assets_are_served(
+    case: _Case, retired: str
+) -> None:
+    script = case.client.get(
+        "/assets/review-app/assets/index-deadbeef.js"
+    )
+    assert script.status_code == 200
+    assert script.content == b"window.reviewReady=true;"
+    assert script.headers["content-type"].startswith("text/javascript")
+    assert case.client.get("/assets/review-app/index.html").status_code == 404
+    assert case.client.get("/assets/review-app/assets/other.js").status_code == 404
+    assert case.client.get(f"/assets/{retired}").status_code == 404
+
+
+def test_build_identity_fails_closed_before_logout_authority(case: _Case) -> None:
+    _login(case)
+    page = case.client.get("/library")
+    csrf = re.search(r'data-csrf-token="([A-Za-z0-9_-]+)"', page.text)
+    assert csrf is not None
+    base_headers = {**case.origin, "X-CSRF-Token": csrf.group(1)}
+    missing = case.client.post("/api/v1/session/logout", headers=base_headers)
+    assert missing.status_code == 409
+    assert missing.json()["error"]["code"] == "browser_build_mismatch"
+    assert case.client.get("/library").status_code == 200
+    mismatch = case.client.post(
+        "/api/v1/session/logout",
+        headers={**base_headers, "x-ml-build-identity": "0" * 64},
+    )
+    assert mismatch.status_code == 409
+    current_page = case.client.get("/library")
+    current_csrf = re.search(
+        r'data-csrf-token="([A-Za-z0-9_-]+)"', current_page.text
+    )
+    assert current_csrf is not None
+    accepted = case.client.post(
+        "/api/v1/session/logout",
+        headers={
+            **case.origin,
+            "X-CSRF-Token": current_csrf.group(1),
+            "x-ml-build-identity": case.identity,
+        },
+    )
+    assert accepted.status_code == 204, accepted.text
+
+
+def test_deep_corrupt_manifest_is_one_stable_workspace_recovery(case: _Case) -> None:
+    (case.asset_root / "review-assets-v1.json").write_text(
+        "[" * 20_000 + "]" * 20_000,
+        encoding="utf-8",
+    )
+    _login(case)
+
+    first = case.client.get("/library")
+    second = case.client.get("/library")
+
+    assert first.status_code == 503
+    assert second.status_code == 503
+    assert first.text == second.text
+    assert "Review workspace unavailable" in first.text

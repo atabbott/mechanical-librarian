@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import unittest
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
+
+import pytest
 
 from mechanical_librarian.domain import shadow_decision as shadow_decision_module
 from mechanical_librarian.domain.metadata_report import (
@@ -245,370 +246,354 @@ def _combination_seam(
     )
 
 
-class ShadowDecisionTests(unittest.TestCase):
-    def test_supported_fields_select_the_unique_eligible_candidate(self) -> None:
-        for destination in (
-            "title",
-            "authors",
-            "language",
-            "publisher",
-            "publishedDate",
-            "publishedYear",
-        ):
-            with self.subTest(destination=destination):
-                packet = _packet(destination)
-                result = decide_shadow_packet(packet)
-                self.assertEqual(1, len(result.decisions))
-                decision = result.decisions[0]
-                self.assertEqual("recommend_candidate", decision.recommendation)
-                self.assertEqual("unique_supported_candidate", decision.reason_code)
-                self.assertIsNotNone(
-                    compile_shadow_review_actions(packet).action_for(
-                        decision.proposal_id,
-                        decision.recommendation,
-                        decision.candidate_id,
-                    )
-                )
+@pytest.mark.parametrize(
+    "destination",
+    (
+        "title",
+        "authors",
+        "language",
+        "publisher",
+        "publishedDate",
+        "publishedYear",
+    ),
+)
+def test_supported_fields_select_the_unique_eligible_candidate(destination) -> None:
+    packet = _packet(destination)
+    result = decide_shadow_packet(packet)
+    assert 1 == len(result.decisions)
+    decision = result.decisions[0]
+    assert "recommend_candidate" == decision.recommendation
+    assert "unique_supported_candidate" == decision.reason_code
+    assert compile_shadow_review_actions(packet).action_for(
+            decision.proposal_id,
+            decision.recommendation,
+            decision.candidate_id,
+        ) is not None
 
-    def test_report_only_source_evidence_is_not_blocked_by_write_sufficiency(self) -> None:
-        for destination in (
-            "authors",
-            "language",
-            "publisher",
-            "publishedDate",
-            "publishedYear",
-        ):
-            with self.subTest(destination=destination):
-                packet = _packet(
-                    destination,
-                    sufficiency="manual",
-                    provider_support=0,
-                    target_only=1,
-                )
-                decision = decide_shadow_packet(packet).decisions[0]
-                self.assertEqual("recommend_candidate", decision.recommendation)
-                self.assertEqual("unique_supported_candidate", decision.reason_code)
 
-    def test_report_only_source_evidence_still_requires_local_support(self) -> None:
-        for destination in (
-            "authors",
-            "language",
-            "publisher",
-            "publishedDate",
-            "publishedYear",
-        ):
-            with self.subTest(destination=destination):
-                decision = decide_shadow_packet(
-                    _packet(destination, provider_support=1, local_support=0)
-                ).decisions[0]
-                self.assertEqual("manual", decision.recommendation)
-                self.assertEqual("insufficient_support", decision.reason_code)
+@pytest.mark.parametrize(
+    "destination",
+    (
+        "authors",
+        "language",
+        "publisher",
+        "publishedDate",
+        "publishedYear",
+    ),
+)
+def test_report_only_source_evidence_is_not_blocked_by_write_sufficiency(destination) -> None:
+    packet = _packet(
+        destination,
+        sufficiency="manual",
+        provider_support=0,
+        target_only=1,
+    )
+    decision = decide_shadow_packet(packet).decisions[0]
+    assert "recommend_candidate" == decision.recommendation
+    assert "unique_supported_candidate" == decision.reason_code
 
-    def test_ambiguous_report_only_source_candidates_abstain(self) -> None:
-        decision = decide_shadow_packet(
-            _packet("publisher", provider_support=0, candidate_count=2)
-        ).decisions[0]
-        self.assertEqual("manual", decision.recommendation)
-        self.assertEqual("ambiguous_eligible_actions", decision.reason_code)
 
-    def test_every_unsupported_field_selects_exact_manual_action(self) -> None:
-        for destination in (
-            "subtitle",
-            "narrators",
-            "series",
-            "genres",
-            "description",
-            "isbn",
-            "asin",
-            "explicit",
-            "tags",
-            "cover",
-        ):
-            with self.subTest(destination=destination):
-                result = decide_shadow_packet(_packet(destination))
-                decision = result.decisions[0]
-                self.assertEqual("manual", decision.recommendation)
-                self.assertEqual("unsupported_destination", decision.reason_code)
+@pytest.mark.parametrize(
+    "destination",
+    (
+        "authors",
+        "language",
+        "publisher",
+        "publishedDate",
+        "publishedYear",
+    ),
+)
+def test_report_only_source_evidence_still_requires_local_support(destination) -> None:
+    decision = decide_shadow_packet(
+        _packet(destination, provider_support=1, local_support=0)
+    ).decisions[0]
+    assert "manual" == decision.recommendation
+    assert "insufficient_support" == decision.reason_code
 
-    def test_insufficient_conflicting_and_ambiguous_inputs_abstain(self) -> None:
-        controls = (
-            (_packet(sufficiency="manual"), "evidence_sufficiency_manual"),
-            (_packet(provider_support=0), "insufficient_support"),
-            (_packet(local_support=0), "insufficient_support"),
-            (_packet(target_only=1), "target_only_preservation"),
-            (_packet(candidate_count=0), "no_eligible_action"),
-            (_packet(candidate_count=2), "ambiguous_eligible_actions"),
-        )
-        for packet, reason in controls:
-            with self.subTest(reason=reason):
-                decision = decide_shadow_packet(packet).decisions[0]
-                self.assertEqual("manual", decision.recommendation)
-                self.assertEqual(reason, decision.reason_code)
 
-    def test_keep_current_requires_one_evidence_positive_preservation(self) -> None:
-        data = json.loads(_packet().to_json())
-        proposal = data["proposals"][0]
-        proposal["decision_summary"]["evidence_sufficiency"] = "keep_current"
-        proposal["current"] = {"state": "value", "value": "Synthetic title"}
-        proposal["candidates"][0]["assessment"] = "preserves_target"
-        decision = decide_shadow_packet(_rebuild(data)).decisions[0]
-        self.assertEqual("recommend_keep_current", decision.recommendation)
-        self.assertEqual("unique_supported_preservation", decision.reason_code)
+def test_ambiguous_report_only_source_candidates_abstain() -> None:
+    decision = decide_shadow_packet(
+        _packet("publisher", provider_support=0, candidate_count=2)
+    ).decisions[0]
+    assert "manual" == decision.recommendation
+    assert "ambiguous_eligible_actions" == decision.reason_code
 
-        proposal["candidates"][0]["decision_summary"]["support"][
-            "independent_provider_correlations"
-        ] = 0
-        decision = decide_shadow_packet(_rebuild(data)).decisions[0]
-        self.assertEqual("manual", decision.recommendation)
-        self.assertEqual("insufficient_support", decision.reason_code)
 
-    def test_published_date_precision_refinement_abstains_safely(self) -> None:
-        month = json.loads(_packet("publishedDate").to_json())
-        month_candidate = month["proposals"][0]["candidates"][0]
-        month_candidate["date_precision"] = "month"
-        month_candidate["value"] = {"kind": "text", "value": "2024-08"}
-        month_candidate["decision_summary"]["publication"]["precision"] = "month"
-        self.assertEqual(
-            "manual", decide_shadow_packet(_rebuild(month)).decisions[0].recommendation
-        )
+@pytest.mark.parametrize(
+    "destination",
+    (
+        "subtitle",
+        "narrators",
+        "series",
+        "genres",
+        "description",
+        "isbn",
+        "asin",
+        "explicit",
+        "tags",
+        "cover",
+    ),
+)
+def test_every_unsupported_field_selects_exact_manual_action(destination) -> None:
+    result = decide_shadow_packet(_packet(destination))
+    decision = result.decisions[0]
+    assert "manual" == decision.recommendation
+    assert "unsupported_destination" == decision.reason_code
 
-        timestamp = json.loads(_packet("publishedDate").to_json())
-        timestamp["citations"][0]["fact"]["date_precision"] = "timestamp"
-        self.assertEqual(
-            "manual",
-            decide_shadow_packet(_rebuild(timestamp)).decisions[0].recommendation,
-        )
 
-        timestamp["proposals"][0]["candidates"][0]["decision_summary"]["support"][
-            "independent_provider_correlations"
-        ] = 2
-        self.assertEqual(
-            "recommend_candidate",
-            decide_shadow_packet(_rebuild(timestamp)).decisions[0].recommendation,
-        )
+@pytest.mark.parametrize(
+    ("packet", "reason"),
+    (
+        pytest.param(
+            _packet(sufficiency="manual"),
+            "evidence_sufficiency_manual",
+            id="manual_sufficiency",
+        ),
+        pytest.param(
+            _packet(provider_support=0), "insufficient_support", id="no_provider_support"
+        ),
+        pytest.param(
+            _packet(local_support=0), "insufficient_support", id="no_local_support"
+        ),
+        pytest.param(
+            _packet(target_only=1), "target_only_preservation", id="target_only"
+        ),
+        pytest.param(
+            _packet(candidate_count=0), "no_eligible_action", id="no_candidate"
+        ),
+        pytest.param(
+            _packet(candidate_count=2), "ambiguous_eligible_actions", id="two_candidates"
+        ),
+    ),
+)
+def test_insufficient_conflicting_and_ambiguous_inputs_abstain(packet, reason) -> None:
+    decision = decide_shadow_packet(packet).decisions[0]
+    assert "manual" == decision.recommendation
+    assert reason == decision.reason_code
 
-    def test_supported_title_projects_through_exact_unsupported_witnesses(self) -> None:
-        packet = _combination_packet()
-        self.assertEqual(1, len(packet.bibliographic_combinations))
-        catalogue = compile_shadow_review_actions(packet)
-        decisions = {
-            value.destination: value for value in decide_shadow_packet(packet).decisions
-        }
 
-        title = decisions["title"]
-        self.assertEqual("recommend_candidate", title.recommendation)
-        self.assertEqual("unique_supported_candidate", title.reason_code)
-        selected = catalogue.action_for(
-            title.proposal_id,
-            title.recommendation,
-            title.candidate_id,
-        )
-        self.assertIsNotNone(selected)
-        assert selected is not None
-        self.assertEqual(selected.action_id, title.action_id)
-        self.assertEqual(selected.citation_ids, title.citation_ids)
-        self.assertEqual(selected.combination_ids, title.combination_ids)
+def test_keep_current_requires_one_evidence_positive_preservation() -> None:
+    data = json.loads(_packet().to_json())
+    proposal = data["proposals"][0]
+    proposal["decision_summary"]["evidence_sufficiency"] = "keep_current"
+    proposal["current"] = {"state": "value", "value": "Synthetic title"}
+    proposal["candidates"][0]["assessment"] = "preserves_target"
+    decision = decide_shadow_packet(_rebuild(data)).decisions[0]
+    assert "recommend_keep_current" == decision.recommendation
+    assert "unique_supported_preservation" == decision.reason_code
 
-        for destination in ("subtitle", "series"):
-            with self.subTest(destination=destination):
-                sibling = decisions[destination]
-                manual = catalogue.action_for(sibling.proposal_id, "manual", None)
-                self.assertIsNotNone(manual)
-                assert manual is not None
-                self.assertEqual(manual.action_id, sibling.action_id)
-                self.assertEqual("manual", sibling.recommendation)
-                self.assertEqual("unsupported_destination", sibling.reason_code)
-                self.assertEqual(manual.citation_ids, sibling.citation_ids)
-                self.assertEqual((), sibling.combination_ids)
+    proposal["candidates"][0]["decision_summary"]["support"][
+        "independent_provider_correlations"
+    ] = 0
+    decision = decide_shadow_packet(_rebuild(data)).decisions[0]
+    assert "manual" == decision.recommendation
+    assert "insufficient_support" == decision.reason_code
 
-    def test_supported_title_preservation_projects_through_exact_witnesses(self) -> None:
+
+def test_published_date_precision_refinement_abstains_safely() -> None:
+    month = json.loads(_packet("publishedDate").to_json())
+    month_candidate = month["proposals"][0]["candidates"][0]
+    month_candidate["date_precision"] = "month"
+    month_candidate["value"] = {"kind": "text", "value": "2024-08"}
+    month_candidate["decision_summary"]["publication"]["precision"] = "month"
+    assert "manual" == decide_shadow_packet(_rebuild(month)).decisions[0].recommendation
+
+    timestamp = json.loads(_packet("publishedDate").to_json())
+    timestamp["citations"][0]["fact"]["date_precision"] = "timestamp"
+    assert "manual" == decide_shadow_packet(_rebuild(timestamp)).decisions[0].recommendation
+
+    timestamp["proposals"][0]["candidates"][0]["decision_summary"]["support"][
+        "independent_provider_correlations"
+    ] = 2
+    assert "recommend_candidate" == decide_shadow_packet(_rebuild(timestamp)).decisions[0].recommendation
+
+
+def test_supported_title_projects_through_exact_unsupported_witnesses() -> None:
+    packet = _combination_packet()
+    assert 1 == len(packet.bibliographic_combinations)
+    catalogue = compile_shadow_review_actions(packet)
+    decisions = {
+        value.destination: value for value in decide_shadow_packet(packet).decisions
+    }
+
+    title = decisions["title"]
+    assert "recommend_candidate" == title.recommendation
+    assert "unique_supported_candidate" == title.reason_code
+    selected = catalogue.action_for(
+        title.proposal_id,
+        title.recommendation,
+        title.candidate_id,
+    )
+    assert selected is not None
+    assert selected is not None
+    assert selected.action_id == title.action_id
+    assert selected.citation_ids == title.citation_ids
+    assert selected.combination_ids == title.combination_ids
+
+    for destination in ("subtitle", "series"):
+        sibling = decisions[destination]
+        manual = catalogue.action_for(sibling.proposal_id, "manual", None)
+        assert manual is not None
+        assert manual is not None
+        assert manual.action_id == sibling.action_id
+        assert "manual" == sibling.recommendation
+        assert "unsupported_destination" == sibling.reason_code
+        assert manual.citation_ids == sibling.citation_ids
+        assert () == sibling.combination_ids
+
+
+def test_supported_title_preservation_projects_through_exact_witnesses() -> None:
+    decisions = {
+        value.destination: value
+        for value in decide_shadow_packet(
+            _combination_packet(current_title="Synthetic Work")
+        ).decisions
+    }
+    assert "recommend_keep_current" == decisions["title"].recommendation
+    assert "unique_supported_preservation" == decisions["title"].reason_code
+    for destination in ("subtitle", "series"):
+        assert "manual" == decisions[destination].recommendation
+        assert "unsupported_destination" == decisions[destination].reason_code
+
+
+def test_evidence_backed_title_conflict_selects_only_the_supported_bundle() -> None:
+    report = _bibliographic_report(
+        current_title="Current Work",
+        local_claims=(_local_title("Synthetic Work"),),
+        providers=(
+            _source(
+                "current_catalogue",
+                "edition-current",
+                titles=("Current Work",),
+                series="Synthetic Series",
+            ),
+            _source(
+                "supported_catalogue",
+                "edition-supported",
+                titles=("Synthetic Work",),
+                series="Synthetic Series",
+            ),
+        ),
+    )
+    proposal = evaluate_report(report)
+    title_result = next(
+        value
+        for value in proposal.results
+        if value.destination.value == "title"
+    )
+    assert "unresolved_choice" == title_result.outcome.value
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+
+    title = next(
+        value
+        for value in decide_shadow_packet(packet).decisions
+        if value.destination == "title"
+    )
+
+    assert "recommend_candidate" == title.recommendation
+    assert "unique_supported_candidate" == title.reason_code
+    selected = next(
+        candidate
+        for proposal_value in packet.proposals
+        if proposal_value["proposal_id"] == title.proposal_id
+        for candidate in proposal_value["candidates"]
+        if candidate["candidate_id"] == title.candidate_id
+    )
+    assert {"kind": "text", "value": "Synthetic Work"} == selected["value"]
+
+
+@pytest.mark.parametrize(
+    ("destination", "variant"),
+    (
+        pytest.param("series", "missing", id="series_missing"),
+        pytest.param("series", "excluded", id="series_excluded"),
+        pytest.param("series", "unbound", id="series_unbound"),
+        pytest.param("subtitle", "wrong_kind", id="subtitle_wrong_kind"),
+        pytest.param("series", "wrong_candidate", id="series_wrong_candidate"),
+    ),
+)
+def test_missing_excluded_wrong_or_unbound_witness_keeps_title_manual(
+    destination, variant
+) -> None:
+    packet = _combination_packet()
+    catalogue = _catalogue_with_witness_variant(
+        packet,
+        destination=destination,
+        variant=variant,
+    )
+    with patch(
+        "mechanical_librarian.domain.shadow_decision."
+        "compile_shadow_review_actions",
+        return_value=catalogue,
+    ):
         decisions = {
             value.destination: value
-            for value in decide_shadow_packet(
-                _combination_packet(current_title="Synthetic Work")
-            ).decisions
+            for value in decide_shadow_packet(packet).decisions
         }
-        self.assertEqual("recommend_keep_current", decisions["title"].recommendation)
-        self.assertEqual(
-            "unique_supported_preservation", decisions["title"].reason_code
-        )
-        for destination in ("subtitle", "series"):
-            self.assertEqual("manual", decisions[destination].recommendation)
-            self.assertEqual(
-                "unsupported_destination", decisions[destination].reason_code
-            )
+    assert "manual" == decisions["title"].recommendation
+    assert "bibliographic_combination_unresolved" == decisions["title"].reason_code
+    for sibling in ("subtitle", "series"):
+        assert "manual" == decisions[sibling].recommendation
+        assert "unsupported_destination" == decisions[sibling].reason_code
 
-    def test_evidence_backed_title_conflict_selects_only_the_supported_bundle(self) -> None:
-        report = _bibliographic_report(
-            current_title="Current Work",
-            local_claims=(_local_title("Synthetic Work"),),
-            providers=(
-                _source(
-                    "current_catalogue",
-                    "edition-current",
-                    titles=("Current Work",),
-                    series="Synthetic Series",
-                ),
-                _source(
-                    "supported_catalogue",
-                    "edition-supported",
-                    titles=("Synthetic Work",),
-                    series="Synthetic Series",
-                ),
-            ),
-        )
-        proposal = evaluate_report(report)
-        title_result = next(
-            value
-            for value in proposal.results
-            if value.destination.value == "title"
-        )
-        self.assertEqual("unresolved_choice", title_result.outcome.value)
-        packet = ShadowReviewPacket.create(
-            ReviewCase.create(proposal, report), proposal, report
+
+def test_unbound_eligible_title_does_not_preempt_exact_combination_match() -> None:
+    packet = _combination_packet()
+    catalogue = compile_shadow_review_actions(packet)
+    title_proposal = next(
+        value for value in packet.proposals if value["destination"] == "title"
+    )
+    title_action = next(
+        value
+        for value in catalogue.actions
+        if value.proposal_id == title_proposal["proposal_id"]
+        and value.recommendation == "recommend_candidate"
+    )
+    competing = PolicyAction(
+        _action_id(
+            title_action.proposal_id,
+            "recommend_candidate",
+            "alternative_" + "f" * 64,
+        ),
+        title_action.proposal_id,
+        title_action.destination,
+        "recommend_candidate",
+        "alternative_" + "f" * 64,
+        title_action.citation_ids,
+        title_action.combination_ids,
+    )
+    original = shadow_decision_module._eligible_actions
+
+    def ambiguous(
+        packet_value: ShadowReviewPacket,
+        catalogue_value: PolicyActionCatalogue,
+        proposal: dict[str, object],
+    ) -> tuple[PolicyAction, ...]:
+        eligible = original(packet_value, catalogue_value, proposal)
+        return (
+            (*eligible, competing)
+            if proposal["destination"] == "title"
+            else eligible
         )
 
+    with patch(
+        "mechanical_librarian.domain.shadow_decision._eligible_actions",
+        side_effect=ambiguous,
+    ):
         title = next(
             value
             for value in decide_shadow_packet(packet).decisions
             if value.destination == "title"
         )
+    assert "recommend_candidate" == title.recommendation
+    assert "unique_supported_candidate" == title.reason_code
 
-        self.assertEqual("recommend_candidate", title.recommendation)
-        self.assertEqual("unique_supported_candidate", title.reason_code)
-        selected = next(
-            candidate
-            for proposal_value in packet.proposals
-            if proposal_value["proposal_id"] == title.proposal_id
-            for candidate in proposal_value["candidates"]
-            if candidate["candidate_id"] == title.candidate_id
-        )
-        self.assertEqual(
-            {"kind": "text", "value": "Synthetic Work"}, selected["value"]
-        )
 
-    def test_missing_excluded_wrong_or_unbound_witness_keeps_title_manual(self) -> None:
-        packet = _combination_packet()
-        controls = (
-            ("series", "missing"),
-            ("series", "excluded"),
-            ("series", "unbound"),
-            ("subtitle", "wrong_kind"),
-            ("series", "wrong_candidate"),
-        )
-        for destination, variant in controls:
-            with self.subTest(destination=destination, variant=variant):
-                catalogue = _catalogue_with_witness_variant(
-                    packet,
-                    destination=destination,
-                    variant=variant,
-                )
-                with patch(
-                    "mechanical_librarian.domain.shadow_decision."
-                    "compile_shadow_review_actions",
-                    return_value=catalogue,
-                ):
-                    decisions = {
-                        value.destination: value
-                        for value in decide_shadow_packet(packet).decisions
-                    }
-                self.assertEqual("manual", decisions["title"].recommendation)
-                self.assertEqual(
-                    "bibliographic_combination_unresolved",
-                    decisions["title"].reason_code,
-                )
-                for sibling in ("subtitle", "series"):
-                    self.assertEqual("manual", decisions[sibling].recommendation)
-                    self.assertEqual(
-                        "unsupported_destination", decisions[sibling].reason_code
-                    )
-
-    def test_unbound_eligible_title_does_not_preempt_exact_combination_match(self) -> None:
-        packet = _combination_packet()
-        catalogue = compile_shadow_review_actions(packet)
-        title_proposal = next(
-            value for value in packet.proposals if value["destination"] == "title"
-        )
-        title_action = next(
-            value
-            for value in catalogue.actions
-            if value.proposal_id == title_proposal["proposal_id"]
-            and value.recommendation == "recommend_candidate"
-        )
-        competing = PolicyAction(
-            _action_id(
-                title_action.proposal_id,
-                "recommend_candidate",
-                "alternative_" + "f" * 64,
-            ),
-            title_action.proposal_id,
-            title_action.destination,
-            "recommend_candidate",
-            "alternative_" + "f" * 64,
-            title_action.citation_ids,
-            title_action.combination_ids,
-        )
-        original = shadow_decision_module._eligible_actions
-
-        def ambiguous(
-            packet_value: ShadowReviewPacket,
-            catalogue_value: PolicyActionCatalogue,
-            proposal: dict[str, object],
-        ) -> tuple[PolicyAction, ...]:
-            eligible = original(packet_value, catalogue_value, proposal)
-            return (
-                (*eligible, competing)
-                if proposal["destination"] == "title"
-                else eligible
-            )
-
-        with patch(
-            "mechanical_librarian.domain.shadow_decision._eligible_actions",
-            side_effect=ambiguous,
-        ):
-            title = next(
-                value
-                for value in decide_shadow_packet(packet).decisions
-                if value.destination == "title"
-            )
-        self.assertEqual("recommend_candidate", title.recommendation)
-        self.assertEqual("unique_supported_candidate", title.reason_code)
-
-    def test_identical_fully_witnessed_combinations_select_title_once(self) -> None:
-        packet = _combination_packet(
-            providers=(
-                _source(
-                    "hardcover",
-                    "edition-1",
-                    titles=("Synthetic Work",),
-                    subtitle="Synthetic Subtitle",
-                ),
-                _source(
-                    "open_library",
-                    "edition-2",
-                    titles=("Synthetic Work",),
-                    series="Synthetic Series",
-                ),
-            )
-        )
-        self.assertEqual(2, len(packet.bibliographic_combinations))
-        decisions = {
-            value.destination: value for value in decide_shadow_packet(packet).decisions
-        }
-        self.assertEqual("recommend_candidate", decisions["title"].recommendation)
-        self.assertEqual(
-            "unique_supported_candidate", decisions["title"].reason_code
-        )
-        self.assertEqual(
-            tuple(
-                value["combination_id"]
-                for value in packet.bibliographic_combinations
-            ),
-            decisions["title"].combination_ids,
-        )
-
-    def test_identical_combination_projection_is_provider_order_invariant(self) -> None:
-        providers = (
+def test_identical_fully_witnessed_combinations_select_title_once() -> None:
+    packet = _combination_packet(
+        providers=(
             _source(
                 "hardcover",
                 "edition-1",
@@ -622,206 +607,226 @@ class ShadowDecisionTests(unittest.TestCase):
                 series="Synthetic Series",
             ),
         )
-        first = decide_shadow_packet(_combination_packet(providers=providers))
-        second = decide_shadow_packet(
-            _combination_packet(providers=tuple(reversed(providers)))
-        )
-        self.assertEqual(first.to_json(), second.to_json())
+    )
+    assert 2 == len(packet.bibliographic_combinations)
+    decisions = {
+        value.destination: value for value in decide_shadow_packet(packet).decisions
+    }
+    assert "recommend_candidate" == decisions["title"].recommendation
+    assert "unique_supported_candidate" == decisions["title"].reason_code
+    assert tuple(
+            value["combination_id"]
+            for value in packet.bibliographic_combinations
+        ) == decisions["title"].combination_ids
 
-    def test_combination_seam_requires_at_least_one_unanimous_full_action(self) -> None:
-        self.assertEqual(
-            "at_least_one",
-            shadow_decision_module._RULE_TABLE["combinations"][
-                "fully_witnessed_combination_requirement"
-            ],
-        )
-        packet = _combination_packet(
-            providers=(
-                _source(
-                    "hardcover",
-                    "edition-1",
-                    titles=("Synthetic Work",),
-                    subtitle="Synthetic Subtitle",
-                ),
-                _source(
-                    "open_library",
-                    "edition-2",
-                    titles=("Synthetic Work",),
-                    series="Synthetic Series",
-                ),
-            )
-        )
-        catalogue = compile_shadow_review_actions(packet)
-        title = next(
-            value
-            for value in catalogue.actions
-            if value.destination == "title" and value.recommendation != "manual"
-        )
-        first_id, second_id = (
-            value["combination_id"] for value in packet.bibliographic_combinations
-        )
 
-        seam_packet, seam_catalogue, eligible = _combination_seam(packet, (title,))
-        selected = shadow_decision_module._combination_selections(
-            seam_packet, seam_catalogue, eligible
-        )
-        self.assertIsNotNone(selected)
-        assert selected is not None
-        self.assertEqual({title.proposal_id: title}, selected[0])
-        reversed_packet, reversed_catalogue, reversed_eligible = _combination_seam(
-            packet,
-            (title,),
-            combinations=tuple(reversed(packet.bibliographic_combinations)),
-        )
-        self.assertEqual(
-            selected,
-            shadow_decision_module._combination_selections(
-                reversed_packet, reversed_catalogue, reversed_eligible
+def test_identical_combination_projection_is_provider_order_invariant() -> None:
+    providers = (
+        _source(
+            "hardcover",
+            "edition-1",
+            titles=("Synthetic Work",),
+            subtitle="Synthetic Subtitle",
+        ),
+        _source(
+            "open_library",
+            "edition-2",
+            titles=("Synthetic Work",),
+            series="Synthetic Series",
+        ),
+    )
+    first = decide_shadow_packet(_combination_packet(providers=providers))
+    second = decide_shadow_packet(
+        _combination_packet(providers=tuple(reversed(providers)))
+    )
+    assert first.to_json() == second.to_json()
+
+
+def test_combination_seam_requires_at_least_one_unanimous_full_action() -> None:
+    assert "at_least_one" == shadow_decision_module._RULE_TABLE["combinations"][
+            "fully_witnessed_combination_requirement"
+        ]
+    packet = _combination_packet(
+        providers=(
+            _source(
+                "hardcover",
+                "edition-1",
+                titles=("Synthetic Work",),
+                subtitle="Synthetic Subtitle",
+            ),
+            _source(
+                "open_library",
+                "edition-2",
+                titles=("Synthetic Work",),
+                series="Synthetic Series",
             ),
         )
+    )
+    catalogue = compile_shadow_review_actions(packet)
+    title = next(
+        value
+        for value in catalogue.actions
+        if value.destination == "title" and value.recommendation != "manual"
+    )
+    first_id, second_id = (
+        value["combination_id"] for value in packet.bibliographic_combinations
+    )
 
-        citation_disagreement = (
-            replace(title, citation_ids=("citation_a",)),
-            replace(title, citation_ids=("citation_b",)),
-        )
-        seam_packet, seam_catalogue, eligible = _combination_seam(
-            packet, citation_disagreement
-        )
-        self.assertIsNone(
-            shadow_decision_module._combination_selections(
-                seam_packet, seam_catalogue, eligible
-            )
-        )
-
-        preservation_combinations = json.loads(
-            json.dumps(packet.bibliographic_combinations)
-        )
-        preservation_combinations[1]["selections"][0]["kind"] = "preserve_target"
-        candidate = title
-        preservation = PolicyAction(
-            _action_id(title.proposal_id, "recommend_keep_current", None),
-            title.proposal_id,
-            title.destination,
-            "recommend_keep_current",
-            None,
-            title.citation_ids,
-            title.combination_ids,
-        )
-        seam_packet, seam_catalogue, eligible = _combination_seam(
-            packet,
-            (candidate, preservation),
-            combinations=tuple(preservation_combinations),
-        )
-        self.assertIsNone(
-            shadow_decision_module._combination_selections(
-                seam_packet, seam_catalogue, eligible
-            )
+    seam_packet, seam_catalogue, eligible = _combination_seam(packet, (title,))
+    selected = shadow_decision_module._combination_selections(
+        seam_packet, seam_catalogue, eligible
+    )
+    assert selected is not None
+    assert selected is not None
+    assert {title.proposal_id: title} == selected[0]
+    reversed_packet, reversed_catalogue, reversed_eligible = _combination_seam(
+        packet,
+        (title,),
+        combinations=tuple(reversed(packet.bibliographic_combinations)),
+    )
+    assert selected == shadow_decision_module._combination_selections(
+            reversed_packet, reversed_catalogue, reversed_eligible
         )
 
-        combination_disagreement = (
-            replace(title, combination_ids=(first_id,)),
-            replace(title, combination_ids=(second_id,)),
-        )
-        seam_packet, seam_catalogue, eligible = _combination_seam(
-            packet, combination_disagreement
-        )
-        self.assertIsNone(
-            shadow_decision_module._combination_selections(
-                seam_packet, seam_catalogue, eligible
-            )
-        )
+    citation_disagreement = (
+        replace(title, citation_ids=("citation_a",)),
+        replace(title, citation_ids=("citation_b",)),
+    )
+    seam_packet, seam_catalogue, eligible = _combination_seam(
+        packet, citation_disagreement
+    )
+    assert shadow_decision_module._combination_selections(
+            seam_packet, seam_catalogue, eligible
+        ) is None
 
-    def test_packet_boundary_rejects_unreachable_combination_shapes(self) -> None:
-        packet = _combination_packet()
-        mutations = (
-            lambda selections: selections.pop(),
-            lambda selections: selections.reverse(),
+    preservation_combinations = json.loads(
+        json.dumps(packet.bibliographic_combinations)
+    )
+    preservation_combinations[1]["selections"][0]["kind"] = "preserve_target"
+    candidate = title
+    preservation = PolicyAction(
+        _action_id(title.proposal_id, "recommend_keep_current", None),
+        title.proposal_id,
+        title.destination,
+        "recommend_keep_current",
+        None,
+        title.citation_ids,
+        title.combination_ids,
+    )
+    seam_packet, seam_catalogue, eligible = _combination_seam(
+        packet,
+        (candidate, preservation),
+        combinations=tuple(preservation_combinations),
+    )
+    assert shadow_decision_module._combination_selections(
+            seam_packet, seam_catalogue, eligible
+        ) is None
+
+    combination_disagreement = (
+        replace(title, combination_ids=(first_id,)),
+        replace(title, combination_ids=(second_id,)),
+    )
+    seam_packet, seam_catalogue, eligible = _combination_seam(
+        packet, combination_disagreement
+    )
+    assert shadow_decision_module._combination_selections(
+            seam_packet, seam_catalogue, eligible
+        ) is None
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        pytest.param(lambda selections: selections.pop(), id="dropped_selection"),
+        pytest.param(lambda selections: selections.reverse(), id="reordered_selections"),
+        pytest.param(
             lambda selections: selections.__setitem__(
                 1, json.loads(json.dumps(selections[0]))
             ),
+            id="duplicated_selection",
+        ),
+        pytest.param(
             lambda selections: selections[0].__setitem__("destination", "authors"),
-        )
-        for mutate in mutations:
-            with self.subTest(mutation=mutate):
-                data = json.loads(packet.to_json())
-                mutate(data["bibliographic_combinations"][0]["selections"])
-                with self.assertRaises(ShadowReviewValueError):
-                    _rebuild(data)
+            id="relabelled_destination",
+        ),
+    ),
+)
+def test_packet_boundary_rejects_unreachable_combination_shapes(mutate) -> None:
+    packet = _combination_packet()
+    data = json.loads(packet.to_json())
+    mutate(data["bibliographic_combinations"][0]["selections"])
+    with pytest.raises(ShadowReviewValueError):
+        _rebuild(data)
 
-    def test_catalogue_boundary_rejects_duplicate_action_keys(self) -> None:
-        catalogue = compile_shadow_review_actions(_combination_packet())
-        with self.assertRaises(PolicyActionCompilationError):
-            PolicyActionCatalogue(
-                tuple(
-                    sorted(
-                        (*catalogue.actions, catalogue.actions[0]),
-                        key=lambda value: value.action_id,
-                    )
-                ),
-                catalogue.exclusions,
-            )
 
-    def test_identity_replay_and_document_validation_are_canonical(self) -> None:
-        packet = _packet()
-        first = decide_shadow_packet(packet)
-        second = decide_shadow_packet(packet)
-        self.assertEqual(first.to_json(), second.to_json())
-        self.assertEqual(first, ShadowDecisionSet.from_json(first.to_json(), packet))
-        self.assertEqual(DECISION_POLICY_VERSION, first.policy_version)
-        self.assertEqual(DECISION_POLICY_SHA256, first.policy_sha256)
-        self.assertEqual(ACTION_POLICY_VERSION, first.compiler_policy_version)
-        document = json.loads(first.to_json())
-        document["decision_set_id"] = "shadow_decision_set_" + "0" * 64
-        with self.assertRaises(ShadowDecisionError):
-            ShadowDecisionSet.from_json(
-                json.dumps(document, separators=(",", ":"), sort_keys=True),
-                packet,
-            )
+def test_catalogue_boundary_rejects_duplicate_action_keys() -> None:
+    catalogue = compile_shadow_review_actions(_combination_packet())
+    with pytest.raises(PolicyActionCompilationError):
+        PolicyActionCatalogue(
+            tuple(
+                sorted(
+                    (*catalogue.actions, catalogue.actions[0]),
+                    key=lambda value: value.action_id,
+                )
+            ),
+            catalogue.exclusions,
+        )
 
-    def test_v5_policy_identity_rejects_v4_replay(self) -> None:
-        self.assertEqual(
-            "deterministic-shadow-decision-policy-v5", DECISION_POLICY_VERSION
+
+def test_identity_replay_and_document_validation_are_canonical() -> None:
+    packet = _packet()
+    first = decide_shadow_packet(packet)
+    second = decide_shadow_packet(packet)
+    assert first.to_json() == second.to_json()
+    assert first == ShadowDecisionSet.from_json(first.to_json(), packet)
+    assert DECISION_POLICY_VERSION == first.policy_version
+    assert DECISION_POLICY_SHA256 == first.policy_sha256
+    assert ACTION_POLICY_VERSION == first.compiler_policy_version
+    document = json.loads(first.to_json())
+    document["decision_set_id"] = "shadow_decision_set_" + "0" * 64
+    with pytest.raises(ShadowDecisionError):
+        ShadowDecisionSet.from_json(
+            json.dumps(document, separators=(",", ":"), sort_keys=True),
+            packet,
         )
-        self.assertEqual(
-            "d7e765d71a6b52259a8c8e54961afe63d54344a19785b288f0ddb59b7db5e5f8",
-            DECISION_POLICY_SHA256,
-        )
-        packet = _packet()
-        document = json.loads(decide_shadow_packet(packet).to_json())
-        document["policy_version"] = "deterministic-shadow-decision-policy-v4"
-        document["policy_sha256"] = "a86201443a027971fdb8943763c1911300a586ecc3fe732b01622a7596649a99"
-        core = {
-            key: value
-            for key, value in document.items()
-            if key != "decision_set_id"
-        }
-        document["decision_set_id"] = "shadow_decision_set_" + hashlib.sha256(
+
+
+def test_v5_policy_identity_rejects_v4_replay() -> None:
+    assert "deterministic-shadow-decision-policy-v5" == DECISION_POLICY_VERSION
+    assert "d7e765d71a6b52259a8c8e54961afe63d54344a19785b288f0ddb59b7db5e5f8" == DECISION_POLICY_SHA256
+    packet = _packet()
+    document = json.loads(decide_shadow_packet(packet).to_json())
+    document["policy_version"] = "deterministic-shadow-decision-policy-v4"
+    document["policy_sha256"] = "a86201443a027971fdb8943763c1911300a586ecc3fe732b01622a7596649a99"
+    core = {
+        key: value
+        for key, value in document.items()
+        if key != "decision_set_id"
+    }
+    document["decision_set_id"] = "shadow_decision_set_" + hashlib.sha256(
+        json.dumps(
+            core,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    with pytest.raises(ShadowDecisionError):
+        ShadowDecisionSet.from_json(
             json.dumps(
-                core,
+                document,
                 ensure_ascii=False,
                 separators=(",", ":"),
                 sort_keys=True,
-            ).encode("utf-8")
-        ).hexdigest()
-        with self.assertRaises(ShadowDecisionError):
-            ShadowDecisionSet.from_json(
-                json.dumps(
-                    document,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ),
-                packet,
-            )
-
-    def test_bounded_parser_rejects_noncanonical_and_oversized_documents(self) -> None:
-        packet = _packet()
-        serialized = decide_shadow_packet(packet).to_json()
-        with self.assertRaises(ShadowDecisionError):
-            ShadowDecisionSet.from_json(" " + serialized, packet)
-        with self.assertRaises(ShadowDecisionError):
-            ShadowDecisionSet.from_json(serialized + (" " * 1_000_000), packet)
+            ),
+            packet,
+        )
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_bounded_parser_rejects_noncanonical_and_oversized_documents() -> None:
+    packet = _packet()
+    serialized = decide_shadow_packet(packet).to_json()
+    with pytest.raises(ShadowDecisionError):
+        ShadowDecisionSet.from_json(" " + serialized, packet)
+    with pytest.raises(ShadowDecisionError):
+        ShadowDecisionSet.from_json(serialized + (" " * 1_000_000), packet)

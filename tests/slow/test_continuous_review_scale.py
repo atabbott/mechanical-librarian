@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tests.integration.test_continuous_review_scale import qualify_installed_pipeline
+from tests.support.continuous_review_scale import qualify_installed_pipeline
 
 
 def test_installed_pipeline_reconciles_one_thousand_fairly_across_restart() -> None:
