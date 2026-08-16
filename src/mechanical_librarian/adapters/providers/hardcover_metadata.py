@@ -17,6 +17,7 @@ import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
     ProviderAttemptRecord,
+    ProviderFailure,
     ProviderIncompleteCause,
     ProviderIncompleteCauseRecord,
     _DiscoveryRequestLedger,
@@ -393,7 +394,7 @@ class HardcoverMetadataProvider:
             )
         try:
             payload = self._request(body, deadline=deadline)
-        except _ProviderFailure as error:
+        except ProviderFailure as error:
             return result(error.status)
         try:
             if _has_graphql_errors(payload):
@@ -480,7 +481,7 @@ class HardcoverMetadataProvider:
                         outcome="cancelled",
                     )
                 raise
-            except _ProviderFailure as error:
+            except ProviderFailure as error:
                 if self._attempt_count == attempts_before_dispatch:
                     raise
                 can_retry = (
@@ -527,7 +528,7 @@ class HardcoverMetadataProvider:
                         delay=delay,
                         outcome="deadline_exhausted",
                     )
-                    raise _ProviderFailure(ProviderStatus.UNAVAILABLE) from None
+                    raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
                 self._record_attempt(
                     started,
                     category=error.category,
@@ -542,7 +543,7 @@ class HardcoverMetadataProvider:
                 outcome="response_received",
             )
             return payload
-        raise _ProviderFailure(ProviderStatus.UNAVAILABLE)
+        raise ProviderFailure(ProviderStatus.UNAVAILABLE)
 
     def _request_once(
         self, body: dict[str, object], *, deadline: float | None, is_retry: bool
@@ -589,7 +590,7 @@ class HardcoverMetadataProvider:
                     in {"", "identity"}
                 )
                 if response.is_stream_consumed and not identity_encoding:
-                    raise _ProviderFailure(
+                    raise ProviderFailure(
                         ProviderStatus.MALFORMED,
                         category="response_malformed",
                     )
@@ -605,29 +606,29 @@ class HardcoverMetadataProvider:
                     allow_empty=response.status_code != 200,
                 )
                 if not identity_encoding:
-                    raise _ProviderFailure(
+                    raise ProviderFailure(
                         ProviderStatus.MALFORMED,
                         category="response_malformed",
                     )
                 if response.status_code == 401:
-                    raise _ProviderFailure(
+                    raise ProviderFailure(
                         ProviderStatus.AUTHENTICATION,
                         category="http_401",
                     )
                 if response.status_code == 403:
-                    raise _ProviderFailure(
+                    raise ProviderFailure(
                         ProviderStatus.AUTHORIZATION,
                         category="http_403",
                     )
                 if response.status_code == 429:
-                    raise _ProviderFailure(
+                    raise ProviderFailure(
                         ProviderStatus.RATE_LIMITED,
                         category="http_429",
                         retryable=retry_after is not None,
                         retry_after=retry_after,
                     )
                 if response.status_code in {500, 502, 503, 504}:
-                    raise _ProviderFailure(
+                    raise ProviderFailure(
                         ProviderStatus.UNAVAILABLE,
                         category=f"http_{response.status_code}",
                         retryable=True,
@@ -638,7 +639,7 @@ class HardcoverMetadataProvider:
                         ),
                     )
                 if response.status_code != 200:
-                    raise _ProviderFailure(
+                    raise ProviderFailure(
                         ProviderStatus.UNAVAILABLE,
                         category="http_other",
                     )
@@ -649,35 +650,35 @@ class HardcoverMetadataProvider:
                     .lower()
                     != "application/json"
                 ):
-                    raise _ProviderFailure(
+                    raise ProviderFailure(
                         ProviderStatus.MALFORMED,
                         category="response_malformed",
                     )
                 return payload
         except _DeadlineExpired:
-            raise _ProviderFailure(
+            raise ProviderFailure(
                 ProviderStatus.UNAVAILABLE,
                 category="deadline",
             ) from None
         except _ResponseOversized:
             self._remaining_response_bytes = 0
-            raise _ProviderFailure(
+            raise ProviderFailure(
                 ProviderStatus.OVERSIZED,
                 category="response_oversized",
             ) from None
-        except _ProviderFailure:
+        except ProviderFailure:
             raise
         except httpx.HTTPError as error:
             category = transient_transport_failure(error)
             if category is not None:
-                raise _ProviderFailure(
+                raise ProviderFailure(
                     ProviderStatus.UNAVAILABLE,
                     category=category,
                     retryable=True,
                 ) from None
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE) from None
+            raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
         except (OSError, ValueError):
-            raise _ProviderFailure(ProviderStatus.UNAVAILABLE) from None
+            raise ProviderFailure(ProviderStatus.UNAVAILABLE) from None
 
     def _consume_response_bytes(self, amount: int) -> None:
         self._remaining_response_bytes -= amount
@@ -687,9 +688,9 @@ class HardcoverMetadataProvider:
 
     def _incomplete(
         self, cause: ProviderIncompleteCause
-    ) -> _ProviderFailure:
+    ) -> ProviderFailure:
         self._incomplete_causes.append(ProviderIncompleteCauseRecord(cause))
-        return _ProviderFailure(ProviderStatus.INCOMPLETE)
+        return ProviderFailure(ProviderStatus.INCOMPLETE)
 
     def _retry_delay(self, retry_index: int) -> float:
         jitter = self._jitter()
@@ -1951,22 +1952,6 @@ class _ResponseOversized(ValueError):
 
 class _DeadlineExpired(Exception):
     pass
-
-
-class _ProviderFailure(Exception):
-    def __init__(
-        self,
-        status: ProviderStatus,
-        *,
-        category: str = "provider_failure",
-        retryable: bool = False,
-        retry_after: float | None = None,
-    ) -> None:
-        super().__init__(status.value)
-        self.status = status
-        self.category = category
-        self.retryable = retryable
-        self.retry_after = retry_after
 
 
 __all__ = [
