@@ -80,6 +80,18 @@ multipart parser, identity provider, cache, session service, or second process
 is introduced. The licences are compatible with AGPL-3.0-or-later; release
 notice and SBOM generation remain separate release gates.
 
+#702 moved Starlette out of that baseline's transitive column: `app.py` imports
+`starlette.types` directly, so it is now pinned in `pyproject.toml` beside
+FastAPI rather than floating under FastAPI's open `starlette>=0.46.0`. That is a
+manifest relationship change, not a version-drift correction to the table above,
+which stays the introduction-time record. FastAPI's move to the 0.14x line for
+that pin adds exactly one new transitive package, `annotated-doc` (MIT, two
+modules, no dependencies of its own), which participates only in FastAPI's
+`Annotated` documentation metadata. Neither receives any authority the baseline
+paragraph above does not already grant FastAPI and Starlette, and no optional
+extra is installed, so no multipart parser, template engine, CLI, settings
+loader, or second HTTP client enters the closure.
+
 F16a #450 added one pinned development-only browser qualification dependency
 and its locked Python closure. The table and browser payload hashes are the
 introduction-time qualification baseline. A Playwright update requires explicit
@@ -109,6 +121,30 @@ binaries remain development cache content and are not application packages or
 published artifacts. All three Python-package licences are compatible with
 AGPL-3.0-or-later distribution; the browser's release inventory remains a
 qualification input and future release-SBOM concern, not runtime content.
+
+#702 added one more development-only client with the Starlette upgrade.
+`starlette.testclient` prefers `httpx2` and emits a `StarletteDeprecationWarning`
+when it falls back to `httpx`; `scripts/qualify_exact_artifact.py` fails its
+installed-workspace probe on any output at all, so that warning fails the
+`exact-installed` gate rather than merely annotating it. `httpx2` is therefore
+pinned in the `dev` group, not in `[project.dependencies]`, and does not enter
+the shipped wheel's metadata or the container image.
+
+| Package | Version | Relationship | SPDX licence | Product authority |
+| --- | --- | --- | --- | --- |
+| HTTPX2 | 2.10.0 | direct development only | BSD-3-Clause | in-process ASGI transport for `TestClient` only |
+| httpcore2 | 2.10.0 | transitive development only | BSD-3-Clause | HTTPX2 transport support only |
+| truststore | 0.10.4 | transitive development only | MIT | HTTPX2 system trust-store support; no test opens a network socket that uses it |
+
+It does not replace the runtime `httpx==0.28.1` the Audiobookshelf, Google
+Books, Open Library, and Hardcover adapters call. The two are separate
+distributions with separate import names and separate locked closures, they
+coexist in the development environment, and only `httpx` is a runtime
+dependency, so no adapter's client construction, least-authority `Auth` flow,
+or wrapped-disconnect classification moves. `httpx2-jsfetch` appears in
+`uv.lock` as an `httpx2` dependency gated on `sys_platform == 'emscripten'` and
+installs on no supported platform. All three licences are compatible with
+AGPL-3.0-or-later distribution.
 
 ## React platform build dependencies
 
