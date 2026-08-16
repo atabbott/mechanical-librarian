@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 import httpx
 
+import mechanical_librarian.adapters.persistence.binding as persistence_binding
 import mechanical_librarian.adapters.persistence.schema as persistence_schema
 import mechanical_librarian.adapters.providers.hardcover_metadata as hardcover_metadata
 from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
@@ -1106,7 +1107,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             try:
                 # A journal descriptor may close between the connection proof's
                 # setup and SQLite opening its exact database descriptor.
-                connection = persistence_schema._connect_bound(
+                connection = persistence_binding._connect_bound(
                     path,
                     descriptor,
                     lambda: os.close(churned_descriptor),
@@ -1195,7 +1196,7 @@ class MetadataPersistenceTests(unittest.TestCase):
             binding = repository._binding
             self.assertIsNotNone(binding)
             require_current = cast(
-                "persistence_schema._LinuxDatabaseBinding", binding
+                "persistence_binding._LinuxDatabaseBinding", binding
             ).require_current
             calls = 0
 

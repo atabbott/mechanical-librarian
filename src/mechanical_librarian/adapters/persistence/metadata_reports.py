@@ -14,19 +14,27 @@ from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, cast
+from urllib.parse import quote
 
+from mechanical_librarian.adapters.persistence.binding import (
+    _connect_bound,
+    _LinuxDatabaseBinding,
+    _LinuxDirectoryChain,
+    _reject_database_sidecars,
+    _unlink_created,
+    _validate_connection_binding,
+    _validate_delete_mode_header,
+)
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _automatic_decision_value,
 )
 from mechanical_librarian.adapters.persistence.schema import (
-    _LinuxDatabaseBinding,
-    _LinuxDirectoryChain,
+    _create_schema,
     _provider_recovery_outbox_id,
-    _reject_database_sidecars,
+    _validate_existing_read_only,
     _validate_provider_recovery_outbox_row,
-    open_repository,
-    open_shadow_preview_repository,
+    _validate_schema,
 )
 from mechanical_librarian.adapters.persistence.transactions import TransactionScope
 from mechanical_librarian.application.catalogue import (
@@ -8121,6 +8129,182 @@ def _validate_proposal_row(row: tuple[object, ...]) -> str:
     ):
         raise MetadataReportError("persisted proposal envelope disagrees")
     return document
+
+def open_shadow_preview_repository(path: Path) -> SQLiteShadowPreviewRepository:
+    """Open an exact-current SQLite database without create or write authority."""
+    descriptor = -1
+    connection: sqlite3.Connection | None = None
+    try:
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        if not nofollow:
+            raise MetadataReportError("database no-follow access is unavailable")
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | nofollow,
+        )
+        information = os.fstat(descriptor)
+        if not stat.S_ISREG(information.st_mode):
+            raise MetadataReportError("database path is invalid")
+        identity = (
+            information.st_dev,
+            information.st_ino,
+            information.st_size,
+            information.st_mtime_ns,
+            information.st_ctime_ns,
+        )
+        _validate_delete_mode_header(descriptor)
+        _reject_database_sidecars(path)
+        _validate_existing_read_only(path, descriptor)
+        _reject_database_sidecars(path)
+        absolute = str(path.absolute())
+        uri = f"file:{quote(absolute, safe='/')}?mode=ro&immutable=1"
+        connection = sqlite3.connect(uri, uri=True, isolation_level=None)
+        _validate_connection_binding(connection, path, descriptor)
+        connection.execute("PRAGMA query_only=ON")
+        if connection.execute("PRAGMA query_only").fetchone() != (1,):
+            raise MetadataReportError("database query-only mode is unavailable")
+        if connection.execute("PRAGMA database_list").fetchall() == []:
+            raise MetadataReportError("database connection identity is unavailable")
+        _validate_schema(connection)
+        _reject_database_sidecars(path)
+        current = path.lstat()
+        if (
+            not stat.S_ISREG(current.st_mode)
+            or (
+                current.st_dev,
+                current.st_ino,
+                current.st_size,
+                current.st_mtime_ns,
+                current.st_ctime_ns,
+            )
+            != identity
+        ):
+            raise MetadataReportError("database authority changed")
+        repository = SQLiteShadowPreviewRepository(
+            connection, descriptor, path, identity
+        )
+        connection = None
+        descriptor = -1
+        return repository
+    except MetadataReportError:
+        raise
+    except (OSError, sqlite3.Error, ValueError) as error:
+        raise MetadataReportError("database is unavailable or incompatible") from error
+    finally:
+        if connection is not None:
+            connection.close()
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def open_repository(path: Path, *, create: bool = True, expected_identity: tuple[int, int] | None = None, cross_thread: bool = False, authority: object | None = None) -> SQLiteMetadataReportRepository:
+    created = False
+    descriptor = -1
+    created_identity: tuple[int, int] | None = None
+    connection: sqlite3.Connection | None = None
+    binding: _LinuxDatabaseBinding | None = None
+    try:
+        nofollow = getattr(os, "O_NOFOLLOW", 0)
+        if not nofollow:
+            raise MetadataReportError("database no-follow access is unavailable")
+        flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0) | nofollow
+        if os.path.lexists(path):
+            descriptor = os.open(path, flags)
+            information = os.fstat(descriptor)
+            if expected_identity is not None and (information.st_dev, information.st_ino) != expected_identity:
+                raise MetadataReportError("database authority changed")
+            if not stat.S_ISREG(information.st_mode):
+                raise MetadataReportError("database path is invalid")
+            _validate_delete_mode_header(descriptor)
+            if sys.platform.startswith("linux"):
+                binding = _LinuxDatabaseBinding.create(path, descriptor, authority)
+                descriptor = -1
+                _validate_existing_read_only(
+                    binding.alias_path, binding.descriptor
+                )
+                binding.require_current()
+            else:
+                _reject_database_sidecars(path)
+                _validate_existing_read_only(path, descriptor)
+                _reject_database_sidecars(path)
+        elif expected_identity is not None:
+            raise MetadataReportError("database authority changed")
+        elif create:
+            descriptor = os.open(path, flags | os.O_CREAT | os.O_EXCL, 0o600)
+            information = os.fstat(descriptor)
+            if not stat.S_ISREG(information.st_mode):
+                raise MetadataReportError("database path is invalid")
+            created = True
+            created_identity = (information.st_dev, information.st_ino)
+            if sys.platform.startswith("linux"):
+                binding = _LinuxDatabaseBinding.create(path, descriptor, authority)
+                descriptor = -1
+        else:
+            raise MetadataReportError("database is unavailable")
+        database_path = binding.alias_path if binding is not None else path
+        database_descriptor = (
+            binding.descriptor if binding is not None else descriptor
+        )
+        connection = _connect_bound(
+            database_path,
+            database_descriptor,
+            binding.require_current if binding is not None else None,
+            cross_thread=cross_thread,
+        )
+        connection.create_function(
+            "ml_casefold",
+            1,
+            _review_casefold,
+            deterministic=True,
+        )
+        if binding is not None:
+            binding.require_current()
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("PRAGMA journal_mode=DELETE")
+        connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("PRAGMA busy_timeout=5000")
+        if created:
+            _create_schema(connection)
+        _validate_schema(connection)
+        if binding is None:
+            os.close(descriptor)
+            descriptor = -1
+        repository = SQLiteMetadataReportRepository(connection, binding, (information.st_dev, information.st_ino))
+        connection = None
+        binding = None
+        return repository
+    except MetadataReportError:
+        if connection is not None:
+            connection.close()
+        if binding is not None:
+            try:
+                binding.close()
+            except MetadataReportError:
+                pass
+        if created and created_identity is not None:
+            _unlink_created(path, created_identity)
+        raise
+    except (OSError, sqlite3.Error) as error:
+        if connection is not None:
+            connection.close()
+        if binding is not None:
+            try:
+                binding.close()
+            except MetadataReportError:
+                pass
+        if created and created_identity is not None:
+            _unlink_created(path, created_identity)
+        raise MetadataReportError("database is unavailable or incompatible") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def _review_casefold(value: object) -> str:
+    if type(value) is not str:
+        raise ValueError("review search value is invalid")
+    return value.casefold()
+
 
 # The schema spine now lives in `schema.py`, but 33 test modules and the
 # composition root import these names from here. Re-export rather than rewrite
