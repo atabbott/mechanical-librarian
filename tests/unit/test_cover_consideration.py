@@ -13,7 +13,12 @@ from mechanical_librarian.application.cover_consideration import (
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.review_web import _needs_attention
-from tests.unit.test_cover_packets import _preview, _report, _source
+from tests.unit.test_cover_packets import (
+    _observer_result,
+    _preview,
+    _report,
+    _source,
+)
 
 
 class _Store:
@@ -286,6 +291,59 @@ class CoverConsiderationTests(unittest.TestCase):
                 )
         self.assertIs(surfaced.exception, fault)
         self.assertEqual(len(dispatches), 1)
+
+    def test_assembly_fault_after_the_reviewer_returns_is_not_reviewer_failure(
+        self,
+    ) -> None:
+        """The reviewer's return is now a boundary the handler can see.
+
+        The dispatch flag marked the reviewer's call but not its return, so the
+        report `observe_cover_packet` assembles afterwards -- row binding, the
+        two digests, `_observer_reference` and the canonicalisation -- still
+        counted as dispatched. A fault in that assembly was persisted as
+        `reviewer_status="failed"` with reviewer failure evidence, blaming the
+        contained process for a projection it never touched. `observe_cover_packet`
+        now signals the validated return, so the far end of the reviewer's
+        contribution is as visible to the handler as the near end (#698).
+        """
+        dispatches: list[object] = []
+
+        def reviewer(*args: object) -> str:
+            dispatches.append(args)
+            return _observer_result(*cast("tuple[bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]]", args))
+
+        service = CoverConsiderationService(
+            self.store,
+            read_preview=lambda artifact, _variant: self.payload_by_artifact[artifact],
+            read_preview_digest=lambda digest: self.payload_by_preview[digest],
+            clock=lambda: self.now,
+            reviewer_profile=b"profile",
+            reviewer=cast("ReviewRunner", reviewer),
+        )
+
+        # A reviewer that returns a valid result is still one completed
+        # observation, so the boundary does not cost the ordinary path.
+        value = service.ensure(
+            "review_case_" + "4" * 64, self.report.to_json(), self.proposal
+        )
+        self.assertEqual(value["reviewer_status"], "completed")
+        self.assertEqual(len(dispatches), 1)
+
+        # A fault in the assembly that runs after the validated return is ours,
+        # and the reviewer is not asked again to produce it.
+        fault = RuntimeError("observer reference is broken")
+        with patch.object(
+            cover_observation, "_observer_reference", side_effect=fault
+        ):
+            with self.assertRaises(RuntimeError) as surfaced:
+                service.ensure(
+                    "review_case_" + "5" * 64,
+                    self.report.to_json(),
+                    self.proposal,
+                )
+        self.assertIs(surfaced.exception, fault)
+        self.assertEqual(len(dispatches), 2)
+        self.assertNotIn("review_case_" + "5" * 64, self.store.current)
 
 
 if __name__ == "__main__":

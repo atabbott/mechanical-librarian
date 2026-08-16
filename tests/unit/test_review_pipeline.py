@@ -475,6 +475,71 @@ class ReviewPipelinePersistenceTests(unittest.TestCase):
         self.assertIsInstance(raised.exception.__cause__, MetadataReportError)
         self.assertEqual(closed, [True])
 
+    def test_every_remaining_bare_call_site_converts_and_still_releases(
+        self,
+    ) -> None:
+        """The seam's shape is universal, not one exception and three gaps.
+
+        `check_connection`'s two durable transitions, `hold_connection` and
+        `run_recovery_successor` released the handle on every path but converted
+        nothing, so the bound repository's own error reached their callers
+        untyped -- the recovery classifier and the web boundary both, neither of
+        which this layer had promised a raw adapter fault. Each converts now,
+        and the `finally` still runs (#698).
+        """
+        closed: list[str] = []
+        fault = MetadataReportError("durable transition is unavailable")
+
+        class _UnwritableRepository:
+            def __init__(self, seam: str) -> None:
+                self._seam = seam
+
+            def __getattr__(self, name: str):
+                def call(*_arguments: object, **_keywords: object):
+                    if name == self._seam:
+                        raise fault
+                    return None
+
+                return call
+
+            def close(self) -> None:
+                closed.append(self._seam)
+
+        def pipeline_for(seam: str) -> ReviewPreparationPipeline:
+            return ReviewPreparationPipeline(
+                repository_factory=lambda: cast(
+                    "ReviewPipelineRepository", _UnwritableRepository(seam)
+                ),
+                libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+                discover=lambda *_: (_ for _ in ()).throw(AssertionError),
+                extract=lambda *_: (_ for _ in ()).throw(AssertionError),
+                providers=lambda *_: (), propose=lambda *_: "",
+                admit=lambda *_: ("", None), project=lambda *_: True,
+                check_connection=lambda _: None, clock=lambda: 6,
+            )
+
+        for seam, run in (
+            (
+                "begin_target_connection_check",
+                lambda pipeline: pipeline.check_connection("primary"),
+            ),
+            (
+                "hold_target_connection",
+                lambda pipeline: pipeline.hold_connection("primary", "transient"),
+            ),
+            (
+                "provider_retry_work_id",
+                lambda pipeline: pipeline.run_recovery_successor("report_1"),
+            ),
+        ):
+            with self.subTest(seam=seam):
+                closed.clear()
+                with self.assertRaises(ReviewPipelineError) as raised:
+                    run(pipeline_for(seam))
+                self.assertEqual(raised.exception.code, "persistence")
+                self.assertIs(raised.exception.__cause__, fault)
+                self.assertEqual(closed, [seam])
+
     def test_checking_condition_allows_admission_replay_and_rejects_stale_finish_epoch(self) -> None:
         repository = open_repository(self.path)
         repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)

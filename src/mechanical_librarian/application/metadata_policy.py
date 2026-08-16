@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from threading import RLock
 from typing import TYPE_CHECKING, Protocol
 
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_cases import ReviewCaseError
 from mechanical_librarian.domain.automatic_decision import (
     QUALIFIED_POLICY_OPTIONS,
@@ -40,6 +41,28 @@ MAX_SHADOW_SAMPLE_RESPONSE_BYTES = 1_048_576
 
 class MetadataPolicyApplicationError(RuntimeError):
     """A fixed, value-free draft policy failure."""
+
+
+POLICY_CONTENTION_CONDITIONS = frozenset({"processing", "stale", "unqualified"})
+
+
+class PolicyContentionError(MetadataReportError):
+    """A policy seam refusing because the state it was given no longer holds.
+
+    The seam below this application declares no error type, so contention used
+    to be recognisable only by searching its message for a word. That made every
+    rewording a silent change of control flow, and misread any unrelated failure
+    whose message happened to contain one. The condition travels on the
+    exception instead, drawn from a closed vocabulary, and the message stays
+    free to say whatever reads best. It subclasses ``MetadataReportError`` so
+    every caller that already matches the repository's error type still does.
+    """
+
+    def __init__(self, condition: str, message: str) -> None:
+        if condition not in POLICY_CONTENTION_CONDITIONS:
+            raise MetadataReportError("metadata policy contention is invalid")
+        self.condition = condition
+        super().__init__(message)
 
 
 class AutomaticSafetyRepository(Protocol):
@@ -698,24 +721,27 @@ class PolicyNotebook:
             return PolicyActivation(profile, transition)
         except MetadataPolicyApplicationError:
             raise
+        except PolicyContentionError as error:
+            # The seam's three contention conditions are typed and closed, so
+            # the branch a failure takes no longer depends on a word appearing
+            # in a message. The wire codes below are unchanged, because the
+            # transport reads them off this message.
+            raise MetadataPolicyApplicationError(
+                {
+                    "processing": "policy transition is processing",
+                    "stale": "policy activation is stale",
+                    "unqualified": "policy activation is unqualified",
+                }[error.condition]
+            ) from error
         except Exception as error:
             # The block is wider than the activation seam: it resolves the
             # profile against every configured library and reopens each
-            # resolution before the seam is reached, and a resolution that
-            # fails lands here too. The seam signals contention, an in-flight
-            # transition, and an unqualified resolution through message text
-            # rather than a type, so these three tests are the only narrowing
-            # available; everything else, a failed resolution included, is
-            # honestly reported as an activation that is unavailable. Each
-            # branch chains the cause, so no failure loses its origin.
-            if "stale" in str(error):
-                raise MetadataPolicyApplicationError("policy activation is stale") from error
-            if "processing" in str(error):
-                raise MetadataPolicyApplicationError(
-                    "policy transition is processing"
-                ) from error
-            if "unqualified" in str(error):
-                raise MetadataPolicyApplicationError("policy activation is unqualified") from error
+            # resolution before the seam is reached, and a resolution that fails
+            # lands here too. Contention is the only thing the seam names, and
+            # it is matched above; everything else, a failed resolution
+            # included, is honestly reported as an activation that is
+            # unavailable. Both branches chain the cause, so no failure loses
+            # its origin.
             raise MetadataPolicyApplicationError("policy activation is unavailable") from error
 
     def transition(self) -> PolicyTransition | None:
@@ -729,12 +755,15 @@ class PolicyNotebook:
             raise MetadataPolicyApplicationError("policy transition is invalid")
         try:
             return self._repository.retry_metadata_policy_transition(transition_id, retried_at)
-        except Exception as error:
-            # Same untyped seam as ``activate``: contention is recognisable only
-            # by message, and every other failure of the retry stays unavailable
-            # rather than borrowing a staleness it cannot demonstrate.
-            if "stale" in str(error):
+        except PolicyContentionError as error:
+            # Same seam as ``activate``, and staleness is the only condition it
+            # signals here. Any other condition would be a contention this retry
+            # cannot act on, so it stays unavailable rather than borrowing a
+            # staleness it cannot demonstrate.
+            if error.condition == "stale":
                 raise MetadataPolicyApplicationError("policy transition is stale") from error
+            raise MetadataPolicyApplicationError("policy transition is unavailable") from error
+        except Exception as error:
             raise MetadataPolicyApplicationError("policy transition is unavailable") from error
 
     def acknowledge(self, transition_id: object, acknowledged_at: object) -> PolicyTransition:

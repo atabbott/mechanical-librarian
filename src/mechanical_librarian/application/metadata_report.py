@@ -707,6 +707,22 @@ class ReportRepository(Protocol):
     def close(self) -> None: ...
 
 
+def _release_repository(
+    repository: ReportRepository | None, failure: BaseException
+) -> None:
+    """Release the report handle without letting cleanup replace ``failure``."""
+    if repository is None:
+        return
+    try:
+        repository.close()
+    except Exception as error:
+        # ``ReportRepository`` declares no error type, so breadth is what
+        # guarantees the caller still sees the failure they asked about. The
+        # release failure is not discarded: it is noted on that failure, which
+        # the caller raises with its identity and cause intact.
+        failure.add_note(f"report repository release failed: {error!r}")
+
+
 @dataclass(frozen=True, slots=True)
 class ProviderBinding:
     name: str
@@ -1153,18 +1169,17 @@ class GenerateMetadataReport:
                 # this item could not be inspected -- which is a per-item
                 # outcome that leaves the rest of a batch runnable.
                 raise ItemInspectionError("EPUB inspection failed") from error
-        except MetadataReportError:
-            if repository is not None:
-                repository.close()
+        except MetadataReportError as error:
+            _release_repository(repository, error)
             raise
         except Exception as error:
             # Covers the repository handle and the current-report read as well
             # as the inspection above; neither seam declares an error type, and
             # this layer owes its caller a ``MetadataReportError`` rather than a
             # raw adapter fault. The repository is released on every path.
-            if repository is not None:
-                repository.close()
-            raise MetadataReportError("EPUB inspection failed") from error
+            failure = MetadataReportError("EPUB inspection failed")
+            _release_repository(repository, failure)
+            raise failure from error
 
         target_title_claim = (
             ()
@@ -1237,10 +1252,11 @@ class GenerateMetadataReport:
             try:
                 provider = binding.factory()
             except CredentialError as error:
-                repository.close()
-                raise CredentialError(
+                failure = CredentialError(
                     "provider credential unavailable", provider=binding.name
-                ) from error
+                )
+                _release_repository(repository, failure)
+                raise failure from error
             except Exception as error:
                 # The branch above already carries every credential failure the
                 # factory declares. What reaches here is a factory that broke
@@ -1250,10 +1266,9 @@ class GenerateMetadataReport:
                 # a durable authentication fault against the provider's
                 # recovery health. Report it as what it is: the provider could
                 # not be constructed.
-                repository.close()
-                raise MetadataReportError(
-                    "provider construction failed"
-                ) from error
+                failure = MetadataReportError("provider construction failed")
+                _release_repository(repository, failure)
+                raise failure from error
             try:
                 with self._timing.measure("provider_search", "provider"):
                     observation = provider.observe(
@@ -1299,8 +1314,9 @@ class GenerateMetadataReport:
                     authority=binding.authority,
                 )
             if observation.provider != binding.name:
-                repository.close()
-                raise MetadataReportError("provider result is invalid")
+                failure = MetadataReportError("provider result is invalid")
+                _release_repository(repository, failure)
+                raise failure
             # Both reads are optional diagnostics an adapter may expose as a
             # computed property. A missing attribute already yields the default,
             # so only a property that itself fails reaches these handlers, and
@@ -1343,8 +1359,9 @@ class GenerateMetadataReport:
                 or value.provider != binding.name
                 for value in candidate_descriptors
             ):
-                repository.close()
-                raise MetadataReportError("provider cover result is invalid")
+                failure = MetadataReportError("provider cover result is invalid")
+                _release_repository(repository, failure)
+                raise failure
             descriptors.extend(candidate_descriptors)
 
         reasons = tuple(
@@ -1371,15 +1388,14 @@ class GenerateMetadataReport:
                 field_results=derive_field_results(combined_claims),
                 cover_sources=cover_sources,
             )
-        except Exception:
+        except Exception as error:
             # Cleanup only: the report assembly spans domain construction over
             # everything the providers returned, and this handler exists to
             # release the repository handle rather than to classify anything.
-            # The failure is re-raised unchanged, so nothing here classifies or
-            # hides it; the one thing that could displace it is a ``close``
-            # that itself fails, which is undeclared like the rest of this
-            # protocol.
-            repository.close()
+            # The failure is re-raised unchanged, and a ``close`` that itself
+            # fails no longer displaces it: the release failure is noted on it
+            # instead.
+            _release_repository(repository, error)
             raise
         try:
             def currentness() -> bool:

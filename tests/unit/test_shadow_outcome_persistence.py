@@ -1531,6 +1531,53 @@ class ShadowOutcomePersistenceTests(unittest.TestCase):
             supervisor.stop()
             repository.close()
 
+    def test_composed_projection_records_a_broken_factory_as_projection(self) -> None:
+        """Building the consideration service is not the store answering badly.
+
+        The cover stage converted its whole body to `persistence`, so a fault in
+        the injected factory -- this layer's own work, reaching no store
+        operation -- was durably recorded against the store. The adapter's
+        allow-list has no `persistence`, so it landed as the anonymous `failed`
+        and the owner was told nothing at all. It is `projection` now, which the
+        allow-list and the schema both carry (#698).
+        """
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            database = root / "reports.sqlite"
+            repository = open_repository(database)
+            report, proposal = self._qualified_cover_report(root)
+            recovery = composition.SQLiteProviderRecoveryStore.open(root / "provider-recovery.sqlite")
+            supervisor = composition.create_review_pipeline(
+                _pipeline_configuration(), database, root / "catalogue.sqlite",
+                root / "artifacts", database_authority=repository.authority,
+                provider_recovery=recovery,
+            )
+            pipeline = self._run_qualified_cover_pipeline(
+                repository, root, report, proposal, supervisor
+            )
+            self.assertEqual([True, True, True, True], [pipeline.run_next(1) for _ in range(4)])
+            with patch.object(
+                composition, "_compose_cover_considerations",
+                side_effect=TypeError("consideration service is broken"),
+            ):
+                self.assertTrue(pipeline.run_next(1))
+            self.assertEqual(
+                ("failed", "projection", None), repository._connection.execute(
+                    "SELECT state,failure_code,failure_root FROM review_preparation_work "
+                    "WHERE stage='projection'"
+                ).fetchone(),
+            )
+            for table in (
+                "cover_considerations", "current_cover_considerations",
+                "current_review_packages", "provider_recovery_outbox",
+            ):
+                self.assertEqual((0,), repository._connection.execute(
+                    f"SELECT count(*) FROM {table}"
+                ).fetchone())
+            self._assert_no_cover_effect_authority(repository)
+            supervisor.stop()
+            repository.close()
+
     def test_composed_cover_replay_reuses_exact_binding_and_profile_change_supersedes_once(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

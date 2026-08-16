@@ -22,7 +22,10 @@ from mechanical_librarian.application.configuration import ReviewWebConfiguratio
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
-from mechanical_librarian.application.metadata_policy import PolicyTransition
+from mechanical_librarian.application.metadata_policy import (
+    PolicyContentionError,
+    PolicyTransition,
+)
 from mechanical_librarian.application.review_pipeline import (
     PipelineProgress,
 )
@@ -119,7 +122,10 @@ class FakeReviewRepository:
 
     def activate_metadata_policy(self, policy_id, expected_active_policy_id, resolutions, activated_at):
         if expected_active_policy_id != self.active_policy_id:
-            raise RuntimeError("stale")
+            # The real seam signals contention with a typed condition, and this
+            # double only ever satisfied the old message search by accident of
+            # the word it chose.
+            raise PolicyContentionError("stale", "policy state moved")
         if policy_id == self.active_policy_id:
             return None
         previous = self.active_policy_id

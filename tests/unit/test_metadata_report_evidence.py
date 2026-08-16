@@ -56,6 +56,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
 )
 from mechanical_librarian.domain.metadata_report import (
+    MAX_REPORT_BYTES,
     ClaimKind,
     ClaimScope,
     Comparison,
@@ -1289,6 +1290,29 @@ class MetadataReportEvidenceTests(unittest.TestCase):
                 self.assertEqual(report.local_claims[0].canonical, canonical)
                 self.assertEqual(report.report_id, replay.report_id)
                 self.assertEqual(MetadataReport.from_json(report.to_json()), report)
+
+    def test_from_json_refuses_an_unpaired_surrogate_as_its_declared_type(
+        self,
+    ) -> None:
+        """The length guard's codec failure is a refusal, not an escape.
+
+        The guard encodes the document to measure it, so a string carrying an
+        unpaired surrogate makes `encode` raise. Run outside the conversion
+        block, that `UnicodeEncodeError` escaped `from_json` as itself and made
+        the declared `ReportValueError` contract a half-truth no caller could
+        narrow to. The guard now sits inside the block, so the codec failure is
+        the one declared refusal and stays chained as the cause (#698).
+        """
+        with self.assertRaises(ReportValueError) as refused:
+            MetadataReport.from_json('{"a": "\ud800"}')
+        self.assertIsInstance(refused.exception.__cause__, UnicodeEncodeError)
+
+        # The guard's other two rejections keep the identity they always had,
+        # and neither acquires a cause it did not have.
+        for document in ("", "{}" + "　" * MAX_REPORT_BYTES):
+            with self.assertRaises(ReportValueError) as refused:
+                MetadataReport.from_json(document)
+            self.assertIsNone(refused.exception.__cause__)
 
 
 if __name__ == "__main__":

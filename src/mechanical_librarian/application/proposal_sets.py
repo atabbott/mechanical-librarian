@@ -63,23 +63,41 @@ class CreateProposalSet:
             report = MetadataReport.from_json(self._repository.get(report_id))
             if report.report_id != report_id:
                 raise ProposalSetError("proposal report identity disagrees")
-            policy = self._resolve_policy_profile(report)
+            try:
+                policy = self._resolve_policy_profile(report)
+            except (ProposalSetError, TargetConnectionError):
+                raise
+            except Exception as error:
+                raise ProposalSetError(
+                    "proposal policy resolution failed"
+                ) from error
             # ``type(policy) is str`` is an exact-type test over the declared
             # ``ResolvedMetadataPolicy | str`` union, so each arm is already
             # proven; mypy simply does not narrow inside a conditional
             # expression.
-            proposal_set = evaluate_report(
-                report,
-                policy
-                if type(policy) is str
-                else cast("ResolvedMetadataPolicy", policy).resolved_id,
-                None
-                if type(policy) is str
-                else human_review_destinations(
-                    cast("ResolvedMetadataPolicy", policy)
-                ),
-            )
-            if self._require_current(report) is not True:
+            try:
+                proposal_set = evaluate_report(
+                    report,
+                    policy
+                    if type(policy) is str
+                    else cast("ResolvedMetadataPolicy", policy).resolved_id,
+                    None
+                    if type(policy) is str
+                    else human_review_destinations(
+                        cast("ResolvedMetadataPolicy", policy)
+                    ),
+                )
+            except ProposalValueError:
+                raise
+            except Exception as error:
+                raise ProposalSetError("proposal evaluation failed") from error
+            try:
+                current = self._require_current(report)
+            except (ProposalSetError, TargetConnectionError):
+                raise
+            except Exception as error:
+                raise ProposalSetError("proposal currency check failed") from error
+            if current is not True:
                 raise ProposalSetError("proposal report is stale")
             persisted = self._repository.publish_proposal(proposal_set)
             if (
@@ -96,18 +114,16 @@ class CreateProposalSet:
         except (ReportValueError, ProposalValueError) as error:
             raise ProposalSetError("proposal input is invalid") from error
         except Exception as error:
-            # This spans the whole run, not the publication alone: policy
-            # resolution, report evaluation, and the currency check are inside
-            # the same block, and each reaches an injected seam that declares no
-            # error type. So the message names the outcome the caller gets --
-            # no published proposal set -- and not the phase that failed; a
-            # policy resolver that raises is reported here too, before any
-            # publication was attempted. What the message does rule out is the
-            # one thing above it: the domain parsers name their malformed-input
-            # failures, those are matched already, and a fault that reached here
-            # is not a valid-input problem and must not be reported as one.
-            # Separating the phases would move caller-visible error identities
-            # that no proven misclassification justifies moving.
+            # Policy resolution, evaluation and the currency check now name
+            # themselves where they run, so what is left under this handler is
+            # the stored-report read and the publication pair -- and only they
+            # can reach it. The message is therefore true of what failed rather
+            # than of the outcome alone: a resolver that raises before anything
+            # was published no longer reports a failed publication. What the
+            # message still rules out is the one thing above it: the domain
+            # parsers name their malformed-input failures, those are matched
+            # already, and a fault that reached here is not a valid-input
+            # problem and must not be reported as one.
             raise ProposalSetError("proposal publication failed") from error
 
 

@@ -26,6 +26,7 @@ from mechanical_librarian.domain.field_effect import (
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
+    ReportValueError,
     TargetDestination,
 )
 
@@ -550,14 +551,12 @@ class ContinuousGuardedApplication:
                     raise GuardedApplicationError("activity")
                 try:
                     report = MetadataReport.from_json(report_document)
-                except Exception as error:
-                    # ``from_json`` does not funnel into one declared type. Its
-                    # length guard encodes the document *outside* the block that
-                    # converts ``UnicodeError`` to ``ReportValueError``, so an
-                    # unpaired surrogate in a stored row escapes as
-                    # ``UnicodeEncodeError``. Breadth is what keeps every
-                    # unreadable row one ``activity`` refusal instead of letting
-                    # a codec fault reach the owner as an unhandled error.
+                except ReportValueError as error:
+                    # ``from_json`` now funnels every malformed-document
+                    # outcome, the length guard's codec failure included, into
+                    # its one declared type, so an unreadable row is one
+                    # ``activity`` refusal and a fault in the parser itself is
+                    # no longer reclassified as one.
                     raise GuardedApplicationError("activity") from error
                 if report.report_id != report_id:
                     raise GuardedApplicationError("activity")

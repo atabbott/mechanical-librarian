@@ -334,7 +334,19 @@ class ReviewPipelineStages:
 
             if snapshot() is None:
                 return
-            considerations = self._cover_considerations(pipeline_repository)
+            try:
+                considerations = self._cover_considerations(pipeline_repository)
+            except ReviewApplicationError:
+                raise
+            except Exception as error:
+                # Building the consideration service is this layer's own work
+                # and reaches no store operation, so a factory that raises is a
+                # projection fault. It is the one part of this stage that can be
+                # told apart: past this point the service holds the repository
+                # itself and reaches it from inside the gated operation, so a
+                # failure raised there is not attributable to either side from
+                # here.
+                raise ReviewPipelineError("projection") from error
             prepare_cover_consideration(
                 None,
                 considerations,
@@ -354,16 +366,19 @@ class ReviewPipelineStages:
             raise ReviewPipelineError("stale") from error
         except ReviewApplicationError as error:
             raise ReviewPipelineError(error.code) from error
+        except ReviewPipelineError:
+            raise
         except Exception as error:
-            # Last resort over the whole cover stage. Staleness and the
-            # application's own codes are carried through above, so what
-            # remains is a cover preparation that failed for a reason nothing
-            # here can name -- from the untyped repository seam, from the
-            # injected consideration factory, or from the application's own
-            # preparation between them, none of which this handler can tell
-            # apart. ``persistence`` is the code this stage answers with in
-            # that case rather than a finding about which of the three failed.
-            # It must still raise: an unprepared cover cannot be advanced past.
+            # Last resort over the rest of the cover stage. Staleness, the
+            # application's own codes and the factory's projection fault are
+            # carried through above, so what remains is the staged read, the
+            # durable gate, and a preparation that reaches the repository
+            # through the service's own handle inside that gate. Those are not
+            # separable from here: the operation the gate runs both projects and
+            # persists, so a failure it raises has no attributable side.
+            # ``persistence`` is the code this stage answers with for that
+            # remainder rather than a finding about which of them failed. It
+            # must still raise: an unprepared cover cannot be advanced past.
             raise ReviewPipelineError("persistence") from error
 
     def after_advance(
