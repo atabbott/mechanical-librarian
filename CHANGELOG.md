@@ -7,6 +7,11 @@
 
 ## Unreleased
 
+- Put the last frontend test that waited out a dwell on a real 360 ms sleep
+  onto the fake clock, and pin the 320 ms confirmation dwell to the status only
+  its continuation writes, so a dwell that suspends nothing fails. Records why
+  Testing Library's `userEvent` and `findBy*` cannot be used there -- the same
+  reason `test.globals: true` is declined rather than adopted. (#699)
 - Sweep the application layer's 94 broad exception handlers so none can turn a
   fault into a benign domain outcome: two narrow to the type their seam
   declares, the rest record the invariant that makes breadth correct. Five

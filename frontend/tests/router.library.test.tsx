@@ -433,8 +433,40 @@ describe('Library route', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).toHaveAttribute('aria-current', 'true'))
   })
 
+  it('suspends the confirmation dwell for its whole interval before continuing', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const authorsField = { ...titleField, destination: 'authors', proposalId: 'proposal-authors', targetFingerprint: 'fingerprint-authors' }
+    const settled: CaseDetailView = { ...detail, fields: [{ ...titleField, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }, authorsField] }
+    let current: CaseDetailView = { ...detail, fields: [titleField, authorsField] }
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }) }
+    // Fake clock installed before the first decision, and `settle` pinned to
+    // interval 0, for the reason recorded on the navigation test below.
+    vi.useFakeTimers()
+    try {
+      const settle = async (until: () => unknown) => { await vi.waitFor(until, { interval: 0 }) }
+      const continued = () => screen.queryByText('Decision recorded. Continuing with authors.')
+      const choice = () => screen.getByRole('button', { name: 'Choose current value: Old title' })
+      renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+      await vi.waitFor(() => expect(choice()).toBeEnabled())
+      fireEvent.click(choice())
+      await settle(() => expect(screen.getByText('The authoritative case confirms this exact field outcome.')).toBeVisible())
+
+      // Only the code after the awaited dwell writes this status, so its absence
+      // at 319 ms and its arrival at 320 ms pin the controller to that timer. A
+      // timer-count delta cannot: it survives a dwell that schedules the 320 ms
+      // timer and then awaits a different one.
+      await act(async () => { await vi.advanceTimersByTimeAsync(319) })
+      expect(continued()).toBeNull()
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      await settle(() => expect(continued()).toBeVisible())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('clears authoritative confirmation when the reviewer navigates during its dwell', async () => {
-    const user = userEvent.setup()
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const authorsField = { ...titleField, destination: 'authors', proposalId: 'proposal-authors', targetFingerprint: 'fingerprint-authors' }
@@ -444,21 +476,51 @@ describe('Library route', () => {
     const authorsDecision = new Promise<never>((_resolve, reject) => { rejectAuthors = reject })
     const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async (_id, command) => { if (command.destination === 'authors') return authorsDecision; current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } })
     const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision }
-    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    // The dwell is scheduled the instant the confirmation renders, so the fake
+    // clock has to be installed before the first decision is recorded: a timer
+    // created on the real clock cannot be advanced afterwards. That rules out
+    // `userEvent` and `findBy*` for the whole block — see Test economy in
+    // docs/development/testing-strategy.md. `settle` polls on the real clock
+    // and advances the fake one by nothing, so the dwell elapses only where
+    // this test says it does.
+    vi.useFakeTimers()
+    try {
+      const settle = async (until: () => unknown) => { await vi.waitFor(until, { interval: 0 }) }
+      const confirmation = () => screen.queryByText('The authoritative case confirms this exact field outcome.')
+      const choice = () => screen.getByRole('button', { name: 'Choose current value: Old title' })
+      renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
-    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
-    expect(await screen.findByText('The authoritative case confirms this exact field outcome.')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: /Authors.*Needs review/u }))
-    const authorsChoice = screen.getByRole('button', { name: 'Choose current value: Old title' })
-    await user.click(authorsChoice)
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 360)) })
+      // The route's own load needs the clock; no dwell exists yet to disturb.
+      await vi.waitFor(() => expect(choice()).toBeEnabled())
+      fireEvent.click(choice())
+      await settle(() => expect(confirmation()).toBeVisible())
+      fireEvent.click(screen.getByRole('button', { name: /Authors.*Needs review/u }))
+      await settle(() => expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).toHaveAttribute('aria-current', 'true'))
+      const authorsChoice = choice()
+      fireEvent.click(authorsChoice)
+      await settle(() => expect(authorsChoice).toHaveTextContent('Recording…'))
 
-    expect(screen.queryByText('The authoritative case confirms this exact field outcome.')).toBeNull()
-    expect(authorsChoice).toHaveTextContent('Recording…')
-    await act(async () => { rejectAuthors?.(new ApiError(503, 'decision_failed')) })
-    expect(await screen.findByRole('button', { name: 'Try the same decision again' })).toBeVisible()
-    await user.click(screen.getByRole('button', { name: /Title.*Decision recorded/u }))
-    expect(screen.getByText(/The recorded value remains Old title/u)).toBeVisible()
+      // Navigating away is what hides the confirmation, so here the dwell's
+      // expiry shows in nothing the reviewer can see — its only duty is to
+      // leave the decision started after it alone. The advance is made
+      // load-bearing on the timer instead: still scheduled a millisecond short
+      // of 320 ms, retired on the millisecond it was set for. That is all a
+      // count delta can show; the dwell itself is pinned to the controller by
+      // the continuation test above.
+      await act(async () => { await vi.advanceTimersByTimeAsync(319) })
+      const pendingDwell = vi.getTimerCount()
+      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+      expect(vi.getTimerCount()).toBe(pendingDwell - 1)
+
+      expect(confirmation()).toBeNull()
+      expect(authorsChoice).toHaveTextContent('Recording…')
+      await act(async () => { rejectAuthors?.(new ApiError(503, 'decision_failed')) })
+      await settle(() => expect(screen.getByRole('button', { name: 'Try the same decision again' })).toBeVisible())
+      fireEvent.click(screen.getByRole('button', { name: /Title.*Decision recorded/u }))
+      await settle(() => expect(screen.getByText(/The recorded value remains Old title/u)).toBeVisible())
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('preserves final completion when navigation ends the confirmation dwell', async () => {

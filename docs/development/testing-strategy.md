@@ -120,6 +120,35 @@ longhand stays.
   substituted at construction, so the failure is forced across a boundary the
   code must keep. Where a private member genuinely is the contract under test,
   say so at the site.
+- Drive a frontend debounce, dwell, or interval on `vi.useFakeTimers()`, and
+  reach the assertions through `fireEvent` and `vi.waitFor` rather than
+  `userEvent` or `findBy*`. `@testing-library/react`'s
+  `jestFakeTimersAreEnabled()` reports true only where a global `jest` exists,
+  so under vitest fake timers its `asyncWrapper` schedules a zero-delay timer
+  on the fake clock and never advances it: every `userEvent` call and every
+  `findBy*` waits forever instead of failing. `userEvent.setup({ advanceTimers
+  })` does not rescue it, because the stall is in Testing Library's wrapper
+  rather than user-event's own wait, and `test.globals: true` does not either
+  -- which is why it is declined in `vite.config.ts`, and why `tsconfig.json`
+  does not declare the matching ambient types: vitest injects `vi`, `describe`,
+  `expect` and their siblings, never `jest`, so the detection stays false,
+  while types for globals nobody enables turn a missing import into a run that
+  fails after typechecking passed. Only a `globalThis.jest = vi` shim would
+  flip the detection, and that would put every `waitFor` on Testing Library's
+  fake-timer branch, where each poll advances the clock 50 ms and silently
+  eats the interval under test. Wait with
+  `vi.waitFor(until, { interval: 0 })` instead, which polls on the real clock
+  and advances the fake one by nothing, so the advance the test writes down is
+  the only time that passes. Carry a mutation check with each advance --
+  shorten it and the test must fail -- and pin the advance to an effect the
+  code after the awaited timer owns: absent a millisecond short of the
+  interval, present on it. A timer-count delta is not that proof. It shows
+  only that some timer expired, so a dwell that schedules its timer and then
+  awaits a different one keeps the count and passes while suspending nothing.
+  Where that effect does not surface in the scenario under test, prove the
+  interval in a focused test that reaches it rather than weakening the
+  assertion to the level at hand. Real timers stay only where no timer is
+  being measured.
 
 F19a adds focused source proof for clean-schema automatic bootstrap, exact
 qualified option/bundle admission, atomic human/automatic uniqueness,
