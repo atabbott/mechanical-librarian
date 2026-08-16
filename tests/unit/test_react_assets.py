@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import tempfile
-import unittest
+from collections.abc import Iterator
 from pathlib import Path
-from typing import cast
+
+import pytest
 
 from mechanical_librarian.interfaces.web.react_assets import (
+    ReactAssetBundle,
     ReactAssetError,
     ReactAssetLoader,
     ReactAssetRecovery,
@@ -60,117 +63,126 @@ def _write_bundle(root: Path) -> None:
     )
 
 
-class ReactAssetTests(unittest.TestCase):
-    def test_exact_manifest_and_assets_open(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            _write_bundle(root)
+@pytest.fixture
+def bundle() -> Iterator[ReactAssetBundle]:
+    """An exact on-disk bundle, opened, with its directory alive for reads."""
 
-            bundle = load_react_asset_bundle(root)
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        _write_bundle(root)
+        yield load_react_asset_bundle(root)
 
-            self.assertRegex(bundle.build_identity, r"^[0-9a-f]{64}$")
-            self.assertEqual(bundle.entry, "index.html")
-            self.assertIn(b"id=app", bundle.read("index.html"))
 
-            shell = bundle.shell_html("a" * 32)
-            self.assertIn('data-csrf-token="' + "a" * 32 + '"', shell)
-            self.assertIn(
-                'data-build-identity="' + bundle.build_identity + '"', shell
-            )
-            for hostile in ('" onload="alert(1)', "short", "a" * 129):
-                with self.subTest(hostile=hostile), self.assertRaises(
-                    ReactAssetError
-                ):
-                    bundle.shell_html(hostile)
+def test_exact_manifest_and_assets_open(bundle: ReactAssetBundle) -> None:
+    assert re.search(r"^[0-9a-f]{64}$", bundle.build_identity)
+    assert bundle.entry == "index.html"
+    assert b"id=app" in bundle.read("index.html")
 
-    def test_missing_corrupt_extra_shape_and_source_map_fail_closed(self) -> None:
-        for mutation in (
-            "missing",
-            "corrupt",
-            "shape",
-            "source_map",
-            "kind",
-            "noncanonical",
-        ):
-            with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as directory:
-                root = Path(directory)
-                _write_bundle(root)
-                manifest_path = root / "review-assets-v1.json"
-                value = json.loads(manifest_path.read_text(encoding="utf-8"))
-                if mutation == "missing":
-                    (root / value["assets"][1]["path"]).unlink()
-                elif mutation == "corrupt":
-                    (root / value["assets"][1]["path"]).write_bytes(b"changed")
-                elif mutation == "shape":
-                    value["unexpected"] = True
-                    manifest_path.write_text(json.dumps(value), encoding="utf-8")
-                elif mutation == "source_map":
-                    value["assets"][1]["path"] = "assets/index.js.map"
-                    manifest_path.write_text(json.dumps(value), encoding="utf-8")
-                elif mutation == "kind":
-                    value["assets"][0]["kind"] = "script"
-                    manifest_path.write_text(json.dumps(value), encoding="utf-8")
-                else:
-                    manifest_path.write_text(
-                        json.dumps(value, separators=(",", ":")), encoding="utf-8"
-                    )
-                with self.assertRaises((ReactAssetError, OSError)):
-                    load_react_asset_bundle(root)
+    shell = bundle.shell_html("a" * 32)
+    assert 'data-csrf-token="' + "a" * 32 + '"' in shell
+    assert 'data-build-identity="' + bundle.build_identity + '"' in shell
 
-    def test_recovery_is_stable_and_never_requests_reload(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            loader = ReactAssetLoader(Path(directory))
-            first = loader.load()
-            second = loader.load()
 
-            self.assertIs(first, second)
-            self.assertIsInstance(first, ReactAssetRecovery)
-            self.assertFalse(cast(ReactAssetRecovery, first).reload)
-            self.assertEqual(
-                cast(ReactAssetRecovery, first).retry,
-                "owner_requested_restart_after_rebuild",
-            )
+@pytest.mark.parametrize(
+    "hostile",
+    ('" onload="alert(1)', "short", "a" * 129),
+    ids=("attribute_injection", "under_length", "over_length"),
+)
+def test_hostile_csrf_token_is_refused_by_the_shell(
+    bundle: ReactAssetBundle, hostile: str
+) -> None:
+    with pytest.raises(ReactAssetError):
+        bundle.shell_html(hostile)
 
-    def test_deep_manifest_recursion_is_cached_as_stable_recovery(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "review-assets-v1.json").write_text(
-                "[" * 20_000 + "]" * 20_000,
-                encoding="utf-8",
-            )
-            loader = ReactAssetLoader(root)
 
-            first = loader.load()
-            second = loader.load()
-
-            self.assertIs(first, second)
-            self.assertIsInstance(first, ReactAssetRecovery)
-
-    def test_build_identity_mismatch_fails_closed(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            _write_bundle(root)
-
-            with self.assertRaisesRegex(
-                ReactAssetError, "build_identity_mismatch"
-            ):
-                load_react_asset_bundle(root, "b" * 64)
-
-    def test_manifest_identity_cannot_be_relabelled(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            _write_bundle(root)
-            manifest_path = root / "review-assets-v1.json"
-            value = json.loads(manifest_path.read_text(encoding="utf-8"))
-            value["build_identity"] = "b" * 64
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "missing",
+        "corrupt",
+        "shape",
+        "source_map",
+        "kind",
+        "noncanonical",
+    ),
+)
+def test_missing_corrupt_extra_shape_and_source_map_fail_closed(
+    mutation: str,
+) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        _write_bundle(root)
+        manifest_path = root / "review-assets-v1.json"
+        value = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if mutation == "missing":
+            (root / value["assets"][1]["path"]).unlink()
+        elif mutation == "corrupt":
+            (root / value["assets"][1]["path"]).write_bytes(b"changed")
+        elif mutation == "shape":
+            value["unexpected"] = True
+            manifest_path.write_text(json.dumps(value), encoding="utf-8")
+        elif mutation == "source_map":
+            value["assets"][1]["path"] = "assets/index.js.map"
+            manifest_path.write_text(json.dumps(value), encoding="utf-8")
+        elif mutation == "kind":
+            value["assets"][0]["kind"] = "script"
+            manifest_path.write_text(json.dumps(value), encoding="utf-8")
+        else:
             manifest_path.write_text(
-                json.dumps(value, indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
+                json.dumps(value, separators=(",", ":")), encoding="utf-8"
             )
+        with pytest.raises((ReactAssetError, OSError)):
+            load_react_asset_bundle(root)
 
-            with self.assertRaisesRegex(ReactAssetError, "build_identity_mismatch"):
-                load_react_asset_bundle(root)
+
+def test_recovery_is_stable_and_never_requests_reload() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        loader = ReactAssetLoader(Path(directory))
+        first = loader.load()
+        second = loader.load()
+
+        assert first is second
+        assert isinstance(first, ReactAssetRecovery)
+        assert not first.reload
+        assert first.retry == "owner_requested_restart_after_rebuild"
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_deep_manifest_recursion_is_cached_as_stable_recovery() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        (root / "review-assets-v1.json").write_text(
+            "[" * 20_000 + "]" * 20_000,
+            encoding="utf-8",
+        )
+        loader = ReactAssetLoader(root)
+
+        first = loader.load()
+        second = loader.load()
+
+        assert first is second
+        assert isinstance(first, ReactAssetRecovery)
+
+
+def test_build_identity_mismatch_fails_closed() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        _write_bundle(root)
+
+        with pytest.raises(ReactAssetError, match="build_identity_mismatch"):
+            load_react_asset_bundle(root, "b" * 64)
+
+
+def test_manifest_identity_cannot_be_relabelled() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        _write_bundle(root)
+        manifest_path = root / "review-assets-v1.json"
+        value = json.loads(manifest_path.read_text(encoding="utf-8"))
+        value["build_identity"] = "b" * 64
+        manifest_path.write_text(
+            json.dumps(value, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ReactAssetError, match="build_identity_mismatch"):
+            load_react_asset_bundle(root)
