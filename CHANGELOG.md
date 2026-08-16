@@ -64,6 +64,35 @@
   either would add or drop a type rather than name one. The helper's docstring
   names both and why, so the shared baseline is not mistaken for a module
   invariant and neither path is later widened into agreement with it. (#706)
+- Move the locked Python closure off every Starlette advisory and put
+  `dependency-audit` back to reporting something. The job has been failing on
+  `main` since at least `ecd70fcb` on one package, `starlette 0.47.3`, carrying
+  six advisories, and because it is not a required check it failed silently.
+  Four of them -- the `FileResponse` `Range` merge, `StaticFiles` UNC paths,
+  `request.form()` limits, and `HTTPEndpoint` method dispatch -- reach nothing
+  here, because this service builds its own responses and has no form, upload,
+  static-file, or `HTTPEndpoint` surface. The two that reached it are the two
+  about `Host`-derived values, and the path-based decisions they undermined are
+  fixed above, independently of any version.
+  Starlette moves to 1.6.0 and is pinned directly, because `app.py` imports
+  `starlette.types` and a direct import is a direct dependency; FastAPI moves
+  to 0.141.1 because 0.116.1 capped Starlette below 0.48.0 and 0.141.1 replaces
+  that cap with an open `starlette>=0.46.0`. The FastAPI major-line move and
+  Starlette's 0.x-to-1.x break cost nothing at this application's seams: the
+  middleware stack, `Security`/`Depends` wiring, exception handlers and
+  `RequestValidationError` shape are unchanged, the generated
+  `review-openapi-v1.json` regenerates byte-identical, and the browser tier
+  passes on the built artifact against a real Uvicorn process. The upgrade adds
+  one transitive package, `annotated-doc` (MIT), and installs no optional
+  extra.
+  Worth recording for whoever reads the fix above later: Starlette 1.x now
+  validates the `Host` header itself and falls back to the ASGI `server` value
+  when it does not match, so on this version the header can no longer split the
+  two path values at all. The application-level fix is not made redundant by
+  that -- it is what stops the decision depending on which version is installed
+  -- but a `Host`-header test alone would stop failing if the fix were reverted
+  on 1.x. The encoded-fragment case pinned above is the one that still fails,
+  which is why it is there.
 - Take every path-based security decision in the web layer on the path the
   router dispatched on, not on the URL Starlette rebuilds from the `Host`
   header. `request.url` is reconstructed as `scheme://<Host header><path>`, so

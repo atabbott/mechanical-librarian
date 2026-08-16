@@ -80,6 +80,18 @@ multipart parser, identity provider, cache, session service, or second process
 is introduced. The licences are compatible with AGPL-3.0-or-later; release
 notice and SBOM generation remain separate release gates.
 
+#702 moved Starlette out of that baseline's transitive column: `app.py` imports
+`starlette.types` directly, so it is now pinned in `pyproject.toml` beside
+FastAPI rather than floating under FastAPI's open `starlette>=0.46.0`. That is a
+manifest relationship change, not a version-drift correction to the table above,
+which stays the introduction-time record. FastAPI's move to the 0.14x line for
+that pin adds exactly one new transitive package, `annotated-doc` (MIT, two
+modules, no dependencies of its own), which participates only in FastAPI's
+`Annotated` documentation metadata. Neither receives any authority the baseline
+paragraph above does not already grant FastAPI and Starlette, and no optional
+extra is installed, so no multipart parser, template engine, CLI, settings
+loader, or second HTTP client enters the closure.
+
 F16a #450 added one pinned development-only browser qualification dependency
 and its locked Python closure. The table and browser payload hashes are the
 introduction-time qualification baseline. A Playwright update requires explicit
