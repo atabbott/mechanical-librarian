@@ -11,9 +11,11 @@ import hashlib
 import json
 import os
 import tempfile
-import unittest
+from collections.abc import Callable, Iterator
+from contextlib import ExitStack
+from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Generic, TypeVar, cast
 
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
@@ -590,42 +592,84 @@ class FakeActivityApplication(ContinuousGuardedApplication):
         return None
 
 
-class ReviewWebTestCase(unittest.TestCase):
-    """One authenticated transport-test application over the fake repository."""
+RepositoryT = TypeVar("RepositoryT", bound=FakeReviewRepository)
 
-    def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory()
-        root = Path(self.temporary.name)
-        self.hash_path = root / "owner.hash"
-        self.hash_path.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
-        os.chmod(self.hash_path, 0o600)
-        report = _report()
-        self.case = ReviewCase.create(evaluate_report(report), report)
-        self.repository = FakeReviewRepository(self.case, report)
-        self.now = 1_000
-        configuration = ReviewWebConfiguration(
-            canonical_origin="https://review.test",
-            owner_password_hash_file=str(self.hash_path),
-            session_lifetime_seconds=600,
-        )
-        self.client = TestClient(
-            create_transport_test_app(
-                self.repository, configuration, clock=lambda: self.now
-            ),
-            base_url="https://review.test",
-        )
-        self.origin = {"Origin": "https://review.test"}
 
-    def tearDown(self) -> None:
-        self.client.close()
-        self.temporary.cleanup()
+@dataclass
+class ReviewWebContext(Generic[RepositoryT]):
+    """One authenticated transport-test application over the fake repository.
 
-    def _login(self) -> dict[str, object]:
+    The shared builder both review-web cohorts use, rather than the
+    `TestCase` base they inherited: a support-tier helper keeps them
+    independent of each other, which
+    `docs/development/testing-strategy.md` requires. `now` and `client`
+    stay rebindable because the transport cohort advances the clock and
+    substitutes applications mid-test, and the clock reads `now` back
+    through the instance so a test that advances it is seen.
+    """
+
+    temporary: tempfile.TemporaryDirectory[str]
+    hash_path: Path
+    case: ReviewCase
+    repository: RepositoryT
+    now: int
+    client: TestClient
+    origin: dict[str, str]
+    cleanup: ExitStack
+
+    def login(self) -> dict[str, object]:
         response = self.client.post(
             "/api/v1/session/login",
             headers=self.origin,
             json={"password": "correct horse"},
         )
-        self.assertEqual(response.status_code, 200, response.text)
+        assert response.status_code == 200, response.text
         self.client.headers["x-ml-build-identity"] = TEST_REACT_BUILD_IDENTITY
         return response.json()
+
+    def close(self) -> None:
+        # The stack exits any client a test entered before the field is
+        # replaced, so a substituted application still shuts down.
+        self.cleanup.close()
+        self.client.close()
+        self.temporary.cleanup()
+
+
+def review_web_context(
+    repository_factory: Callable[[ReviewCase, MetadataReport], RepositoryT],
+) -> Iterator[ReviewWebContext[RepositoryT]]:
+    """Yield one signed-out transport application over `repository_factory`."""
+
+    temporary = tempfile.TemporaryDirectory()
+    hash_path = Path(temporary.name) / "owner.hash"
+    hash_path.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+    os.chmod(hash_path, 0o600)
+    report = _report()
+    case = ReviewCase.create(evaluate_report(report), report)
+    repository = repository_factory(case, report)
+    configuration = ReviewWebConfiguration(
+        canonical_origin="https://review.test",
+        owner_password_hash_file=str(hash_path),
+        session_lifetime_seconds=600,
+    )
+    # The clock reads `context.now` when it is called, not when it is built,
+    # so a test that advances the field is seen by the running application.
+    context: ReviewWebContext[RepositoryT]
+    client = TestClient(
+        create_transport_test_app(
+            repository, configuration, clock=lambda: context.now
+        ),
+        base_url="https://review.test",
+    )
+    context = ReviewWebContext(
+        temporary=temporary,
+        hash_path=hash_path,
+        case=case,
+        repository=repository,
+        now=1_000,
+        client=client,
+        origin={"Origin": "https://review.test"},
+        cleanup=ExitStack(),
+    )
+    yield context
+    context.close()

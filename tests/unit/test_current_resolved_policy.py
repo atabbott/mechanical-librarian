@@ -8,7 +8,8 @@ itself and pin the three configuration failures it distinguishes.
 from __future__ import annotations
 
 import json
-import unittest
+
+import pytest
 
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
@@ -70,39 +71,38 @@ def _configured(override: dict[str, dict[str, str]] | None = None) -> ResolvedMe
     return resolve_policy(MetadataPolicyProfile.builtin(), "books", override)
 
 
-class CurrentResolvedPolicyTests(unittest.TestCase):
-    def test_absent_resolution_is_bound_from_configuration_once(self) -> None:
-        repository = _Repository(None)
-        resolved = current_resolved_policy(_configuration(), repository, "books")
-        self.assertEqual(_configured(), resolved)
-        self.assertEqual([_configured().canonical_json], repository.bindings)
-
-    def test_matching_persisted_resolution_is_returned_without_binding(self) -> None:
-        repository = _Repository(_configured())
-        resolved = current_resolved_policy(_configuration(), repository, "books")
-        self.assertEqual(_configured(), resolved)
-        self.assertEqual([], repository.bindings)
-
-    def test_drifted_persisted_resolution_is_a_configuration_failure(self) -> None:
-        override = {"options": {}, "destinations": {"series": "ignore"}}
-        repository = _Repository(_configured(override))
-        with self.assertRaises(ReviewCaseError) as raised:
-            current_resolved_policy(_configuration(), repository, "books")
-        self.assertEqual("configuration", str(raised.exception))
-        self.assertEqual([], repository.bindings)
-
-    def test_unconfigured_library_is_a_configuration_failure(self) -> None:
-        repository = _Repository(None)
-        with self.assertRaises(ReviewCaseError):
-            current_resolved_policy(_configuration(), repository, "absent")
-        self.assertEqual([], repository.bindings)
-
-    def test_bind_returning_another_identity_is_a_configuration_failure(self) -> None:
-        repository = _Repository(None, bound="resolved_policy_" + "0" * 64)
-        with self.assertRaises(ReviewCaseError):
-            current_resolved_policy(_configuration(), repository, "books")
-        self.assertEqual(1, len(repository.bindings))
+def test_absent_resolution_is_bound_from_configuration_once() -> None:
+    repository = _Repository(None)
+    resolved = current_resolved_policy(_configuration(), repository, "books")
+    assert _configured() == resolved
+    assert [_configured().canonical_json] == repository.bindings
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_matching_persisted_resolution_is_returned_without_binding() -> None:
+    repository = _Repository(_configured())
+    resolved = current_resolved_policy(_configuration(), repository, "books")
+    assert _configured() == resolved
+    assert [] == repository.bindings
+
+
+def test_drifted_persisted_resolution_is_a_configuration_failure() -> None:
+    override = {"options": {}, "destinations": {"series": "ignore"}}
+    repository = _Repository(_configured(override))
+    with pytest.raises(ReviewCaseError) as raised:
+        current_resolved_policy(_configuration(), repository, "books")
+    assert "configuration" == str(raised.value)
+    assert [] == repository.bindings
+
+
+def test_unconfigured_library_is_a_configuration_failure() -> None:
+    repository = _Repository(None)
+    with pytest.raises(ReviewCaseError):
+        current_resolved_policy(_configuration(), repository, "absent")
+    assert [] == repository.bindings
+
+
+def test_bind_returning_another_identity_is_a_configuration_failure() -> None:
+    repository = _Repository(None, bound="resolved_policy_" + "0" * 64)
+    with pytest.raises(ReviewCaseError):
+        current_resolved_policy(_configuration(), repository, "books")
+    assert 1 == len(repository.bindings)

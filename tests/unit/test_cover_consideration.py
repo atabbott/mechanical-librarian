@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-import unittest
 from typing import cast
 from unittest.mock import patch
+
+import pytest
 
 from mechanical_librarian.application import cover_observation
 from mechanical_librarian.application.cover_consideration import (
@@ -55,8 +56,10 @@ class _Store:
         return tuple(reversed(self.events[-limit:]))
 
 
-class CoverConsiderationTests(unittest.TestCase):
-    def setUp(self) -> None:
+class _Case:
+    """The coupled service, store and clock a `setUp` used to carry."""
+
+    def __init__(self) -> None:
         incumbent_payload = _preview(1)
         alternative_payload = _preview(2)
         self.sources = (
@@ -88,263 +91,258 @@ class CoverConsiderationTests(unittest.TestCase):
         )
         self.proposal = {"proposal_id": "review_proposal_" + "a" * 64}
 
-    def test_model_free_manual_path_is_persisted_before_exact_selection(self) -> None:
-        value = self.service.ensure(
-            "review_case_" + "b" * 64,
-            self.report.to_json(),
-            self.proposal,
-        )
-        self.assertEqual(value["reviewer_status"], "unavailable")
-        self.assertTrue(value["candidates"][0]["incumbent"])
-        alternative = value["candidates"][1]
-        self.assertTrue(alternative["selectable"])
-        self.service.validate_decision(
+
+@pytest.fixture
+def case() -> _Case:
+    return _Case()
+
+
+def test_model_free_manual_path_is_persisted_before_exact_selection(case: _Case) -> None:
+    value = case.service.ensure(
+        "review_case_" + "b" * 64,
+        case.report.to_json(),
+        case.proposal,
+    )
+    assert value["reviewer_status"] == "unavailable"
+    assert value["candidates"][0]["incumbent"]
+    alternative = value["candidates"][1]
+    assert alternative["selectable"]
+    case.service.validate_decision(
+        "review_case_" + "b" * 64,
+        value["consideration_id"],
+        "accept",
+        {"kind": "cover", "value": alternative["artifact_id"]},
+    )
+    with pytest.raises(CoverConsiderationError, match="invalid_choice"):
+        case.service.validate_decision(
             "review_case_" + "b" * 64,
             value["consideration_id"],
             "accept",
-            {"kind": "cover", "value": alternative["artifact_id"]},
-        )
-        with self.assertRaisesRegex(CoverConsiderationError, "invalid_choice"):
-            self.service.validate_decision(
-                "review_case_" + "b" * 64,
-                value["consideration_id"],
-                "accept",
-                {"kind": "cover", "value": value["candidates"][0]["artifact_id"]},
-            )
-
-    def test_incumbent_only_cover_remains_an_explicit_owner_choice(self) -> None:
-        self.assertTrue(
-            _needs_attention(
-                {
-                    "destination": "cover",
-                    "manual_required": False,
-                    "result": {
-                        "outcome": "keep",
-                        "reasons": ["current_cover_verified"],
-                    },
-                }
-            )
+            {"kind": "cover", "value": value["candidates"][0]["artifact_id"]},
         )
 
-    def test_identical_replay_reopens_and_explicit_retry_creates_successor(self) -> None:
-        case_id = "review_case_" + "c" * 64
-        first = self.service.ensure(case_id, self.report.to_json(), self.proposal)
-        replay = self.service.ensure(case_id, self.report.to_json(), self.proposal)
-        self.assertEqual(replay["consideration_id"], first["consideration_id"])
-        self.now += 1
-        successor = self.service.ensure(
-            case_id, self.report.to_json(), self.proposal, retry=True
-        )
-        self.assertEqual(successor["supersedes_id"], first["consideration_id"])
-        self.assertEqual([event["kind"] for event in self.store.events], ["automatic_prepared", "superseded", "owner_retry_prepared"])
 
-    def test_incumbent_duplicate_remains_bound_to_abs_original(self) -> None:
-        payload = _preview(7)
-        incumbent = _source(1, payload, incumbent=True)
-        larger_duplicate = _source(9, payload, embedded=True)
-        report = _report((incumbent, larger_duplicate))
-        assert incumbent.artifact is not None
-        assert larger_duplicate.artifact is not None
-        store = _Store()
-        service = CoverConsiderationService(
-            store,
-            read_preview=lambda _artifact, _variant: payload,
-            read_preview_digest=lambda _digest: payload,
-            clock=lambda: 10,
-        )
-
-        value = service.ensure(
-            "review_case_" + "d" * 64,
-            report.to_json(),
-            self.proposal,
-        )
-
-        self.assertEqual(len(value["candidates"]), 1)
-        self.assertTrue(value["candidates"][0]["incumbent"])
-        self.assertEqual(
-            value["candidates"][0]["artifact_id"],
-            incumbent.artifact.artifact_id,
-        )
-        self.assertEqual(
-            json.loads(store.current["review_case_" + "d" * 64])[
-                "incumbent_digest"
-            ],
-            incumbent.artifact.original_digest,
-        )
-
-    def test_exact_policy_preferences_are_persisted_and_projected(self) -> None:
-        service = CoverConsiderationService(
-            self.store,
-            read_preview=lambda artifact, _variant: self.payload_by_artifact[artifact],
-            read_preview_digest=lambda digest: self.payload_by_preview[digest],
-            clock=lambda: self.now,
-            policy=CoverPolicy(True, True, True),
-        )
-        case_id = "review_case_" + "e" * 64
-
-        value = service.ensure(case_id, self.report.to_json(), self.proposal)
-
-        self.assertEqual(
-            value["policy_preferences"],
+def test_incumbent_only_cover_remains_an_explicit_owner_choice() -> None:
+    assert _needs_attention(
             {
-                "avoid_promotional_text": True,
-                "avoid_tie_in_branding": True,
-                "prefer_minimal_composition": True,
-                "schema_version": "cover-policy-v1",
-            },
-        )
-        persisted = json.loads(self.store.current[case_id])
-        self.assertEqual(
-            json.loads(persisted["policy_document"]),
-            value["policy_preferences"],
-        )
-        self.assertEqual(persisted["policy_reference"], value["policy_reference"])
-
-    def test_changed_reviewer_contract_makes_the_prior_consideration_noncurrent(self) -> None:
-        case_id = "review_case_" + "f" * 64
-        first = self.service.ensure(case_id, self.report.to_json(), self.proposal)
-        changed = CoverConsiderationService(
-            self.store,
-            read_preview=lambda artifact, _variant: self.payload_by_artifact[artifact],
-            read_preview_digest=lambda digest: self.payload_by_preview[digest],
-            clock=lambda: self.now + 1,
-            reviewer_profile=b"changed-profile",
+                "destination": "cover",
+                "manual_required": False,
+                "result": {
+                    "outcome": "keep",
+                    "reasons": ["current_cover_verified"],
+                },
+            }
         )
 
-        self.assertIsNone(changed.project(self.store.current[case_id]))
-        with self.assertRaisesRegex(CoverConsiderationError, "stale"):
-            changed.validate_decision(
-                case_id,
-                str(first["consideration_id"]),
-                "keep_current",
-                None,
+
+def test_identical_replay_reopens_and_explicit_retry_creates_successor(case: _Case) -> None:
+    case_id = "review_case_" + "c" * 64
+    first = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    replay = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    assert replay["consideration_id"] == first["consideration_id"]
+    case.now += 1
+    successor = case.service.ensure(
+        case_id, case.report.to_json(), case.proposal, retry=True
+    )
+    assert successor["supersedes_id"] == first["consideration_id"]
+    assert [event["kind"] for event in case.store.events] == ["automatic_prepared", "superseded", "owner_retry_prepared"]
+
+
+def test_incumbent_duplicate_remains_bound_to_abs_original(case: _Case) -> None:
+    payload = _preview(7)
+    incumbent = _source(1, payload, incumbent=True)
+    larger_duplicate = _source(9, payload, embedded=True)
+    report = _report((incumbent, larger_duplicate))
+    assert incumbent.artifact is not None
+    assert larger_duplicate.artifact is not None
+    store = _Store()
+    service = CoverConsiderationService(
+        store,
+        read_preview=lambda _artifact, _variant: payload,
+        read_preview_digest=lambda _digest: payload,
+        clock=lambda: 10,
+    )
+
+    value = service.ensure(
+        "review_case_" + "d" * 64,
+        report.to_json(),
+        case.proposal,
+    )
+
+    assert len(value["candidates"]) == 1
+    assert value["candidates"][0]["incumbent"]
+    assert value["candidates"][0]["artifact_id"] == incumbent.artifact.artifact_id
+    assert json.loads(store.current["review_case_" + "d" * 64])[
+            "incumbent_digest"
+        ] == incumbent.artifact.original_digest
+
+
+def test_exact_policy_preferences_are_persisted_and_projected(case: _Case) -> None:
+    service = CoverConsiderationService(
+        case.store,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=lambda digest: case.payload_by_preview[digest],
+        clock=lambda: case.now,
+        policy=CoverPolicy(True, True, True),
+    )
+    case_id = "review_case_" + "e" * 64
+
+    value = service.ensure(case_id, case.report.to_json(), case.proposal)
+
+    assert value["policy_preferences"] == {
+            "avoid_promotional_text": True,
+            "avoid_tie_in_branding": True,
+            "prefer_minimal_composition": True,
+            "schema_version": "cover-policy-v1",
+        }
+    persisted = json.loads(case.store.current[case_id])
+    assert json.loads(persisted["policy_document"]) == value["policy_preferences"]
+    assert persisted["policy_reference"] == value["policy_reference"]
+
+
+def test_changed_reviewer_contract_makes_the_prior_consideration_noncurrent(case: _Case) -> None:
+    case_id = "review_case_" + "f" * 64
+    first = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    changed = CoverConsiderationService(
+        case.store,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=lambda digest: case.payload_by_preview[digest],
+        clock=lambda: case.now + 1,
+        reviewer_profile=b"changed-profile",
+    )
+
+    assert changed.project(case.store.current[case_id]) is None
+    with pytest.raises(CoverConsiderationError, match="stale"):
+        changed.validate_decision(
+            case_id,
+            str(first["consideration_id"]),
+            "keep_current",
+            None,
+        )
+    successor = changed.ensure(case_id, case.report.to_json(), case.proposal)
+    assert first["consideration_id"] == successor["supersedes_id"]
+
+
+def test_preview_store_failure_is_typed_unavailable(case: _Case) -> None:
+    case_id = "review_case_" + "1" * 64
+    value = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+
+    def unavailable(_digest: str) -> bytes:
+        raise RuntimeError("synthetic store failure")
+
+    broken = CoverConsiderationService(
+        case.store,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=unavailable,
+        clock=lambda: case.now,
+    )
+    candidate = value["candidates"][0]
+    with pytest.raises(CoverConsiderationError, match="unavailable"):
+        broken.image(
+            case_id,
+            str(value["consideration_id"]),
+            str(candidate["reference"]),
+        )
+
+
+def test_local_projection_fault_is_not_recorded_as_reviewer_failure(case: _Case) -> None:
+    """Only the contained process can produce reviewer failure evidence.
+
+    The handler wrapped all of `observe_cover_packet` -- the packet binding,
+    the schema construction, the envelope parse, and the result validation
+    -- not just the reviewer dispatch. A fault in this layer's own
+    projection was therefore recorded as `reviewer_status="failed"` with
+    reviewer failure evidence, and the workflow continued as though the
+    contained process had failed. Everything before the dispatch is ours,
+    so a failure there surfaces instead (#698).
+    """
+    dispatches: list[object] = []
+
+    def reviewer(*args: object) -> str:
+        dispatches.append(args)
+        raise RuntimeError("contained reviewer exited")
+
+    service = CoverConsiderationService(
+        case.store,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=lambda digest: case.payload_by_preview[digest],
+        clock=lambda: case.now,
+        reviewer_profile=b"profile",
+        reviewer=cast("ReviewRunner", reviewer),
+    )
+
+    # A failure of the contained process is still one reviewable outcome.
+    value = service.ensure(
+        "review_case_" + "2" * 64, case.report.to_json(), case.proposal
+    )
+    assert value["reviewer_status"] == "failed"
+    assert len(dispatches) == 1
+
+    # A fault in the projection that runs before the reviewer is reached is
+    # not a reviewer outcome, and never reaches the reviewer at all.
+    fault = RuntimeError("cover request projection is broken")
+    with patch.object(
+        cover_observation, "admit_cover_review_request", side_effect=fault
+    ):
+        with pytest.raises(RuntimeError) as surfaced:
+            service.ensure(
+                "review_case_" + "3" * 64,
+                case.report.to_json(),
+                case.proposal,
             )
-        successor = changed.ensure(case_id, self.report.to_json(), self.proposal)
-        self.assertEqual(first["consideration_id"], successor["supersedes_id"])
+    assert surfaced.value is fault
+    assert len(dispatches) == 1
 
-    def test_preview_store_failure_is_typed_unavailable(self) -> None:
-        case_id = "review_case_" + "1" * 64
-        value = self.service.ensure(case_id, self.report.to_json(), self.proposal)
 
-        def unavailable(_digest: str) -> bytes:
-            raise RuntimeError("synthetic store failure")
+def test_assembly_fault_after_the_reviewer_returns_is_not_reviewer_failure(
+    case: _Case,
+) -> None:
+    """The reviewer's return is now a boundary the handler can see.
 
-        broken = CoverConsiderationService(
-            self.store,
-            read_preview=lambda artifact, _variant: self.payload_by_artifact[artifact],
-            read_preview_digest=unavailable,
-            clock=lambda: self.now,
-        )
-        candidate = value["candidates"][0]
-        with self.assertRaisesRegex(CoverConsiderationError, "unavailable"):
-            broken.image(
-                case_id,
-                str(value["consideration_id"]),
-                str(candidate["reference"]),
+    The dispatch flag marked the reviewer's call but not its return, so the
+    report `observe_cover_packet` assembles afterwards -- row binding, the
+    two digests, `_observer_reference` and the canonicalisation -- still
+    counted as dispatched. A fault in that assembly was persisted as
+    `reviewer_status="failed"` with reviewer failure evidence, blaming the
+    contained process for a projection it never touched. `observe_cover_packet`
+    now signals the validated return, so the far end of the reviewer's
+    contribution is as visible to the handler as the near end (#698).
+    """
+    dispatches: list[object] = []
+
+    def reviewer(*args: object) -> str:
+        dispatches.append(args)
+        return _observer_result(*cast("tuple[bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]]", args))
+
+    service = CoverConsiderationService(
+        case.store,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=lambda digest: case.payload_by_preview[digest],
+        clock=lambda: case.now,
+        reviewer_profile=b"profile",
+        reviewer=cast("ReviewRunner", reviewer),
+    )
+
+    # A reviewer that returns a valid result is still one completed
+    # observation, so the boundary does not cost the ordinary path.
+    value = service.ensure(
+        "review_case_" + "4" * 64, case.report.to_json(), case.proposal
+    )
+    assert value["reviewer_status"] == "completed"
+    assert len(dispatches) == 1
+
+    # A fault in the assembly that runs after the validated return is ours,
+    # and the reviewer is not asked again to produce it.
+    fault = RuntimeError("observer reference is broken")
+    with patch.object(
+        cover_observation, "_observer_reference", side_effect=fault
+    ):
+        with pytest.raises(RuntimeError) as surfaced:
+            service.ensure(
+                "review_case_" + "5" * 64,
+                case.report.to_json(),
+                case.proposal,
             )
-
-
-    def test_local_projection_fault_is_not_recorded_as_reviewer_failure(self) -> None:
-        """Only the contained process can produce reviewer failure evidence.
-
-        The handler wrapped all of `observe_cover_packet` -- the packet binding,
-        the schema construction, the envelope parse, and the result validation
-        -- not just the reviewer dispatch. A fault in this layer's own
-        projection was therefore recorded as `reviewer_status="failed"` with
-        reviewer failure evidence, and the workflow continued as though the
-        contained process had failed. Everything before the dispatch is ours,
-        so a failure there surfaces instead (#698).
-        """
-        dispatches: list[object] = []
-
-        def reviewer(*args: object) -> str:
-            dispatches.append(args)
-            raise RuntimeError("contained reviewer exited")
-
-        service = CoverConsiderationService(
-            self.store,
-            read_preview=lambda artifact, _variant: self.payload_by_artifact[artifact],
-            read_preview_digest=lambda digest: self.payload_by_preview[digest],
-            clock=lambda: self.now,
-            reviewer_profile=b"profile",
-            reviewer=cast("ReviewRunner", reviewer),
-        )
-
-        # A failure of the contained process is still one reviewable outcome.
-        value = service.ensure(
-            "review_case_" + "2" * 64, self.report.to_json(), self.proposal
-        )
-        self.assertEqual(value["reviewer_status"], "failed")
-        self.assertEqual(len(dispatches), 1)
-
-        # A fault in the projection that runs before the reviewer is reached is
-        # not a reviewer outcome, and never reaches the reviewer at all.
-        fault = RuntimeError("cover request projection is broken")
-        with patch.object(
-            cover_observation, "admit_cover_review_request", side_effect=fault
-        ):
-            with self.assertRaises(RuntimeError) as surfaced:
-                service.ensure(
-                    "review_case_" + "3" * 64,
-                    self.report.to_json(),
-                    self.proposal,
-                )
-        self.assertIs(surfaced.exception, fault)
-        self.assertEqual(len(dispatches), 1)
-
-    def test_assembly_fault_after_the_reviewer_returns_is_not_reviewer_failure(
-        self,
-    ) -> None:
-        """The reviewer's return is now a boundary the handler can see.
-
-        The dispatch flag marked the reviewer's call but not its return, so the
-        report `observe_cover_packet` assembles afterwards -- row binding, the
-        two digests, `_observer_reference` and the canonicalisation -- still
-        counted as dispatched. A fault in that assembly was persisted as
-        `reviewer_status="failed"` with reviewer failure evidence, blaming the
-        contained process for a projection it never touched. `observe_cover_packet`
-        now signals the validated return, so the far end of the reviewer's
-        contribution is as visible to the handler as the near end (#698).
-        """
-        dispatches: list[object] = []
-
-        def reviewer(*args: object) -> str:
-            dispatches.append(args)
-            return _observer_result(*cast("tuple[bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]]", args))
-
-        service = CoverConsiderationService(
-            self.store,
-            read_preview=lambda artifact, _variant: self.payload_by_artifact[artifact],
-            read_preview_digest=lambda digest: self.payload_by_preview[digest],
-            clock=lambda: self.now,
-            reviewer_profile=b"profile",
-            reviewer=cast("ReviewRunner", reviewer),
-        )
-
-        # A reviewer that returns a valid result is still one completed
-        # observation, so the boundary does not cost the ordinary path.
-        value = service.ensure(
-            "review_case_" + "4" * 64, self.report.to_json(), self.proposal
-        )
-        self.assertEqual(value["reviewer_status"], "completed")
-        self.assertEqual(len(dispatches), 1)
-
-        # A fault in the assembly that runs after the validated return is ours,
-        # and the reviewer is not asked again to produce it.
-        fault = RuntimeError("observer reference is broken")
-        with patch.object(
-            cover_observation, "_observer_reference", side_effect=fault
-        ):
-            with self.assertRaises(RuntimeError) as surfaced:
-                service.ensure(
-                    "review_case_" + "5" * 64,
-                    self.report.to_json(),
-                    self.proposal,
-                )
-        self.assertIs(surfaced.exception, fault)
-        self.assertEqual(len(dispatches), 2)
-        self.assertNotIn("review_case_" + "5" * 64, self.store.current)
-
-
-if __name__ == "__main__":
-    unittest.main()
+    assert surfaced.value is fault
+    assert len(dispatches) == 2
+    assert "review_case_" + "5" * 64 not in case.store.current

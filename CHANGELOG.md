@@ -7,6 +7,8 @@
 
 ## Unreleased
 
+- Convert every `tests/unit/` module to pytest, completing the suite
+  conversion and retiring the last shared `TestCase` base. (#697)
 - Convert every `TestCase` module outside `tests/unit/` to pytest, the pilot
   stage of the suite conversion. (#697)
 - Make the application layer's error identities name the failure they report.

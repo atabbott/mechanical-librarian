@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import unittest
+import pytest
 
 from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
     _entry as catalogue_entry,
@@ -47,114 +47,135 @@ def _payload(*, relative: str | None = "book.epub", path: str | None = "/media/A
     }
 
 
-class AudiobookshelfEbookLocationTests(unittest.TestCase):
-    def _catalogue(self, payload: dict[str, object]):
-        return catalogue_entry(
-            "primary",
-            _library(),
-            MediaMountConfiguration("books", "/library", "/media", True),
-            {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
-            payload,
+def _catalogue(payload: dict[str, object]):
+    return catalogue_entry(
+        "primary",
+        _library(),
+        MediaMountConfiguration("books", "/library", "/media", True),
+        {"id": "item-1", "libraryId": "library-1", "updatedAt": 1},
+        payload,
+    )
+
+
+def _current(payload: dict[str, object]):
+    return _snapshot(payload, "item-1", "library-1", "/media").files[0]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (_payload(path=None), _payload(relative=None), _payload()),
+    ids=("relative_only", "path_only", "both_coordinates"),
+)
+def test_nested_coordinate_variants_share_one_canonical_path_and_identity(
+    payload: dict[str, object],
+) -> None:
+    catalogue = _catalogue(payload)
+    current = _current(payload)
+    assert "Author/Book/book.epub" == catalogue.service_path
+    assert "Author/Book/book.epub" == current.relative_path
+    assert catalogue.service_path == current.relative_path
+    assert catalogue.file_identity == current.identity
+
+
+def test_nested_coordinate_variants_agree_on_one_file_identity() -> None:
+    identities = {
+        _catalogue(payload).file_identity
+        for payload in (_payload(path=None), _payload(relative=None), _payload())
+    }
+    assert 1 == len(identities)
+
+
+def test_flat_item_path_is_shared_at_both_boundaries() -> None:
+    payload = _payload(
+        relative="flat.epub",
+        path="/media/flat.epub",
+        item_relative="flat.epub",
+        item_path="/media/flat.epub",
+        is_file=True,
+    )
+    catalogue = _catalogue(payload)
+    current = _current(payload)
+    assert "flat.epub" == catalogue.service_path
+    assert catalogue.file_identity == current.identity
+
+
+def test_all_available_path_sources_must_agree() -> None:
+    payload = _payload(path="/media/Other/book.epub")
+    entry = _catalogue(payload)
+    assert "needs-attention" == entry.classification
+    with pytest.raises(MetadataReportError):
+        _current(payload)
+
+
+def test_path_only_record_must_still_agree_with_item_coordinates() -> None:
+    payload = _payload(relative=None, path="/media/Other/book.epub")
+    assert "needs-attention" == _catalogue(payload).classification
+    with pytest.raises(MetadataReportError):
+        _current(payload)
+    payload = _payload(item_path="/media/Other")
+    entry = _catalogue(payload)
+    assert "needs-attention" == entry.classification
+    with pytest.raises(MetadataReportError):
+        _current(payload)
+
+
+def _ambiguous() -> dict[str, object]:
+    payload = _payload()
+    media = payload["media"]
+    assert type(media) is dict
+    media["ebookFiles"] = [media["ebookFile"]]
+    return payload
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        _payload(item_relative="Author/../Book"),
+        _payload(relative=None, path=None),
+        _ambiguous(),
+    ),
+    ids=("traversal", "missing", "ambiguous"),
+)
+def test_traversal_missing_and_ambiguous_ebooks_fail_closed(
+    payload: dict[str, object],
+) -> None:
+    entry = _catalogue(payload)
+    assert "singular-supported" != entry.classification
+    with pytest.raises(MetadataReportError):
+        _current(payload)
+
+
+def test_unchanged_identity_is_current_and_changed_file_identity_is_not() -> None:
+    first = _payload()
+    unchanged = _payload()
+    changed = _payload(size=8)
+    catalogue = _catalogue(first)
+    assert catalogue.file_identity == _current(unchanged).identity
+    assert catalogue.file_identity != _current(changed).identity
+
+
+def test_normalizer_rejects_path_without_a_service_root() -> None:
+    with pytest.raises(ValueError):
+        normalize_ebook_location(
+            _payload()["media"]["ebookFile"],
+            service_path=None,
+            item=_payload(),
         )
 
-    def _current(self, payload: dict[str, object]):
-        return _snapshot(payload, "item-1", "library-1", "/media").files[0]
 
-    def test_nested_coordinate_variants_share_one_canonical_path_and_identity(self) -> None:
-        identities = set()
-        for payload in (
-            _payload(path=None),
-            _payload(relative=None),
-            _payload(),
-        ):
-            with self.subTest(payload=payload["relPath"]):
-                catalogue = self._catalogue(payload)
-                current = self._current(payload)
-                self.assertEqual("Author/Book/book.epub", catalogue.service_path)
-                self.assertEqual("Author/Book/book.epub", current.relative_path)
-                self.assertEqual(catalogue.service_path, current.relative_path)
-                self.assertEqual(catalogue.file_identity, current.identity)
-                identities.add(catalogue.file_identity)
-        self.assertEqual(1, len(identities))
-
-    def test_flat_item_path_is_shared_at_both_boundaries(self) -> None:
-        payload = _payload(
-            relative="flat.epub",
-            path="/media/flat.epub",
-            item_relative="flat.epub",
-            item_path="/media/flat.epub",
-            is_file=True,
-        )
-        catalogue = self._catalogue(payload)
-        current = self._current(payload)
-        self.assertEqual("flat.epub", catalogue.service_path)
-        self.assertEqual(catalogue.file_identity, current.identity)
-
-    def test_all_available_path_sources_must_agree(self) -> None:
-        payload = _payload(path="/media/Other/book.epub")
-        entry = self._catalogue(payload)
-        self.assertEqual("needs-attention", entry.classification)
-        with self.assertRaises(MetadataReportError):
-            self._current(payload)
-
-    def test_path_only_record_must_still_agree_with_item_coordinates(self) -> None:
-        payload = _payload(relative=None, path="/media/Other/book.epub")
-        self.assertEqual("needs-attention", self._catalogue(payload).classification)
-        with self.assertRaises(MetadataReportError):
-            self._current(payload)
-        payload = _payload(item_path="/media/Other")
-        entry = self._catalogue(payload)
-        self.assertEqual("needs-attention", entry.classification)
-        with self.assertRaises(MetadataReportError):
-            self._current(payload)
-
-    def test_traversal_missing_and_ambiguous_ebooks_fail_closed(self) -> None:
-        traversal = _payload(item_relative="Author/../Book")
-        missing = _payload(relative=None, path=None)
-        ambiguous = _payload()
-        media = ambiguous["media"]
-        assert type(media) is dict
-        media["ebookFiles"] = [media["ebookFile"]]
-        for payload in (traversal, missing, ambiguous):
-            with self.subTest(payload=payload):
-                entry = self._catalogue(payload)
-                self.assertNotEqual("singular-supported", entry.classification)
-                with self.assertRaises(MetadataReportError):
-                    self._current(payload)
-
-    def test_unchanged_identity_is_current_and_changed_file_identity_is_not(self) -> None:
-        first = _payload()
-        unchanged = _payload()
-        changed = _payload(size=8)
-        catalogue = self._catalogue(first)
-        self.assertEqual(catalogue.file_identity, self._current(unchanged).identity)
-        self.assertNotEqual(catalogue.file_identity, self._current(changed).identity)
-
-    def test_normalizer_rejects_path_without_a_service_root(self) -> None:
-        with self.assertRaises(ValueError):
-            normalize_ebook_location(
-                _payload()["media"]["ebookFile"],
-                service_path=None,
-                item=_payload(),
-            )
-
-    def test_flat_item_coordinates_cannot_be_interpreted_as_a_directory(self) -> None:
-        payload = _payload(
-            relative="book.epub",
-            path=None,
-            item_relative="book.epub",
-            item_path="/media/book.epub",
-            is_file=True,
-        )
-        catalogue = self._catalogue(payload)
-        current = self._current(payload)
-        self.assertEqual("book.epub", catalogue.service_path)
-        self.assertEqual(catalogue.file_identity, current.identity)
-        payload["media"]["ebookFile"]["metadata"]["relPath"] = "nested/book.epub"
-        self.assertEqual("needs-attention", self._catalogue(payload).classification)
-        with self.assertRaises(MetadataReportError):
-            self._current(payload)
-
-
-if __name__ == "__main__":
-    unittest.main()
+def test_flat_item_coordinates_cannot_be_interpreted_as_a_directory() -> None:
+    payload = _payload(
+        relative="book.epub",
+        path=None,
+        item_relative="book.epub",
+        item_path="/media/book.epub",
+        is_file=True,
+    )
+    catalogue = _catalogue(payload)
+    current = _current(payload)
+    assert "book.epub" == catalogue.service_path
+    assert catalogue.file_identity == current.identity
+    payload["media"]["ebookFile"]["metadata"]["relPath"] = "nested/book.epub"
+    assert "needs-attention" == _catalogue(payload).classification
+    with pytest.raises(MetadataReportError):
+        _current(payload)
