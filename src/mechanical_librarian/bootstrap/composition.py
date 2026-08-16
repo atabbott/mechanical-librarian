@@ -96,9 +96,7 @@ from mechanical_librarian.application.batch import (
 from mechanical_librarian.application.batch import manifest as batch_manifest
 from mechanical_librarian.application.batch_run import ForegroundBatchRun
 from mechanical_librarian.application.catalogue import (
-    CatalogueError,
     RefreshCurrentCatalogue,
-    TargetConnectionError,
 )
 from mechanical_librarian.application.configuration import (
     ConfigurationError,
@@ -1257,25 +1255,6 @@ def create_review_pipeline(
             return recovery_runner.run_one(now=now)
         except ProviderRecoveryStoreError as error:
             raise ReviewPipelineError("recovery") from error
-
-    def discover(
-        connection: str, library: str
-    ) -> tuple[int, str, tuple[CatalogueEntry, ...]]:
-        with discovery_lock:
-            repository = open_catalogue(catalogue_path, create=True)
-            try:
-                service = RefreshCurrentCatalogue(reader, repository)
-                service.refresh_library(configuration, connection, library)
-                snapshot = repository.snapshot(
-                    batch_catalogue_fingerprint(configuration)
-                )
-                return snapshot.generation, snapshot.fingerprint, snapshot.entries
-            except TargetConnectionError:
-                raise
-            except CatalogueError as error:
-                raise ReviewPipelineError("transient") from error
-            finally:
-                repository.close()
 
     # The pipeline hands every stage callback back exactly the repository
     # ``repository_factory`` above created, so each of these narrows the seam's
