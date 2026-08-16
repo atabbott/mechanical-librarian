@@ -138,6 +138,21 @@ from mechanical_librarian.application.proposal_sets import (
     GetProposalSet,
     ProposalCurrentnessError,
 )
+from mechanical_librarian.application.provider_recovery_evidence import (
+    TargetConnectionHeld as _TargetConnectionHeld,
+)
+from mechanical_librarian.application.provider_recovery_evidence import (
+    classify_provider_recovery_failure as _classify_provider_recovery_failure,
+)
+from mechanical_librarian.application.provider_recovery_evidence import (
+    provider_recovery_jobs as _provider_recovery_jobs,
+)
+from mechanical_librarian.application.provider_recovery_evidence import (
+    provider_statuses as _provider_statuses,
+)
+from mechanical_librarian.application.provider_recovery_evidence import (
+    record_provider_recovery_observations as _record_provider_recovery_observations,
+)
 from mechanical_librarian.application.provider_recovery_runner import (
     ScopedProviderRecoveryRunner,
 )
@@ -145,7 +160,6 @@ from mechanical_librarian.application.provider_retry_successor import (
     ConfiguredProviderRetry,
     GenerateProviderRetrySuccessor,
     ProviderRetryDisabled,
-    ProviderRetrySharedFailure,
     ProviderRetrySuccessorError,
 )
 from mechanical_librarian.application.review_application import (
@@ -850,78 +864,6 @@ def run_metadata_report(config_path: Path, database_path: Path, artifact_store_p
     return run_metadata_report_loaded(configuration, database_path, artifact_store_path, connection_name, library_name, item, file_index, expected_file_identity)
 
 
-def _provider_statuses(report: MetadataReport) -> tuple[ProviderStatus, ...]:
-    return tuple(
-        status
-        for provider in report.providers
-        for status in (
-            provider.status,
-            *(lane.status for lane in provider.lanes),
-        )
-    )
-
-
-def _record_provider_recovery_observations(
-    store: SQLiteProviderRecoveryStore,
-    report: MetadataReport,
-    *,
-    adapters: dict[str, str],
-    scope: str,
-    generation: int,
-    now: int,
-) -> None:
-    """Persist only terminal F22 provider classifications; never retry them."""
-    failures = {
-        ProviderStatus.AUTHENTICATION: "authentication", ProviderStatus.AUTHORIZATION: "authorization",
-        ProviderStatus.RATE_LIMITED: "rate_limited", ProviderStatus.UNAVAILABLE: "transient",
-        ProviderStatus.INCOMPLETE: "transient",
-    }
-    for observation in report.providers:
-        statuses = (observation.status, *(lane.status for lane in observation.lanes))
-        terminal = tuple(failures[status] for status in statuses if status in failures)
-        failure = (
-            next((value for value in terminal if value in {"authentication", "authorization", "configuration"}), None)
-            or next((value for value in terminal if value in {"rate_limited", "transient"}), None)
-        )
-        if failure is not None:
-            adapter = adapters.get(observation.provider)
-            if adapter is None:
-                raise ReviewPipelineError("configuration")
-            store.observe_failure(
-                connection=observation.provider, adapter=adapter, scope=scope,
-                generation=generation, failure=failure, now=now,
-            )
-
-
-def _provider_recovery_jobs(
-    report: MetadataReport, *, package: tuple[str | None, str, str | None, int | None, str],
-    configuration: ApplicationConfiguration, scope: str,
-) -> tuple[ProviderRecoveryJob, ...]:
-    """Create bounded retry work only from a published terminal package."""
-    adapters = {provider.name: provider.adapter for provider in configuration.providers}
-    retryable = {
-        ProviderStatus.AUTHENTICATION, ProviderStatus.AUTHORIZATION,
-        ProviderStatus.RATE_LIMITED, ProviderStatus.UNAVAILABLE,
-        ProviderStatus.INCOMPLETE,
-    }
-    jobs = []
-    for observation in report.providers:
-        lane_ids = tuple(sorted(lane.identity for lane in observation.lanes if lane.status in retryable))
-        if not lane_ids:
-            continue
-        adapter = adapters.get(observation.provider)
-        if adapter is None:
-            raise ReviewPipelineError("configuration")
-        jobs.append(ProviderRecoveryJob(
-            observation.provider, adapter, scope,
-            configuration.provider_recovery_generation, report.report_id,
-            report.target.connection, report.target.library, report.target.item,
-            report.file.identity, report.report_id, *package,
-            json.dumps(lane_ids, separators=(",", ":")),
-        ))
-    return tuple(sorted(jobs, key=lambda job: (job.connection, job.adapter, job.scope, job.generation, job.member_id)))
-
-
 class _NonClosingRepository:
     """Let one composed service borrow a pipeline-owned repository connection."""
 
@@ -1201,35 +1143,6 @@ def _current_resolved_policy(
     if bound_id != configured_resolution.resolved_id:
         raise ReviewCaseError("configuration")
     return configured_resolution
-
-
-class _TargetConnectionHeld(CurrentnessError):
-    """Private runner signal: retain provider recovery unchanged for a target hold."""
-
-
-def _classify_provider_recovery_failure(error: Exception) -> tuple[str, int | None]:
-    if isinstance(error, _TargetConnectionHeld):
-        return "target_held", None
-    if isinstance(error, CredentialError) or (
-        isinstance(error, ProviderRetrySuccessorError)
-        and isinstance(error.__cause__, CredentialError)
-    ):
-        return "authentication", None
-    if isinstance(error, ProviderRetryDisabled):
-        return "disabled", None
-    if isinstance(error, ProviderRetrySharedFailure):
-        failure = (
-            "transient" if error.failure in {"unavailable", "incomplete"}
-            else error.failure
-        )
-        return failure, error.retry_after
-    if isinstance(error, ProviderRetrySuccessorError) and "configuration" in str(error):
-        return "configuration", None
-    if isinstance(error, ProviderRetrySuccessorError):
-        return "terminal", None
-    if isinstance(error, (CurrentnessError, TargetNotFoundError)):
-        return "stale", None
-    return "transient", None
 
 
 def create_review_pipeline(
