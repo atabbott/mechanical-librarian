@@ -56,6 +56,46 @@ the stall diagnostic still reaches an observer while the cohort's own output
 stays discarded, and `--tb=native` keeps a bounded traceback's retained tail
 ending at the assertion and the innermost frame.
 
+## Test economy
+
+These are standing rules for every test written from here on, not a record of
+one cleanup. They sit beside the `Code economy` rules in `AGENTS.md` and are
+read the same way: the rule, the reason it exists, and the case where the
+longhand stays.
+
+- Express variant cases through `@pytest.mark.parametrize` or vitest's
+  `it.each` rather than writing a near-duplicate method per variant. A variant
+  is a value, not a behaviour, and a copied method hides which value actually
+  failed. Case count is the invariant, never line count: collapsing four
+  methods into one parameterized case with four parameters keeps four
+  reported cases and four independent failures, while collapsing them into one
+  method with a loop deletes three. `parametrize` does not work on a
+  `unittest.TestCase` method -- it collects as a single case and then fails
+  with a missing-argument `TypeError` -- so a `TestCase` class either converts
+  or keeps `subTest`, which parameterizes the assertions without splitting the
+  case. Where a variant needs its own name to be diagnosable, leave it a
+  separate test and say why.
+- Build fixture data through a shared builder rather than inlining the same
+  payload in each test. A payload copied into thirty tests is thirty places to
+  update when a schema field is added, and the copies drift into thirty
+  slightly different documents that no longer agree on what the canonical one
+  is. Shared builders live in `tests/support/` for the backend and
+  `frontend/tests/fixtures.tsx` for the browser; a test module never imports
+  another test module's fixtures, because that makes one cohort a dependency
+  of another. Inline a payload only where its exact shape is the thing under
+  test, and keep it inline where a builder parameter would exist for one
+  caller.
+- Force a failure through a seam that survives relocation, not by substituting
+  a member on the object under test. Replacing a method on a live repository
+  or service and then calling a sibling that invokes it works only while both
+  members live on the same object. When the callee moves into an aggregate the
+  call becomes internal, the substitution stops reaching it, and the test does
+  not fail -- it stops testing, and stays green with its assertion silently
+  removed. Prefer a fake collaborator, an injected port, or a connection
+  substituted at construction, so the failure is forced across a boundary the
+  code must keep. Where a private member genuinely is the contract under test,
+  say so at the site.
+
 F19a adds focused source proof for clean-schema automatic bootstrap, exact
 qualified option/bundle admission, atomic human/automatic uniqueness,
 restart/idempotency/currentness, pause/suspension/recovery, and the selected

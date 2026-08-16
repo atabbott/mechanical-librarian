@@ -7,6 +7,34 @@
 
 ## Unreleased
 
+- Split the router tests by route and record the suite's standing test
+  conventions. `frontend/tests/router.test.tsx` held 124 of the frontend's 149
+  tests in one `describe` across 2,710 lines, with its first 108 lines given to
+  fixtures and its first four tests exercising pure functions of other modules.
+  Five route modules now own the route tests -- library, activity, detail,
+  policy, and shell -- none over 793 lines; the four pure-function tests move
+  beside the modules they prove; and the fixtures move to
+  `frontend/tests/fixtures.tsx`. The count is unchanged at 149 with an
+  identical leaf-title multiset: 124 tests relocated, every one a 1:1 move.
+  The split exposed one position-dependent test. `polls idle Activity while
+  mounted and tears the poll down after navigation` passed when it ran after
+  forty-four siblings and failed when it ran first, because awaiting the
+  router's `navigate` resolves the router but not React's passive-effect
+  cleanup -- and it is that cleanup which unsubscribes the Activity query
+  observer and clears its poll interval. On a cold module the observer was
+  still subscribed when the test measured, so an interval that should have been
+  gone fired once more. The test now waits for the observer count to reach zero
+  before measuring, asserting the teardown it names instead of assuming it.
+  `docs/development/testing-strategy.md` gains a `Test economy` section stating
+  three permanent rules, in the manner of `AGENTS.md`'s `Code economy`:
+  parameterize variants rather than copying methods, with case count as the
+  invariant; build fixture data through shared builders rather than inlining
+  the same payload, and never import another test module's fixtures; and force
+  a failure through a seam that survives relocation, because a member
+  substituted on the object under test stops reaching its target the moment
+  that member moves, and the test then passes while testing nothing. Twenty-two
+  sites of that last shape exist today and are recorded for separate work.
+  (#661)
 - Split the four oversized backend test files into per-concern modules. The
   suite's four largest files -- 21,204 lines and 337 cases between them --
   each held one or two classes covering unrelated surfaces, so a failure
