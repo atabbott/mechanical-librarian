@@ -4,64 +4,60 @@ import os
 import subprocess
 import sys
 import tempfile
-import unittest
 from importlib import metadata
 from pathlib import Path
+
+import pytest
 
 import mechanical_librarian
 from mechanical_librarian.bootstrap import main
 
 
-class PackageSmokeTests(unittest.TestCase):
-    def test_installed_metadata_matches_exposed_version(self) -> None:
-        self.assertEqual(
-            metadata.version("mechanical-librarian"),
-            mechanical_librarian.__version__,
+def test_installed_metadata_matches_exposed_version() -> None:
+    assert metadata.version("mechanical-librarian") == mechanical_librarian.__version__
+
+
+def test_distribution_excludes_source_only_workbench() -> None:
+    files = tuple(str(path) for path in (metadata.files("mechanical-librarian") or ()))
+    assert not any("mechanical_librarian_workbench" in path for path in files)
+
+
+def test_composed_cli_exposes_help() -> None:
+    with pytest.raises(SystemExit) as raised:
+        main(["--help"])
+    assert raised.value.code == 0
+
+
+def test_all_modules_import_outside_checkout_without_creating_state() -> None:
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in {"PYTHONHOME", "PYTHONPATH"}
+    }
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        directory = Path(temporary_directory)
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                (
+                    "import importlib, pkgutil, mechanical_librarian; "
+                    "[importlib.import_module(item.name) for item in "
+                    "pkgutil.walk_packages(mechanical_librarian.__path__, "
+                    "mechanical_librarian.__name__ + '.')]; "
+                    "print(mechanical_librarian.__version__)"
+                ),
+            ],
+            cwd=temporary_directory,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
+        created_entries = list(directory.iterdir())
 
-    def test_distribution_excludes_source_only_workbench(self) -> None:
-        files = tuple(str(path) for path in (metadata.files("mechanical-librarian") or ()))
-        self.assertFalse(any("mechanical_librarian_workbench" in path for path in files))
-
-    def test_composed_cli_exposes_help(self) -> None:
-        with self.assertRaises(SystemExit) as raised:
-            main(["--help"])
-        self.assertEqual(raised.exception.code, 0)
-
-    def test_all_modules_import_outside_checkout_without_creating_state(self) -> None:
-        environment = {
-            key: value
-            for key, value in os.environ.items()
-            if key not in {"PYTHONHOME", "PYTHONPATH"}
-        }
-        with tempfile.TemporaryDirectory() as temporary_directory:
-            directory = Path(temporary_directory)
-            completed = subprocess.run(
-                [
-                    sys.executable,
-                    "-I",
-                    "-c",
-                    (
-                        "import importlib, pkgutil, mechanical_librarian; "
-                        "[importlib.import_module(item.name) for item in "
-                        "pkgutil.walk_packages(mechanical_librarian.__path__, "
-                        "mechanical_librarian.__name__ + '.')]; "
-                        "print(mechanical_librarian.__version__)"
-                    ),
-                ],
-                cwd=temporary_directory,
-                env=environment,
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            created_entries = list(directory.iterdir())
-
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(completed.stdout.strip(), mechanical_librarian.__version__)
-        self.assertEqual(created_entries, [])
-
-
-if __name__ == "__main__":
-    unittest.main()
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == mechanical_librarian.__version__
+    assert created_entries == []
