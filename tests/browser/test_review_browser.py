@@ -42,6 +42,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
+from tests.support.review_web_doubles import FakeActivityApplication
 from tests.unit.review_app_fixture import create_transport_test_app
 from tests.unit.test_bibliographic_bundles import (
     _bibliographic_report,
@@ -58,12 +59,11 @@ from tests.unit.test_cover_packets import (
 from tests.unit.test_cover_packets import (
     _source as _cover_source,
 )
-from tests.unit.test_review_web import _ActivityApplication
 
 _PASSWORD = "synthetic browser password"
 
 
-class _BrowserActivityApplication(_ActivityApplication):
+class _BrowserActivityApplication(FakeActivityApplication):
     def wake(self) -> None:
         return None
 

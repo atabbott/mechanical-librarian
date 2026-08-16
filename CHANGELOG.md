@@ -7,6 +7,134 @@
 
 ## Unreleased
 
+- Keep installed pytest plugins and oversized parameter names out of the test
+  tiers. Two further defects in the engine adoption, both found in review of
+  #661.
+  Rejecting `PYTEST_PLUGINS` closed one door and left the next one open: pytest
+  auto-loads every installed distribution exposing a `pytest11` entry point, so
+  a `pytest-randomly` or `pytest-xdist` in a contributor's environment could
+  reorder, shard, or drop cases with no environment variable set and nothing
+  rejected. A tier now passes `--disable-plugin-autoload` and loads pytest's
+  builtins and the runner's own plugin only. Cohort membership is unchanged:
+  the two distributions currently installed, `anyio` and hypothesis's pytest
+  integration, contribute no cases, and the suite's hypothesis tests pass
+  without the integration because they run through `unittest.TestCase`.
+  A long parameter set produced an identity past the stall diagnostic's
+  512-character safe bound, so the diagnostic was withheld from exactly the
+  parameterized style this milestone's conventions recommend. The parameter
+  component is now bounded, with its retained head paired with a digest of the
+  exact parameters rather than truncated: bare truncation would map distinct
+  parameter sets onto one identity and make the collision guard refuse a
+  legitimate cohort. Module, class, and function names are left verbatim, so a
+  `unittest.TestCase` identity is still exactly what `TestCase.id()` produces.
+  (#661)
+- Stop the test-tier runner honouring ambient pytest configuration, and give
+  it unittest's accounting for shared setup, unexpected successes, and native
+  case identities. Four defects in the engine adoption, all found in review of
+  #661 and all about the runner being the gate.
+  `pytest.main` incorporates `PYTEST_ADDOPTS`, so `PYTEST_ADDOPTS='-k passing'`
+  reduced a cohort to its passing subset, returned success, and reported the
+  tier **passed** with a failing test sitting unrun beside it -- the gate could
+  be disabled from outside and still report green, and the exact-artifact
+  qualifier preserved the variable into its isolated environment. Ambient
+  `--capture=fd` would additionally have silenced the stall diagnostic. A tier
+  now refuses to run under any pytest variable that can reach collection,
+  execution, plugin loading, or the diagnostic streams, naming the offending
+  variables and never echoing their values, which may carry private paths.
+  `PYTEST_THEME` and `PYTEST_THEME_MODE` stay permitted and are documented as
+  such: they only colour a stream every tier already discards.
+  A `setUpClass` failure made the tier's machine-readable evidence least
+  accurate exactly when shared setup broke: pytest reports the failure against
+  every collected method, so an unexecuted two-method class read as two tests
+  run and two errors where unittest reports none run and one class-level
+  error. Class-scoped setup and teardown failures are now counted once, under
+  a `setUpClass`/`tearDownClass` identity, while an instance `setUp` failure
+  stays one error per case.
+  A non-strict `xfail` that unexpectedly passed left pytest's exit code at
+  success, so the tier reported passed while the runner's own accounting held
+  an unexpected success. A tier now passes only when the engine and that
+  accounting agree, and `xfail_strict` is declared so a native `xfail` fails at
+  the engine too.
+  A native pytest case had only its node id, which carries the file path and,
+  when parameterized, bracketed parameters. That id could never match the
+  stall diagnostic's safe-identity guard, so a native test running past the
+  threshold produced no diagnostic at all -- and the identity was not path-free
+  either, so a failing native case would have reported a filesystem path.
+  Native identities are now built like unittest's: dotted, path-free, and
+  reduced to the safe alphabet, with a cohort whose reduced identities are not
+  unique failing closed rather than silently shrinking its manifest. (#661)
+- Split the router tests by route and record the suite's standing test
+  conventions. `frontend/tests/router.test.tsx` held 124 of the frontend's 149
+  tests in one `describe` across 2,710 lines, with its first 108 lines given to
+  fixtures and its first four tests exercising pure functions of other modules.
+  Five route modules now own the route tests -- library, activity, detail,
+  policy, and shell -- none over 793 lines; the four pure-function tests move
+  beside the modules they prove; and the fixtures move to
+  `frontend/tests/fixtures.tsx`. The count is unchanged at 149 with an
+  identical leaf-title multiset: 124 tests relocated, every one a 1:1 move.
+  The split exposed one position-dependent test. `polls idle Activity while
+  mounted and tears the poll down after navigation` passed when it ran after
+  forty-four siblings and failed when it ran first, because awaiting the
+  router's `navigate` resolves the router but not React's passive-effect
+  cleanup -- and it is that cleanup which unsubscribes the Activity query
+  observer and clears its poll interval. On a cold module the observer was
+  still subscribed when the test measured, so an interval that should have been
+  gone fired once more. The test now waits for the observer count to reach zero
+  before measuring, asserting the teardown it names instead of assuming it.
+  `docs/development/testing-strategy.md` gains a `Test economy` section stating
+  three permanent rules, in the manner of `AGENTS.md`'s `Code economy`:
+  parameterize variants rather than copying methods, with case count as the
+  invariant; build fixture data through shared builders rather than inlining
+  the same payload, and never import another test module's fixtures; and force
+  a failure through a seam that survives relocation, because a member
+  substituted on the object under test stops reaching its target the moment
+  that member moves, and the test then passes while testing nothing. Twenty-two
+  sites of that last shape exist today and are recorded for separate work.
+  (#661)
+- Split the four oversized backend test files into per-concern modules. The
+  suite's four largest files -- 21,204 lines and 337 cases between them --
+  each held one or two classes covering unrelated surfaces, so a failure
+  reddened a 5,000-line file instead of naming what broke.
+  `test_metadata_adapters.py` (6,184) becomes six modules, `test_proposal_set.py`
+  (5,527) six, `test_metadata_report.py` (5,213) five, and `test_review_web.py`
+  (4,280) four. No resulting module exceeds 1,413 lines.
+  Three of them doubled as the suite's fixture library: nine modules imported
+  proposal builders out of `test_proposal_set`, seven imported a review-case
+  report out of `test_review_case_persistence`, and a browser-tier module
+  imported a test double out of a fast-tier one. Those builders now live in
+  `tests/support/`, so no cohort reaches into another cohort's tests for them.
+  Every case body is copied verbatim from its source's own lines: no assertion
+  is added, removed, reworded, or weakened. The 337 cases remain 337, and each
+  moved identifier is a 1:1 relocation -- the removed and added leaf-name
+  multisets are identical per commit and across the packet, so no case
+  disappeared and none was invented. Browser, slow, and required-installed
+  manifests are unchanged. (#661)
+- Run the public test tiers on pytest without changing what a tier is.
+  `scripts/run_test_tier.py` hand-rolled `unittest` discovery, which foreclosed
+  fixtures, `parametrize`, and assertion introspection for every future test in
+  the suite. Collection and execution now delegate to pytest while the tier
+  contract stays exactly where it was: the same `COHORTS` patterns, the same
+  dotted path-free test identities, the same `test-cohort-v1` manifest, the
+  same `test-tier-stall-v1` diagnostic on standard error, the same
+  `test-tier-result-v1` summary with #655's bounded failure tracebacks on
+  standard output, and the same fail-closed behaviour for an empty or
+  unimportable cohort. Every cohort manifest and `test_ids_sha256` is
+  byte-identical to the value the unittest engine produced -- fast 1,631 cases,
+  browser 6, slow 2, required-installed 15 -- and no test file changed to make
+  that true.
+  Two engine settings carry tier behaviour rather than taste. `--capture=sys`
+  replaces only `sys.stdout`/`sys.stderr`, exactly as the runner's own
+  redirection already did, so file descriptor 2 keeps pointing at the real
+  stream and the stall diagnostic still reaches an observer; descriptor-level
+  capture, pytest's default, swallows it silently. `--tb=native` keeps the
+  interpreter's traceback format, so a traceback truncated to its retained tail
+  still ends at the assertion and the innermost frame.
+  The runner also implements unittest's `load_tests` protocol, which pytest does
+  not. `tests/slow/test_continuous_review_scale.py` uses it to select one method
+  from a subclass of a fast-tier base; without that handling the slow cohort
+  would have grown from two cases to six and would have re-run two fast-tier
+  cases under a second identity, breaking tier disjointness rather than merely
+  the digest. (#661)
 - Distinguish consolidation from relocation in the code-economy rules, and let a
   single-consumer helper earn its place, so the requirement that an abstraction
   be lighter than what it replaces stops being read as a bar on moving code to

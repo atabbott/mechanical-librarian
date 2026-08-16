@@ -9,7 +9,7 @@ from mechanical_librarian.domain.human_decision import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from tests.unit.test_review_case_persistence import _report
+from tests.support.review_cases import _report
 
 
 class HumanDecisionTests(unittest.TestCase):

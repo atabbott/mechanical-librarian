@@ -31,7 +31,7 @@ from mechanical_librarian.domain.shadow_review import (
 from mechanical_librarian.domain.shadow_review_actions import (
     compile_shadow_review_actions,
 )
-from tests.unit.test_proposal_set import _claim, _fields, _provider, _report
+from tests.support.proposal_evidence import _claim, _fields, _provider, _report
 
 
 def _bibliographic_report(

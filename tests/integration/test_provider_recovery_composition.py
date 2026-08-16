@@ -43,7 +43,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
-from tests.unit.test_proposal_set import _claim, _provider
+from tests.support.proposal_evidence import _claim, _provider
 
 
 class _TargetReader:

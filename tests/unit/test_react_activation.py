@@ -15,9 +15,9 @@ from mechanical_librarian.application.configuration import ReviewWebConfiguratio
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
+from tests.support.review_cases import _report
+from tests.support.review_web_doubles import FakeReviewRepository
 from tests.unit.review_app_fixture import create_transport_test_app
-from tests.unit.test_review_case_persistence import _report
-from tests.unit.test_review_web import _Repository
 
 
 def _write_bundle(root: Path) -> str:
@@ -80,7 +80,7 @@ class ReactActivationTests(unittest.TestCase):
         report = _report()
         case = ReviewCase.create(evaluate_report(report), report)
         self.case_id = case.review_case_id
-        self.repository = _Repository(case, report)
+        self.repository = FakeReviewRepository(case, report)
         asset_root = root / "assets"
         asset_root.mkdir()
         self.asset_root = asset_root
