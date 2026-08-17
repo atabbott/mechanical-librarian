@@ -141,11 +141,18 @@ are documented at their definitions in `scripts/run_test_tier.py` and
   distinguish source provenance, setup or build failure, a nonzero test result
   and a bounded subprocess timeout, and a stalled test emits one bounded
   path-free identifier so a hosted timeout stays diagnosable.
-- A failing tier reports every failed identifier — the list is never truncated
-  — and each failing test's traceback under a per-test and whole-stream byte
-  bound. Any truncation declares what it dropped, and what is retained holds
-  the error identity as well as the tail, because `--tb=native` puts the
-  identity in the middle of a long report.
+- A failing tier reports every failed identifier — the runner never truncates
+  that list — and each failing test's traceback under a per-test and
+  whole-stream byte bound. Any truncation declares what it dropped, and what is
+  retained holds the error identity as well as the tail, because `--tb=native`
+  puts the identity in the middle of a long report.
+- When the exact-artifact qualifier runs a tier as a child, it keeps a bounded
+  tail of each captured stream, so a verdict longer than that window loses its
+  leading identifiers while keeping the reason, status, counts and tier. The
+  complete list is on the runner's own standard output in that case. The
+  qualifier does not parse the runner's schema to rescue it: coupling the two
+  layers would buy back one list and cost the independence that lets either be
+  changed alone.
 - Nothing carrying a path or a value reaches an evidence record. Raw cohort
   output stays discarded; a failing command's captured streams reach only a
   narrative account beside the record, on standard output, with every

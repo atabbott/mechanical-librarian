@@ -42,12 +42,23 @@ _MAX_COMMAND_STREAM_BYTES = 1_048_576
 # aimed at.
 #
 # On stderr the tier runner writes its `test-tier-result-v1` line last, so a
-# tail always reaches the reason and the complete failed-identifier list. On
-# stdout it has already applied its own per-traceback bound -- including #730's
-# anchored window -- and closes the stream with its own omission notice, so
-# whatever a tail keeps already carries each retained failure's identity and
-# declares how many were dropped before this seam ever saw them. Every other
-# child run here -- build, install, resolver -- ends its output at its error.
+# tail always reaches that line however much the child wrote before it. It
+# reaches the *complete* failed-identifier list only while the verdict fits
+# this window. Past that the tail begins inside `failed_test_ids` and the
+# leading identifiers are gone, truncated from the front like any other tail.
+# What still survives is the end of the verdict: `sort_keys` puts
+# `failed_test_ids` second and every remaining key after it, and those keys are
+# small and fixed, so the reason, status, counts and tier are retained however
+# long the list grows. A reader who hits that reads the identifiers off the
+# runner's own standard output instead, which carries a block per retained
+# failure and declares how many it omitted.
+#
+# On stdout the runner has already applied its own per-traceback bound --
+# including #730's anchored window -- and closes the stream with that omission
+# notice, so whatever a tail keeps already carries each retained failure's
+# identity and declares what was dropped before this seam ever saw it. Every
+# other child run here -- build, install, resolver -- ends its output at its
+# error.
 #
 # The justification this comment used to give, that a traceback's tail ends at
 # the assertion, is the premise #730 disproved: it holds for an assertion
