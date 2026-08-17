@@ -44,11 +44,14 @@ test output. A failing tier reports every failed identifier — the list is not
 truncated — and each failing test's formatted traceback, bounded to
 4 KiB per test and 256 KiB across the whole stream, framing included, so a
 broad failure stays readable and stays inside the exact-artifact qualifier's
-per-stream capture bound. An over-long traceback keeps both ends of that
-4 KiB and declares the elided middle between them: the tail holds the
-assertion `--tb=native` guarantees it ends at, while the head holds the error
-identity a transport failure states first and buries under kilobytes of its
-own call log. A truncated report always declares how many
+per-stream capture bound. An over-long traceback keeps two windows within that
+4 KiB and declares every byte it drops between them. One window is anchored on
+the exception line rather than on the start of the text, because a
+`--tb=native` report opens with the frame block and reaches the error identity
+only after it — for a transport failure that buries its own identity under
+kilobytes of call log, the identity is in the middle, and neither end of the
+text retains it. The other window is the tail, which holds the assertion
+`--tb=native` guarantees the report ends at. A truncated report always declares how many
 tracebacks it omitted. Raw
 cohort output remains discarded; only the traceback of a test that already
 failed is reported, and it carries the runner's own repository paths. The
