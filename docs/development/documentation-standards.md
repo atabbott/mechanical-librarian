@@ -54,15 +54,24 @@ grant current behavior.
 
 ## Verification
 
-CI should check:
+Documentation is checked where a test binds a document to the thing it
+describes, and nowhere else. What merging proves today:
 
-- Markdown style;
-- internal and external links;
-- spelling with a project dictionary;
-- duplicate headings and broken anchors;
-- code fences and executable examples;
-- generated schema/reference drift;
-- required metadata for ADRs and release notes.
+- the generated `docs/reference/review-openapi-v1.json` matches the routes, and
+  `docs/reference/config-v6.schema.json` matches the configuration model;
+- `docs/examples/synthetic-config.json` is executable — the CLI tests load it;
+- `CONTRIBUTING.md`'s check table matches `.github/workflows/public-gate.yml`
+  row by row;
+- `docs/operations/deployment.md` states the operational facts
+  `tests/unit/test_operations.py` requires and none it forbids;
+- no `CHANGELOG.md` entry exceeds its line budget;
+- generating everything leaves the tree clean.
+
+There is no Markdown style check, link checker, spell check, duplicate-heading
+or anchor check, code-fence check, or ADR metadata check. #686 owns adding
+real ones. Until then, a rule stated in prose is enforced by review, and prose
+that is not bound to an artifact can go stale without anything failing — which
+is the argument for pointing at the artifact instead of restating it.
 
 Screenshots should be rare, sanitized, and accompanied by durable prose because
 interfaces change faster than contracts.

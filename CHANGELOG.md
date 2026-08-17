@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Leave the documentation corpus smaller and truer, with one authority per rule.
+  Prose describing a browser digest comparison #757 removed, and two
+  justifications their code had outgrown, now state what the code does; the
+  dependency, quality and product-boundary corpora each collapse to one
+  authority; and the drifted composition graph, closed checkpoint ledgers and
+  security output ledger become pointers. (#683, #684, #685)
 - Make a failing gate identify itself. The browser tier no longer loses the
   keep-alive race that produced `Route.fetch: socket hang up`, a truncated
   traceback is retained around its exception line so a transport error's
