@@ -1,11 +1,30 @@
 # Documentation
 
-Every live document in this repository is listed here. A document that is not
+Every live document in this repository is listed here, including the
+repository-root files. A document under `docs/` or at the root that is not
 listed has been deleted; git history is its archive.
 
-The first four sections are current authority. The historical section is
-record: those documents describe the delivery context they were written in, not
-current installed behaviour, and each row names what still depends on it.
+Every section except **Historical record** is current authority. The historical
+section is record: those documents describe the delivery context they were
+written in, not current installed behaviour, and each row names what still
+depends on it.
+
+## Repository root
+
+- [AGENTS.md](../AGENTS.md) — the agent operating guide, and the entry point
+  that names what is required reading
+- [README.md](../README.md) — the current checkpoint and runtime boundary
+- [PRODUCT.md](../PRODUCT.md) — the single product-boundary statement
+- [CONTRIBUTING.md](../CONTRIBUTING.md) — including the table reconciling every
+  documented check against the workflow that enforces it
+- [DESIGN.md](../DESIGN.md) — the durable visual design record; `.impeccable/`
+  derives `design.json` from it
+- [CHANGELOG.md](../CHANGELOG.md)
+- [SECURITY.md](../SECURITY.md) — vulnerability reporting
+- [SUPPORT.md](../SUPPORT.md)
+- [GOVERNANCE.md](../GOVERNANCE.md) and
+  [CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md) — GitHub community-health files,
+  found by convention rather than by link
 
 ## Operations
 
@@ -64,7 +83,9 @@ current installed behaviour, and each row names what still depends on it.
 
 ## Product and governance
 
-- [PRODUCT.md](../PRODUCT.md) — the single product-boundary statement
+The product boundary itself is [PRODUCT.md](../PRODUCT.md), listed under
+Repository root above.
+
 - [Scope and non-goals](product/scope.md)
 - [Review experience](product/review-experience.md)
 - [Automation policy](product/automation-policy.md)
@@ -73,9 +94,6 @@ current installed behaviour, and each row names what still depends on it.
 - [Opening-ebook evidence contract](product/opening-ebook-evidence.md)
 - [Opening-audio evidence contract](product/opening-audio-evidence.md)
 - [Post-1.0 reviewer backends](product/future-reviewer-backends.md)
-- [Contributing](../CONTRIBUTING.md)
-- [Security reporting](../SECURITY.md)
-- [Support](../SUPPORT.md)
 
 ## Research
 
