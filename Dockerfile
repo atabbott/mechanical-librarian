@@ -30,4 +30,10 @@ COPY --from=build /opt/mechanical-librarian /opt/mechanical-librarian
 USER 65532:65532
 EXPOSE 8443
 VOLUME ["/data"]
+# The image carries no curl and no wget, and gains neither: the probe is the
+# installed interpreter asking the server over loopback. `start-period` covers
+# the first-run store creation the entrypoint does before the server binds.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --start-interval=5s \
+    --retries=3 \
+    CMD ["/opt/mechanical-librarian/bin/mechanical-librarian-container-health"]
 ENTRYPOINT ["/opt/mechanical-librarian/bin/mechanical-librarian-container"]

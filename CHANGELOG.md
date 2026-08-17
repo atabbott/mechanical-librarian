@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Enforce the documentation corpus's own claims on every pull request:
+  `scripts/verify_documentation_integrity.py` fails the gate when a live
+  document is unreachable from `docs/README.md`, a relative link does not
+  resolve, or an ADR is missing its index row, shares a number, or is indexed
+  but absent. The changelog guard now also requires each entry to name its
+  issue, grandfathering by name the 39 written before that convention. (#686)
+- Harden the container runtime contract: the image declares a `HEALTHCHECK`
+  reading `/health/ready` over loopback HTTPS against the configured
+  certificate as its own trust anchor, compose caps memory and processes at
+  measured figures recorded beside them, and the default publication becomes
+  `127.0.0.1:8443` with LAN exposure now a documented owner choice. (#738)
 - Leave the documentation corpus smaller and truer, with one authority per rule.
   Prose describing a browser digest comparison #757 removed, and two
   justifications their code had outgrown, now state what the code does; the
