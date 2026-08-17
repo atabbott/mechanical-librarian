@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
+import json
 import os
 import stat
 import subprocess
@@ -241,6 +243,248 @@ def test_command_timeout_is_distinct_from_a_nonzero_failure() -> None:
     assert "installed_test_suite_failed" == failed.value.reason
 
 
+def test_a_failing_installed_suite_reports_a_redacted_diagnosis() -> None:
+    """Prove a real failing installed suite survives as more than its reason.
+
+    The whole path is exercised rather than faked: a wheel is built, installed
+    into an isolated environment, and its suite is run by that environment's
+    interpreter and fails. Before this, `_run` captured the child's streams and
+    discarded them with the exception, so a failing gate reported
+    `installed_test_suite_failed` and nothing an engineer could act on, while
+    the failing identifier and its traceback sat in a buffer that was dropped.
+    """
+
+    secret = "probe-secret-value-0123456789"
+    with tempfile.TemporaryDirectory() as directory:
+        source = Path(directory)
+        _write_probe(source, "source", with_test=True, failing=True)
+        source_sha = _commit(source, "failing installed suite")
+        with patch.dict(os.environ, {"ML_PROBE_TOKEN": secret}):
+            with pytest.raises(QualificationFailure) as raised:
+                qualify_exact_artifact(
+                    source,
+                    source_sha,
+                    distribution="cache-probe",
+                    import_name="cache_probe",
+                    console_script="cache-probe",
+                    console_args=(),
+                )
+
+    assert "installed_test_suite_failed" == raised.value.reason
+    diagnostic = raised.value.diagnostic
+    # The failing identifier and the assertion detail, neither of which the
+    # reason alone ever carried.
+    assert "InstalledProbeTests.test_exact_installed_source" in diagnostic
+    assert "probe-failure-detail" in diagnostic
+    # Both captured streams, not only the one the engine reports failures on.
+    assert "probe-stdout-marker" in diagnostic
+    # The child quoted a secret-named variable out of the environment the
+    # qualifier constructed for it. The diagnostic names the variable it came
+    # from and never the value, on both streams it reached.
+    assert secret not in diagnostic
+    assert diagnostic.count("[redacted $ML_PROBE_TOKEN]") == 2
+
+
+def test_an_opaque_value_is_redacted_under_a_name_that_never_says_secret() -> None:
+    # Auditing a real constructed environment is what found the first half:
+    # `BAGGAGE` held 185 opaque identifying characters, and no name vocabulary
+    # would ever have reached it. `hunter2` is the second half: a secret-named
+    # variable is redacted almost regardless of length, because an
+    # eight-character floor printed a six-character credential verbatim. Its
+    # remaining floor separates a credential from a flag and nothing else. A
+    # path-valued variable is deliberately kept, because a path is what makes a
+    # reported traceback locatable.
+    #
+    # The two connection strings are the third half, and they are why "is a
+    # path" had to stop meaning "contains a separator". Neither name matches
+    # the vocabulary, and both hold slashes, so a contained-separator exemption
+    # published both sets of credentials verbatim. `REDIS_URL` is also
+    # twenty-one characters, so the length floor would not have caught it
+    # either. A credential-free URL stays readable.
+    redactions = dict(
+        qualifier_module._environment_redactions(
+            {
+                "BAGGAGE": "session.id=41f0c2e9a7b64d18,user.id=9c3e77a1",
+                "HOME": "/home/runner/work/mechanical-librarian",
+                "GH_TOKEN": "ghp_probe0123456789",
+                "DB_PASSWORD": "hunter2",
+                "CARD_PIN_TOKEN": "4821",
+                "SDK_HAS_OAUTH_REFRESH": "1",
+                "EMPTY_TOKEN": "",
+                "SHLVL": "1",
+                "DATABASE_URL": "postgres://user:password@host/db",
+                "REDIS_URL": "rediss://:pw@h:6379/0",
+                "PUBLIC_ENDPOINT": "https://api.example.invalid/v1",
+                "RELATIVE_OUTPUT": "./build/generated/review-api-v1.d.ts",
+            }
+        )
+    )
+    assert redactions == {
+        "session.id=41f0c2e9a7b64d18,user.id=9c3e77a1": "[redacted $BAGGAGE]",
+        "ghp_probe0123456789": "[redacted $GH_TOKEN]",
+        "hunter2": "[redacted $DB_PASSWORD]",
+        # Four characters is the shortest a credential can be -- a PIN -- and
+        # is redacted. `SDK_HAS_OAUTH_REFRESH` is a boolean flag whose name
+        # matches the vocabulary on `AUTH`; substring-replacing its `1` rewrote
+        # every digit in a real diagnostic and left it unreadable, protecting
+        # nothing. Three characters carry no credential entropy.
+        "4821": "[redacted $CARD_PIN_TOKEN]",
+        "postgres://user:password@host/db": "[redacted $DATABASE_URL]",
+        "rediss://:pw@h:6379/0": "[redacted $REDIS_URL]",
+        # A long non-path value with no credentials in it: redacted on shape
+        # alone, which is the floor rule doing its job rather than the URL one.
+        "https://api.example.invalid/v1": "[redacted $PUBLIC_ENDPOINT]",
+    }
+    # `REDIS_URL` is under the shape rule's floor, so only the credential rule
+    # can have reached it. Asserting the length keeps that case honest if the
+    # floor ever moves.
+    assert len("rediss://:pw@h:6379/0") < qualifier_module._MIN_OPAQUE_VALUE_CHARACTERS
+    # Longest first, so a value containing another is replaced whole rather
+    # than leaving a fragment of it behind.
+    lengths = [
+        len(value)
+        for value, _ in qualifier_module._environment_redactions(
+            {"A_TOKEN": "short", "B_TOKEN": "a much longer secret value"}
+        )
+    ]
+    assert lengths == sorted(lengths, reverse=True)
+
+
+def test_a_secret_straddling_the_retained_boundary_leaks_no_fragment() -> None:
+    """Redaction runs over the whole stream, before anything is dropped.
+
+    Truncating first cut a straddling value in two: `replace` matched nothing,
+    because the whole value was gone, and the suffix was printed verbatim. The
+    value below also carries multi-byte characters and is positioned so the
+    byte boundary falls inside one of them, which is the same failure one level
+    down -- a `replace` decode of an already-truncated stream turns that
+    character into U+FFFD and breaks the match for the rest of the value.
+    """
+
+    secret = "probe-token-" + "é" * 20 + "-tail"
+    encoded = secret.encode("utf-8")
+    assert len(encoded) == 57
+    # 12 ASCII characters plus the first byte of the first two-byte character,
+    # so the retained boundary lands mid-sequence and mid-value.
+    lead = 13
+    suffix = b"z" * (
+        qualifier_module._MAX_DIAGNOSTIC_STREAM_BYTES - (len(encoded) - lead)
+    )
+    captured = bytearray(b"y" * 100 + encoded + suffix)
+
+    diagnostic = qualifier_module._command_diagnostic(
+        "installed_test_suite_failed",
+        captured,
+        bytearray(),
+        {"PROBE_TOKEN": secret},
+    )
+
+    assert "[redacted $PROBE_TOKEN]" in diagnostic
+    assert secret not in diagnostic
+    # The fragment is the leak, and it is what a placeholder-only assertion
+    # would miss: the placeholder can be present while a suffix sits beside it.
+    assert "é" * 19 + "-tail" not in diagnostic
+    assert "-tail" not in diagnostic
+    # The stream genuinely exceeded the bound, so the boundary was crossed.
+    assert "[elided " in diagnostic
+
+
+def test_an_inserted_placeholder_is_never_rescanned() -> None:
+    """One pass, so a placeholder's own text cannot match another value.
+
+    Replacing value by value in sequence rescans what the previous replacement
+    wrote, and the arrangement below is what makes that reachable rather than
+    merely conceivable. Values are applied longest first, so the cascade needs
+    the value matching the inserted text to be the *shorter* of the two: the
+    long one is replaced, its placeholder is written into the body, and the
+    short one then finds `TOKEN]` inside that placeholder. `TOKEN]` appears
+    nowhere in what the child wrote, so under sequential replacement the
+    account reports a secret the child never emitted, from text this function
+    inserted itself.
+    """
+
+    diagnostic = qualifier_module._command_diagnostic(
+        "installed_test_suite_failed",
+        bytearray(b"assertion failed: abcdefghij\n"),
+        bytearray(),
+        {"LONGSECRET_TOKEN": "abcdefghij", "SHORT_TOKEN": "TOKEN]"},
+    )
+
+    assert "[redacted $LONGSECRET_TOKEN]" in diagnostic
+    assert "SHORT_TOKEN" not in diagnostic
+    # One placeholder, not a placeholder nested inside a placeholder.
+    assert diagnostic.count("[redacted") == 1
+
+
+def test_a_broken_narrative_stream_cannot_suppress_the_evidence_record(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A consumer reading part of standard output must not cost the record.
+
+    `... | head` closes the pipe, and the narrative write then raises. While
+    that write came first, the `BrokenPipeError` propagated before the record
+    was ever produced, so the stream deliberately separated as the disposable
+    one could destroy the one that has to survive.
+    """
+
+    class _ClosedPipe:
+        def write(self, value: str) -> int:
+            raise BrokenPipeError(32, "Broken pipe")
+
+        def flush(self) -> None:
+            raise BrokenPipeError(32, "Broken pipe")
+
+        def fileno(self) -> int:
+            # Raised rather than answered, so the redirection this provokes
+            # cannot reach the real descriptor the test runner is using.
+            raise io.UnsupportedOperation("fileno")
+
+    failure = QualificationFailure(
+        "installed_test_suite_failed",
+        "==== exact-artifact failure: installed_test_suite_failed ====\n",
+    )
+    with patch.object(
+        qualifier_module,
+        "qualify_exact_artifact",
+        side_effect=failure,
+    ):
+        with patch.object(sys, "stdout", _ClosedPipe()):
+            assert 1 == qualifier_module.main(["--source-sha", "0" * 40])
+
+    assert json.loads(capsys.readouterr().err) == {
+        "reason": "installed_test_suite_failed",
+        "schema": "exact-artifact-evidence-v4",
+        "status": "failed",
+    }
+
+
+def test_the_narrative_diagnosis_stays_out_of_the_evidence_record(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The record is the artifact a candidate publishes, so it keeps its exact
+    # path-free three-key shape. The narrative account carries the runner's own
+    # paths and goes to the other stream.
+    failure = QualificationFailure(
+        "installed_test_suite_failed",
+        "==== exact-artifact failure: installed_test_suite_failed ====\n"
+        "---- child stdout ----\n/runner/work/checkout/tests/test_probe.py\n",
+    )
+    with patch.object(
+        qualifier_module,
+        "qualify_exact_artifact",
+        side_effect=failure,
+    ):
+        assert 1 == qualifier_module.main(["--source-sha", "0" * 40])
+
+    captured = capsys.readouterr()
+    assert "/runner/work/checkout/tests/test_probe.py" in captured.out
+    assert json.loads(captured.err) == {
+        "reason": "installed_test_suite_failed",
+        "schema": "exact-artifact-evidence-v4",
+        "status": "failed",
+    }
+
+
 def test_qualification_environment_discards_inherited_uv_controls() -> None:
     inherited = {
         "ML_FRONTEND_PREBUILT_DIR": "/tmp/stale-assets",
@@ -443,7 +687,13 @@ def test_subprocess_descendant_cannot_extend_deadline() -> None:
     assert "command_descendant_invalid" == raised.value.reason
 
 
-def _write_probe(source: Path, marker: str, *, with_test: bool = False) -> None:
+def _write_probe(
+    source: Path,
+    marker: str,
+    *,
+    with_test: bool = False,
+    failing: bool = False,
+) -> None:
     (source / ".gitignore").write_text(
         "/build/\n*.egg-info/\n",
         encoding="utf-8",
@@ -493,8 +743,23 @@ def main():
         tests = source / "tests"
         tests.mkdir(exist_ok=True)
         (tests / "__init__.py").write_text("", encoding="utf-8")
-        (tests / "test_probe.py").write_text(
-            f"""\
+        # The failing variant writes to both captured streams and quotes a
+        # secret-named variable out of the environment the qualifier built for
+        # it, so one run proves the diagnostic survives and that the value does
+        # not survive with it.
+        body = (
+            """\
+import os
+import unittest
+
+
+class InstalledProbeTests(unittest.TestCase):
+    def test_exact_installed_source(self):
+        print("probe-stdout-marker", os.environ["ML_PROBE_TOKEN"])
+        self.fail("probe-failure-detail " + os.environ["ML_PROBE_TOKEN"])
+"""
+            if failing
+            else f"""\
 import shutil
 import subprocess
 import unittest
@@ -514,9 +779,9 @@ class InstalledProbeTests(unittest.TestCase):
             text=True,
         )
         self.assertEqual({marker!r} + "\\n", completed.stdout)
-""",
-            encoding="utf-8",
+"""
         )
+        (tests / "test_probe.py").write_text(body, encoding="utf-8")
 
 
 def _commit(source: Path, message: str) -> str:

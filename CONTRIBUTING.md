@@ -153,6 +153,57 @@ so behaviour diffs stay reviewable. `src/styles.css` and the generated DTOs are
 excluded in `frontend/.prettierignore`; `frontend/prototype/` is scratch space
 excluded from lint.
 
+## What merging proves
+
+`.github/workflows/public-gate.yml` is the only workflow in this repository.
+Every check named below is either enforced there -- on each pull-request head
+and again on the merged `main` commit -- or named as maintainer-manual. Nothing
+else is checked automatically, whatever another document may imply.
+
+The third column is exact text from that workflow for an enforced check, and
+text deliberately absent from it for a maintainer-manual one, so the two halves
+of this table can be checked against the workflow rather than trusted.
+
+| Check | Enforced by | Command or job |
+| --- | --- | --- |
+| Lockfile currency | gate | `uv lock --check`, in all three qualification jobs |
+| Python formatting | gate | `uv run ruff format --check src tests scripts` in `fast-source` |
+| Python lint | gate | `uv run ruff check src tests scripts` in `fast-source` |
+| Python typing | gate | `uv run mypy src tests scripts` in `fast-source` |
+| Frontend typing, lint, formatting and Vitest suite | gate | `npm run typecheck`, `npm run lint`, `npm test`; `npm run lint` is what fails on unformatted source |
+| Frontend licence inventory and dependency advisories | gate | `npm run licenses`, `npm audit --audit-level=low` |
+| The exact Node and npm toolchain, in every job that builds the frontend | gate | `test "$(node --version)"` and `test "$(npm --version)"` |
+| DTO generation is deterministic | gate | `cmp "$RUNNER_TEMP/review-api-a.d.ts"` in `fast-source` |
+| The asset build is reproducible | gate | `diff -r "$RUNNER_TEMP/frontend-build-a"` in `fast-source` |
+| Generating everything leaves the tree clean | gate | `git diff --exit-code` in `fast-source` |
+| Unit, integration and architecture tests | gate | `scripts/run_test_tier.py fast` in `fast-source` |
+| Committed OpenAPI and configuration schemas still match the code | gate | the fast tier |
+| Workflow permissions and the advisory acceptance register | gate | the fast tier |
+| Wheel identity, archive and installed record integrity, payload equality, installed console | gate | `scripts/qualify_exact_artifact.py` in `exact-installed` |
+| Required installed test tier, run by the isolated wheel's interpreter | gate | `--test-tier required` in `exact-installed` |
+| The pinned Chromium payload is the exact expected one | gate | `scripts/verify_playwright_browser.py` in `protected-browser` |
+| Browser tier against that verified payload | gate | `scripts/run_test_tier.py browser` in `protected-browser` |
+| The shipped container image builds from the exact revision | gate | `docker build --pull --tag mechanical-librarian:gate .` in `container-image` |
+| Advisories against the locked dependency closure | gate | `--lockfile=uv.lock` in `dependency-audit` |
+| Explicit slow tier: scale, endurance, resource ceilings | maintainer-manual | `qualify_exact_artifact.py --test-tier slow` |
+| One-command complete exact-head qualification | maintainer-manual | `run_test_tier.py complete` |
+| The built container image's lifecycle | maintainer-manual | `scripts/qualify_container_lifecycle.py` |
+| Audiobookshelf field-effect qualification | maintainer-manual | `scripts/qualify_audiobookshelf_field_effect.py` |
+| Recoverability envelope | maintainer-manual | `scripts/recoverability_evaluator.py` |
+| Closing reference to an open issue, and the `tracking-exempt` exception | maintainer-manual | the trusted delivery controller, at preflight and again immediately before merge |
+| Documentation, changelog, ADR and security-review requirements | maintainer-manual | review |
+
+Four of the five maintainer-manual qualifiers have their own logic unit-tested
+in the fast tier, so for those, what is manual is running the qualification.
+`scripts/qualify_container_lifecycle.py` is the exception: nothing under
+`tests/` references it, so neither its logic nor its execution is checked by
+merging. The `container-image` job builds the image and never runs, loads, or
+pushes it, so nothing about the running image is proven by merging either.
+
+There is no coverage threshold, and no separate contract, security, or
+documentation test tier. Security and documentation behaviour is proven by
+focused tests inside the cohorts above, not by a cohort of its own.
+
 ## Pull requests
 
 During the initial application build, new product functionality is delivered as
@@ -181,8 +232,7 @@ A new-functionality slice increment pull request must:
 - update documentation and the changelog when behavior changes;
 - include an ADR for durable architectural decisions;
 - avoid unrelated refactoring;
-- pass formatting, linting, typing, unit, contract, integration, security,
-  documentation, and container-build checks.
+- pass every check [the gate enforces](#what-merging-proves).
 
 Reviewers should be able to understand each increment and its place in the
 frozen slice outcome without reconstructing intent from horizontal fragments.

@@ -28,6 +28,7 @@ from scripts.run_test_tier import (
     cohort_manifest,
     cohort_targets,
     collect_cohort,
+    main,
     run_cohort,
 )
 
@@ -228,6 +229,36 @@ def test_required_installed_is_an_explicit_fast_subset() -> None:
     installed = set(collect_cohort(root, "required-installed"))
     assert installed
     assert installed < fast
+
+
+def test_the_tier_inventory_lists_standalone_and_a_bare_invocation_refuses() -> None:
+    # `run_test_tier.py --list` is the documented way to check the tier
+    # inventory against the prose. It used to exit with a usage error, because
+    # `tier` was a required positional, so the one command the documentation
+    # offered for reconciling the tier set could not be run at all.
+    inventory = StringIO()
+    with redirect_stdout(inventory):
+        assert main(["--list"]) == 0
+    decoded = json.loads(inventory.getvalue())
+    assert decoded == {
+        "schema": "test-tier-inventory-v1",
+        "tiers": [
+            "browser",
+            "complete",
+            "complete-installed",
+            "fast",
+            "required-installed",
+            "slow",
+        ],
+    }
+    # Every listed name is one the runner accepts, and no accepted name is
+    # missing: the inventory is the argument parser's own set, not a copy.
+    assert set(decoded["tiers"]) == set(COHORTS) | {"complete-installed", "complete"}
+    # Dropping the positional is a listing request only; a bare invocation
+    # still refuses rather than defaulting to some tier.
+    with pytest.raises(SystemExit):
+        with redirect_stderr(StringIO()):
+            main([])
 
 
 def test_manifest_is_path_free_and_stable() -> None:
