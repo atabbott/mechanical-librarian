@@ -48,7 +48,7 @@ dev = [
   # with a separate import name and is unaffected by it.
   "httpx2==2.10.0",
   "mypy==2.3.1",
-  "playwright==1.61.0",
+  "playwright==1.62.0",
   "pytest==9.1.1",
   "ruff==0.16.3",
   "setuptools==83.0.0",
