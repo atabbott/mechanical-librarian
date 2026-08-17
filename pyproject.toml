@@ -33,7 +33,7 @@ dependencies = [
   # GHSA-86qp-5c8j-p5mr -- the `Host`-header path poisoning this project's own
   # trust boundary was decided on -- in 1.0.1.
   "starlette==1.6.0",
-  "uvicorn==0.35.0",
+  "uvicorn==0.52.1",
 ]
 
 [dependency-groups]
