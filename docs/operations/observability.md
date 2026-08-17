@@ -1,10 +1,11 @@
 # Observability and support
 
-The supported review runtime exposes anonymous process liveness at
-`/health/live` and startup/drain readiness at `/health/ready`. Liveness says
-only that the HTTPS process responds. Readiness becomes successful only after
-the exact-current application store opens, and becomes unavailable before
-worker shutdown begins.
+The supported review runtime exposes two anonymous operational endpoints:
+process liveness at `/health/live` and startup/drain readiness at
+`/health/ready`. Neither requires a credential, and the container's own
+`HEALTHCHECK` reads readiness on that basis. Liveness says only that the HTTPS
+process responds. Readiness becomes successful only after the exact-current
+application store opens, and becomes unavailable before worker shutdown begins.
 
 Authenticated `GET /api/v1/operations/status` returns
 `operational-status-v1`: readiness, aggregate counts, bounded stage timing and

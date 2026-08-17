@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Harden the container runtime contract: the image declares a `HEALTHCHECK`
+  reading `/health/ready` over loopback HTTPS against the configured
+  certificate as its own trust anchor, compose caps memory and processes at
+  measured figures recorded beside them, and the default publication becomes
+  `127.0.0.1:8443` with LAN exposure now a documented owner choice. (#738)
 - Leave the documentation corpus smaller and truer, with one authority per rule.
   Prose describing a browser digest comparison #757 removed, and two
   justifications their code had outgrown, now state what the code does; the

@@ -10,6 +10,31 @@ referenced owner-only TLS, password and service-secret files within explicitly
 mounted private locations. Add ebook media mounts as read-only Compose
 overrides; never grant a writable media mount or Docker socket.
 
+The published mapping is `127.0.0.1:8443:8443`, so the review surface reaches
+the host and nothing further. Exposing it to a LAN is an owner decision rather
+than a default: republish it as `8443:8443`, or on a chosen host address, only
+together with the canonical origin, certificate names, and network path that
+decision implies. Nothing but TLS and the owner password stands in front of that
+surface.
+
+The container declares its own health. `HEALTHCHECK` runs the installed
+`mechanical-librarian-container-health` and the Compose `healthcheck` block runs
+the same command, so `docker inspect` and an orchestrator both see the readiness
+defined in [observability and support](observability.md). That probe reads
+`/health/ready` over loopback HTTPS and verifies the connection against the
+configured certificate as its own trust anchor and the configured canonical
+origin as its hostname. It presents no credential, returns no library data, and
+adds no `curl` or `wget` to the image.
+
+Compose also bounds the blast radius of a runaway container with `mem_limit`,
+`memswap_limit`, and `pids_limit`. Each value is sized from a measured run of
+this image, and `compose.yaml` records that measurement beside the setting so a
+later reader can tell it from a guess.
+
+Both healthchecks set a start interval, which needs Docker Engine 25 or newer
+and Compose v2.20 or newer. That is the newest runtime either file requires;
+nothing else in them assumes a version that recent.
+
 On an absent data volume the entrypoint creates the exact-current application
 and catalogue stores and private artifact area, then starts the existing review
 server. On restart it accepts only those exact-current stores. A schema mismatch,
@@ -19,7 +44,8 @@ failure stops startup rather than importing, migrating or repairing data.
 Use `docker compose up --build` for a local installed-product qualification.
 `scripts/qualify_container_lifecycle.py --source-sha <exact-head>` repeats the
 head-bound build, synthetic owner-secret/TLS seeding, non-root read-only-root
-run, health probes, bounded graceful termination and exact-current restart.
+run, health probes, the container's own `HEALTHCHECK` verdict, bounded graceful
+termination and exact-current restart.
 Stop with `docker compose down`; do not add `-v` unless intentionally deleting
 the complete local application state. The public gate's `container-image` job
 runs `docker build` at every candidate revision, so a Dockerfile regression

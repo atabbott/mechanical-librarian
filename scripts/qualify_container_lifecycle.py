@@ -137,8 +137,28 @@ def _remove_owned(kind: str, name: str, run_id: str) -> None:
     )
 
 
-def _health(port: int, route: str, deadline: float) -> bool:
-    context = ssl._create_unverified_context()
+def _verified_context(certificate_pem: str) -> ssl.SSLContext:
+    """A client context pinned to the synthetic certificate this run seeded.
+
+    `verify_mode` stays `CERT_REQUIRED` and that certificate is the only trust
+    anchor loaded, so the chain must terminate in exactly it. Hostname checking
+    is the single part that cannot apply: the qualifier reaches the container
+    through a published loopback mapping, by address and on a port `docker
+    port` only reveals after start, while the certificate carries
+    `DNS:review.test`. Pinning is what carries the assurance instead, and it is
+    a real one -- the unverified context this replaced accepted any certificate
+    at all, including one the run had not issued.
+
+    The certificate arrives as PEM text rather than a path because the seed
+    directory holding it is deleted before the qualified container starts.
+    """
+
+    context = ssl.create_default_context(cadata=certificate_pem)
+    context.check_hostname = False
+    return context
+
+
+def _health(port: int, route: str, deadline: float, context: ssl.SSLContext) -> bool:
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(
@@ -153,9 +173,27 @@ def _health(port: int, route: str, deadline: float) -> bool:
     return False
 
 
-def _workspace(port: int) -> bool:
+def _declared_health(container: str, deadline: float) -> str:
+    """The container's own `HEALTHCHECK` verdict, waited out to `deadline`.
+
+    `docker inspect` has no `.State.Health` at all on an image that declares no
+    healthcheck, so the template below fails the run rather than reporting a
+    blank -- the declaration is part of the contract being qualified.
+    """
+
+    status = "starting"
+    while time.monotonic() < deadline:
+        status = _run(
+            ["docker", "inspect", container, "--format", "{{.State.Health.Status}}"]
+        )
+        if status != "starting":
+            return status
+        time.sleep(1)
+    return status
+
+
+def _workspace(port: int, context: ssl.SSLContext) -> bool:
     """Exercise authenticated direct entry and one manifest-admitted asset."""
-    context = ssl._create_unverified_context()
     opener = urllib.request.build_opener(
         urllib.request.HTTPSHandler(context=context),
         urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
@@ -434,8 +472,19 @@ def main() -> None:
                     "1",
                     "-subj",
                     "/CN=review.test",
+                    # A real certificate carries its names in a SAN, and the
+                    # container health probe verifies the hostname it connects
+                    # under. Without this the qualification identity would rest
+                    # on OpenSSL's subject-CN fallback, which no operator's
+                    # certificate relies on and no verifier promises to keep.
+                    "-addext",
+                    "subjectAltName=DNS:review.test",
                 ]
             )
+            # Read before this directory is removed: it is the trust anchor for
+            # every HTTPS request the qualifier makes to the started container,
+            # which happens after the `with` block below closes.
+            certificate_pem = (seed / "tls.crt").read_text(encoding="ascii")
             _run(
                 [
                     "docker",
@@ -522,12 +571,15 @@ def main() -> None:
             raise QualificationError("container_ownership_failed")
         _run(["docker", "start", container])
         port = int(_run(["docker", "port", container, "8443/tcp"]).rsplit(":", 1)[1])
-        if not _health(port, "/health/live", time.monotonic() + 20):
+        pinned = _verified_context(certificate_pem)
+        if not _health(port, "/health/live", time.monotonic() + 20, pinned):
             raise QualificationError("container_liveness_failed")
-        if not _health(port, "/health/ready", time.monotonic() + 20):
+        if not _health(port, "/health/ready", time.monotonic() + 20, pinned):
             raise QualificationError("container_readiness_failed")
-        if not _workspace(port):
+        if not _workspace(port, pinned):
             raise QualificationError("container_react_workspace_failed")
+        if _declared_health(container, time.monotonic() + 90) != "healthy":
+            raise QualificationError("container_declared_health_failed")
         inspection = json.loads(_run(["docker", "inspect", container]))[0]
         if (
             inspection["Config"]["User"] != "65532:65532"
@@ -547,7 +599,7 @@ def main() -> None:
             port = int(
                 _run(["docker", "port", container, "8443/tcp"]).rsplit(":", 1)[1]
             )
-            if not _health(port, "/health/ready", time.monotonic() + 20):
+            if not _health(port, "/health/ready", time.monotonic() + 20, pinned):
                 raise QualificationError("container_restart_failed")
             shutdown_ms = max(shutdown_ms, _clean_stop(container))
             _run(
@@ -567,6 +619,7 @@ def main() -> None:
                 {
                     "application_sha256": first_hash,
                     "container_id": container_id,
+                    "declared_health": "healthy",
                     "exact_current_restart": True,
                     "graceful_shutdown_ms": shutdown_ms,
                     "graceful_shutdown_seconds": GRACEFUL_SHUTDOWN_SECONDS,
@@ -580,7 +633,7 @@ def main() -> None:
                     "readiness": True,
                     "react_assets_validated": True,
                     "react_workspace_activated": True,
-                    "schema": "container-lifecycle-evidence-v3",
+                    "schema": "container-lifecycle-evidence-v4",
                     "snapshot_build": True,
                     "workbench_excluded": True,
                     "single_data_volume": True,
