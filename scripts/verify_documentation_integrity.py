@@ -9,8 +9,10 @@ missing index rows, so the claims are enforced here instead:
 
 1. every live document under `docs/` is reachable from `docs/README.md`,
    directly or through documents that are themselves reachable;
-2. every relative link in a live document resolves to a path that exists;
-3. every ADR file has an index row and every index row names a file;
+2. every relative link in a live document resolves to a path that exists, and
+   every link is written in a form this checker can actually read;
+3. every ADR file has an index row, every index row names a file, and every
+   row's declared number is the number of the file it links to;
 4. no two ADRs share a number.
 
 The corpus is `docs/**/*.md` plus the repository-root `*.md` files, which is
@@ -42,11 +44,26 @@ _ADR_FILENAME = re.compile(r"^(\d{4})-[a-z0-9-]+\.md$")
 _ADR_INDEX_ROW = re.compile(r"^\|\s*\[(\d+)\]\(([^)]+)\)\s*\|")
 _NOT_A_DECISION = frozenset({"README.md", "template.md"})
 
-# `[text](target)`, which also matches the `![alt](target)` image form. The
-# target stops at whitespace or a closing parenthesis: this corpus uses neither
-# link titles nor parenthesised targets, and a target that grew one would be
-# reported rather than silently half-read.
-_INLINE_LINK = re.compile(r"!?\[[^\]]*\]\(([^()\s]+)\)")
+# `[text](target)` and the `![alt](target)` image form, with the optional
+# Markdown title in any of its three spellings. The title is matched so that a
+# titled link is read rather than skipped: an earlier revision required the
+# target to run to the closing parenthesis, which made `[a](b.md "why")` match
+# nothing at all, so a broken titled target passed silently.
+# `_unsupported_link_forms` below is the guard that stops that class of hole
+# recurring, for the forms this pattern still does not read.
+_INLINE_LINK = re.compile(
+    r"!?\[[^\]]*\]\(\s*([^()\s]+)(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^()]*\)))?\s*\)"
+)
+# Reference-style links -- `[text][label]` or `[text][]` -- and the definitions
+# they resolve through. This corpus writes every target inline, and these are
+# reported rather than resolved: resolving them means implementing enough of
+# the Markdown link algorithm to tell a shortcut reference `[label]` from
+# ordinary bracketed prose, which is a parser rather than a checker. Reporting
+# the definition is what closes the shortcut form too, because without a
+# definition a shortcut is not a link at all.
+_REFERENCE_LINK = re.compile(r"!?\[[^\]]*\]\[[^\]]*\]")
+_REFERENCE_DEFINITION = re.compile(r"^ {0,3}\[([^\]]+)\]:\s*\S")
+_LINK_OPENING = re.compile(r"\]\(")
 _FENCE = re.compile(r"^\s*(```|~~~)")
 _INLINE_CODE = re.compile(r"`[^`]*`")
 
@@ -92,7 +109,12 @@ def _strip_code(text: str) -> str:
 
 
 def relative_targets(text: str) -> tuple[str, ...]:
-    """Every link target in `text` that names a path, in document order."""
+    """Every path-naming target `_INLINE_LINK` reads from `text`, in order.
+
+    This is what the pattern reads, which is not the same claim as every link
+    the document contains. `_unsupported_link_forms` reports the difference, so
+    a target missing from here is a finding somewhere rather than a silence.
+    """
 
     targets = [
         target
@@ -111,10 +133,61 @@ def _resolved(root: Path, document: Path, target: str) -> Path:
     return (root / document).parent / path
 
 
-def broken_links(root: Path) -> tuple[str, ...]:
+def _excerpt(text: str, position: int) -> str:
+    """The line `position` falls on, trimmed to something a finding can carry."""
+
+    start = text.rfind("\n", 0, position) + 1
+    end = text.find("\n", position)
+    line = text[start : end if end != -1 else len(text)].strip()
+    return line if len(line) <= 72 else f"{line[:69]}..."
+
+
+def _unsupported_link_forms(text: str) -> tuple[str, ...]:
+    """Every link this checker will not resolve, so none is silently skipped.
+
+    A checker that quietly ignores a syntax reports green for reach it does not
+    have, which is the failure this whole script exists to stop. Two named
+    forms are reported by name, and the residue rule behind them catches the
+    unnamed ones: any `](` the inline pattern did not consume is a link written
+    in a shape the pattern cannot read, whatever that shape turns out to be.
+    """
+
+    stripped = _strip_code(text)
+    findings = [
+        f"uses a reference-style link {match.group(0)}; write the target inline"
+        for match in _REFERENCE_LINK.finditer(stripped)
+    ]
+    findings.extend(
+        f"defines the link reference [{match.group(1)}]; write the target inline"
+        for line in stripped.splitlines()
+        for match in [_REFERENCE_DEFINITION.match(line)]
+        if match is not None
+    )
+    spans = [match.span() for match in _INLINE_LINK.finditer(stripped)]
+    findings.extend(
+        f"has a link this checker cannot read: {_excerpt(stripped, match.start())}"
+        for match in _LINK_OPENING.finditer(stripped)
+        if not any(start <= match.start() < end for start, end in spans)
+    )
+    return tuple(findings)
+
+
+def link_findings(root: Path) -> tuple[str, ...]:
+    """Report every relative link that does not resolve, and every one that
+    cannot be read.
+
+    The second half is what makes the first half's guarantee true. `Every
+    relative link resolves` is only worth as much as the set of links the
+    extractor sees, so a form it cannot parse is a finding rather than a skip.
+    """
+
     findings: list[str] = []
     for document in live_documents(root):
         text = (root / document).read_text(encoding="utf-8")
+        findings.extend(
+            f"{document.as_posix()} {finding}"
+            for finding in _unsupported_link_forms(text)
+        )
         for target in relative_targets(text):
             if not _resolved(root, document, target).exists():
                 findings.append(f"{document.as_posix()} links to missing {target}")
@@ -178,6 +251,14 @@ def adr_index_findings(root: Path) -> tuple[str, ...]:
     The reconciliation is by filename, never by arithmetic over the numbers: a
     gap in the sequence is a decision that was never written, which is a
     historical fact and not a defect this can repair by inventing a document.
+
+    A row's own declared number is checked against the number in the file it
+    links to, which is a separate claim from either direction of the filename
+    reconciliation. A row reading `[0002](0003-third.md)` links to a file that
+    exists and covers a file that has a row, so both directions pass while the
+    index presents the decision under the wrong number. This milestone
+    renumbered a duplicate ADR-0050 and added four missing rows by hand, which
+    is exactly the operation that produces this shape of defect.
     """
 
     directory = root / ADR_DIRECTORY
@@ -195,6 +276,13 @@ def adr_index_findings(root: Path) -> tuple[str, ...]:
         for number, target in indexed
         if not (directory / target).is_file()
     )
+    for number, target in indexed:
+        named = _ADR_FILENAME.match(target)
+        if named is not None and named.group(1) != number:
+            findings.append(
+                f"{ADR_INDEX.as_posix()} row {number} names {target},"
+                f" which is ADR {named.group(1)}"
+            )
     return tuple(findings)
 
 
@@ -236,7 +324,7 @@ def integrity_findings(root: Path) -> tuple[str, ...]:
     """Every finding, links first: an orphan is often a broken link upstream."""
 
     return (
-        *broken_links(root),
+        *link_findings(root),
         *orphaned_documents(root),
         *adr_index_findings(root),
         *duplicate_adr_numbers(root),

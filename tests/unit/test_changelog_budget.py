@@ -16,7 +16,12 @@ LINE_BUDGET = 6
 # nowhere to have left anything. One or more issues in parentheses, which is
 # the form every entry written since #717 uses. A bare `#757` in mid-sentence
 # is a mention of some other issue, not this entry's reference.
-ISSUE_REFERENCE = re.compile(r"\(#\d+(?:,\s*#\d+)*\)")
+#
+# Each number is a positive integer with no leading zero, because GitHub
+# numbering starts at 1: `(#0)` and `(#000)` are parenthesised text shaped like
+# a reference that no issue can ever be, and satisfying the rule with one would
+# name nothing to hold what the entry left out.
+ISSUE_REFERENCE = re.compile(r"\(#[1-9]\d*(?:,\s*#[1-9]\d*)*\)")
 
 # The 39 entries that predate the convention, pinned by the exact first line of
 # each. They are grandfathered by identity rather than by a count, because a
@@ -239,3 +244,23 @@ def test_a_mid_sentence_mention_of_another_issue_is_not_a_reference() -> None:
 
     source = "- Prose describing what #757 removed now states what the code does.\n"
     assert unreferenced_entries(source) == (source.rstrip("\n"),)
+
+
+def test_an_issue_number_that_cannot_exist_is_not_a_reference() -> None:
+    """GitHub numbering starts at 1, so `#0` names nothing to defer to."""
+
+    source = "- Outcome. (#0)\n- Another outcome. (#000)\n"
+    assert unreferenced_entries(source) == (
+        "- Outcome. (#0)",
+        "- Another outcome. (#000)",
+    )
+
+
+def test_a_leading_zero_does_not_disguise_a_real_issue() -> None:
+    source = "- Outcome. (#0686)\n"
+    assert unreferenced_entries(source) == ("- Outcome. (#0686)",)
+
+
+def test_one_unusable_number_in_a_list_does_not_pass_the_whole_entry() -> None:
+    source = "- Outcome across two tickets. (#686, #0)\n"
+    assert unreferenced_entries(source) == ("- Outcome across two tickets. (#686, #0)",)

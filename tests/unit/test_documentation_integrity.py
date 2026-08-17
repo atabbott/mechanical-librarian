@@ -275,3 +275,124 @@ def test_the_command_succeeds_on_an_intact_corpus(
 ) -> None:
     assert checker.main(["--root", str(corpus)]) == 0
     assert "no findings" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "link",
+    (
+        '[guide](./absent.md "details")',
+        "[guide](./absent.md 'details')",
+        "[guide](./absent.md (details))",
+    ),
+    ids=("double_quoted", "single_quoted", "parenthesised"),
+)
+def test_a_titled_link_to_a_missing_target_is_reported(corpus: Path, link: str) -> None:
+    """A title is ordinary Markdown, so a titled target is read, not skipped.
+
+    The regression this pins: an earlier target pattern had to run to the
+    closing parenthesis, so a titled link matched nothing at all and a broken
+    one passed in silence.
+    """
+
+    (corpus / "docs" / "operations.md").write_text(
+        f"# Operations\n\n{link}\n", encoding="utf-8"
+    )
+    assert checker.integrity_findings(corpus) == (
+        "docs/operations.md links to missing ./absent.md",
+    )
+
+
+def test_a_titled_link_reaches_the_document_it_names(corpus: Path) -> None:
+    (corpus / "docs" / "operations.md").write_text(
+        '# Operations\n\n[Deeper](deeper.md "why it exists")\n', encoding="utf-8"
+    )
+    (corpus / "docs" / "deeper.md").write_text("# Deeper\n", encoding="utf-8")
+    assert checker.relative_targets(
+        (corpus / "docs" / "operations.md").read_text(encoding="utf-8")
+    ) == ("deeper.md",)
+    assert checker.integrity_findings(corpus) == ()
+
+
+def test_a_reference_style_link_is_reported_rather_than_ignored(corpus: Path) -> None:
+    """Not resolved, but never skipped: the corpus writes targets inline."""
+
+    (corpus / "docs" / "operations.md").write_text(
+        "# Operations\n\n[guide][manual]\n\n[manual]: ./absent.md\n", encoding="utf-8"
+    )
+    assert checker.integrity_findings(corpus) == (
+        "docs/operations.md uses a reference-style link [guide][manual];"
+        " write the target inline",
+        "docs/operations.md defines the link reference [manual];"
+        " write the target inline",
+    )
+
+
+def test_a_collapsed_reference_link_is_reported_too(corpus: Path) -> None:
+    (corpus / "docs" / "operations.md").write_text(
+        "# Operations\n\n[manual][]\n", encoding="utf-8"
+    )
+    assert checker.integrity_findings(corpus) == (
+        "docs/operations.md uses a reference-style link [manual][];"
+        " write the target inline",
+    )
+
+
+def test_a_link_the_checker_cannot_read_is_reported_rather_than_skipped(
+    corpus: Path,
+) -> None:
+    """The residue rule, which covers the forms nobody thought to name.
+
+    Any `](` the inline pattern did not consume is a link written in a shape
+    the pattern cannot read. Reporting it is what keeps `every relative link
+    resolves` worth what it claims.
+    """
+
+    (corpus / "docs" / "operations.md").write_text(
+        "# Operations\n\n[a link](two words.md)\n", encoding="utf-8"
+    )
+    assert checker.integrity_findings(corpus) == (
+        "docs/operations.md has a link this checker cannot read:"
+        " [a link](two words.md)",
+    )
+
+
+def test_a_parenthesised_target_is_reported_rather_than_half_read(
+    corpus: Path,
+) -> None:
+    (corpus / "docs" / "operations.md").write_text(
+        "# Operations\n\n[a link](nested(parens).md)\n", encoding="utf-8"
+    )
+    assert checker.integrity_findings(corpus) == (
+        "docs/operations.md has a link this checker cannot read:"
+        " [a link](nested(parens).md)",
+    )
+
+
+def test_an_unreadable_link_inside_code_stays_a_quotation(corpus: Path) -> None:
+    (corpus / "docs" / "operations.md").write_text(
+        "# Operations\n\n```markdown\n[a link](two words.md)\n```\n", encoding="utf-8"
+    )
+    assert checker.integrity_findings(corpus) == ()
+
+
+def test_an_index_row_naming_the_wrong_decision_number_is_reported(
+    corpus: Path,
+) -> None:
+    """A row can link the right file under the wrong number and pass both
+    directions of the filename reconciliation.
+
+    Renumbering a duplicate and adding missing rows by hand -- both done in
+    this milestone -- is exactly the operation that produces this.
+    """
+
+    index = corpus / "docs" / "architecture" / "decisions" / "README.md"
+    index.write_text(
+        index.read_text(encoding="utf-8").replace(
+            "| [0003](0003-third.md) |", "| [0002](0003-third.md) |"
+        ),
+        encoding="utf-8",
+    )
+    assert checker.adr_index_findings(corpus) == (
+        "docs/architecture/decisions/README.md row 0002 names 0003-third.md,"
+        " which is ADR 0003",
+    )

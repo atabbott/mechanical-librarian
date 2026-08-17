@@ -60,9 +60,11 @@ describes, and nowhere else. What merging proves today:
 - every live document under `docs/` is reachable from `docs/README.md`,
   directly or transitively, so the list that claims to hold every live document
   cannot silently stop holding one;
-- every relative link in a live document resolves to a path that exists;
+- every relative link in a live document resolves to a path that exists, and
+  every link is written in a form the checker can read;
 - every file in `docs/architecture/decisions/` has a row in that directory's
-  index and every index row names a file that is there;
+  index, every index row names a file that is there, and every row's declared
+  number is the number of the file it links to;
 - no two ADRs share a number;
 - the generated `docs/reference/review-openapi-v1.json` matches the routes, and
   `docs/reference/config-v6.schema.json` matches the configuration model;
@@ -87,9 +89,19 @@ It reads the tree and nothing else — an `http`, `https` or `mailto` target is
 skipped rather than fetched, so the check never needs a network. Its own
 behaviour is proven against fixture corpora in
 `tests/unit/test_documentation_integrity.py`, which also runs it against this
-repository, so the fast tier fails on a corpus defect too. The reconciliation is
-by filename in both directions and never by arithmetic over ADR numbers: a gap
-in the sequence is a decision that was never written, not a missing file.
+repository, so the fast tier fails on a corpus defect too. The ADR
+reconciliation is by filename in both directions and never by arithmetic over
+the numbers: a gap in the sequence is a decision that was never written, not a
+missing file.
+
+Write every link target inline, as `[text](path.md)`, optionally with a title.
+Reference-style links — `[text][label]` with a `[label]: path.md` definition
+elsewhere — are reported as findings rather than resolved. Resolving them means
+telling a shortcut reference apart from ordinary bracketed prose, which is a
+Markdown parser rather than a link check, and no document here needs the form.
+Behind both rules sits a residue check: any `](` the checker's own pattern did
+not consume is reported as a link it cannot read. A link form that is silently
+ignored is reach the green result does not have, so no form is ignored.
 
 Still unenforced, and owned by no ticket yet: Markdown style, spell checking,
 duplicate headings, anchor targets inside a document, code-fence contents, ADR
