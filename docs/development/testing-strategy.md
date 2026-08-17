@@ -268,6 +268,80 @@ longhand stays.
   assertion to the level at hand. Real timers stay only where no timer is
   being measured.
 
+### Measuring whether a test earns its keep
+
+Neither instrument below is a gate. No coverage percentage and no mutation
+score is enforced, and the decision recorded under `Coverage` above is
+unchanged; these are recorded analysis, run when someone wants evidence about a
+particular module rather than on every candidate. Both reproduce from these
+commands. `mutants/` is generated output, ignored by git, and never committed.
+
+```bash
+uv run python -m coverage run --branch \        # whole-tier line and branch
+  --source=src/mechanical_librarian \           # coverage, minutes
+  scripts/run_test_tier.py fast
+uv run python -m coverage report --precision=1 --sort=cover
+
+export PYTHONPATH="$PWD/mutants/src"            # the mutated package, never
+uv run python scripts/generate_mutants.py       # the editable install
+uv run python scripts/run_mutation_audit.py \   # pass 1: capped, fast
+  --only application.review_web --max-tests 40 --out pass1.jsonl
+uv run python scripts/run_mutation_audit.py \   # pass 2: the unkilled set
+  --only application.review_web --max-tests 0 \
+  --survivors-from pass1.jsonl --out pass2.jsonl
+```
+
+`[tool.mutmut]` in `pyproject.toml` names the modules under audit. `PYTHONPATH`
+is load-bearing: the editable install points at `src/`, so without it the tests
+import unmutated source and every mutant is reported as surviving — a total
+failure that looks like a clean result. `scripts/generate_mutants.py` documents
+why it copies the package itself and why it collects stats without `-x`.
+`mutants/tests` and `mutants/mutmut-stats.json` are snapshots taken when it
+runs, so a test written afterwards is invisible to the driver and the mutants
+it was written to kill are reported as surviving; `run_mutation_audit.py`
+refuses to start in that state rather than measure the previous suite.
+
+Each run appends one JSON line per mutant to its `--out` stream and fsyncs
+before starting the next, so an interrupted run keeps what it executed, and a
+rerun skips mutants already recorded rather than repeating them.
+
+**Two passes, because a truncated test set over-reports survivors.**
+`--max-tests` caps how many of a mutant's reaching tests are run. That is safe
+for a `killed` verdict — one test failed, and truncation cannot un-fail it —
+and unsafe for `survived`, because the killer may be a test the cap dropped.
+Only pass 2's survivors are unkilled. In this suite's own audit a cap of 40
+reported the login throttle as unpinned; the test that pins it was 48th of 51,
+and three of the headline findings evaporated once the cap was removed.
+
+**A batched run cannot say which tests kill nothing.** Under `-x` only the
+first failing test is observable, so the `first_failure` field names one killer
+and says nothing about the others. Four tests recorded zero kills that way and
+each killed 83–90 mutants when measured alone. To judge one test, run it by
+itself against every mutant it reaches:
+
+```bash
+PYTHONPATH="$PWD/mutants/src" uv run python \
+  scripts/mutation_kills_for_test.py 'tests/unit/test_x.py::test_y'
+```
+
+That is the only measurement that may be cited as evidence a test kills
+nothing.
+
+Two further limits are properties of the instruments, not of the suite. A
+coverage run on a developer host is not the coverage the product ships with:
+`sys.platform` branches leave Linux-only code unexecuted and their tests
+skipped, so a module can read far below its real figure. And a test that reads
+source as text rather than importing it — the `tests/architecture` cohort —
+cannot kill a mutant at all, because every mutant lives in the file it reads.
+Absence of kills there is the instrument's silence, not the test's.
+
+Some survivors are accepted rather than chased. A mutation of a `help=`,
+`metavar=`, or `description=` string changes no behaviour, and an error
+identity that no seam exposes — `_Parser.error` raises one fixed `ValueError`
+that `interfaces/cli`'s `main` catches regardless of its message — cannot be
+observed without pinning a string no operator ever sees. Record those; do not
+write a test for them.
+
 ## Fixtures, hostile input and privacy
 
 Hostile files, network responses, configuration, credentials, SQLite rows, and

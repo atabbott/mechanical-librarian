@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Test the hypothesis that this suite carries deletable tests, and record that
+  it does not. A coverage run and a mutation run over the highest-churn modules
+  found four deletable lines: 48% of tests add no unique coverage yet assert
+  distinct behaviour, so the audit's product is 38 new cases closing assertion
+  gaps the measurement found — the CLI argument contract, the owner login
+  throttle window and token bounds — and tooling to repeat it. (#737)
+- Rebase Renovate branches only when they conflict, so an open update is no
+  longer rewritten by unrelated activity on the base branch. (#768)
 - Stop a route's deferred focus move from taking focus a reader already placed,
   which silently lost the key that followed. The protected browser tier's
   failure records now reach its log instead of pytest's discarded capture,

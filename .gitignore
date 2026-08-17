@@ -27,6 +27,15 @@ secrets/
 *.sqlite3
 *.db
 
+# Mutation-analysis working tree. `mutmut run` copies `src/`, `tests/` and the
+# repository files the suite reads into `mutants/` and rewrites the audited
+# sources there, so it is generated output rather than a source. It is ignored
+# rather than deleted because regenerating it costs a stats collection over the
+# whole cohort, and because an untracked directory would otherwise fail the
+# clean-tree check in `scripts/qualify_exact_artifact.py` and
+# `run_test_tier.py complete`.
+/mutants/
+
 # Language and build outputs
 __pycache__/
 *.py[cod]
