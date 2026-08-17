@@ -36,10 +36,28 @@ _MAX_INSTALLED_BYTES = 134_217_728
 _MAX_METADATA_BYTES = 1_048_576
 _MAX_COMMAND_STREAM_BYTES = 1_048_576
 # The retained tail of each captured stream when a command fails. A tail rather
-# than a head: the tier runner writes its `test-tier-result-v1` line last, so a
-# tail always reaches the failed identifiers, and a traceback's tail ends at the
-# assertion. Two of these plus framing stay small enough to read in a hosted log
-# and far inside the per-stream capture bound above.
+# than a head, for this seam's own reasons rather than #730's. What arrives here
+# is a whole captured stream, not one traceback, so there is no exception line
+# to anchor a second window on and no single identity a middle window could be
+# aimed at.
+#
+# On stderr the tier runner writes its `test-tier-result-v1` line last, so a
+# tail always reaches the reason and the complete failed-identifier list. On
+# stdout it has already applied its own per-traceback bound -- including #730's
+# anchored window -- and closes the stream with its own omission notice, so
+# whatever a tail keeps already carries each retained failure's identity and
+# declares how many were dropped before this seam ever saw them. Every other
+# child run here -- build, install, resolver -- ends its output at its error.
+#
+# The justification this comment used to give, that a traceback's tail ends at
+# the assertion, is the premise #730 disproved: it holds for an assertion
+# failure and not for a transport error, whose identity sits mid-report. It is
+# recorded here as wrong rather than deleted, because nothing at this seam ever
+# rested on it -- the runner one level down is what makes the tail sufficient,
+# and it is the layer #730 fixed.
+#
+# Two of these plus framing stay small enough to read in a hosted log and far
+# inside the per-stream capture bound above.
 _MAX_DIAGNOSTIC_STREAM_BYTES = 16_384
 # A captured stream is the child's, so it may quote whatever the qualifier put
 # in the child's environment. The qualifier constructs that environment by

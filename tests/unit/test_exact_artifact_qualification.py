@@ -416,6 +416,47 @@ def test_an_inserted_placeholder_is_never_rescanned() -> None:
     assert diagnostic.count("[redacted") == 1
 
 
+def test_the_retained_tail_reaches_the_tier_runners_own_verdict() -> None:
+    """The tail is sufficient here because the runner writes its verdict last.
+
+    This seam keeps a tail of a whole captured stream rather than #730's
+    anchored window, and the reason is one level down: the tier runner emits
+    `test-tier-result-v1`, carrying the reason and every failed identifier, as
+    the final line of its standard error. A stream far over the bound therefore
+    still reports which tests failed and why the tier failed. Anchoring would
+    have nothing to aim at -- a captured stream is a report of many failures,
+    or of a build command that is not Python at all, not one traceback.
+    """
+
+    verdict = json.dumps(
+        {
+            "failed_test_ids": ["tests.unit.test_probe.Probe.test_boundary"],
+            "reason": "test_tier_failed",
+            "schema": "test-tier-result-v1",
+            "status": "failed",
+            "tier": "required-installed",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    # Leading noise the child wrote before its verdict, well past the bound.
+    noise = b"resolving dependency graph\n" * 2_000
+    captured = bytearray(noise + verdict.encode("utf-8") + b"\n")
+    assert len(captured) > qualifier_module._MAX_DIAGNOSTIC_STREAM_BYTES
+
+    diagnostic = qualifier_module._command_diagnostic(
+        "installed_test_suite_failed",
+        bytearray(),
+        captured,
+        {},
+    )
+
+    assert verdict in diagnostic
+    assert "tests.unit.test_probe.Probe.test_boundary" in diagnostic
+    # The stream crossed the bound, and the account says how much it dropped.
+    assert "[elided " in diagnostic
+
+
 def test_a_broken_narrative_stream_cannot_suppress_the_evidence_record(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
