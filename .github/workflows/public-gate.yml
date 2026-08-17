@@ -62,6 +62,9 @@ jobs:
       - name: Typecheck the Python source
         run: uv run mypy src tests scripts
 
+      - name: Verify the live documentation corpus
+        run: uv run python scripts/verify_documentation_integrity.py
+
       - name: Qualify the frontend source
         working-directory: frontend
         run: |

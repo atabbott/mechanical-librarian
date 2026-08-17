@@ -57,6 +57,13 @@ grant current behavior.
 Documentation is checked where a test binds a document to the thing it
 describes, and nowhere else. What merging proves today:
 
+- every live document under `docs/` is reachable from `docs/README.md`,
+  directly or transitively, so the list that claims to hold every live document
+  cannot silently stop holding one;
+- every relative link in a live document resolves to a path that exists;
+- every file in `docs/architecture/decisions/` has a row in that directory's
+  index and every index row names a file that is there;
+- no two ADRs share a number;
 - the generated `docs/reference/review-openapi-v1.json` matches the routes, and
   `docs/reference/config-v6.schema.json` matches the configuration model;
 - `docs/examples/synthetic-config.json` is executable — the CLI tests load it;
@@ -64,14 +71,33 @@ describes, and nowhere else. What merging proves today:
   row by row;
 - `docs/operations/deployment.md` states the operational facts
   `tests/unit/test_operations.py` requires and none it forbids;
-- no `CHANGELOG.md` entry exceeds its line budget;
+- no `CHANGELOG.md` entry exceeds its line budget, and every entry names its
+  issue apart from the pre-convention entries the guard grandfathers by name;
 - generating everything leaves the tree clean.
 
-There is no Markdown style check, link checker, spell check, duplicate-heading
-or anchor check, code-fence check, or ADR metadata check. #686 owns adding
-real ones. Until then, a rule stated in prose is enforced by review, and prose
-that is not bound to an artifact can go stale without anything failing — which
-is the argument for pointing at the artifact instead of restating it.
+The first four are `scripts/verify_documentation_integrity.py`, which the
+`fast-source` gate job runs and which reproduces from a clean checkout with one
+command:
+
+```text
+uv run python scripts/verify_documentation_integrity.py
+```
+
+It reads the tree and nothing else — an `http`, `https` or `mailto` target is
+skipped rather than fetched, so the check never needs a network. Its own
+behaviour is proven against fixture corpora in
+`tests/unit/test_documentation_integrity.py`, which also runs it against this
+repository, so the fast tier fails on a corpus defect too. The reconciliation is
+by filename in both directions and never by arithmetic over ADR numbers: a gap
+in the sequence is a decision that was never written, not a missing file.
+
+Still unenforced, and owned by no ticket yet: Markdown style, spell checking,
+duplicate headings, anchor targets inside a document, code-fence contents, ADR
+status metadata, and external links, which would need network access in CI and
+are a deliberate non-goal. For those, a rule stated in prose is enforced by
+review, and prose that is not bound to an artifact can go stale without
+anything failing — which is the argument for pointing at the artifact instead
+of restating it.
 
 Screenshots should be rare, sanitized, and accompanied by durable prose because
 interfaces change faster than contracts.
