@@ -164,22 +164,22 @@ jobs:
           'from importlib.metadata import version; print("version=" + version("playwright"))'
           >> "$GITHUB_OUTPUT"
 
-      - name: Restore the pinned Chromium qualification payload
+      - name: Restore the cached Chromium qualification payload
         id: chromium-payload
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
 
-      - name: Install the pinned Chromium qualification browser
+      - name: Install the Chromium qualification browser
         run: uv run playwright install --with-deps chromium
 
-      - name: Verify the exact Chromium qualification payload
+      - name: Record the Chromium qualification payload
         run: uv run python scripts/verify_playwright_browser.py
 
-      # Saved only after verification passes, so a corrupt or inexact payload is
-      # never persisted for a later run to restore.
-      - name: Save the verified Chromium qualification payload
+      # Saved only after the payload is accepted, so a malformed one is never
+      # persisted for a later run to restore.
+      - name: Save the recorded Chromium qualification payload
         if: steps.chromium-payload.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

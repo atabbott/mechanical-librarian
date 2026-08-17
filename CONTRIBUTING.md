@@ -181,8 +181,8 @@ of this table can be checked against the workflow rather than trusted.
 | Workflow permissions and the advisory acceptance register | gate | the fast tier |
 | Wheel identity, archive and installed record integrity, payload equality, installed console | gate | `scripts/qualify_exact_artifact.py` in `exact-installed` |
 | Required installed test tier, run by the isolated wheel's interpreter | gate | `--test-tier required` in `exact-installed` |
-| The pinned Chromium payload is the exact expected one | gate | `scripts/verify_playwright_browser.py` in `protected-browser` |
-| Browser tier against that verified payload | gate | `scripts/run_test_tier.py browser` in `protected-browser` |
+| The Chromium payload is well formed, and its digest is recorded | gate | `scripts/verify_playwright_browser.py` in `protected-browser` |
+| Browser tier against that recorded payload | gate | `scripts/run_test_tier.py browser` in `protected-browser` |
 | The shipped container image builds from the exact revision | gate | `docker build --pull --tag mechanical-librarian:gate .` in `container-image` |
 | Advisories against the locked dependency closure | gate | `--lockfile=uv.lock` in `dependency-audit` |
 | Explicit slow tier: scale, endurance, resource ceilings | maintainer-manual | `qualify_exact_artifact.py --test-tier slow` |
