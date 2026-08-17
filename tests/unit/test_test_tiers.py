@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -23,8 +24,10 @@ from scripts.run_test_tier import (
     _REJECTED_PYTEST_ENVIRONMENT,
     _SAFE_TEST_ID,
     _STALL_DIAGNOSTIC_SECONDS,
+    _TEST_TRACEBACK_HEAD_BYTES,
     COHORTS,
     _CohortSession,
+    _retained_traceback,
     cohort_manifest,
     cohort_targets,
     collect_cohort,
@@ -349,14 +352,239 @@ def test_tracebacks_are_bounded_per_test_and_in_total() -> None:
     assert len(emitted) < 2 * _MAX_TRACEBACK_STREAM_BYTES
     assert "[elided " in narrative
     assert "==== fast tracebacks omitted: " in narrative
-    # The retained tail keeps the assertion detail; the head is dropped.
+    # Both ends of the retained span survive and the elisions are declared in
+    # place. The first window is anchored on the exception line, so the frame
+    # block ahead of the identity is declared as a leading elision rather than
+    # spending the window on it; the tail still ends at the assertion.
+    assert "boundary-" in narrative
     assert "-tail" in narrative
-    assert "boundary-" not in narrative
+    assert narrative.index("[elided ") < narrative.index("boundary-")
+    assert narrative.index("boundary-") < narrative.rindex("-tail")
 
     blocks = narrative.split("==== fast failure: ")[1:]
     assert blocks
     for block in blocks:
         assert len(block.encode("utf-8")) <= _MAX_TEST_TRACEBACK_BYTES + 512
+
+
+def _transport_failure_module(directory: Path) -> tuple[str, ...]:
+    """A module whose real `--tb=native` report has the #730 shape.
+
+    The shape is the whole point of the test, so it is built rather than
+    assumed. A `--tb=native` report opens with the frame block -- pytest's own
+    runner internals before the test's frames -- and only then reaches the
+    exception line that names the error. A Playwright failure then follows
+    that line with kilobytes of `Call log:` request headers, so the identity
+    ends up in the *middle* of the text: measured at byte 4,738 of 15,862.
+
+    Two details make this module reproduce that rather than something easier.
+    The call chain is deep, so the frame block ahead of the identity is longer
+    than the whole first retention window. And the message is a module
+    constant rather than a literal at the raise site, so it is not echoed into
+    a frame's source line -- an echo would put a copy of the identity early in
+    the text and let a head-from-byte-zero policy pass a test it should fail,
+    which is exactly how the first version of this test passed.
+    """
+
+    headers = "\n".join(
+        f'  - sec-ch-ua-platform: "Linux" {index:04d}' for index in range(300)
+    )
+    call_log = f"Locator.click: Route.fetch: socket hang up\nCall log:\n{headers}"
+    lines = [
+        "class TransportError(Exception):",
+        "    pass",
+        "",
+        f"_CALL_LOG = {call_log!r}",
+        "",
+        "def _frame_00() -> None:",
+        "    raise TransportError(_CALL_LOG)",
+        "",
+    ]
+    depth = 24
+    for index in range(1, depth):
+        lines.extend(
+            (
+                f"def _frame_{index:02d}() -> None:",
+                f"    _frame_{index - 1:02d}()",
+                "",
+            )
+        )
+    lines.extend(
+        (
+            "def test_transport_failure() -> None:",
+            f"    _frame_{depth - 1:02d}()",
+            "",
+        )
+    )
+    return _module(directory, "\n".join(lines))
+
+
+def test_transport_failure_keeps_the_identity_buried_in_the_middle() -> None:
+    """The #730 case, which neither end of the text on its own retains.
+
+    Tail-only retention elided the identity as leading bytes and emitted a
+    fragment ending mid-header-dump, which three sightings were recorded as
+    "the tooling lost the traceback". Adding a literal head did not fix it:
+    under `--tb=native` the first bytes are `_pytest/runner.py` frames and the
+    identity is further in than the head window reaches.
+    """
+
+    with tempfile.TemporaryDirectory() as directory:
+        summary, narrative = _run_failing_cohort(
+            _transport_failure_module(Path(directory))
+        )
+    assert len(summary["failed_test_ids"]) == 1
+
+    body = narrative.split("==== fast failure: ")[1].split(" ====\n", 1)[1]
+    # The report really did bury the identity: more bytes were dropped ahead of
+    # the first retained window than that window could have held, so no
+    # head-from-byte-zero policy could have reached the identity. Without this
+    # the test would pass on a report that never had the failing shape.
+    leading = int(body.split("[elided ", 1)[1].split(" bytes]", 1)[0])
+    assert body.startswith("[elided ")
+    assert leading > _TEST_TRACEBACK_HEAD_BYTES
+
+    # The identity, which both earlier policies lost.
+    assert "Locator.click: Route.fetch: socket hang up" in body
+    # The tail is still the end of the text, and still last.
+    assert body.rstrip().endswith('  - sec-ch-ua-platform: "Linux" 0299')
+    assert body.index("socket hang up") < body.rindex("[elided ")
+
+    blocks = narrative.split("==== fast failure: ")[1:]
+    assert len(blocks) == 1
+    assert len(blocks[0].encode("utf-8")) <= _MAX_TEST_TRACEBACK_BYTES + 512
+
+
+# A frame block long enough that the identity cannot sit in a literal head,
+# built to the shape `--tb=native` emits: an introduced block of indented
+# frames, then the exception line.
+_FRAME_BLOCK = "\n".join(
+    f'  File "/x/site-packages/_pytest/runner.py", line {index}, in call_{index}'
+    f"\n    result = func()"
+    for index in range(60)
+)
+_CALL_LOG = "\n".join(
+    f'  - sec-ch-ua-platform: "Linux" {index:04d}' for index in range(300)
+)
+
+
+_ELISION = re.compile(r"(?:^|\n)\[elided (\d+) bytes\](?:\n|$)")
+
+
+def _retained_regions(body: str, encoded: bytes) -> tuple[int, int]:
+    """Check every retained window against `encoded` and total the accounting.
+
+    Returns the retained and declared byte counts. Each window must be the
+    exact slice of `encoded` that begins where the declared elisions before it
+    say it does, and the windows and elisions together must account for every
+    byte of the report. That is what makes a declared count a fact about the
+    report rather than a number, and it is what catches a window emitted
+    twice, a gap counted from stale arithmetic, or a separator inserted
+    between bytes that are contiguous in the report.
+
+    The elision markers are split out with their surrounding framing newlines,
+    rather than walked line by line, because a window is cut at a byte offset
+    and so both begins and ends mid-line. Only this split can tell a newline
+    the report contains from one the framing added.
+    """
+
+    windows = _ELISION.split(body)
+    cursor = retained = declared = 0
+    for index, piece in enumerate(windows):
+        if index % 2:
+            gap = int(piece)
+            declared += gap
+            cursor += gap
+            continue
+        window = piece.encode("utf-8")
+        assert encoded[cursor : cursor + len(window)] == window, (
+            f"window at {cursor} is not the report's own bytes"
+        )
+        cursor += len(window)
+        retained += len(window)
+    assert cursor == len(encoded), f"accounting ends at {cursor}, not {len(encoded)}"
+    return retained, declared
+
+
+def test_retention_anchors_on_the_last_exception_line() -> None:
+    """A chained failure names the error that reached the runner, not the first."""
+
+    encoded = (
+        f"Traceback (most recent call last):\n{_FRAME_BLOCK}\nmod.First: WRONG-ONE\n"
+        "\nDuring handling of the above exception, another exception occurred:\n\n"
+        f"Traceback (most recent call last):\n{_FRAME_BLOCK}\n"
+        f"mod.Second: RIGHT-ONE\nCall log:\n{_CALL_LOG}"
+    ).encode("utf-8")
+    body = _retained_traceback(encoded)
+
+    assert "RIGHT-ONE" in body
+    assert "WRONG-ONE" not in body
+    retained, declared = _retained_regions(body, encoded)
+    assert retained <= _MAX_TEST_TRACEBACK_BYTES
+    assert retained + declared == len(encoded)
+
+
+def test_retention_falls_back_to_the_literal_head_without_a_frame_block() -> None:
+    """Not every reported detail is a traceback; a collection error is prose."""
+
+    encoded = ("PROSE-HEAD " + "z" * 9_000 + " PROSE-TAIL").encode("utf-8")
+    body = _retained_traceback(encoded)
+
+    assert body.startswith("PROSE-HEAD")
+    assert body.endswith("PROSE-TAIL")
+    retained, declared = _retained_regions(body, encoded)
+    assert retained <= _MAX_TEST_TRACEBACK_BYTES
+    assert retained + declared == len(encoded)
+
+
+def test_retention_keeps_the_literal_head_when_the_tail_already_holds_the_identity() -> (
+    None
+):
+    """Anchoring a short message already inside the tail would only narrow it."""
+
+    frames = "\n".join(
+        f'  File "/x/site-packages/_pytest/runner.py", line {index}, in call_{index}'
+        f"\n    result = func()"
+        for index in range(300)
+    )
+    encoded = (
+        f"Traceback (most recent call last):\n{frames}\nmod.Error: LATE-IDENTITY"
+    ).encode("utf-8")
+    body = _retained_traceback(encoded)
+
+    assert body.startswith("Traceback (most recent call last):")
+    assert "LATE-IDENTITY" in body
+    retained, declared = _retained_regions(body, encoded)
+    assert retained <= _MAX_TEST_TRACEBACK_BYTES
+    assert retained + declared == len(encoded)
+
+
+@pytest.mark.parametrize("excess", (1, 2, 17, 512, 1_023, 1_025, 3_071, 4_096))
+def test_retention_declares_what_it_drops_at_every_window_boundary(
+    excess: int,
+) -> None:
+    """Windows that meet must neither duplicate bytes nor misdeclare the gap.
+
+    A detail only slightly over budget puts the anchored window's end against
+    the tail's start. The two are merged rather than joined, because a
+    separator between contiguous bytes would invent a line break that the
+    report does not have.
+    """
+
+    frames = "\n".join(
+        f'  File "/x.py", line {index}, in frame\n    inner()' for index in range(12)
+    )
+    encoded = (
+        f"Traceback (most recent call last):\n{frames}\nmod.Error: IDENTITY-HERE\n"
+        + "y" * (_MAX_TEST_TRACEBACK_BYTES + excess)
+    ).encode("utf-8")
+    body = _retained_traceback(encoded)
+
+    assert body.count("IDENTITY-HERE") == 1
+    assert "[elided -" not in body
+    retained, declared = _retained_regions(body, encoded)
+    assert retained <= _MAX_TEST_TRACEBACK_BYTES
+    assert retained + declared == len(encoded)
 
 
 def test_framing_bytes_are_charged_to_the_aggregate_bound() -> None:
