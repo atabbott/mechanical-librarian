@@ -43,10 +43,13 @@ installed package metadata and the bundled licence files, on every update.
   distribution under `AGPL-3.0-or-later`, and bundled licence texts must remain
   present in installed distributions. Release SBOM and notice generation remain
   governed by the release workflow.
-- **Closed closure.** An addition must not quietly enlarge the closure. No
-  optional extra is installed, so no multipart parser, template engine, CLI,
+- **Closed closure.** An addition must not quietly enlarge the runtime closure.
+  No optional extra is installed, so no multipart parser, template engine, CLI,
   settings loader, cache, session service, identity provider, second HTTP
-  client, or second process enters the graph without its own decision.
+  client, or second server process enters the shipped graph without its own
+  decision. The runtime's own child processes — the EPUB inspector, the cover
+  decoder, the contained reviewer — are composed by this repository and are not
+  dependency closure.
 - **Development-only stays development-only.** A development dependency is
   locked in a dependency group and is absent from `[project.dependencies]`, the
   shipped wheel's and sdist's contents and metadata, the container image, and
@@ -54,19 +57,49 @@ installed package metadata and the bundled licence files, on every update.
 
 ## Granted runtime authority
 
-- **Pydantic** validates in-memory configuration transport data only. Pydantic
-  Settings is not installed and no environment-variable behaviour is enabled.
-  Application values are projected into frozen dataclasses and domain types
-  before orchestration; domain code does not import Pydantic.
-- **HTTPX and HTTPcore** carry bounded target-service status and authorization
-  HTTP. The client disables ambient environment and proxy trust and redirects,
-  sends no cookies, retains default TLS verification, sets every timeout phase
-  and pool bound, and streams into a hard response cap. Composition supplies
-  only a target-service scoped credential-bearing client. Neither receives
-  persistence, media, provider, reviewer, or mutation authority. The bounded
-  provider retry policy imports the pinned HTTPcore exception type only to
-  recognise HTTPX's exact wrapped remote-disconnect cause without parsing
-  exception text; that classification dependency grants HTTPcore nothing else.
+Each grant below is written from the imports and call sites, and is meant to be
+checked against them. A grant that has fallen behind the code is worse than no
+grant, because a reviewer assessing an update trusts it.
+
+- **Pydantic** is the validation boundary for two hostile inputs. It validates
+  the configuration document (`infrastructure/configuration.py`), and it
+  validates and serialises the authenticated API's request and response DTOs
+  (`interfaces/web/app.py` imports `BaseModel`, `ConfigDict`, `Field`,
+  `StrictStr` and `TypeAdapter`), so it is reachable from unauthenticated HTTP
+  and a Pydantic update is a parser update. Pydantic Settings is not installed
+  and no environment-variable behaviour is enabled. Validated values are
+  projected into frozen dataclasses and domain types before orchestration;
+  domain code does not import Pydantic.
+- **HTTPX and HTTPcore** carry every byte the application exchanges with an
+  external service: Audiobookshelf catalogue, item and field-effect traffic
+  (`adapters/library_services/`), and Hardcover, Open Library and Google Books
+  provider traffic (`adapters/providers/`). That includes **production writes**
+  — a metadata `PATCH` and a cover `POST` in
+  `audiobookshelf_field_effect.py` — and a **credential-bearing GraphQL POST**
+  to Hardcover. The grant is not "no mutation authority"; it is that every one
+  of those requests is bounded before it is made.
+
+  `infrastructure/security/credentials.py` constructs every client, and each
+  one sets `follow_redirects=False`, `trust_env=False`, `verify=True`, an
+  explicit `httpx.Timeout`, and `httpx.Limits(max_connections=1,
+  max_keepalive_connections=0)`. Responses stream into a hard byte cap. The
+  target client's `httpx.Auth` flow is what bounds the write authority: it
+  attaches the bearer token only when the request is same-origin as the
+  configured endpoint **and** is either a `GET` on one of the five permitted
+  read paths, a `PATCH` on `/api/items/{id}/media`, or a `POST` on
+  `/api/items/{id}/cover`. Any other method, path, or origin is sent without
+  the credential. The Hardcover client attaches its token only to the fixed
+  GraphQL URL. Open Library's client carries no secret, and Google Books' is
+  credential-free or reads one owner-only key file.
+
+  The application's guarded-effect gates — consent, backup readiness,
+  exact-current plan validation, read-back verification and audit — sit above
+  this transport and are what authorise a write at all; HTTPX performs one, it
+  does not decide one. HTTPX receives no persistence handle, no database
+  connection, and no reviewer authority. The bounded provider retry policy
+  imports the pinned HTTPcore exception type only to recognise HTTPX's exact
+  wrapped remote-disconnect cause without parsing exception text; that
+  classification dependency grants HTTPcore nothing else.
 - **FastAPI and Starlette** provide typed `/api/v1` routing, deterministic
   OpenAPI, and ASGI request, response, cookie and middleware primitives, and
   receive only already composed application services and bounded DTOs.
@@ -76,31 +109,67 @@ installed package metadata and the bundled licence files, on every update.
   only authority its own transitive `annotated-doc` participates in.
 - **Uvicorn** runs one HTTP process with proxy and access logging disabled by
   composition. It receives no target or provider credential and cannot trust
-  forwarded headers implicitly.
+  forwarded headers implicitly. `infrastructure/security/review_protocol.py`
+  subclasses Uvicorn's own `h11_impl` HTTP protocol to enforce a connection-state
+  invariant, so a Uvicorn update can change that seam and is reviewed as
+  transport code rather than as a server version.
 - **Argon2-cffi** verifies one owner Argon2id PHC hash. It receives one
   submitted password and one descriptor-bound PHC string; neither is logged,
   returned, or stored in the application database.
+- **Pillow** (MIT-CMU, compatible with `AGPL-3.0-or-later`) is the image
+  decoder, and it is the only dependency that parses hostile media bytes. It is
+  used in two places and never as a serialiser. In `bootstrap/cover_child.py` it
+  decodes a downloaded or target-supplied cover inside a one-shot child that
+  first sets `RLIMIT_AS` to 256 MiB, `RLIMIT_CPU` to 30 seconds, `RLIMIT_NOFILE`
+  to 64, `RLIMIT_NPROC` to 1 and `RLIMIT_CORE` to 0, then denies networking both
+  by replacing the `socket` entry points and, on Linux, by installing a seccomp
+  filter over the socket syscalls; original and preview byte caps and a pixel
+  cap bound the input before Pillow sees it. In
+  `application/cover_packet_semantics.py` it decodes one already
+  digest-verified report-bound preview, with `DecompressionBombError`,
+  `DecompressionBombWarning` and `UnidentifiedImageError` all treated as
+  rejection; the derived transport PNG is re-encoded by this repository's own
+  platform-independent encoder, not by Pillow. Pillow receives no path, network,
+  credential, database, or write authority in either site.
 
 ## Granted development-only authority
 
 No development dependency is imported by the runtime package or included as
 application authority. None receives a target, provider, or reviewer
-credential, a production path, private corpus, database, persistence, media,
-apply-port, subprocess, or publication authority. Tests use synthetic
-credentials, hostile strings, disposable owner-only databases, loopback HTTPS,
-and no production service; property cases use repository-authored synthetic
-structures.
+credential, a production path, private corpus, or publication authority. Tests
+use synthetic credentials, hostile strings, disposable owner-only databases,
+loopback HTTPS, and no production service; property cases use
+repository-authored synthetic structures.
 
-- **Playwright** drives disposable same-origin browser qualification only. A
-  Playwright update requires explicit approval and must update the browser
-  qualification evidence. The pinned release binds one Chromium revision, which
-  the public gate downloads before the exact installed-artifact suite;
-  `scripts/verify_playwright_browser.py` records that payload's tree digest and
+`ruff`, `mypy`, `pytest` and `setuptools` read and analyse this repository's own
+source and build its wheel from it. They are granted the checkout and nothing
+else: no credential, no network use in any gate command, no target or provider,
+and no runtime import. `setuptools` is the build backend and is the only one of
+the four that produces a shipped artifact; a `setuptools` update is reviewed as
+a build change, which is why `.github/renovate.json` keeps it out of the
+auto-merge classes.
+
+- **Playwright** drives disposable same-origin browser qualification only, and
+  it is the one development dependency with **process-creation authority**:
+  `tests/browser/` calls `playwright.chromium.launch(headless=True)`, so a
+  Playwright update changes what process the browser tier starts. That browser
+  is the pinned release's own bound Chromium revision, which the public gate
+  downloads before the exact installed-artifact suite, and
+  `scripts/verify_playwright_browser.py` records the payload's tree digest and
   rejects an unsupported platform, an unreadable layout, and an absent, empty,
-  or symlinked payload. Browser binaries are development cache content, not
-  application packages or published artifacts; the browser's own release
-  inventory is a qualification input and a future release-SBOM concern, not
-  runtime content.
+  or symlinked payload before anything launches. The browser reaches only
+  loopback HTTPS review servers built from synthetic fixtures; it receives no
+  target or provider credential, no production path, and no apply port. Browser
+  binaries are development cache content, not application packages or published
+  artifacts; the browser's own release inventory is a qualification input and a
+  future release-SBOM concern, not runtime content.
+
+  A Playwright **minor** update opens without auto-merge and is merged by a
+  maintainer; a **major** update needs Dependency Dashboard approval. A
+  **patch** is in the ordinary Python patch group and may auto-merge once the
+  required checks pass — `.github/renovate.json` is the authority for all
+  three, and the gate's payload record is produced on every run, so no
+  qualification evidence has to be regenerated by hand for any of them.
 - **HTTPX2** is the in-process ASGI transport for `TestClient` only, and is
   pinned in the `dev` group rather than in `[project.dependencies]`.
   `starlette.testclient` prefers `httpx2` and emits a
