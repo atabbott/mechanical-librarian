@@ -17,8 +17,12 @@ untracked artifact.
 
 ## Tiers
 
-The public suite has four explicit qualification tiers, disjoint by directory,
-declared in `COHORTS`. `scripts/run_test_tier.py` is the only way a tier is run
+The public suite has four explicit qualification tiers, declared in `COHORTS`.
+The three source cohorts — `fast`, `browser` and `slow` — are disjoint by
+directory. `required-installed` is not: it names five files that `fast` also
+collects, deliberately, because its distinct invariant is execution through the
+installed wheel rather than a different set of tests.
+`scripts/run_test_tier.py` is the only way a tier is run
 or listed, so a cohort admits exactly the paths its declared patterns match.
 `scripts/run_test_tier.py --list`, with no tier, emits a
 `test-tier-inventory-v1` document naming every tier the runner accepts, so the
@@ -49,15 +53,23 @@ python3 scripts/qualify_exact_artifact.py \    # scale, endurance, resource
   --source-sha "$(git rev-parse HEAD)" \       # ceilings, exhaustive corpora
   --test-tier slow
 
-uv run python scripts/run_test_tier.py complete \   # all of the above at one
+uv run python scripts/run_test_tier.py complete \   # every test tier at one
   --source-sha "$(git rev-parse HEAD)"              # clean exact head
 ```
 
+`complete` runs every **test** tier and nothing else. It verifies the source is
+that exact SHA and clean, runs `fast`, verifies the browser payload, runs
+`browser`, then hands the exact-artifact qualifier the required-installed and
+slow tiers against one built wheel. It does not run ruff, mypy, the frontend
+typecheck, lint or Vitest suites, the licence inventory, `npm audit`, or the
+reproducible-build comparison. A head that passes `complete` is not a
+qualified head: the source gates are the first three commands above, and
+[what merging proves](../../CONTRIBUTING.md#what-merging-proves) is the full
+list.
+
 The browser asset build is not optional: the tier reads `ML_REACT_ASSET_DIR`
 with no fallback, and building into the checkout would leave untracked output
-where a clean tree is itself a check. The required installed cohort
-deliberately repeats a small fast subset because its distinct invariant is
-execution through the installed wheel.
+where a clean tree is itself a check.
 
 A test may move out of routine qualification only when its expensive property
 is scale, endurance, exhaustive breadth, or resource measurement and a smaller
