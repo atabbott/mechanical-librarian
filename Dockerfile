@@ -11,7 +11,7 @@ RUN cd frontend \
     && npm run typecheck \
     && npm run build
 
-FROM python:3.13.14-slim-bookworm@sha256:67a1e1f215ccda113cfc024e8639049257e88f273898f595b61476d128d387e8 AS build
+FROM python:3.14.7-slim-bookworm@sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52 AS build
 COPY --from=ghcr.io/astral-sh/uv:0.11.28@sha256:0f36cb9361a3346885ca3677e3767016687b5a170c1a6b88465ec14aefec90aa /uv /usr/local/bin/uv
 WORKDIR /build
 COPY pyproject.toml setup.py uv.lock README.md LICENSE ./
@@ -22,7 +22,7 @@ RUN ML_FRONTEND_PREBUILT_DIR=/frontend-dist \
     UV_PROJECT_ENVIRONMENT=/opt/mechanical-librarian \
     uv sync --frozen --no-dev --no-editable
 
-FROM python:3.13.14-slim-bookworm@sha256:67a1e1f215ccda113cfc024e8639049257e88f273898f595b61476d128d387e8
+FROM python:3.14.7-slim-bookworm@sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52
 RUN groupadd --system --gid 65532 librarian \
     && useradd --system --uid 65532 --gid librarian --home-dir /nonexistent --shell /usr/sbin/nologin librarian \
     && install -d -o librarian -g librarian -m 0700 /data
