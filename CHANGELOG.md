@@ -137,9 +137,9 @@
   surfacing at runtime as "automatic safety is unavailable" on every safety
   read, pause, suspend and recover. (#667)
 - Compose the `policy-preview` CLI only from a contract its repository
-  satisfies in full, deleting six `type: ignore[arg-type]` suppressions and the
-  latent `AttributeError` behind them. Output, exit codes, and failure messages
-  are unchanged. (#667)
+  satisfies in full, deleting six `# type: ignore[arg-type]` suppressions and
+  the latent `AttributeError` behind them. Output, exit codes, and failure
+  messages are unchanged. (#667)
 - Move review-pipeline construction, provider-recovery activation, and policy
   resolution out of the 2,418-line composition root into four owned application
   modules, which gain their destination layer's import constraints. Nothing
@@ -167,8 +167,8 @@
 - Report a failed field-effect claim as what it was, so `claim_conflict` again
   means an actual concurrency conflict. A paused control table, suspended
   capability, revoked authority or consent, and storage fault each surface
-  under their own code, and three of those now return 503 rather than 409.
-  (#656)
+  under their own code, and every one but the paused table now returns 503
+  rather than 409. (#656)
 - Report known-vulnerable Python dependencies in CI, so the backend half of the
   supply chain is audited on every change. A `dependency-audit` job scans the
   complete `uv.lock` closure with a digest-pinned OSV-Scanner; the only
@@ -222,9 +222,10 @@
   `provider_recovery_generation` and restart after fixing a dormant provider
   condition. (#625)
 - Make Library policy impact previews distinguish real changes from retained
-  values, unsupported evidence, and owner review. Empty fields with no
-  candidate read `No change · remains empty`, and exact-current, ignored, and
-  abstained outcomes no longer inflate the change total. (#609)
+  values, unsupported evidence, and owner review. An empty field with no
+  candidate now reads `No change · remains empty — no supported value found`,
+  and exact-current, ignored, and abstained outcomes no longer inflate the
+  change total. (#609)
 - Explain every closed Library policy representation in place: its admitted
   source and value, bounded transformation, field effect, and abstention
   boundary. Visible Google text now never falls back to Hardcover, and any
