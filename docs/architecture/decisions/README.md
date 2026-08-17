@@ -44,7 +44,8 @@ context and consequences rather than reproducing code.
 | [0028](0028-normalize-transient-reviewer-json-and-partition-combinations.md) | accepted | Normalize transient reviewer JSON and partition finite actions by one allowed bibliographic combination |
 | [0029](0029-provider-independent-shadow-decision-preview.md) | accepted | Add a provider-independent, read-only deterministic shadow decision preview |
 | [0030](0030-authenticated-review-web-boundary.md) | accepted | Use one authenticated Python review web boundary |
-| [0031](0031-persisted-review-preparation.md) | accepted | Persist progressive review preparation beside the review boundary |
+| [0031](0031-persisted-review-preparation.md) | accepted; polling deferral and complete-baseline catalogue publication boundary superseded by 0032 | Persist progressive review preparation beside the review boundary |
+| [0032](0032-continuous-review-reconciliation.md) | accepted | Activate bounded continuous review reconciliation |
 | [0033](0033-versioned-policy-draft-preview.md) | accepted | Persist immutable metadata-policy drafts before activation |
 | [0034](0034-atomic-policy-generation-cutover.md) | accepted | Cut over metadata policy with one atomic generation |
 | [0035](0035-persist-non-authoritative-policy-preview-outcomes.md) | accepted | Persist non-authoritative policy Preview outcomes |
@@ -65,7 +66,10 @@ context and consequences rather than reproducing code.
 | [0050](0050-bound-installed-owner-assistance.md) | accepted | Bound installed owner-assistance commands and cover observation |
 | [0051](0051-atomic-current-review-packages.md) | accepted | Publish review packages after projection |
 | [0052](0052-record-automatic-no-change.md) | accepted | Record automatic no-change outcomes |
+| [0053](0053-dormant-provider-recovery.md) | accepted | Gate dormant provider recovery on one scoped canary |
+| [0054](0054-scoped-provider-successors.md) | accepted | Bind retry-eligible provider lanes to scoped successor evidence |
 | [0055](0055-connection-scoped-preparation-recovery.md) | accepted | Pause review preparation by target connection |
+| [0056](0056-edition-overflow-work-witness.md) | accepted | Retain a work-only witness for bounded edition overflow |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

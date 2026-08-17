@@ -4,18 +4,35 @@ This repository is the production implementation of Mechanical Librarian. Treat 
 as a public open-source project even before publication: never add personal
 paths, domains, credentials, media, database snapshots, or unredacted reports.
 
+## Reading
+
+Required before any change: this file, [PRODUCT.md](PRODUCT.md) for the product
+boundary, [CONTRIBUTING.md](CONTRIBUTING.md) for what merging actually proves,
+and [testing and quality strategy](docs/development/testing-strategy.md).
+
+Everything else is reference, read when the work reaches it and not before.
+[Security and threat model](docs/architecture/security.md) is the authority for
+any change touching credentials, network access, parsers, AI inputs, writes,
+backups, authentication, or upgrades.
+[Functional slice delivery](docs/development/slice-delivery.md) and
+[exact-head merging](docs/development/exact-head-merging.md) govern how a change
+is delivered and merged; [the delivery-slice plan](docs/product/delivery-slices.md)
+is the ordered ledger of what is planned, not a rulebook.
+[Dependencies](docs/development/dependencies.md),
+[work management](docs/development/work-management.md), and
+[documentation standards](docs/development/documentation-standards.md) each own
+their own subject. Reading a reference you do not need costs the session more
+than it returns.
+
 ## Product contract
 
-- Normal deployment is one self-contained container.
-- Audiobookshelf is the first production adapter.
-- Production metadata and cover writes use supported service APIs only.
-- Application databases are never edited directly for normal operation.
-- Media mounts are read-only unless an explicitly approved future feature adds
-  embedded-file updates with independent backups and safety gates.
-- AI reviewers never receive service credentials or production write access.
-- Destructive operations are never unattended.
-- Backup readiness, plan validation, optimistic concurrency, apply
-  verification, and durable audit records are mandatory before writes.
+One self-contained container beside an existing library; Audiobookshelf first;
+supported service APIs only, never a direct database edit; read-only media
+mounts; AI reviewers with no credential or write authority; no unattended
+destructive work; and consent, backup readiness, plan validation, optimistic
+concurrency, read-back verification and durable audit records before any write.
+[PRODUCT.md](PRODUCT.md) is the single product-boundary statement and states
+each of those once.
 
 ## Architecture rules
 
@@ -209,116 +226,38 @@ Do not weaken tests, safety gates, types, or linters to make a change pass. Fix
 the implementation or explicitly revise the governing decision with rationale
 and review. There is no coverage threshold to weaken: the decision not to
 enforce one is recorded in
-[quality strategy](docs/development/quality-strategy.md), and
+[testing and quality strategy](docs/development/testing-strategy.md), and
 [CONTRIBUTING.md](CONTRIBUTING.md) lists every check the gate does enforce
 beside the ones that are maintainer-manual.
 
 ## Functional slice delivery
 
-- During the initial application build, new product functionality is normally
-  delivered as a functional slice rather than as horizontal layer or
-  work-package PRs.
-- A concise future product outcome may remain deferred without becoming a
-  slice tracker. Deferred outcomes carry `Delivery slice: Unassigned backlog`;
-  they have no functional-slice designation or delivery milestone and are not
-  eligible for implementation.
-- Only explicit promotion of the same deferred issue creates an assigned slice
-  tracker. `Deliver the next slice` selects only an assigned, unblocked
-  `Ready` tracker and ignores `Unassigned backlog`; selection never implicitly
-  promotes deferred work.
-- Fixes, audit corrections, security work, dependency-only changes,
-  documentation, tooling, maintenance, and genuinely standalone tickets are
-  not slices. Use a focused purpose branch such as `fix/`, `docs/`, `chore/`,
-  or `feature/` and one ticket-level pull request.
-- A ticket or slice may introduce a framework, library, or tool that materially
-  helps deliver its current outcome without a separate permission ticket.
-  This includes correctly classified development-only dependencies needed for
-  testing, generation, browser qualification, builds, analysis, or docs.
-  Keep the dependency within that delivery boundary and satisfy the documented
-  architecture, licence, security, testing, least-authority, and reproducible
-  lockfile requirements. Durable architecture or trust-boundary changes still
-  require their governing ADR or security review.
-- Before starting new slice functionality, identify a `Ready` slice tracker
-  with an observable executable outcome and complete exit criteria. Delivery
-  may use one pull request or sequential, independently safe vertical
-  increments. Each increment starts from current `main`, is reviewed and
-  qualified at its exact head, and normally merges before the next begins.
-- `Deliver slice <ID>` is standing authority to complete that bounded
-  transaction: create branches and pull requests, remediate CI and review
-  findings on the same branch and pull request, merge an exact qualified head,
-  delete merged branches, and reconcile issue and Project state. `Deliver and
-  merge slice <ID>` is an explicit synonym. The authority does not permit
-  bypasses, force pushes, administrative merges, weakened safety, releases, or
-  production-service use.
-- A new pull request is reserved for a distinct vertical outcome or a required
-  security or privacy separation. A new head on the active pull request
-  invalidates affected review and qualification evidence and must be reviewed
-  and qualified again.
-- Non-activation increments close only constituent tickets whose complete
-  acceptance criteria they satisfy. The activation increment proves the whole
-  supported outcome and alone closes the slice tracker. A one-issue slice may
-  use that tracker as its only closing reference and needs no constituent
-  ticket. Incomplete behavior remains unreachable, disabled, or report-only
-  until activation.
-- Every ready increment pull request must fully satisfy and natively close at
-  least one ticket: a non-activation increment closes at least one constituent,
-  while the activation increment may satisfy this requirement by closing the
-  tracker. If it cannot, keep the pull request draft and re-slice the increment
-  or refine the ticket plan before ready review.
-- Finish only when the complete slice is verified on `main` and tracking and
-  branch cleanup are reconciled, or a genuine external prerequisite or
-  maintainer decision blocks safe progress. A partially merged transaction is
-  recoverable `In progress` work, not a rollback trigger or a completed slice.
-- The trusted controller, validators, and evidence remain maintainer-owned and
-  ignored under `.codex/**`. The controller retains the receipt-bound
-  `CLIENT_ENFORCED_FREE_PLAN` validation mode identifier for evidence
-  compatibility. On GitHub Pro, the active default-branch ruleset independently
-  enforces pull requests and strict required checks; its observations do not
-  become client-side merge authority. Every successful receipt still records
-  `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED`: another qualified pull request or an
-  administrator changing enforcement can move or race `main`, and GitHub's
-  conditional merge locks the pull-request head but not the base SHA. Exact
-  local, connector, check, review, exact repository/branch provenance,
-  internally persisted dry-run, conditional-merge, exact closing-reference,
-  and post-merge gates remain mandatory.
-  Dry-run freshness ends at the trusted mutation-attempt instant, not terminal
-  completion. Activation permits at most 99 constituents plus its tracker;
-  non-activation permits at most 100 constituents.
-  A trusted monotonic deadline starts before the dry-receipt wall timestamp and
-  persistence, including both, and its guard follows the captured mutation
-  timestamp as the only local operation between final
-  preflight and merge. Ambiguous responses persist typed post-attempt evidence
-  no earlier than the mutation attempt, require actual drift for connector
-  failure, treat timing-invalid connector evidence—including invalid elapsed
-  type, range, finiteness, or integer magnitude beyond the supported timestamp
-  domain—as unavailable without a digest, reject raw signed JSON integer tokens
-  longer than 4,300 digits at the bounded parser, and apply the same numeric
-  checks before conversion in normal and recovery validation while accepting
-  the exact maximum timestamp delta. Route authoritative GitHub responses,
-  trusted evidence, and top-level run-record input through one bounded JSON
-  parser that translates decode, integer-conversion, Unicode, and recursion
-  failures into context-specific record errors while preserving size,
-  canonical-byte, and digest checks. Enforce a deterministic maximum structural
-  depth of 100 with a JSON-string-and-escape-aware lexical scan, and capture
-  authoritative REST and GraphQL stdout and stderr as bytes so invalid UTF-8
-  reaches that boundary without exposing raw stderr. Strictly decode every byte
-  input as UTF-8 once and use that same string for depth scanning and JSON
-  decoding, forbidding UTF-16/32 auto-detection. Byte-capture and canonical-
-  strict-decode both branch-cleanup response streams; only decoded HTTP 404
-  in the canonical single-line GitHub diagnostic with empty stdout proves
-  absence. Require the message's `splitlines()` result to contain only that
-  message and reject semantic line separators and noncanonical whitespace,
-  control, or format characters; mixed, prefixed, multiline, repeated, or
-  trailing diagnostics do not, while malformed encodings are record errors;
-  restrict protocol
-  variance to ambiguous connector failure, and remain recovery-only.
-- After the initial product has stable executable seams, maintainers may deliver
-  small bounded additions as ordinary `feature/` PRs. Cross-cutting, high-risk,
-  or independently demonstrable capabilities continue to use slices.
-- Follow [functional slice delivery](docs/development/slice-delivery.md) and the
-  ordered [delivery-slice plan](docs/product/delivery-slices.md). Governance,
-  urgent incident, and private security exceptions follow the narrow rules in
-  the delivery workflow and do not redefine normal product delivery.
+New product functionality is delivered as one functional slice per explicitly
+promoted, assigned `Ready` tracker: a vertical, observable outcome delivered as
+one pull request or as ordered independently safe increments, each started from
+current `main` and reviewed and qualified at its exact head. `Deliver slice
+<ID>`, and its synonym `Deliver and merge slice <ID>`, is standing authority for
+that bounded transaction and for nothing beyond it: no bypass, force push,
+administrative merge, weakened safety, release, or production-service use.
+
+Everything else -- fixes, audit corrections, security work, documentation,
+tooling, dependency-only changes, maintenance, and genuinely standalone tickets
+-- uses a focused `fix/`, `docs/`, `chore/`, or `feature/` branch and one
+ticket-level pull request. Do not create a slice tracker to rename one of those.
+
+- The trusted merge controller, its validators, and its evidence remain
+  maintainer-owned and ignored under `.codex/**`; its gates, receipt
+  contracts, parser bounds, and the residual
+  `EXTERNAL_ACTOR_MUTATION_NOT_PREVENTED` risk it accepts are stated in
+  [exact-head merging](docs/development/exact-head-merging.md).
+- [Functional slice delivery](docs/development/slice-delivery.md) owns the
+  complete workflow: selection and the `Unassigned backlog` boundary, the
+  dependency a slice may introduce without a separate permission ticket, which
+  increment closes which ticket, partial-transaction recovery, and when a small
+  addition may leave the slice workflow after the initial build. The ordered
+  [delivery-slice plan](docs/product/delivery-slices.md) is the planned ledger.
+  Governance, urgent incident, and private security exceptions follow the narrow
+  rules in the delivery workflow and do not redefine normal product delivery.
 
 ## Repository hygiene
 
@@ -335,7 +274,3 @@ beside the ones that are maintainer-manual.
 Until a production release exists, default all integrations to report-only.
 Write-capable development requires explicit test fixtures or isolated fake
 services. Never point development or CI at a contributor's live library.
-
-See [docs/development/quality-strategy.md](docs/development/quality-strategy.md)
-and [docs/architecture/security.md](docs/architecture/security.md) for the full
-quality and safety contracts.

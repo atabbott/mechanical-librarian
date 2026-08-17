@@ -1,5 +1,12 @@
 # Scope and Non-Goals
 
+One self-contained container beside an existing library; Audiobookshelf first;
+supported service APIs only, never a direct database edit; read-only media
+mounts; AI reviewers with no credential or write authority; no unattended
+destructive work. [PRODUCT.md](../../PRODUCT.md) is the single
+product-boundary statement and the authority for every clause above. This
+document adds what that boundary admits and refuses in the first release.
+
 ## Initial scope
 
 - One self-contained Linux container.
@@ -43,6 +50,32 @@
 The audiobook-transcription non-goal applies to the first stable release. The
 planned extension is limited to qualified opening-credit windows; general
 story-content and whole-book transcription remain outside this scope.
+
+## User promise
+
+Beyond the operating context PRODUCT.md states, first-release scope commits to:
+
+- new items remain immediately available for consumption, with curation
+  happening asynchronously after files stabilize;
+- the normal review queue stays small, and automatic decisions are visible in
+  history without demanding routine review;
+- failures stop affected work safely and explain how to recover; and
+- configuration, audit history, and backups are exportable without vendor
+  lock-in.
+
+## Measures of success
+
+- Most new items become acceptably correct without human action.
+- Provider, AI, authentication, backup, or apply failures cannot silently
+  corrupt production metadata.
+- Reprocessing an unchanged item produces no additional production change.
+- Users can understand why a field changed and which evidence supported it.
+- Recovery from a failed upgrade, expired AI login, or bad apply is documented
+  and testable.
+- A new contributor can locate the governing contract for a behaviour without
+  relying on maintainer memory.
+- The product is installable and operable without knowledge of its
+  implementation or the original author's environment.
 
 ## Compatibility posture
 

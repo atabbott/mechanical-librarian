@@ -61,8 +61,9 @@ guarded work, history, and recovery.
   idempotent. Automatic outcomes must be qualified, deterministic, and visible
   in history.
 - Target writes require library-scoped owner consent, backup readiness,
-  exact-current plan validation, verification, and durable audit and recovery
-  records. Destructive work always remains separately authorized.
+  exact-current plan validation, optimistic concurrency, read-back
+  verification, and durable audit and recovery records. Destructive work always
+  remains separately authorized and never runs unattended.
 - AI reviewers have no credentials or production write access. Unsupported
   capabilities remain unsupported rather than falling back to database edits
   or UI automation.
@@ -82,9 +83,8 @@ The product name is Mechanical Librarian.
 
 - `README.md` records the current 0.14.1 interface-fidelity checkpoint and the
   present runtime boundary.
-- `docs/product/vision.md` records the user promise and measures of success.
-- `docs/product/scope.md` records first-release scope, planned extensions, and
-  explicit non-goals.
+- `docs/product/scope.md` records first-release scope, planned extensions,
+  explicit non-goals, the user promise, and the measures of success.
 - `docs/product/review-experience.md` is the product contract for the owner
   review experience.
 - `docs/architecture/` contains the governing architecture, security, privacy,
