@@ -239,7 +239,13 @@ by directory. The required installed cohort intentionally repeats a small fast
 subset because its distinct invariant is execution through the installed wheel.
 Each cohort has a path-free count and identifier digest available through
 `scripts/run_test_tier.py <tier> --list`; an empty or unimportable cohort fails
-closed.
+closed. `scripts/run_test_tier.py --list`, with no tier, emits the
+`test-tier-inventory-v1` document naming every tier the runner accepts, so the
+documented tier set can be checked against the runner rather than trusted:
+
+```bash
+uv run python scripts/run_test_tier.py --list
+```
 
 The exact-artifact procedure requires a clean checkout at the supplied source SHA, snapshots
 the committed source, disables the `uv` build and install cache, validates the
@@ -298,7 +304,16 @@ manual or scheduled workflow is not maintained because the local exact-wheel
 entry point supplies the required milestone evidence without adding another
 remote workflow surface. Qualification reports distinguish a bounded subprocess
 timeout (`*_timeout`) from a genuine nonzero test result (`*_failed`) without
-including captured output or checkout paths.
+including captured output or checkout paths. A failed command's captured
+streams are no longer discarded with the exception: the last 16 KiB of each is
+reported as a separate narrative account on standard output, with the evidence
+record still alone on standard error. That account carries the runner's own
+paths, so it is never folded into the record. Before any captured byte is
+reported, every value in the environment the qualifier constructed for the
+child is replaced by its own variable's name where the variable is
+secret-named, or where the value is long and is not a path: the qualifier
+inherits the ambient environment, so a name vocabulary alone would miss an
+opaque identifying value under an innocuous name.
 
 ## Timing baseline and tier decision
 
@@ -325,8 +340,8 @@ required test preserves the same functional path and failure transitions. A
 slow test is never silently skipped: delivery documentation identifies when
 exact-head slow evidence is required. Fixed diagnostics distinguish source
 provenance, setup/build failure, nonzero test failure, and subprocess timeout;
-captured subprocess streams remain bounded and are not exposed in failure
-evidence.
+captured subprocess streams remain bounded and stay out of the failure evidence
+record, reaching only the redacted narrative account beside it.
 
 The public gate first installs the Chromium revision bound to pinned Playwright
 1.61.0 and verifies its repository-bound complete payload digest before launch.

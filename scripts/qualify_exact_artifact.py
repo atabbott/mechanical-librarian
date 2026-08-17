@@ -20,6 +20,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
@@ -34,6 +35,68 @@ _MAX_WHEEL_MEMBER_BYTES = 16_777_216
 _MAX_INSTALLED_BYTES = 134_217_728
 _MAX_METADATA_BYTES = 1_048_576
 _MAX_COMMAND_STREAM_BYTES = 1_048_576
+# The retained tail of each captured stream when a command fails. A tail rather
+# than a head: the tier runner writes its `test-tier-result-v1` line last, so a
+# tail always reaches the failed identifiers, and a traceback's tail ends at the
+# assertion. Two of these plus framing stay small enough to read in a hosted log
+# and far inside the per-stream capture bound above.
+_MAX_DIAGNOSTIC_STREAM_BYTES = 16_384
+# A captured stream is the child's, so it may quote whatever the qualifier put
+# in the child's environment. The qualifier constructs that environment by
+# inheriting the ambient one (`_qualification_environment`), which on a
+# contributor's machine holds provider keys and on a runner holds whatever the
+# job exported, so the value of every secret-named variable is replaced before
+# any captured byte is reported. The vocabulary is deliberately wide: a
+# needlessly redacted `KEYCHAIN` path costs a line of diagnosis, an unredacted
+# token costs the token.
+_SECRET_ENVIRONMENT_NAME = re.compile(
+    r"TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION|SIGNATURE|KEY",
+    re.IGNORECASE,
+)
+# A secret-named variable is redacted at almost every length, because a
+# six-character `DB_PASSWORD` is a credential and an eight-character floor
+# printed it. The floor that remains is the shortest one that separates a
+# credential from a flag, and it was set by measurement rather than by taste.
+#
+# In the constructed environment of the machine this was written on, every
+# secret-named variable was either one character or at least thirty-two:
+# `CLAUDE_CODE_SDK_HAS_OAUTH_REFRESH=1` and two siblings against a 32-character
+# messaging token and a 42-character session identifier. Substring-replacing
+# the one-character values rewrote every digit `1` in the account -- line
+# numbers, `python3.14`, `test-tier-result-v1`, `tests_run":19` -- into a
+# 45-character placeholder, and a deliberately failed installed suite came back
+# unreadable. Accepting corruption to protect a credential is the right trade
+# and is made elsewhere in this module; accepting it to protect a boolean flag
+# protects nothing and costs the diagnosis the whole account exists to give.
+#
+# Three characters cannot carry credential entropy: that is a flag, an index,
+# or a version digit. Four can, and a four-digit PIN is exactly the case the
+# floor must not miss, so it sits immediately below the shortest value that
+# could be a secret rather than anywhere convenient.
+_MIN_SECRET_VALUE_CHARACTERS = 4
+#
+# A connection string carries its credentials in the value rather than in the
+# name, so it is redacted at any length too. `DATABASE_URL` and `REDIS_URL`
+# match no name vocabulary, and `rediss://:pw@h:6379/0` is twenty-one
+# characters, so neither the names above nor the length floor below reaches
+# them. Only userinfo with a password field qualifies: a credential-free
+# `https://api.example.com` is not a secret and stays readable.
+_CREDENTIAL_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://[^/@\s]*:[^/@\s]*@")
+# The name vocabulary alone is not enough, and auditing a real constructed
+# environment is what showed it: a `BAGGAGE` variable held 185 opaque
+# identifying characters under a name saying nothing about secrets. So a value
+# is also redacted on its shape -- long, and not a filesystem path. That rule
+# gets a floor because it applies to every variable rather than to a named few,
+# and paths are the one long class the account needs to keep, because they are
+# what makes a traceback locatable and are why this account is narrative rather
+# than evidence.
+#
+# "Looks like a path" is a leading path shape, not a contained separator.
+# Testing for a contained separator exempted every URL in the environment,
+# including the two connection strings above, because a credential URL has
+# slashes in it like anything else. A path announces itself at its start.
+_FILESYSTEM_PATH = re.compile(r"^(?:[/~]|\.{1,2}[/\\]|[A-Za-z]:[/\\]|\\\\)")
+_MIN_OPAQUE_VALUE_CHARACTERS = 24
 # The installed-wheel suite intentionally exercises the complete repository.
 # Keep its subprocess deadline below the 15-minute workflow ceiling while
 # allowing slower hosted runners enough headroom as the suite grows. Setup and
@@ -62,10 +125,17 @@ _COMPLETE_INSTALLED_TEST_ARGS = (
 
 
 class QualificationFailure(RuntimeError):
-    """A fixed, path-free exact-artifact qualification failure."""
+    """A fixed, path-free exact-artifact qualification failure.
 
-    def __init__(self, reason: str) -> None:
+    `reason` is the evidence record's whole vocabulary and stays path-free.
+    `diagnostic` is the separate narrative account of a failed child command --
+    redacted, bounded, and carrying the runner's own paths -- so it is reported
+    beside the evidence record rather than inside it.
+    """
+
+    def __init__(self, reason: str, diagnostic: str = "") -> None:
         self.reason = reason
+        self.diagnostic = diagnostic
         super().__init__(reason)
 
 
@@ -823,14 +893,142 @@ def _run(
         timeout_reason = (
             f"{reason[:-7]}_timeout" if reason.endswith("_failed") else reason
         )
-        raise QualificationFailure(timeout_reason)
+        raise QualificationFailure(
+            timeout_reason,
+            _command_diagnostic(timeout_reason, stdout, stderr, env),
+        )
     if overflow.is_set() or descendants_terminated or readers_stuck or returncode != 0:
-        raise QualificationFailure(reason)
+        raise QualificationFailure(
+            reason,
+            _command_diagnostic(reason, stdout, stderr, env),
+        )
     return subprocess.CompletedProcess(
         args=command,
         returncode=returncode,
         stdout=bytes(stdout),
         stderr=bytes(stderr),
+    )
+
+
+def _command_diagnostic(
+    reason: str,
+    stdout: bytearray,
+    stderr: bytearray,
+    env: dict[str, str] | None,
+) -> str:
+    """Account for a failed child command's captured output, or its tail.
+
+    Both streams were already being captured and then discarded with the
+    exception, so an installed-suite failure reported `installed_test_suite_
+    failed` and nothing else: no failing identifier and no traceback, while the
+    tier runner had written both into a buffer the qualifier threw away.
+
+    The result is narrative, not evidence. It carries the runner's own
+    repository and temporary-directory paths, exactly as the tier runner's own
+    traceback stream does, so it is never folded into the path-free evidence
+    record.
+
+    The whole captured stream is decoded and redacted before any of it is
+    dropped, and the order is the guard rather than a preference. Truncating
+    first cuts a value that straddles the retained boundary in two: `replace`
+    then matches nothing, because the whole value is no longer present, and the
+    surviving suffix is printed verbatim. Decoding first is the same guard one
+    level down -- a `replace` decode of a truncated stream turns a multi-byte
+    character cut mid-sequence into U+FFFD, which breaks the match for every
+    value containing it just as effectively.
+    """
+
+    # `env` is the mapping `_run` hands `subprocess.Popen`, so this table is
+    # built from the environment of the process that could have quoted a value.
+    # `None` means `Popen` inherits this process's own environment, which is
+    # what `os.environ` names, so that branch is the child's environment too.
+    redactions = _environment_redactions(os.environ if env is None else env)
+    pattern, placeholders = _redaction_pattern(redactions)
+    blocks = [f"==== exact-artifact failure: {reason} ===="]
+    for name, captured in (("stdout", stdout), ("stderr", stderr)):
+        if not captured:
+            continue
+        body = bytes(captured).decode("utf-8", "replace")
+        if pattern is not None:
+            body = pattern.sub(lambda match: placeholders[match.group(0)], body)
+        # Counted after redaction, so this is how much of the reported account
+        # was dropped rather than an offset into the child's real output. It is
+        # a reading aid on a narrative stream, not a measurement.
+        encoded = body.encode("utf-8")
+        elided = len(encoded) - _MAX_DIAGNOSTIC_STREAM_BYTES
+        if elided > 0:
+            body = encoded[-_MAX_DIAGNOSTIC_STREAM_BYTES:].decode("utf-8", "replace")
+        header = f"---- child {name} ----"
+        if elided > 0:
+            header += f" [elided {elided} leading redacted bytes]"
+        blocks.append(header)
+        blocks.append(body if body.endswith("\n") else f"{body}\n")
+    if len(blocks) == 1:
+        blocks.append("---- the child wrote nothing to either stream ----\n")
+    return "\n".join(blocks)
+
+
+def _redaction_pattern(
+    redactions: tuple[tuple[str, str], ...],
+) -> tuple[re.Pattern[str] | None, dict[str, str]]:
+    """Compile one alternation, so every value is replaced in a single pass.
+
+    Replacing value by value in sequence rescans what the previous replacement
+    inserted. A one-character secret against a roughly twenty-character
+    placeholder expands the stream about twentyfold, and a placeholder's own
+    characters can then match another short value and expand again -- a cascade
+    over a stream already bounded only at one mebibyte. One `sub` cannot match
+    inside what it has just written, so the cascade is gone.
+
+    The residual is not zero and should not be read as zero: a single pass
+    still expands by placeholder length over shortest value length, so a
+    one-character secret still turns one mebibyte into roughly twenty, once.
+    That is bounded, transient, and paid before the account is truncated to its
+    retained tail.
+
+    The values arrive longest first and `re` prefers the leftmost alternative
+    that matches, so a value containing a shorter one is still replaced whole.
+    """
+
+    if not redactions:
+        return None, {}
+    placeholders: dict[str, str] = {}
+    for value, placeholder in redactions:
+        placeholders.setdefault(value, placeholder)
+    pattern = re.compile("|".join(re.escape(value) for value, _ in redactions))
+    return pattern, placeholders
+
+
+def _environment_redactions(
+    environment: Mapping[str, str],
+) -> tuple[tuple[str, str], ...]:
+    """Name every secret-shaped value the child could have been able to quote.
+
+    A value qualifies on its variable's name or on its own shape, and the
+    placeholder names the variable rather than anything about the value, so
+    nothing is classified into the account. Longest first, so a secret that
+    contains another secret is replaced whole rather than leaving a fragment of
+    it behind.
+    """
+
+    redactions = tuple(
+        (value, f"[redacted ${name}]")
+        for name, value in environment.items()
+        if _is_redacted_value(name, value)
+    )
+    return tuple(sorted(redactions, key=lambda entry: len(entry[0]), reverse=True))
+
+
+def _is_redacted_value(name: str, value: str) -> bool:
+    if not value:
+        return False
+    if _SECRET_ENVIRONMENT_NAME.search(name) is not None:
+        return len(value) >= _MIN_SECRET_VALUE_CHARACTERS
+    if _CREDENTIAL_URL.match(value) is not None:
+        return True
+    return (
+        len(value) >= _MIN_OPAQUE_VALUE_CHARACTERS
+        and _FILESYSTEM_PATH.match(value) is None
     )
 
 
@@ -1402,6 +1600,28 @@ def _qualification_tier(test_args: tuple[str, ...] | None) -> str:
     return "custom"
 
 
+def _report_narrative_account(diagnostic: str) -> None:
+    """Emit the optional account without letting it change the exit path.
+
+    A closed standard output must cost the account and nothing else. The
+    descriptor is redirected to the null device on failure so the interpreter's
+    own shutdown flush cannot raise afterwards either, which would replace this
+    command's exit status with one nobody asked for.
+    """
+
+    if not diagnostic:
+        return
+    try:
+        sys.stdout.write(diagnostic)
+        sys.stdout.flush()
+    except (OSError, ValueError):
+        try:
+            descriptor = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(descriptor, sys.stdout.fileno())
+        except (AttributeError, OSError, ValueError):
+            return
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Qualify the exact installed Mechanical Librarian wheel."
@@ -1430,6 +1650,16 @@ def main(argv: list[str] | None = None) -> int:
             test_args=tier_args[arguments.test_tier],
         )
     except QualificationFailure as error:
+        # The evidence record goes to standard error and the narrative account
+        # to standard output, so no consumer of `exact-artifact-evidence-v4`
+        # sees narrative text on its stream and the record stays path-free.
+        #
+        # The record is written first, and the order is a guard. A consumer
+        # reading part of standard output -- `| head` is enough -- closes the
+        # pipe, and writing the optional stream first meant the resulting
+        # `BrokenPipeError` propagated before the record existed. The stream
+        # deliberately separated as the disposable one could destroy the one
+        # that must survive, which inverts the whole design.
         print(
             json.dumps(
                 {
@@ -1442,6 +1672,7 @@ def main(argv: list[str] | None = None) -> int:
             ),
             file=sys.stderr,
         )
+        _report_narrative_account(error.diagnostic)
         return 1
     print(evidence.to_json())
     return 0

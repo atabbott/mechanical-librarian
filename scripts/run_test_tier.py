@@ -647,13 +647,37 @@ def _run_complete(root: Path, source_sha: str) -> bool:
     return completed.returncode == 0
 
 
+def tier_inventory() -> dict[str, object]:
+    """Name every tier this runner accepts, so the documented set is checkable.
+
+    `scripts/run_test_tier.py --list` is the whole inventory and
+    `scripts/run_test_tier.py <tier> --list` is one cohort's manifest. Names
+    only: a cohort's count and digest cost an import of every module it owns,
+    which the inventory has no reason to pay.
+    """
+
+    return {
+        "schema": "test-tier-inventory-v1",
+        "tiers": sorted((*COHORTS, "complete-installed", "complete")),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("tier", choices=(*COHORTS, "complete-installed", "complete"))
+    parser.add_argument(
+        "tier",
+        nargs="?",
+        choices=(*COHORTS, "complete-installed", "complete"),
+    )
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--source-sha")
     arguments = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[1]
+    if arguments.tier is None:
+        if not arguments.list:
+            parser.error("a tier is required unless --list names the inventory")
+        print(json.dumps(tier_inventory(), sort_keys=True, separators=(",", ":")))
+        return 0
     try:
         if arguments.tier == "complete":
             if arguments.list or arguments.source_sha is None:
