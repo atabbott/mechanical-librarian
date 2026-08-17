@@ -49,6 +49,17 @@ from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
 from tests.support.tls import synthetic_tls_identity
 
+# How long the installed server may take to answer `/health/live`. The wait is
+# already a readiness poll, so this only bounds it; a server that starts
+# normally returns within milliseconds and pays none of it. The previous
+# fifteen seconds was reached often enough to fail the fast tier at a measured
+# one run in five on an unchanged commit (#730), so it was bounding a loaded
+# machine rather than a broken one. Sixty seconds matches the reconciliation
+# deadline this qualification already allows below, and costs nothing in the
+# fast case. It does not delay a crash: the death branch returns as soon as
+# the child exits, whatever this value is.
+_REVIEW_SERVER_START_SECONDS = 60
+
 
 class _SharedRepository:
     """One installed single-process repository handle for the bounded qualifier."""
@@ -594,11 +605,25 @@ def qualify_installed_pipeline(
 
 
 def _wait_for_https(process: subprocess.Popen[bytes], origin: str) -> None:
-    deadline = time.monotonic() + 15
+    """Poll the installed server until it is live, or say which way it failed.
+
+    The two ways out are unrelated and used to raise one string, so three
+    sightings of the intermittent `installed review server did not start`
+    produced no evidence about which had happened (#730). A death now reports
+    the child's exit code, which is the discriminating fact and is not
+    sensitive; the child's own output stays discarded, because it inherits an
+    environment carrying secret-named values and this qualification is not on
+    a credentials boundary.
+    """
+
+    deadline = time.monotonic() + _REVIEW_SERVER_START_SECONDS
     with httpx.Client(verify=False, trust_env=False) as client:
         while True:
-            if process.poll() is not None:
-                raise AssertionError("installed review server did not start")
+            code = process.poll()
+            if code is not None:
+                raise AssertionError(
+                    f"installed review server exited before serving, exit code {code}"
+                )
             try:
                 response = client.get(origin + "/health/live")
                 if response.status_code == 200:
@@ -606,7 +631,10 @@ def _wait_for_https(process: subprocess.Popen[bytes], origin: str) -> None:
             except httpx.TransportError:
                 pass
             if time.monotonic() >= deadline:
-                raise AssertionError("installed review server did not start")
+                raise AssertionError(
+                    "installed review server stayed alive without serving for "
+                    f"{_REVIEW_SERVER_START_SECONDS} seconds"
+                )
             time.sleep(0.02)
 
 

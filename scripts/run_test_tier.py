@@ -40,13 +40,41 @@ _REJECTED_PYTEST_ENVIRONMENT = (
     "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
     "PYTEST_PLUGINS",
 )
-# Ceilings for the failure-diagnostic stream. A single traceback keeps its tail,
-# which holds the assertion and the innermost frame. The aggregate ceiling bounds
-# every emitted byte, framing included, so a broad failure stays readable in a
-# hosted log and well inside the exact-artifact qualifier's one-mebibyte
-# per-stream capture bound -- being terminated at that bound would cost the
-# result schema line itself.
+# Ceilings for the failure-diagnostic stream. An over-long traceback keeps two
+# windows -- one anchored on the exception line, one on the end of the text --
+# and declares every byte it drops between them. Neither the literal head nor
+# the tail alone is sufficient, and the literal head is the weakest of the
+# three, because of what `--tb=native` actually produces.
+#
+# `report.longreprtext` does not open with the error. It opens with the frame
+# block, and the frames a tier reports are pytest's own runner internals before
+# they are the test's. The error identity is the exception line, which sits
+# after that whole block, and anything the exception message carries -- a
+# Playwright `Call log:` runs to kilobytes -- follows it. So for the failure
+# this bound exists for, the identity is in the middle of the text: measured at
+# byte 4,738 of 15,862 for a `Route.fetch: socket hang up` raised through a
+# realistic call chain. Tail-only retention elided it as leading bytes, and
+# three sightings of #730 were recorded as "the tooling lost the traceback"
+# because of it. A literal head would have elided it too, as trailing bytes,
+# and would have spent the whole window on `_pytest/runner.py`.
+#
+# Anchoring the first window on the exception line is what keeps it. The
+# anchored window is sized for an error identity and the opening of its
+# message, not for a whole traceback; the frame block ahead of it is dropped at
+# that structural boundary rather than mid-line. The tail keeps the larger
+# share because it holds the assertion and the innermost frame, which is what
+# `--tb=native` guarantees a truncated traceback still ends at, and because a
+# long exception message pushes its own end out of the anchored window.
+#
+# The aggregate ceiling bounds every emitted byte, framing included, so a broad
+# failure stays readable in a hosted log and well inside the exact-artifact
+# qualifier's one-mebibyte per-stream capture bound -- being terminated at that
+# bound would cost the result schema line itself.
 _MAX_TEST_TRACEBACK_BYTES = 4_096
+_TEST_TRACEBACK_HEAD_BYTES = 1_024
+_TEST_TRACEBACK_TAIL_BYTES = _MAX_TEST_TRACEBACK_BYTES - _TEST_TRACEBACK_HEAD_BYTES
+# The line CPython writes above every frame block, which `--tb=native` inherits.
+_NATIVE_TRACEBACK_HEADER = b"Traceback (most recent call last):"
 _MAX_TRACEBACK_STREAM_BYTES = 262_144
 
 # pytest is the execution engine; these arguments carry the properties the
@@ -520,6 +548,91 @@ def run_cohort(root: Path, name: str) -> bool:
     return False
 
 
+def _exception_line_offset(encoded: bytes) -> int | None:
+    """Byte offset of the last raised exception's own line, or `None`.
+
+    A `--tb=native` report is a frame block introduced by
+    `Traceback (most recent call last):`, then the exception line, then
+    whatever the exception message itself carries. Every frame line is
+    indented, so the exception line is the first unindented non-empty line
+    after the block -- which is also what stops this at the identity rather
+    than at an unindented line inside the message, such as Playwright's
+    `Call log:`.
+
+    The *last* block wins. A chained failure prints the original, then
+    `During handling of the above exception, another exception occurred:`,
+    then the exception that actually reached the runner. That final one is the
+    identity; the earlier ones are context and are the first thing worth
+    dropping.
+
+    `None` means the detail is not a native traceback at all -- pytest reports
+    a collection error or an internal failure as prose -- and the caller falls
+    back to retaining the literal head.
+    """
+
+    block_end: int | None = None
+    offset = 0
+    for line in encoded.split(b"\n"):
+        if line == _NATIVE_TRACEBACK_HEADER:
+            block_end = offset + len(line) + 1
+        offset += len(line) + 1
+    if block_end is None:
+        return None
+    offset = block_end
+    for line in encoded[block_end:].split(b"\n"):
+        if line.strip() and not line[:1].isspace():
+            return offset
+        offset += len(line) + 1
+    return None
+
+
+def _retained_traceback(encoded: bytes) -> str:
+    """Reduce an over-long traceback to two windows and declare what it drops.
+
+    The first window is anchored on the exception line so the error identity
+    survives; it falls back to the literal head when there is no frame block
+    to anchor on, and when the exception line already sits inside the tail,
+    where anchoring would only narrow what is kept.
+
+    The windows never overlap and never run backwards: the tail is clamped to
+    start no earlier than the first window ends. A detail only slightly over
+    budget therefore yields windows that meet, and two windows that meet are
+    merged into one before anything is emitted -- otherwise the separator
+    would fabricate a line break in the middle of bytes that are contiguous in
+    the report, which is the same class of lie as a wrong elision count. Each
+    declared count is the length of the gap it stands in, so the arithmetic
+    stays true whichever way the windows were clamped.
+    """
+
+    total = len(encoded)
+    anchor = _exception_line_offset(encoded)
+    head_start = 0
+    if anchor is not None and anchor < total - _TEST_TRACEBACK_TAIL_BYTES:
+        head_start = anchor
+    head_end = min(head_start + _TEST_TRACEBACK_HEAD_BYTES, total)
+    tail_start = max(
+        total - (_MAX_TEST_TRACEBACK_BYTES - (head_end - head_start)), head_end
+    )
+
+    regions: list[list[int]] = []
+    for start, end in ((head_start, head_end), (tail_start, total)):
+        if end <= start:
+            continue
+        if regions and regions[-1][1] == start:
+            regions[-1][1] = end
+        else:
+            regions.append([start, end])
+
+    pieces: list[str] = []
+    cursor = 0
+    for start, end in regions:
+        if start > cursor:
+            pieces.append(f"[elided {start - cursor} bytes]")
+        pieces.append(encoded[start:end].decode("utf-8", "replace"))
+        cursor = end
+    return "\n".join(pieces)
+
+
 def _report_failure_tracebacks(
     tier: str,
     tracebacks: tuple[tuple[str, str], ...],
@@ -542,13 +655,11 @@ def _report_failure_tracebacks(
     omitted = 0
     for index, (identifier, detail) in enumerate(tracebacks):
         encoded = detail.encode("utf-8", "replace")
-        elided = len(encoded) - _MAX_TEST_TRACEBACK_BYTES
-        if elided > 0:
-            encoded = encoded[-_MAX_TEST_TRACEBACK_BYTES:]
-        body = encoded.decode("utf-8", "replace")
+        if len(encoded) > _MAX_TEST_TRACEBACK_BYTES:
+            body = _retained_traceback(encoded)
+        else:
+            body = encoded.decode("utf-8", "replace")
         block = f"==== {tier} failure: {identifier} ====\n"
-        if elided > 0:
-            block += f"[elided {elided} leading bytes]\n"
         block += body if body.endswith("\n") else f"{body}\n"
         charged = len(block.encode("utf-8"))
         if charged > remaining:
