@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Stop a route's deferred focus move from taking focus a reader already placed,
+  which silently lost the key that followed. The protected browser tier's
+  failure records now reach its log instead of pytest's discarded capture,
+  naming the stage, URL, live regions and focused element, and a decision
+  activation that reached no handler fails on that evidence instead of
+  spending the locator timeout on an outcome nothing can produce. (#760)
 - Enforce the documentation corpus's own claims on every pull request:
   `scripts/verify_documentation_integrity.py` fails the gate when a live
   document is unreachable from `docs/README.md`, a relative link does not

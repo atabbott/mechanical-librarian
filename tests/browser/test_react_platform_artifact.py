@@ -4,10 +4,14 @@ import json
 import os
 import re
 import sys
+import time
+from collections.abc import Callable
+from contextlib import ExitStack
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Route, expect, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetBundle,
@@ -25,27 +29,49 @@ from tests.browser.fidelity_cohort import (
     rich_payload,
 )
 
+# The outcome the review controller renders when a decision request is lost
+# before any response, which is the only outcome an aborted request can reach.
+_AMBIGUOUS_NOTICE = (
+    "The response was lost. The current case was reloaded before any retry."
+)
+_ACTIVE_ELEMENT = """() => {
+  const node = document.activeElement
+  if (!node) return 'none'
+  return [node.tagName, node.id || '-', node.className || '-'].join(' ')
+}"""
+# A decision request is dispatched from the activation handler itself, so it is
+# observable in milliseconds whenever a handler ran at all. This window is far
+# longer than that and far shorter than the locator timeout it protects, so it
+# separates "no handler ran" from "the outcome rendered differently" without
+# ever failing an activation that merely had not been serviced yet.
+_LOST_ACTIVATION_MILLISECONDS = 5_000
+
+
+def _report(record: dict[str, object]) -> None:
+    """Emit one diagnostic record on the only stream that survives the tier.
+
+    `scripts/run_test_tier.py` redirects `sys.stdout` and `sys.stderr` to
+    `os.devnull` around `pytest.main`, and `--capture=sys` replaces them again,
+    so a diagnostic written to `sys.stderr` reaches nothing: the tier reports
+    `report.longreprtext` alone and never the captured sections. Every record
+    below existed for a failure no traceback could explain, so each one has to
+    reach the same seam as the tier's own stall breadcrumb.
+    """
+
+    print(
+        json.dumps(record, sort_keys=True, separators=(",", ":")),
+        file=sys.__stderr__,
+        flush=True,
+    )
+
 
 def test_exact_built_shell_supports_every_direct_route_and_client_navigation() -> None:
-    stage = ["test-setup"]
-    try:
-        _exercise_exact_built_shell_supports_every_direct_route_and_client_navigation(
-            stage
-        )
-    except Exception:
-        print(
-            json.dumps(
-                {
-                    "schema": "protected-browser-failure-stage-v1",
-                    "stage": stage[0],
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
-            file=sys.stderr,
-            flush=True,
-        )
-        raise
+    # The stage record is emitted from inside the browser context by
+    # `report_stage` below, which is the only place the page is still
+    # answerable. Anything that fails ahead of that carries its own message.
+    _exercise_exact_built_shell_supports_every_direct_route_and_client_navigation(
+        ["test-setup"]
+    )
 
 
 def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigation(
@@ -152,8 +178,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             return
         route.fulfill(status=404, body="")
 
-    with sync_playwright() as playwright:
+    with ExitStack() as stack:
+        playwright = stack.enter_context(sync_playwright())
         browser = playwright.chromium.launch(headless=True)
+        # Closed on the failing path too, so a failure tears the browser down
+        # the same way a pass does and its teardown output stays comparable.
+        stack.callback(browser.close)
         page = browser.new_page(viewport={"width": 390, "height": 844})
         capture_directory = os.environ.get("ML_VISUAL_CAPTURE_DIR")
 
@@ -198,6 +228,127 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 (request.method, request.url, request.failure)
             ),
         )
+
+        def observed_state() -> dict[str, object]:
+            # Read defensively: this only ever runs while a failure is already
+            # being reported, and a closed target must not replace the real
+            # error with a second one raised from the diagnostic itself.
+            state: dict[str, object] = {}
+            for name, read in (
+                ("live_regions", lambda: page.locator("p[role]").all_inner_texts()),
+                ("active_element", lambda: page.evaluate(_ACTIVE_ELEMENT)),
+                ("url", lambda: page.url),
+            ):
+                try:
+                    state[name] = read()
+                except Exception as unreadable:  # noqa: BLE001 - diagnostic only
+                    state[name] = f"unreadable: {type(unreadable).__name__}"
+            return state
+
+        def report_stage(
+            failure: type[BaseException] | None,
+            _value: BaseException | None,
+            _traceback: object,
+        ) -> None:
+            if failure is not None:
+                _report(
+                    {
+                        "schema": "protected-browser-failure-stage-v1",
+                        "stage": stage[0],
+                        **observed_state(),
+                    }
+                )
+
+        # Unwinds before the Playwright context it was pushed inside, so the
+        # page is still answerable when the record is taken. Reporting from
+        # outside that context reaches a stopped driver and can only say the
+        # interface was unreadable.
+        stack.push(report_stage)
+
+        def decide(site: str, expected: int, activate: Callable[[], None]) -> None:
+            """Activate one decision control and await its ambiguous-outcome notice.
+
+            The notice can only appear once the decision request has actually
+            been dispatched, so a lost activation and a wrong rendered outcome
+            are indistinguishable from a bare wait on the notice: both report
+            only that the text never became visible. Establish the request
+            first, so the failure names which of the two happened and carries
+            the state that explains it. A lost activation is the defect this
+            case exists to catch, so it is reported and never recovered from.
+            """
+            stage[0] = f"ambiguous-decision:{site}"
+            started = time.monotonic()
+            activate()
+            if ambiguous_decisions < expected:
+                try:
+                    page.wait_for_event(
+                        "requestfailed",
+                        predicate=lambda request: request.method == "POST",
+                        timeout=_LOST_ACTIVATION_MILLISECONDS,
+                    )
+                except PlaywrightTimeoutError:
+                    pass
+            if ambiguous_decisions < expected:
+                # The activation reached no handler, so nothing can render the
+                # notice and waiting for it can only spend the locator timeout.
+                # Fail here instead, carrying the state that says so: repeating
+                # the activation would recover the exact defect this covers.
+                state = observed_state()
+                _report(
+                    {
+                        "schema": "protected-browser-lost-activation-v1",
+                        "site": site,
+                        "observed_decision_requests": ambiguous_decisions,
+                        "expected_decision_requests": expected,
+                        **state,
+                    }
+                )
+                raise AssertionError(
+                    f"The {site} activation reached no handler: no decision "
+                    f"request was dispatched within "
+                    f"{_LOST_ACTIVATION_MILLISECONDS} ms, so the ambiguous "
+                    f"outcome it should report can never be rendered and "
+                    f"awaiting that notice could only spend the locator "
+                    f"timeout. Observed {ambiguous_decisions} decision "
+                    f"requests, expected {expected}; focus was on "
+                    f"{state['active_element']!r}, not the control the "
+                    f"activation targeted."
+                )
+            dispatched = time.monotonic()
+            try:
+                page.get_by_text(_AMBIGUOUS_NOTICE, exact=True).wait_for()
+            except PlaywrightTimeoutError:
+                _report(
+                    {
+                        "schema": "protected-browser-ambiguous-decision-v1",
+                        "site": site,
+                        "observed_decision_requests": ambiguous_decisions,
+                        "expected_decision_requests": expected,
+                        "failed_decision_requests": [
+                            url
+                            for method, url, _ in failed_requests
+                            if method == "POST"
+                        ],
+                        **observed_state(),
+                    }
+                )
+                raise
+            assert ambiguous_decisions == expected
+            # Recorded on the passing run too. A timeout says only that the
+            # notice never arrived; what separates a step that is drifting
+            # towards its ceiling from one that was never going to arrive is
+            # how long the same step normally takes, and that is knowable only
+            # from the runs that succeed.
+            settled = time.monotonic()
+            _report(
+                {
+                    "schema": "protected-browser-decision-timing-v1",
+                    "site": site,
+                    "dispatch_milliseconds": round((dispatched - started) * 1000),
+                    "notice_milliseconds": round((settled - dispatched) * 1000),
+                }
+            )
+
         page.route("**/*", fulfill)
         routes = (
             ("/library?lens=all", "Every work, with exceptions first"),
@@ -663,6 +814,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         del errors[missing_case_error_start:]
 
+        stage[0] = "library:desktop-workspace"
         page.set_viewport_size({"width": 1440, "height": 900})
         page.goto("https://react-platform.invalid/library?lens=all")
         page.get_by_text("Catalogue-only work", exact=True).wait_for()
@@ -797,6 +949,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_text(
             "No exact-current works match this search and lens."
         ).wait_for()
+        stage[0] = "library:touch-targets"
         page.goto("https://react-platform.invalid/library?lens=all")
         for control in page.locator(".masthead nav a, .shell-actions button").all():
             assert control.bounding_box()["height"] >= 44
@@ -829,6 +982,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             long_title.evaluate("node => getComputedStyle(node.parentElement).overflow")
             == "visible"
         )
+        stage[0] = "library:keyboard-traversal"
         page.goto("https://react-platform.invalid/library?lens=all")
         page.get_by_text("Catalogue-only work", exact=True).wait_for()
         page.evaluate("() => { document.body.tabIndex = -1; document.body.focus(); }")
@@ -863,6 +1017,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 1440
 
+        stage[0] = "library:viewport:900"
         page.set_viewport_size({"width": 900, "height": 900})
         page.goto("https://react-platform.invalid/library?lens=all")
         expect(page).to_have_url(
@@ -914,6 +1069,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 900
         page.locator(".attention-rail header button").click()
 
+        stage[0] = "library:viewport:760"
         page.set_viewport_size({"width": 760, "height": 900})
         page.goto("https://react-platform.invalid/library?lens=all")
         expect(page).to_have_url("https://react-platform.invalid/library?lens=all")
@@ -941,6 +1097,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 760
 
+        stage[0] = "library:viewport:390"
         page.set_viewport_size({"width": 390, "height": 844})
         page.goto("https://react-platform.invalid/library?lens=all")
         expect(page.locator(".library-works")).to_be_visible()
@@ -985,6 +1142,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_role("button", name="Back to works").click()
         expect(page.locator(".library-works")).to_be_visible()
         expect(page.locator(".workspace-detail")).to_be_hidden()
+        stage[0] = "review:case-1:desktop-decision"
         page.set_viewport_size({"width": 1440, "height": 900})
         expect(page).to_have_url(
             "https://react-platform.invalid/library?lens=all&preview=case-1"
@@ -1018,12 +1176,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "Google Books catalogue record" in title_notices.inner_text()
         assert "Open Library record" in title_notices.inner_text()
         assert "provider_" not in title_notices.inner_text()
-        page.locator("#field-title .proposed-value").first.click()
-        page.get_by_text(
-            "The response was lost. The current case was reloaded before any retry.",
-            exact=True,
-        ).wait_for()
-        assert ambiguous_decisions == 1
+        decide(
+            "pointer",
+            1,
+            lambda: page.locator("#field-title .proposed-value").first.click(),
+        )
         page.get_by_text("Mara Venn", exact=False).first.wait_for()
         page.get_by_role("button", name="Authors", exact=True).click()
         assert (
@@ -1059,8 +1216,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert (
             "Human decision · title" in page.locator(".progressive-panel").inner_text()
         )
+        stage[0] = "review:case-stale"
         page.goto("https://react-platform.invalid/review/case-stale?subview=review")
         page.get_by_role("heading", name="Case superseded").wait_for()
+        stage[0] = "review:case-11:no-owner-decision"
         page.goto(
             "https://react-platform.invalid/review/case-11?field=authors&subview=review"
         )
@@ -1077,6 +1236,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             )
             assert "Current value" in page.locator(f"#field-{destination}").inner_text()
 
+        stage[0] = "review:case-5:automatic-selection"
         page.goto(
             "https://react-platform.invalid/review/case-5?field=authors&subview=review"
         )
@@ -1102,14 +1262,16 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(automatic_authors.locator(".current-value")).to_have_attribute(
             "aria-pressed", "true"
         )
-        automatic_authors.locator(".proposed-value").first.focus()
-        page.keyboard.press("Space")
-        page.get_by_text(
-            "The response was lost. The current case was reloaded before any retry.",
-            exact=True,
-        ).wait_for()
-        assert ambiguous_decisions == 2
+        # One driver-side action, so the route-ready focus effect cannot land
+        # between focusing the control and pressing the key and send the press
+        # to the field container instead. Keyboard activation stays covered.
+        decide(
+            "keyboard",
+            2,
+            lambda: automatic_authors.locator(".proposed-value").first.press("Space"),
+        )
 
+        stage[0] = "review:case-equal:preservation-only"
         page.goto(
             "https://react-platform.invalid/review/case-equal?field=title&subview=review"
         )
@@ -1127,6 +1289,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "Current <script> title"
             in equal_title.locator(".current-value").inner_text()
         )
+        stage[0] = "review:case-4:return-to-automatic"
         page.goto(
             "https://react-platform.invalid/review/case-4?field=title&subview=review"
         )
@@ -1136,6 +1299,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "Automatic policy resumes after fresh checks.", exact=True
         ).wait_for()
         assert return_automatic_requests == 1
+        stage[0] = "review:case-4:compact-layout"
         page.set_viewport_size({"width": 390, "height": 844})
         compact_field_rail = page.locator(".detail-layout > .field-navigation")
         assert (
@@ -1220,6 +1384,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
         assert documents == before_navigation
+        stage[0] = "policy:chapters-and-preview"
         page.get_by_role("link", name="Policy", exact=True).click()
         page.get_by_role("heading", name="Library policy").wait_for()
         page.get_by_role("navigation", name="Policy chapters").get_by_role(
@@ -1296,6 +1461,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_role("button", name="Sign out").click()
         page.get_by_text("Writes are blocked", exact=False).wait_for()
         fail_policy_persistently = True
+        stage[0] = "policy:asset-failure-recovery"
         page.goto("https://react-platform.invalid/policy?section=identity")
         page.get_by_role(
             "heading", name="The current workspace assets could not be loaded."
@@ -1339,4 +1505,3 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             for failure in failed_requests
             if failure[2] not in {"net::ERR_ABORTED", "net::ERR_FAILED"}
         ] == []
-        browser.close()
