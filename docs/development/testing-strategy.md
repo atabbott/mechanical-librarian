@@ -198,14 +198,26 @@ python3 scripts/qualify_exact_artifact.py \
   --test-tier required
 ```
 
-The protected browser tier remains independently runnable. Install and verify
-the repository-pinned Chromium payload before accepting its result:
+The protected browser tier remains independently runnable. Install the Chromium
+payload and record which one ran before accepting its result; the middle command
+prints a `browser-payload-evidence-v1` record naming the platform, the Chromium
+revision, the Playwright version and the payload's tree digest:
 
 ```bash
 uv run playwright install --with-deps chromium
 uv run python scripts/verify_playwright_browser.py
+export ML_REACT_ASSET_DIR="$(mktemp -d)"
+(cd frontend && npm ci --ignore-scripts --no-audit --no-fund && npm run generate \
+  && ML_FRONTEND_OUT_DIR="$ML_REACT_ASSET_DIR" npm run build)
 uv run python scripts/run_test_tier.py browser
 ```
+
+The asset build is not optional. The tier reads `ML_REACT_ASSET_DIR` with no
+fallback, so the two commands alone end in `KeyError` before any browser opens
+-- which is what this block used to instruct. The assets go to a temporary
+directory for the same reason the gate sends them to `RUNNER_TEMP`: building
+them inside the checkout leaves untracked output behind, and a clean tree is
+itself one of the checks.
 
 The tier receives a freshly built `ML_REACT_ASSET_DIR` and opens the real hashed
 shell through authenticated FastAPI direct entry to all five workspace routes.
