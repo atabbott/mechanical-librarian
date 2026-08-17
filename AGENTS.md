@@ -97,7 +97,7 @@ Run the static architecture-boundary test whenever imports or packages move.
   declarations and two copied patterns, and forces no plumbing. Both still grew
   the tree, `+16` and `+7`, on module structure, seven consumer imports, that
   reflow, and the nine comment lines that change's acceptance demanded. #662's
-  changelog entry reconciles both to those net figures, which is the arithmetic
+  pull request reconciles both to those net figures, which is the arithmetic
   this rule requires, and one line of the whole change answers to no bucket
   below: the reflow's two structure lines belong to the structure bucket, and
   its one implementation line belongs to nothing. That single line is #719's,
@@ -199,7 +199,9 @@ Every change must include the smallest appropriate combination of:
   clean-schema policy in ADR-0013: accept only absent or exact-current state;
   do not add migrations, imports, or conversions;
 - an ADR when a durable architectural decision changes;
-- changelog entry for user-visible behavior;
+- changelog entry for user-visible behavior, stating the outcome in at most six
+  lines with its issue reference and leaving the arithmetic, proof narrative,
+  and review history to the pull request and issue it points to;
 - security review for credentials, network access, parsers, AI inputs, writes,
   backups, authentication, or upgrades.
 

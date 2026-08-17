@@ -13,7 +13,8 @@ Documentation is versioned product behavior. Incorrect documentation is a bug.
 - `docs/development/`: contribution, testing, quality, and release practices.
 - `docs/operations/`: deployment, backup, recovery, upgrade, and diagnosis.
 - `docs/reference/`: exact configuration, state, API, and vocabulary contracts.
-- `CHANGELOG.md`: user-visible changes.
+- `CHANGELOG.md`: user-visible changes, one outcome per top-level bullet in at
+  most six lines with its issue reference.
 
 ## Authority and lifecycle
 
