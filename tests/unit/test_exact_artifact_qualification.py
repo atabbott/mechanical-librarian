@@ -416,6 +416,112 @@ def test_an_inserted_placeholder_is_never_rescanned() -> None:
     assert diagnostic.count("[redacted") == 1
 
 
+def test_the_retained_tail_reaches_a_verdict_that_fits_the_window() -> None:
+    """The tail is sufficient here because the runner writes its verdict last.
+
+    This seam keeps a tail of a whole captured stream rather than #730's
+    anchored window, and the reason is one level down: the tier runner emits
+    `test-tier-result-v1` as the final line of its standard error. However much
+    the child wrote before it, the tail reaches that line. Anchoring would have
+    nothing to aim at -- a captured stream is a report of many failures, or of
+    a build command that is not Python at all, not one traceback.
+
+    This is the case where the verdict fits the retained window. The one below
+    is the case where it does not, which is the limit of what this test proves.
+    """
+
+    verdict = json.dumps(
+        {
+            "failed_test_ids": ["tests.unit.test_probe.Probe.test_boundary"],
+            "reason": "test_tier_failed",
+            "schema": "test-tier-result-v1",
+            "status": "failed",
+            "tier": "required-installed",
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    # Leading noise the child wrote before its verdict, well past the bound.
+    noise = b"resolving dependency graph\n" * 2_000
+    captured = bytearray(noise + verdict.encode("utf-8") + b"\n")
+    assert len(captured) > qualifier_module._MAX_DIAGNOSTIC_STREAM_BYTES
+
+    diagnostic = qualifier_module._command_diagnostic(
+        "installed_test_suite_failed",
+        bytearray(),
+        captured,
+        {},
+    )
+
+    assert verdict in diagnostic
+    assert "tests.unit.test_probe.Probe.test_boundary" in diagnostic
+    # The stream crossed the bound, and the account says how much it dropped.
+    assert "[elided " in diagnostic
+
+
+def test_an_oversized_verdict_keeps_its_reason_and_loses_leading_identifiers() -> None:
+    """The limit of the tail, reached rather than reasoned about.
+
+    Enough failures make the verdict line alone exceed the retained window. The
+    tail then begins inside `failed_test_ids` and the leading identifiers are
+    gone -- which is what the earlier version of this test could not detect,
+    because one short identifier can never cross the boundary. That is the same
+    shape as the #730 test that passed only because the identity happened to
+    land in the retained head.
+
+    What survives is the end of the verdict. `sort_keys` puts `failed_test_ids`
+    second and every remaining key after it, and those keys are small and
+    fixed, so the reason, status, counts and tier are always retained however
+    long the identifier list grows. The dropped identifiers are recoverable
+    from the runner's own standard output, which carries a block per retained
+    failure and declares how many it omitted.
+    """
+
+    identifiers = sorted(
+        f"tests.unit.test_probe_{index:03d}.Probe{index:03d}."
+        + "s" * 380
+        + f".t{index:03d}"
+        for index in range(50)
+    )
+    verdict = json.dumps(
+        {
+            "errors": 0,
+            "failed_test_ids": identifiers,
+            "failures": len(identifiers),
+            "reason": "test_tier_failed",
+            "schema": "test-tier-result-v1",
+            "status": "failed",
+            "tests_run": 2_884,
+            "tier": "required-installed",
+            "unexpected_successes": 0,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    captured = bytearray(verdict.encode("utf-8") + b"\n")
+    # The verdict alone crosses the window, with no other output at all.
+    assert len(captured) > qualifier_module._MAX_DIAGNOSTIC_STREAM_BYTES
+
+    diagnostic = qualifier_module._command_diagnostic(
+        "installed_test_suite_failed",
+        bytearray(),
+        captured,
+        {},
+    )
+
+    # The end of the verdict survives, so the account still says what happened.
+    assert '"reason":"test_tier_failed"' in diagnostic
+    assert '"status":"failed"' in diagnostic
+    assert '"tier":"required-installed"' in diagnostic
+    assert '"tests_run":2884' in diagnostic
+    # The list is truncated from its front. This is the assertion the previous
+    # test could not make, and the one that fails if the documented bound is
+    # ever widened back to "the complete failed-identifier list".
+    assert identifiers[-1] in diagnostic
+    assert identifiers[0] not in diagnostic
+    assert "[elided " in diagnostic
+
+
 def test_a_broken_narrative_stream_cannot_suppress_the_evidence_record(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

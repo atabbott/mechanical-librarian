@@ -5,15 +5,18 @@ maintainability take priority over feature count or delivery speed.
 
 ## Before contributing
 
-Read:
+Read [PRODUCT.md](PRODUCT.md) for the product boundary,
+[architecture overview](docs/architecture/overview.md) for the layering rule,
+and [testing and quality strategy](docs/development/testing-strategy.md) for
+what proving a change costs. Then read this file.
 
-1. [Product scope](docs/product/scope.md)
-2. [Architecture overview](docs/architecture/overview.md)
-3. [Security model](docs/architecture/security.md)
-4. [Quality strategy](docs/development/quality-strategy.md)
-5. [Documentation standards](docs/development/documentation-standards.md)
-6. [Work management](docs/development/work-management.md)
-7. [Functional slice delivery](docs/development/slice-delivery.md)
+Consult, when the work reaches them:
+[security model](docs/architecture/security.md),
+[product scope](docs/product/scope.md),
+[documentation standards](docs/development/documentation-standards.md),
+[work management](docs/development/work-management.md),
+[functional slice delivery](docs/development/slice-delivery.md), and
+[dependencies](docs/development/dependencies.md).
 
 Use a discussion or design issue before implementing:
 
@@ -83,29 +86,15 @@ uv run mypy src tests scripts
 Keep formatting-only changes in their own commit so behaviour diffs stay
 reviewable, the same rule the frontend follows under Prettier.
 
-`ruff format` is the backend's line-width contract at `line-length = 88`. Four
-sources are excluded from it, for the reason given below.
-
-ruff selects pyflakes (`F`), pycodestyle (`E`, `W`), bugbear (`B`), and import
-ordering (`I`). `E501` (line length) is not enforced on top of the formatter.
-Every line still wider than 88 after formatting is content the formatter
-deliberately did not touch -- DDL that `sqlite_master` stores verbatim, EPUB
-and XML fixture documents, Python modules embedded as string literals, and
-single-token dotted import paths -- so E501 would measure data rather than
-formatting, and no threshold or exemption list makes it pass without making it
-meaningless. `pyproject.toml` records the measurement. Enforcing it for real
-means moving those literals out of Python source.
-
-mypy runs in strict mode over `src/`, which is what ships with `py.typed`.
-`tests/` and `scripts/` are checked too, but without strict's annotation
-requirements and without `arg-type`, `attr-defined`, or `index`: a suite proves
-behaviour with deliberately narrow fakes and indexes the JSON documents the
-code under test returns, so those three classes measure fixtures rather than
-defects. Every relaxation is an explicit `[[tool.mypy.overrides]]` block in
-`pyproject.toml` with its reason beside it; do not add a silent one.
-
-The analysed platform is pinned to `linux` so the commands above reproduce the
-ubuntu gate byte for byte from any development host.
+`pyproject.toml` is the authority for the line-width contract, the selected
+lint rules, the analysed platform, every disabled code, and every per-file and
+per-module relaxation. Each one is recorded there with the reason it exists
+beside it; read that reason before changing it, and do not add a silent
+relaxation. Four sources are byte-frozen by the F20 rich-metadata qualification
+manifest and cannot carry an inline suppression at all -- the suppression would
+itself change the bytes the manifest pins -- so they are exempted in
+configuration instead. Do not edit those files to satisfy a linter; changing
+them requires re-qualification.
 
 Suppress a finding only where the code is right and the tool is wrong, and
 always inline, named, and justified:
@@ -120,12 +109,6 @@ when a line needs both, put the type suppression first; ruff finds its `noqa`
 anywhere in the trailing comments. `warn_unused_ignores` is on, so a
 suppression that stops suppressing anything fails the gate and must be deleted
 rather than left behind.
-
-Four sources are byte-frozen by the F20 rich-metadata qualification manifest
-and appear in `[tool.ruff.lint.per-file-ignores]` and a mypy override, because
-an inline suppression would itself change the bytes that
-`docs/reference/f20-rich-metadata-qualification-candidate-v1.json` pins. Do not
-edit those files to satisfy a linter; changing them requires re-qualification.
 
 ## Frontend bootstrap
 

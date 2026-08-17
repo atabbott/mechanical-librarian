@@ -16,45 +16,33 @@ candidate is not trusted merely because it has a familiar name or path.
 
 ## Tracked public gate
 
-`.github/workflows/public-gate.yml` runs when a pull request is opened,
-reopened, or receives a new head, and again on the resulting push to `main`. It
-does not run for a ready-for-review state change. Delivery therefore publishes
-one converged draft candidate wherever possible, then requests review explicitly
-after the exact-head jobs pass; the post-merge run verifies the merged commit
-and is not a merge precondition. The workflow has read-only repository contents
-permission and:
+`.github/workflows/public-gate.yml` is the authority for what the gate runs and
+[what merging proves](../../CONTRIBUTING.md#what-merging-proves) reconciles that
+workflow against every documented check. What matters at this boundary is
+narrower.
 
-1. explicitly checks out
-   `github.event.pull_request.head.sha || github.sha` without persisting
-   credentials — the exact pull-request head SHA rather than GitHub's synthetic
-   pull-request merge revision, and the merged commit on a push to `main`;
-2. uses commit-pinned GitHub Actions and a version-pinned `uv` installation;
-3. rejects a stale lockfile with `uv lock --check`;
-4. snapshots that clean committed source, disables build/install caches, builds
-   exactly one wheel, and validates its bounded archive and `RECORD` before
-   installation;
-5. seeds a new environment from all locked dependency groups, installs the
-   explicit wheel pathname without dependency resolution, and rechecks its
-   whole-file identity;
-6. proves the wheel and installed distribution payloads are byte-identical,
-   validates the installer-updated `RECORD`, and runs the complete public test
-   suite with that isolated installed interpreter; and
-7. verifies the recorded install and import origins, then proves from outside
-   the checkout that installed help exposes exactly the approved runtime
-   commands and that the contributor workbench cannot be imported. The emitted
-   path-free evidence binds the pull-request head SHA and wheel, payload, and
-   command output SHA-256 values.
+The workflow runs when a pull request is opened, reopened, or receives a new
+head, and again on the resulting push to `main`. It does not run for a
+ready-for-review state change, so delivery publishes one converged draft
+candidate wherever possible and requests review explicitly after the exact-head
+jobs pass; the post-merge run verifies the merged commit and is not a merge
+precondition.
 
-The concurrency key is scoped to the pull request on a pull-request event and to
-the merged commit on a push to `main`. A new head cancels obsolete work for that
-pull request; a merged commit's verification is never cancelled. The three
-independent qualification jobs remain separate because the earlier serial
-exact-installed workflow exhausted its own 825-second subprocess deadline on
-four consecutive candidates, including after internal sharding. The separate
-`container-image` job builds the shipped image at the same revision and never
-runs, loads, or pushes it. No aggregate runner is maintained: the local
-controller requires passing `fast-source`, `exact-installed`, and
-`protected-browser` check runs on the exact candidate SHA.
+It has read-only repository contents permission and checks out
+`github.event.pull_request.head.sha || github.sha` without persisting
+credentials — the exact pull-request head SHA rather than GitHub's synthetic
+merge revision, and the merged commit on a push. Its concurrency key is scoped
+to the pull request on a pull-request event and to the merged commit on a push,
+so a new head cancels obsolete work for that pull request while a merged
+commit's verification is never cancelled.
+
+The independent qualification jobs remain separate because the earlier serial
+workflow exhausted its own 825-second subprocess deadline on four consecutive
+candidates, including after internal sharding. No aggregate runner is
+maintained: the local controller requires a passing check run for each of the
+gate's required jobs, on the exact candidate SHA. The separate container job
+builds the shipped image at that same revision and never runs, loads, or pushes
+it.
 
 Public CI contains no service credential, private corpus, merge permission, or
 branch-protection override. Private qualification remains local and may expose
@@ -95,11 +83,12 @@ Candidate code is evidence to inspect, never merge authority. In particular:
 
 Genuine `renovate[bot]` pull requests in the low-risk classes explicitly
 enabled by `.github/renovate.json` may use GitHub-native pull-request auto-merge
-instead of the local controller and connector review. The externally configured
+instead of the local controller and connector review; which classes those are is
+stated in [dependencies](dependencies.md). The externally configured
 default-branch ruleset remains the authority: it requires a pull request, a head
-current with `main`, and successful `fast-source`, `exact-installed`, and
-`protected-browser` checks from GitHub Actions on that head. Renovate has no
-bypass actor and cannot merge a branch directly.
+current with `main`, and a successful GitHub Actions check run on that head for
+each required job. Renovate has no bypass actor and cannot merge a branch
+directly.
 
 This exception does not transfer through a title, label, branch name, commit
 author, or human account. Every non-eligible Renovate update and every other

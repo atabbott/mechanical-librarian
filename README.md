@@ -69,11 +69,12 @@ source or the runtime container.
 
 ## Product direction
 
-The intended product remains one self-contained container beside a media
-library, with Audiobookshelf as the first adapter, supported service APIs for
-future metadata writes, read-only media mounts by default, explicit safety
-gates, and durable auditability. AI reviewers remain untrusted and never
-receive service credentials or production write authority.
+One self-contained container beside an existing library; Audiobookshelf first;
+supported service APIs only, never a direct database edit; read-only media
+mounts; AI reviewers with no credential or write authority; no unattended
+destructive work. [PRODUCT.md](PRODUCT.md) is the single product-boundary
+statement, and [scope](docs/product/scope.md) records what the first release
+admits and refuses.
 
 Do not use real library databases, copyrighted book contents, personal
 domains, tokens, or unredacted reports in issues, tests, or pull requests.

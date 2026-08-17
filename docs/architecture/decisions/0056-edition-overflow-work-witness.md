@@ -1,4 +1,4 @@
-# ADR-0050: Retain a work-only witness for bounded edition overflow
+# ADR-0056: Retain a work-only witness for bounded edition overflow
 
 - Status: accepted
 - Date: 2026-08-13
