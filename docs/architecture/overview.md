@@ -1,47 +1,19 @@
 # Architecture overview
 
-The installed runtime exposes one authenticated review service. Its
-owner-requested preparation path composes the application operations that
-contributors may also exercise through the repository-only workbench:
+Authorities: `src/mechanical_librarian/bootstrap/composition.py` for what is
+composed and how, `workbench/mechanical_librarian_workbench/catalogue.py` for
+the contributor scenarios, `tests/architecture/test_import_boundaries.py` for
+the layering rule this document states, and the ADRs for why each boundary is
+where it is. This document states the boundaries; it does not redraw the
+composition root.
 
-```text
-review-serve -> authenticated browser/API -> application services
-
-Workbench catalogue scenario -> application RefreshCurrentCatalogue
-                             -> Audiobookshelf catalogue adapter
-                             -> SQLite catalogue repository
-
-Workbench report scenario -> application GenerateMetadataReport
-                    |-> Audiobookshelf current-item adapter
-                    |-> isolated EPUB inspector child
-                    |-> Hardcover, Open Library, and Google Books metadata adapters
-                    |-> constrained cover-decoder child
-                    `-> SQLite report repository + cover artifact store
-
-Workbench batch scenario -> application manifest selection / ForegroundBatchRun
-          -> current catalogue snapshot
-          -> GenerateMetadataReport once per frozen eligible entry
-
-Workbench proposal scenario -> application CreateProposalSet
-                        |-> exact current report
-                        |-> reused target/media/cover currentness
-                        |-> pure fixed-policy evaluator
-                        `-> append-only ProposalSet repository
-
-Workbench case scenario -> application AdmitReviewCase
-                      `-> exact-current ProposalSet/report/lineage recheck
-                      `-> append-only immutable ReviewCase repository
-
-Web Scan now -> application ReviewPreparationPipeline
-             |-> one-library catalogue refresh
-             |-> existing report, ProposalSet, and ReviewCase services
-             |-> two fixed independently claimable work lanes
-             `-> bounded persisted scan/work state and read-only projection
-
-Workbench contained-reviewer scenario -> narrow source contract
-                                      -> isolated source-only adapter
-                                      -> bounded schema-validated JSON result
-```
+The installed runtime exposes one authenticated review service plus four
+narrower installed commands, and the repository-only workbench exposes a closed
+set of contributor scenarios over the same application operations. Read the
+composition root for the exact wiring: a hand-drawn copy of it drifts, and the
+one this document used to carry had lost two workbench scenarios, four of the
+five installed runners, and four composed applications by the time it was
+replaced.
 
 Bootstrap composes one authenticated `ReviewApplication` before creating
 FastAPI. Named session, case, decision, Library, Attention, policy,

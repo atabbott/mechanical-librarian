@@ -1,5 +1,11 @@
 # Security and threat model
 
+Authorities: the ADRs for every trust-boundary decision,
+`docs/reference/review-openapi-v1.json` for the authenticated surface, the
+modules named in each section for the checks they perform, and
+`.github/workflows/public-gate.yml` with `osv-scanner.toml` for scanning. This
+document states the invariants those artifacts must keep.
+
 ## Authority
 
 Qualified automatic policy is decision-only. Its clean-schema built-in profile
@@ -383,404 +389,267 @@ never the remote URL.
 
 ## Output and persistence
 
-Successful output and persisted documents contain only bounded target names,
-item identity, opaque file identity/digest, current title, fact-local opening
-excerpts, source-explicit target-work subtitle/publisher/imprint observations
-with closed rear resource/spine/tail/marker provenance, controlled
-contributor/production roles, typed date event and precision claims, provider
-candidate edition and provider-local work
-identities, canonical provider access time when egress occurred, comparison
-facts and their closed method, structurally parsed provider name-to-identity
-bindings, closed provider evidence kinds with work/edition scope, controlled
-contributor roles and occurrence ordinals, and derived ISBN relationships
-containing only
-claim references and those already-admitted bounded identities. Comparison
-normalization is closed, never strips diacritics, never uses fuzzy distance,
-and cannot turn aliases, rank, or repeated queries into another source. The
-relationship projection does not duplicate observations or excerpts. Report
-generation performs no decision and grants no write authority. The separate
-ProposalSet contains only bounded alternatives, assessments, stable evidence
-references, hashed correlation groups, closed date event/precision context,
-policy/version bindings, and hashed source-bound bibliographic combination
-relationships; it does
-not duplicate report excerpts or provider/cover payloads. These documents
-contain no credentials, private paths, unadmitted or rejected provider values,
-provider bodies, or arbitrary EPUB text. Optional invalid values cross the
-adapter boundary only as value-free bounded schema counts. Target and provider
-titles pass the same closed public-safe projection before they can enter a
-report. Failure output is fixed and value-free.
+Authorities: `docs/reference/review-openapi-v1.json` for every response shape
+and field, `src/mechanical_librarian/domain/metadata_report.py`,
+`domain/proposal_set.py`, `domain/review_case.py` and `domain/cover_evidence.py`
+for what a persisted document may contain,
+`adapters/persistence/` for the transactions and schema admission that publish
+it, `application/cover_packets.py`, `application/cover_packet_semantics.py`,
+`application/cover_policy.py` and `adapters/reviewers/contained_reviewer.py`
+for the contained cover boundary, and `adapters/providers/` for provider egress.
+Every bound, field list, chunk profile and closed vocabulary named as fixed
+below is stated exactly once, in those artifacts. This section states the
+invariants they must keep; it does not restate them.
 
-Field-specific acceptable outcomes do not expand the trust boundary. Language
-comparison uses a closed registered-code and canonical script/region policy.
-Publisher acceptability starts only from an already admitted edition-bound
-local claim or a provider claim whose exact candidate ISBN anchor has an
-`accepted` identifier relation and passes the closed format/work contradiction
-checks, plus a bounded statement syntax; target metadata, work-scoped or
-malformed values, and associated, unrelated, or unresolved provider facts
-cannot grant authority.
-Distinct publisher/imprint/brand/group alternatives remain distinct bounded
-values with their own citations. The policy stores no inferred corporate
-equality, hierarchy, registry result, or fuzzy-match relationship.
-Bibliographic combinations likewise grant no new evidence authority. Members
-can reference only already-admitted title/subtitle/series alternatives or an
-exact fingerprint of the bound target field. Provider grouping includes the
-candidate manifestation and work identities. Ambiguous same-scope titles and
-explicitly disagreeing edition/work titles cannot re-enter through a
-combination. Exact normalized component containment can reject a tuple but can
-never split text, create a value, rank a provider, or infer an omnibus or
-translation preference.
-Production, conversion, scanning, software, retailer, and workflow credits
-remain a separate contextual claim kind and therefore cannot cross the
-bibliographic contributor or author candidate boundary.
-Copyright-holder, printer, distributor, retailer, conversion, advertisement,
-preview, and other-work text likewise cannot cross into rear
-subtitle/publisher/imprint claims. This rejection is repeated on the value
-inside an exact label and uses the complete contextual-credit and promotion
-vocabularies, including scanning, production, retail, and workflow cues. Rear
-extraction retains the existing fixed resource, byte, text, node, fact,
-excerpt, and hostile-markup bounds; source position changes provenance only
-and grants neither candidate nor write authority.
+### What may cross the boundary
+
+Successful output and persisted documents contain only bounded target and item
+identity, opaque file identity and digest, current title, fact-local opening
+excerpts with their closed provenance, controlled contributor and production
+roles, typed date event and precision claims, provider candidate and
+provider-local work identities, canonical provider access time where egress
+occurred, comparison facts with their closed method, structurally parsed
+name-to-identity bindings, closed provider evidence kinds with scope and
+occurrence ordinal, and derived relationships built only from those
+already-admitted identities.
+
+They contain no credential, private path, unadmitted or rejected provider
+value, provider response body, or arbitrary EPUB text. An optional invalid
+value crosses the adapter boundary only as a value-free bounded schema count.
+Target and provider titles pass the same closed public-safe projection before
+either can enter a report. Failure output is fixed and value-free.
+
+Comparison normalization is closed. It never strips diacritics, never uses
+fuzzy distance, and cannot turn an alias, a rank, or a repeated query into
+another source. No policy stores an inferred corporate equality, hierarchy,
+registry result, or fuzzy match. A relationship projection duplicates no
+observation or excerpt, and a bibliographic combination grants no new evidence
+authority: a member may reference only an already-admitted alternative or an
+exact fingerprint of the bound target field, and exact normalized containment
+may reject a tuple but may never split text, create a value, rank a provider,
+or infer a preference. Production, conversion, scanning, software, retailer and
+workflow credits are a separate contextual claim kind and cannot cross into the
+bibliographic contributor or author boundary; copyright-holder, printer,
+distributor, retailer, conversion, advertisement, preview and other-work text
+cannot cross into rear subtitle, publisher, or imprint claims. Source position
+changes provenance only, and grants neither candidate nor write authority.
+
+Report generation performs no decision and grants no write authority. A
+ProposalSet duplicates no report excerpt and no provider or cover payload, and
+carries no current pointer, review state, lifecycle, or mutation authority.
+
+### Publication
 
 Report and current-pointer publication is one SQLite transaction. Immutable
-report rows have update/delete triggers. The transaction runs the bounded
-target/media currentness precondition before inserting the report or advancing
-the pointer. The separate pointer may advance, but predecessor reports remain
-unchanged.
+report rows carry update and delete triggers. The transaction runs the bounded
+target and media currentness precondition before inserting the report or
+advancing the pointer; the pointer may advance, but a predecessor report is
+never changed.
 
 Validated cover originals and previews stage before that transaction. Only
 report-bound preview digests can be reopened offline; raw originals and remote
 locations have no CLI or replay surface. A failed currentness check leaves no
-new report or pointer; any unreferenced staged bytes are recoverable cleanup,
+new report or pointer, and unreferenced staged bytes are recoverable cleanup,
 not a database repair protocol.
 
-Proposal creation performs one fresh target/media/ABS-cover validation and
-verifies every referenced private cover preview without constructing provider
-clients. After that external read finishes, an immediate SQLite transaction
-rechecks the exact immutable report and current pointer before inserting
-the ProposalSet. Drift or malformed input inserts nothing. The unavoidable
-interval after the last external read is documented; later review admission
-must revalidate freshness. Proposal rows are append-only and have no current
-pointer, review state, lifecycle, or mutation authority.
+Proposal creation performs one fresh target, media and cover validation and
+verifies every referenced private preview without constructing a provider
+client. An immediate transaction then rechecks the exact immutable report and
+current pointer before inserting the ProposalSet; drift or malformed input
+inserts nothing. The interval after the last external read is unavoidable and
+is why review admission revalidates freshness. Review admission rechecks the
+persisted ProposalSet, report and durable pointers inside SQLite, stores only
+bounded identities and canonical projections, and accepts no credential,
+reviewer identity, decision, or target-write capability.
 
-Review admission rechecks persisted ProposalSet/report and durable current
-pointers inside SQLite. External target/media/artifact currentness remains an
-application preflight. It stores bounded identities and canonical proposal
-projections only; no credentials, reviewer identity, decision, or target-write
-capability is accepted by the command.
+### Schema admission
 
-The retired generic review lifecycle remains absent from the installed runtime:
-there is no generic model-selected write authority or generic reviewer queue.
-The installed cover-consideration path may invoke one bounded contained visual
-observer. Its result is advisory evidence only; deterministic identity and cover
-policy decide eligibility, and an explicit owner interaction is the sole source
-of cover write authority. A missing, failed, or unqualified observer preserves
-the fully supported model-free manual path. The retained deterministic packet,
-identity, and policy contracts perform no provider dispatch.
+The report database, `catalogue-v2` database, `config-v6`, artifact records,
+and `batch-manifest-v5` each accept only absent or their exact current schema.
+An earlier schema, an extra object, altered SQL, or a failed integrity check
+fails closed before mutation, and is never migrated, imported, preserved, or
+passed through a compatibility parser. Persisted content is validated when a
+read selects it and when a selected report participates in publication;
+malformed targeted content fails closed, and unrelated historical rows are not
+a whole-database semantic preflight. Recovery uses clean current state plus
+catalogue refresh, fresh manifest creation, or supported report regeneration.
+This is the narrower runtime application of ADR-0013's repository-wide
+pre-release clean-schema rule; it does not limit that rule to database state.
 
-The installed contained cover observer accepts only bounded canonical sanitized
-JSON/text, one locally admitted output schema, and exact report-bound PNG
-previews. Its private profile binds exact
-artifacts, credential store, limits, and model configuration. The isolated child
-has no repository, database, media, service configuration, target/provider
-credential, shell, tool, plugin, web, history, approval, or environment authority.
-A durable installed consideration records bounded attempt evidence and input
-identities before any result can influence advice. The adapter separately withholds child release until
-its in-memory callback has observed the exact PID, process group, and start
-token; those process facts are deliberately not persisted. Returned JSON is
-bounded, duplicate-free, canonical, and locally validated against the bound
-schema. Timeout or cancellation kills the captured process group and proves its
-identity dead; credential drift or cleanup failure blocks success. Raw streams,
-paths, prompts, credentials, and reasoning never cross the boundary. Cover
-identity classification is a local pre-review projection. It binds the exact
-report and already-admitted packet candidate identities, emits only opaque
-references and fixed outcome/reason codes, and gives retained identifier and
-edition/work contradictions plus incompatible manifestation publication/format
-evidence precedence over provider verification. An exact report-and-packet-bound
-EPUB cover verifies its source manifestation only, never a provider cover or
-Audiobookshelf incumbent. An otherwise unresolved provider cover is plausible
-only when its exact edition/work pair is retained by an ISBN lane, or by the
-legacy aggregate-discovery fallback when no lane-candidate mapping exists, and
-it has retained title agreement and no unopposed
-creator/contributor disagreement or deterministic work contradiction. Exact
-retained creator/contributor overlap counts as agreement. Missing creator values
-are neutral; pairwise disagreement alongside agreement and edition-specific
-disagreement are not identity conflicts. Plausible is not
-verified, and no title agreement or an unopposed creator/contributor
-disagreement remains unknown. Admission reopens every bound source preview
-through the report reader, verifies its source digest, deterministically
-re-normalizes it to the candidate transport identity, and recomputes exact
-report-bound candidate reference, provenance, incumbent, dimension, and variant
-facts, so foreign packets fail closed.
-Edition-specific date evidence is neither plausibility support nor a veto; default
-provider covers remain work-level rather than manifestation-level evidence.
-It has no image inference, provider dispatch, child process, persistence,
-policy, or write authority.
+### The contained cover observer
 
-The contained cover observer is the sole semantic consumer of the admitted
-packet images. It has a fixed four-property visual vocabulary with explicit
-unknown values and no owner policy, eligibility, ranking, winner, identity, or
-write fields. Its instruction states that packet data, provider context,
-images, visible text, and OCR-like text are hostile evidence. The local parser
-requires exactly one closed observation for every admitted opaque candidate,
-rejects invented or repeated references and extra or hostile values, verifies
-the complete contained-reviewer execution/request/image/result bindings, and
-emits only opaque identities plus exact preview digest/variant facts. Raw model
-output is not an observation report until that validation passes.
+There is no generic model-selected write authority and no generic reviewer
+queue in the installed runtime. ADR-0049 and ADR-0050 define the sole installed
+exception: one cover-specific contained observer over bounded private
+report-cover previews. Its result is advisory evidence only. Deterministic
+identity and cover policy decide eligibility, and an explicit owner interaction
+is the sole source of cover write authority; a missing, failed, or unqualified
+observer preserves the fully supported model-free manual path. Generic kernel
+use remains reachable only through the source workbench and receives only
+synthetic or irreversibly sanitized inputs.
 
-The installed cover-policy adjudicator introduces no model or provider call.
-It re-admits the exact packet/images, recomputes identity outcomes from the
-exact retained source report instead of trusting a caller-authored identity
-document, and requires the current classifier, taxonomy, observer instruction
-and output-schema identities before using any candidate facts. The policy
-path also binds the exact reviewer profile bytes through contained-reviewer
-authority and recomputes the observer reference; a substituted profile or
-well-shaped invented observer reference fails closed. Its policy is three
-canonical booleans, never prompt text.
-Conflict and unknown-identity candidates cannot be rescued and are excluded
-individually; identity abstains only when no eligible candidate remains.
-Policy-relevant unknown observations still abstain. Missing, duplicate,
-invented, mismatched or hostile references fail before output. The report
-contains only opaque acceptable references, one exact admitted recommendation
-or null, closed reason codes and content identities. Unavailable observations
-produce the fixed `observations_unavailable` abstention. No image, path, URL,
-free text, production target, persistence or write authority enters this
+The isolated child has no repository, database, media, service configuration,
+target or provider credential, shell, tool, plugin, web, history, approval, or
+environment authority. Its private profile binds the exact artifacts,
+credential store, limits and model configuration, and the policy path binds the
+exact profile bytes: a substituted profile or a well-shaped invented observer
+reference fails closed. A durable consideration records bounded attempt
+evidence and input identities before any result can influence advice. The
+adapter withholds child release until an in-memory callback has observed the
+exact PID, process group and start token, and those process facts are
+deliberately not persisted. Timeout or cancellation kills the captured process
+group and proves its identity dead; credential drift or cleanup failure blocks
+success. Raw streams, paths, prompts, credentials and reasoning never cross the
 boundary.
 
-The policy engineering benchmark preserved this boundary. Diagnosis reproduced
-the earlier low-coverage runtime as a Rust allocation abort under a 512 MiB
-child address-space limit; changing only that limit to 1 GiB moved a fixed
-development A/B from 4/8 to 8/8 admitted packets. The corrected benchmark then
-admitted 10/10 exact packet-v2 packets and 36/36 candidates with no retry,
-invented reference, binding, provider, production-access or write violation.
-The versioned benchmark permits reuse of those independently reviewed covers
-for bounded prompt and resource experiments, but every run retains immutable
-configuration and aggregate receipts and makes no unseen-holdout claim.
+The observer's instruction is the only authoritative input. Packet data,
+provider context, images, visible text and OCR-like text are hostile evidence,
+not instructions. Its vocabulary is a fixed set of visual properties with
+explicit unknown values and no owner-policy, eligibility, ranking, winner,
+identity or write field. The local parser requires exactly one closed
+observation for every admitted opaque candidate, rejects an invented or
+repeated reference and an extra or hostile value, verifies the complete
+execution, request, image and result bindings, and emits only opaque identities
+plus exact preview digest and variant facts. Raw model output is not an
+observation report until that validation passes.
 
-Cover
-previews use opaque references, fixed 12-image/1-MiB-each/8-MiB-total limits,
-digest/order binding, a separate ephemeral read-only mount, and repeatable exact
-image arguments. The generic reviewer entry point is image-free. Its closed
-request and adapter method have no image member or image argument. A distinct
-cover request is created only by one full `cover-review-packet-v2` parser that
-validates all closed fields and invariants, a content-bound packet reference,
-preview byte/dimension facts, incumbent/provenance/omission facts and limits,
-canonical candidate order, source-to-derived transport bindings,
-reason-specific omission preconditions, domain
-privacy-safe context text, and exact ordered reference/digest equality with the
-supplied images. Producer and admission use that same semantic validator.
-Packet preparation first verifies each exact report-bound source digest and
-bounded PNG framing, discards all ancillary/profile chunks, decodes one RGBA
+The adjudicator introduces no model or provider call. It re-admits the exact
+packet and images, recomputes identity outcomes from the exact retained source
+report rather than trusting a caller-authored identity document, and requires
+the current classifier, taxonomy, instruction and output-schema identities
+before using any candidate fact. Its policy is canonical booleans, never prompt
+text. Conflict and unknown-identity candidates cannot be rescued and are
+excluded individually; identity abstains only when no eligible candidate
+remains, and unavailable observations produce the fixed abstention. Its report
+carries only opaque acceptable references, one exact admitted recommendation or
+null, and closed reason and content identities. No image, path, URL, free text,
+production target, persistence, or write authority enters this boundary.
+
+Cover identity classification is a local pre-review projection. It binds the
+exact report and already-admitted candidate identities, emits only opaque
+references and fixed outcome and reason codes, gives retained identifier,
+edition/work and manifestation contradictions precedence over provider
+verification, and has no image inference, provider dispatch, child process,
+persistence, policy, or write authority. Plausible is not verified: an
+unresolved provider cover is plausible only under the retained-lane, title-
+agreement and creator-agreement conditions the module states, and anything else
+remains unknown. Admission reopens every bound source preview through the
+report reader, verifies its source digest, re-normalizes it deterministically
+to the candidate transport identity, and recomputes the report-bound reference,
+provenance, incumbent, dimension and variant facts, so a foreign packet fails
+closed.
+
+### Image transport
+
+The generic reviewer entry point is image-free: its closed request and adapter
+method have no image member or argument. A distinct cover request is created
+only by the full packet parser, which validates every closed field and
+invariant and requires exact ordered reference and digest equality with the
+supplied images; producer and admission use that same semantic validator.
+
+Packet preparation verifies each exact report-bound source digest and bounded
+PNG framing, discards every ancillary and profile chunk, decodes one RGBA
 frame, and deterministically re-encodes the exact pixels into a metadata-free
-derived transport. The encoder is platform-independent: it writes filter byte
-zero for every row, one zlib stream of fixed uncompressed DEFLATE blocks no
-larger than 65,535 bytes, and explicit Adler-32 and PNG CRC values. It does not
-delegate PNG serialization or compression decisions to Pillow, libpng, or the
-platform zlib build; Pillow remains the bounded decoder. The candidate keeps the source reference/digest bindings
-separate from the derived transport reference/digest. Admission checks the
-complete bounded, canonically ordered derived PNG chunk structure and checksums,
-fully decodes it, re-encodes it, and requires byte equality before mounting,
-admitting only
-single-frame RGBA PNG previews no larger than 320 by 480 whose decoded and
-declared preview dimensions agree. Its closed profile accepts only exact IHDR,
-one IDAT containing exactly one completed zlib stream with no
-trailing bytes, and final IEND. ICC profiles, PLTE, and every other
-ancillary or unknown chunk is absent from the derived transport; those source
-bytes cannot cross the reviewer boundary. Original-cover technical dimensions
-remain separate ordering evidence; normalized-pixel-equal groups bind the
-canonical best observed dimensions by area, width, then height, and every
-represented source kind affects diversity priority and counts. Forged
-signatures, corrupt or truncated streams,
-invalid chunk state, trailing bytes, unsafe dimensions, and decoder warnings or
-failures cross only the value-free response-format boundary.
+derived transport. That encoder is platform-independent and delegates no
+serialization or compression decision to Pillow, libpng, or the platform zlib
+build; Pillow remains the bounded decoder only. Source reference and digest
+bindings stay separate from the derived transport's. Admission checks the
+complete bounded, canonically ordered chunk structure and checksums, fully
+decodes, re-encodes, and requires byte equality before mounting, and admits
+only a single-frame RGBA PNG within the fixed dimension bound whose decoded and
+declared dimensions agree. ICC profiles, palettes and every other ancillary or
+unknown chunk are absent from the derived transport; those source bytes cannot
+cross the reviewer boundary. A forged signature, corrupt or truncated stream,
+invalid chunk state, trailing byte, unsafe dimension, or decoder warning
+crosses only the value-free response-format boundary.
+
 Before process creation, admitted bytes are copied into anonymous Linux memory
 descriptors, rehashed, and sealed against write, growth, shrink, and further
-seal changes. An image larger than the profile's child file limit fails before
-dispatch. After gated release, the child reopens every sealed descriptor
-read-only through its own `/proc`, verifies its identity, seals, size, and digest,
-rewinds the independent open-file description, and replaces the inherited
-descriptor before limits and exec. Bubblewrap copies from these child-private
-cursors through descriptor-data mounts into private read-only sandbox files. A
-dispatch callback or another same-UID process can therefore neither mutate the
-sealed bytes nor steer Bubblewrap with a shared inherited file offset.
-The image-capable adapter independently reconstructs and fully re-admits the
-packet and exact ordered image tuple immediately before this path. A directly
-constructed private request object therefore has no admission authority.
-Duplicate groups bind to a retained representative only after final selection;
-fully excluded groups contain only their reason-specific omission evidence.
-Only the bounded Instruction is authoritative; canonical input, provider
-metadata, images, and OCR text are hostile evidence, not instructions;
-arbitrary paths, URLs, originals, remote fetches, target/service identities, and
-generic attachments remain unavailable.
+seal changes; an image over the profile's child file limit fails before
+dispatch. After gated release the child reopens every sealed descriptor
+read-only through its own `/proc`, verifies its identity, seals, size and
+digest, rewinds the independent open-file description, and replaces the
+inherited descriptor before limits and exec. Bubblewrap copies from those
+child-private cursors through descriptor-data mounts into private read-only
+sandbox files, so a dispatch callback or another same-UID process can neither
+mutate the sealed bytes nor steer Bubblewrap through a shared inherited file
+offset. The image-capable adapter independently reconstructs and fully re-admits
+the packet and exact ordered image tuple immediately before this path, so a
+directly constructed private request object has no admission authority.
+Arbitrary paths, URLs, originals, remote fetches, target or service identities,
+and generic attachments remain unavailable.
 
-Historical sealed-v2 five-preview qualification attempted 17 development and
-qualification-holdout packets. Its aggregate-only receipt records 17 typed
-`contained_reviewer_invocation_insufficient` failures, zero ordered-reference
-mismatches, zero admitted image or reviewer-output bytes, p50 129 ms, p95 160
-ms, successful cleanup, and a failed sandbox aggregate.
+Qualification history for this boundary — the sealed-v2 attempt, its Bubblewrap
+diagnosis, the memory-envelope correction, and the semantic and policy
+benchmark cohorts and their coverage caveats — is in git history and in the
+issues those runs closed. What survives from it is a rule, not a result: every
+run retains immutable configuration and aggregate-only receipts, makes no
+unseen-holdout claim, and widens no model, prompt, schema, taxonomy, threshold,
+resource, provider, network, corpus, production, or write authority.
 
-Diagnosis proved that the historic attempt never reached reviewer execution:
-Bubblewrap could not resolve the sealed images through `/proc` paths. The
-corrected adapter uses verified child-private descriptor cursors as
-descriptor-data mounts; a five-image no-model Linux proof reproduced exact bytes
-inside the sandbox while the parent repeatedly sought its inherited descriptors
-to EOF.
-Authentication-only success had also hidden an under-sized private inference
-envelope. A bounded 512 MiB memory and 32-task isolated profile completed a
-structured reviewer probe without changing the model or widening prompt,
-network, image, output, provider, corpus, or production authority.
+### Provider egress
 
-The corrected exact implementation **QUALIFIED** one retained real
-five-preview development packet with five admitted ordered observations, zero
-reference mismatch, 16.263-second end-to-end latency, and successful cleanup.
-At 0.15.0 this seam remained source-only/report-only; that result is transport
-and schema-admission evidence, not semantic-quality proof. ADR-0049 later
-activates the same containment in installed owner review without granting it
-identity, decision, credential, provider, or write authority.
+A provider adds no production-write authority and no new network authority. A
+disabled provider constructs no client and produces no egress. Per-response,
+aggregate-byte, row, lane, request and deadline bounds fail closed into typed
+provider outcomes, and a quota or service failure is never reclassified as a
+no-match. Lane overflow is typed before client construction and causes no
+subset egress. One adapter instance owns lane sequencing, request maxima, the
+aggregate byte ceiling, and the shared pacer and deadline. Requests are
+fixed-origin GETs with redirects, environment proxies, compression, retry,
+caching and arbitrary endpoints disabled. Cover URLs are constructed from
+bounded identifiers at a fixed origin, reject redirects, and pass through the
+existing public-address pinning, bounded decoder and private artifact path.
 
-The subsequent semantic qualification reused retained report-bound artifacts
-and the same authority boundary. One development configuration admitted 50/50
-candidates with zero failures, retries, or violations; its seeded 20-case repeat
-matched every field and the joint result. A fresh one-shot final cohort admitted
-48/50 candidates, retaining two post-dispatch, pre-admission runtime failures
-without retry. Their exact shared cause was not retained or proven. Successful
-exact preflight and the admitted rows show that no cohort-wide always-on
-authentication, profile, sandbox, binding, or schema failure occurred, while
-bounded transient child, resource, or packet-interaction hypotheses remain.
-Subsequent local reproduction identified one bounded retryable signature:
-return code 134 with strict pre-terminal JSONL (`turn.started`, but no completed
-or failed terminal event) and bounded nonempty stderr. The cover-only binding
-may retry that exact signature once after one second, creating a fresh job and
-child process inside the same bound adapter and authentication lock. It retains
-only dispatch booleans and the first failure's code, byte count and digest; no
-raw event, stderr, path, credential, image or semantic output persists. Every
-other failure class remains terminal.
-The 50 selected candidate rows came from 29 distinct packets and rows within a
-packet are correlated because one admitted packet result can score multiple
-selected rows. The two failures were packet invocations, but aggregate receipts
-do not retain enough mapping to report distinct successful or failed packet
-counts. The 4% candidate missingness rate
-remains within the frozen 5% candidate-coverage tolerance, but it is not a
-packet coverage rate; its bias magnitude is unknown and conclusions are
-conditional on the 48 admitted candidate rows. Overall per-field lower bounds
-remain useful or strong when both missing cases are counted as disagreements;
-joint agreement falls to 72% and is not robustly useful across all dispatched
-cases. Tie-in branding is
-also class-sensitive: absent-case specificity was 44/44, but branded-positive
-recall was 2/4 (50%), so the high overall agreement does not establish useful
-tie-in detection for an avoid-tie-in policy. Composition was also
-class-sensitive: minimal-positive precision was 15/21 (71.43%) despite 15/17
-(88.24%) reference-minimal recall, so prefer-minimal usefulness remains
-unproven in that earlier candidate-level run. The later full-packet policy
-benchmark separately establishes useful prefer-minimal and avoid-tie-in
-decisions under the corrected 1 GiB profile. Qualification recorded zero
-binding or safety violations, provider calls, production-library accesses, or
-writes. An earlier final cohort was
-invalidated after a broad private JSON discovery scanner opened final-reference
-files without exposing values to tested or model-visible output; another was
-spent by credential-mount setup. Both supplied no semantic evidence and were
-replaced only by fresh disjoint cohorts after diagnosis. No model, prompt,
-schema, packaging, taxonomy, threshold, resource, provider, network, corpus,
-production, or write authority was widened.
+Open Library's enabled configuration requires a non-secret contact email, held
+only long enough to identify its fixed-origin requests; it enters no
+fingerprint, report, ID, manifest, persisted artifact, log, or diagnostic.
+Google Books may be credential-free or may use one owner-only API-key file;
+only the credential-bearing controller reads that file, and report, proposal,
+admission and reviewer code receives neither credential nor network authority.
 
-Authentication actions remain adapter-owned and create no generic reviewer
-lifecycle. Generic kernel use remains reachable only through the source
-workbench and receives only synthetic or irreversibly sanitized inputs.
-ADRs 0049 and 0050 define the sole installed exception: the cover-specific
-observer is packaged and composed for bounded private report-cover previews,
-with no target credentials, identity admission, owner-decision, or write
-authority.
+Provider recovery is credential-bearing background egress under those same
+limits. The claimant revalidates the exact source report, the full current
+review-package tuple, target and media identity, the enabled provider binding,
+and the positive configuration generation immediately before constructing the
+client. Provider work runs outside SQLite writer transactions. Shared
+authentication, authorization, quota, unavailable and incomplete results are
+classified before publication, and diagnostics retain no credential, raw
+header, query, payload, response body, work identifier, or private path.
 
-The final report database, `catalogue-v2` database, `config-v6`, artifact
-records, and `batch-manifest-v5` each accept only absent or their exact current
-schema. `metadata-report-v1` through `metadata-report-v10`, prior development
-schemas, extra objects, altered
-SQL, failed foreign-key/integrity checks, and other schemas fail closed before
-mutation. Persisted report content is validated when an exact-ID or
-current-scope read selects it and when a selected current report or exact-ID
-collision participates in publication. Malformed targeted content fails
-closed; unrelated historical rows are not a whole-database semantic preflight.
-Earlier schemas are not migrated, imported, preserved, or passed through a
-compatibility parser. Recovery uses clean current state plus catalogue refresh,
-fresh manifest creation, or supported report regeneration as applicable;
-same-schema exact-ID and current-scope replay retain their existing transaction
-and validation controls.
-This report-database boundary is the narrower runtime application of ADR-0013's
-repository-wide pre-release clean-schema rule; it does not limit that rule to
-database state.
-
-Open Library adds no credential or production-write authority. Its enabled
-configuration requires a non-secret contact email, which is held only long
-enough to identify fixed-origin metadata and cover requests. It is not included
-in application fingerprints, reports, IDs, manifests, persisted artifacts,
-logs, or diagnostics. Search and detail responses use existing strict byte,
-content-type, encoding, JSON, projection, and aggregate-deadline bounds.
-The application admits at most eight distinct ISBN-family lanes and one
-complete-title/author lane. Overflow is typed before client construction and
-causes no subset egress. One adapter instance owns all lane sequencing, fixed
-request maxima, 2 MiB aggregate response-byte ceiling, and the shared
-pacer/deadline. Candidate admission accepts
-only exact normalized ISBN-family rows with
-canonical Open Library edition/work keys. Cover URLs are constructed from
-bounded numeric IDs at the fixed Covers origin; malformed present IDs are
-retained as `rejected` report outcomes without a request. Valid URLs are paced
-with metadata, reject
-redirects, and still pass through the existing public-address pinning, bounded
-decoder, and private artifact path.
-
-Google Books adds no production-write authority. It is an ordinary,
-explicitly referenced provider and remains disabled without client
-construction or egress. Enabled access may be credential-free or may use one
-owner-only API-key file. Only the credential-bearing controller reads that
-file; report, proposal, admission, and reviewer code receives neither
-credentials nor network authority. Requests are fixed-origin GETs with
-redirects, environment proxies, compression, retry, caching, and arbitrary
-endpoints disabled. Per-response, aggregate-byte, row, lane, request, and
-deadline bounds fail closed into typed provider outcomes; quota and service
-failures are never reclassified as `no_match`.
-
-Provider recovery is credential-bearing background egress under the same
-adapter limits, never a new network authority. The claimant revalidates the
-exact source report, full current review-package tuple, target/media identity,
-enabled provider binding, and positive configuration generation immediately
-before constructing the provider client. Provider work runs outside SQLite
-writer transactions with the existing aggregate request, byte, 60-second
-deadline, retry, pacing, and cancellation bounds. Shared authentication,
-authorization, quota, unavailable, or incomplete results are classified before
-publication; diagnostics retain neither credentials, raw headers, queries,
-payloads, response bodies, work identifiers, nor private paths.
+### Decision authority
 
 The deterministic shadow-decision preview adds no network or credential
-authority. It opens only an existing regular exact-current report database by
-the dedicated read-only/no-create path, verifies query-only behavior, and never
-initializes, upgrades, migrates, or persists state. Success and every accepted
-failure preserve database bytes, directory entries, and SQLite sidecars. The
-domain policy can select only an exact compiler action with closed citations
-and combinations; ambiguity and unsupported state abstain to manual. The
-canonical output is operator-visible data, not approval or an apply token.
+authority. It opens only an existing regular exact-current report database
+through the dedicated read-only, no-create path, verifies query-only behaviour,
+and never initializes, upgrades, migrates or persists state; success and every
+accepted failure preserve database bytes, directory entries and SQLite
+sidecars. The domain policy may select only an exact compiler action with
+closed citations and combinations, and abstains to manual on ambiguity or
+unsupported state. Its canonical output is operator-visible data, not approval
+or an apply token.
 
-Policy Preview composes that same provider-independent decision policy into the
-existing persisted projection stage without adding a network client or
-provider call. The owner-session/CSRF commands move through the closed
+Policy Preview composes that same provider-independent policy into the persisted
+projection stage without adding a network client or provider call. The
+owner-session and CSRF commands move through the closed
 `review | preview | automatic` posture. Review and Preview report authority
 `none`; explicit confirmation revalidates the exact preview before reporting
-the qualified `decision_only` authority. Outcome publication revalidates exact
-case, report, proposal, target fingerprint, policy generation/resolution,
-source decision set, catalogue, action, evidence, and rule identity in one
-immediate transaction. Stale work publishes no outcome and reuses the current
-pipeline row. Outcome/history reads validate the whole append-only document
-before returning anything and cap the requested sample at 50 and the encoded
-projection at one MiB. They never construct target or apply clients.
-Leave-Preview remains impact-only; the separate confirmation command is
-CSRF-protected and fails closed when the preview is unavailable.
+the qualified decision-only authority. Outcome publication revalidates every
+identity it depends on — case, report, proposal, target fingerprint, policy
+generation and resolution, source decision set, catalogue, action, evidence and
+rule — in one immediate transaction; stale work publishes no outcome. Outcome
+and history reads validate the whole append-only document before returning
+anything, cap the sample and the encoded projection, and construct no target or
+apply client. Leave-Preview is impact-only, and the separate confirmation
+command is CSRF-protected and fails closed when the preview is unavailable.
 
 Automatic policy intent is accepted only after the authenticated owner enters
 Preview, and both draft persistence and activation recheck that stored posture
 inside their transactions. Human admission substitutes Ask only for Automatic
-categories; it preserves explicit Ask, Ignore, and Unsupported choices. Only
-the closed qualified category/option matrix may reach decision-only Automatic;
-all other automatic intent is rejected, and no automatic outcome itself grants
-effect or target-write authority. The deterministic F19 projection includes
-exact `policy_ignored` proposals; the external-review packet remains unchanged.
+categories and preserves explicit Ask, Ignore and Unsupported choices. Only the
+closed qualified category and option matrix may reach decision-only Automatic;
+all other automatic intent is rejected, and no automatic outcome grants effect
+or target-write authority.
 
 ### Authenticated Activity history
 
