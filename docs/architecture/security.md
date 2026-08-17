@@ -595,11 +595,31 @@ aggregate-byte, row, lane, request and deadline bounds fail closed into typed
 provider outcomes, and a quota or service failure is never reclassified as a
 no-match. Lane overflow is typed before client construction and causes no
 subset egress. One adapter instance owns lane sequencing, request maxima, the
-aggregate byte ceiling, and the shared pacer and deadline. Requests are
-fixed-origin GETs with redirects, environment proxies, compression, retry,
-caching and arbitrary endpoints disabled. Cover URLs are constructed from
-bounded identifiers at a fixed origin, reject redirects, and pass through the
-existing public-address pinning, bounded decoder and private artifact path.
+aggregate byte ceiling, and the shared pacer and deadline.
+
+Every provider metadata client is constructed in
+`infrastructure/security/credentials.py` with environment and proxy trust off,
+client-level redirect following off, TLS verification on, an explicit timeout,
+and one connection; arbitrary endpoints and caching are unavailable to all of
+them. Remote cover acquisition does not use that client at all: it has its own
+address-pinned socket transport, described below. The method and origin
+contract differs by provider and is not provider-wide:
+
+- **Open Library** issues fixed-origin `GET` requests only. Its cover requests
+  use constructed fixed-origin numeric-ID URLs, allow no redirect, and share the
+  adapter's request-start pacer.
+- **Google Books** issues fixed-origin `GET` requests only, with compression
+  declined.
+- **Hardcover** issues one `POST` per request, carrying a fixed GraphQL query to
+  one fixed HTTPS URL with identity coding, and is the only provider whose
+  metadata traffic is not a `GET`. Its remote cover requests are separately
+  credential-free and follow **bounded manual redirects**, each hop revalidated
+  against public HTTPS port 443 before use, as recorded under credentials and
+  egress above. No redirect is ever followed by an HTTP client automatically;
+  the cover transport resolves and re-checks each hop itself.
+
+Every cover byte, whichever provider supplied it, passes through the same
+public-address pinning, bounded decoder child, and private artifact path.
 
 Open Library's enabled configuration requires a non-secret contact email, held
 only long enough to identify its fixed-origin requests; it enters no

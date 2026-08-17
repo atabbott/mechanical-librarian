@@ -70,27 +70,35 @@ grant, because a reviewer assessing an update trusts it.
   and no environment-variable behaviour is enabled. Validated values are
   projected into frozen dataclasses and domain types before orchestration;
   domain code does not import Pydantic.
-- **HTTPX and HTTPcore** carry every byte the application exchanges with an
-  external service: Audiobookshelf catalogue, item and field-effect traffic
+- **HTTPX and HTTPcore** carry the application's service and provider traffic:
+  Audiobookshelf catalogue, item, raw-cover and field-effect requests
   (`adapters/library_services/`), and Hardcover, Open Library and Google Books
-  provider traffic (`adapters/providers/`). That includes **production writes**
+  metadata requests (`adapters/providers/`). That includes **production writes**
   — a metadata `PATCH` and a cover `POST` in
   `audiobookshelf_field_effect.py` — and a **credential-bearing GraphQL POST**
   to Hardcover. The grant is not "no mutation authority"; it is that every one
   of those requests is bounded before it is made.
 
-  `infrastructure/security/credentials.py` constructs every client, and each
-  one sets `follow_redirects=False`, `trust_env=False`, `verify=True`, an
-  explicit `httpx.Timeout`, and `httpx.Limits(max_connections=1,
-  max_keepalive_connections=0)`. Responses stream into a hard byte cap. The
-  target client's `httpx.Auth` flow is what bounds the write authority: it
-  attaches the bearer token only when the request is same-origin as the
-  configured endpoint **and** is either a `GET` on one of the five permitted
-  read paths, a `PATCH` on `/api/items/{id}/media`, or a `POST` on
-  `/api/items/{id}/cover`. Any other method, path, or origin is sent without
-  the credential. The Hardcover client attaches its token only to the fixed
-  GraphQL URL. Open Library's client carries no secret, and Google Books' is
-  credential-free or reads one owner-only key file.
+  It is not all outbound traffic. Remote provider cover acquisition
+  (`adapters/providers/remote_cover.py`) uses its own `socket` and `ssl`
+  transport, not HTTPX, because it pins each resolved address and revalidates
+  every redirect hop itself. An HTTPX update does not reach that path, and a
+  change to that path is not a dependency change.
+
+  `infrastructure/security/credentials.py` constructs every credential-bearing
+  and provider client, and each one sets `follow_redirects=False`,
+  `trust_env=False`, `verify=True`, an explicit `httpx.Timeout`, and
+  `httpx.Limits(max_connections=1, max_keepalive_connections=0)`. Responses
+  stream into a hard byte cap. The target client's `httpx.Auth` flow is what
+  bounds the write authority: it attaches the bearer token only when the request
+  is same-origin as the configured endpoint **and** is either a `GET` on one of
+  the five permitted read paths, a `PATCH` on `/api/items/{id}/media`, or a
+  `POST` on `/api/items/{id}/cover`. Any other method, path, or origin is sent
+  without the credential. The Hardcover client attaches its token only to the
+  fixed GraphQL URL. Open Library's client carries no secret, and Google Books'
+  is credential-free or reads one owner-only key file. The Audiobookshelf
+  raw-cover read builds its own credential-free client with an empty user agent
+  in `audiobookshelf_item.py`.
 
   The application's guarded-effect gates — consent, backup readiness,
   exact-current plan validation, read-back verification and audit — sit above
