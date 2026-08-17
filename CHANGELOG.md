@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Make a failing gate identify itself. The browser tier no longer loses the
+  keep-alive race that produced `Route.fetch: socket hang up`, a truncated
+  traceback keeps its head as well as its tail so a transport error's identity
+  survives, the installed review server's start wait tells a crash from a
+  timeout and reports the child's exit code, and the browser tier emits the
+  payload record naming the Chromium it ran. (#730)
 - Compress every changelog entry to the outcome it reports, in at most six
   lines with its issue reference, and hold future entries there with a guard
   test that names any entry over budget. No entry was deleted and no issue

@@ -40,13 +40,28 @@ _REJECTED_PYTEST_ENVIRONMENT = (
     "PYTEST_DISABLE_PLUGIN_AUTOLOAD",
     "PYTEST_PLUGINS",
 )
-# Ceilings for the failure-diagnostic stream. A single traceback keeps its tail,
-# which holds the assertion and the innermost frame. The aggregate ceiling bounds
-# every emitted byte, framing included, so a broad failure stays readable in a
-# hosted log and well inside the exact-artifact qualifier's one-mebibyte
-# per-stream capture bound -- being terminated at that bound would cost the
-# result schema line itself.
+# Ceilings for the failure-diagnostic stream. An over-long traceback keeps its
+# head and its tail, split within the single-traceback ceiling, and declares the
+# elided middle. Neither end alone is sufficient, because the two failure classes
+# a tier reports put the answer at opposite ends.
+#
+# The tail holds the assertion and the innermost frame, which is what
+# `--tb=native` guarantees a truncated traceback still ends at, so it keeps the
+# larger share. But a transport error is not an assertion: a Playwright failure
+# opens with `Locator.click: Route.fetch: socket hang up` and closes with
+# kilobytes of `Call log:` request headers. Tail-only retention reported exactly
+# that -- a fragment ending mid-header-dump with the error identity and every
+# Python frame elided as leading bytes -- and three sightings of #730 were
+# recorded as "the tooling lost the traceback" because of it. The head is sized
+# for an error identity and its opening frames, not for a whole traceback.
+#
+# The aggregate ceiling bounds every emitted byte, framing included, so a broad
+# failure stays readable in a hosted log and well inside the exact-artifact
+# qualifier's one-mebibyte per-stream capture bound -- being terminated at that
+# bound would cost the result schema line itself.
 _MAX_TEST_TRACEBACK_BYTES = 4_096
+_TEST_TRACEBACK_HEAD_BYTES = 1_024
+_TEST_TRACEBACK_TAIL_BYTES = _MAX_TEST_TRACEBACK_BYTES - _TEST_TRACEBACK_HEAD_BYTES
 _MAX_TRACEBACK_STREAM_BYTES = 262_144
 
 # pytest is the execution engine; these arguments carry the properties the
@@ -544,11 +559,12 @@ def _report_failure_tracebacks(
         encoded = detail.encode("utf-8", "replace")
         elided = len(encoded) - _MAX_TEST_TRACEBACK_BYTES
         if elided > 0:
-            encoded = encoded[-_MAX_TEST_TRACEBACK_BYTES:]
-        body = encoded.decode("utf-8", "replace")
+            head = encoded[:_TEST_TRACEBACK_HEAD_BYTES].decode("utf-8", "replace")
+            tail = encoded[-_TEST_TRACEBACK_TAIL_BYTES:].decode("utf-8", "replace")
+            body = f"{head}\n[elided {elided} bytes]\n{tail}"
+        else:
+            body = encoded.decode("utf-8", "replace")
         block = f"==== {tier} failure: {identifier} ====\n"
-        if elided > 0:
-            block += f"[elided {elided} leading bytes]\n"
         block += body if body.endswith("\n") else f"{body}\n"
         charged = len(block.encode("utf-8"))
         if charged > remaining:

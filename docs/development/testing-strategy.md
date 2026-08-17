@@ -54,7 +54,10 @@ contributes only that subset. Two of the runner's pytest arguments carry tier
 behaviour rather than taste: `--capture=sys` leaves file descriptor 2 alone so
 the stall diagnostic still reaches an observer while the cohort's own output
 stays discarded, and `--tb=native` keeps a bounded traceback's retained tail
-ending at the assertion and the innermost frame.
+ending at the assertion and the innermost frame. That is why the tail keeps
+the larger share of the per-test bound when a traceback is truncated, and why
+it is not the whole share: a Playwright transport error is not an assertion,
+so its identity is at the head and only a head-and-tail retention keeps both.
 
 A tier supplies its own arguments and refuses to run under ambient ones. pytest
 incorporates `PYTEST_ADDOPTS`, `PYTEST_PLUGINS`, `PYTEST_DISABLE_PLUGIN_AUTOLOAD`,
@@ -201,7 +204,10 @@ python3 scripts/qualify_exact_artifact.py \
 The protected browser tier remains independently runnable. Install the Chromium
 payload and record which one ran before accepting its result; the middle command
 prints a `browser-payload-evidence-v1` record naming the platform, the Chromium
-revision, the Playwright version and the payload's tree digest:
+revision, the Playwright version and the payload's tree digest. The tier emits
+that same record itself, on the original standard error the stall diagnostic
+uses, so a failing run says which browser it ran without the command being
+issued separately:
 
 ```bash
 uv run playwright install --with-deps chromium

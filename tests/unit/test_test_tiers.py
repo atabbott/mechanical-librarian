@@ -349,14 +349,50 @@ def test_tracebacks_are_bounded_per_test_and_in_total() -> None:
     assert len(emitted) < 2 * _MAX_TRACEBACK_STREAM_BYTES
     assert "[elided " in narrative
     assert "==== fast tracebacks omitted: " in narrative
-    # The retained tail keeps the assertion detail; the head is dropped.
+    # Both ends survive, and the elision is declared between them rather than
+    # ahead of a fragment: the head carries the error identity, the tail the
+    # assertion `--tb=native` guarantees a truncated traceback still ends at.
+    assert "boundary-" in narrative
     assert "-tail" in narrative
-    assert "boundary-" not in narrative
+    assert narrative.index("boundary-") < narrative.index("[elided ")
+    assert narrative.index("[elided ") < narrative.rindex("-tail")
 
     blocks = narrative.split("==== fast failure: ")[1:]
     assert blocks
     for block in blocks:
         assert len(block.encode("utf-8")) <= _MAX_TEST_TRACEBACK_BYTES + 512
+
+
+def test_transport_failure_keeps_the_error_identity_its_head_carries() -> None:
+    """The #730 case, which tail-only retention reported as a header dump.
+
+    A Playwright failure is not an assertion: it opens with
+    `Locator.click: Route.fetch: socket hang up` and closes with kilobytes of
+    `Call log:` request headers. Keeping only the tail elided the identity as
+    leading bytes and emitted a fragment ending mid-header-dump, which three
+    sightings were recorded as "the tooling lost the traceback".
+    """
+
+    headers = "\n".join(
+        f'  - sec-ch-ua-platform: "Linux" {index:04d}' for index in range(300)
+    )
+    detail = f"Locator.click: Route.fetch: socket hang up\nCall log:\n{headers}"
+    with tempfile.TemporaryDirectory() as directory:
+        summary, narrative = _run_failing_cohort(
+            _synthetic_cohort(Path(directory), 1, detail)
+        )
+    assert len(summary["failed_test_ids"]) == 1
+    assert "[elided " in narrative
+
+    # The identity the reader needs, which used to be elided entirely.
+    assert "Locator.click: Route.fetch: socket hang up" in narrative
+    # The tail the previous policy kept is still there, and still last.
+    assert narrative.rstrip().endswith('  - sec-ch-ua-platform: "Linux" 0299')
+    assert narrative.index("socket hang up") < narrative.index("[elided ")
+
+    blocks = narrative.split("==== fast failure: ")[1:]
+    assert len(blocks) == 1
+    assert len(blocks[0].encode("utf-8")) <= _MAX_TEST_TRACEBACK_BYTES + 512
 
 
 def test_framing_bytes_are_charged_to_the_aggregate_bound() -> None:

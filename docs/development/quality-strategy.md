@@ -41,10 +41,14 @@ evidence binds the source, wheel, payload, selected tier, and command-output
 digests. A test that makes no progress for 30 seconds emits one bounded,
 path-free test identifier so a hosted timeout remains diagnosable without raw
 test output. A failing tier reports every failed identifier — the list is not
-truncated — and each failing test's formatted traceback, bounded to the last
+truncated — and each failing test's formatted traceback, bounded to
 4 KiB per test and 256 KiB across the whole stream, framing included, so a
 broad failure stays readable and stays inside the exact-artifact qualifier's
-per-stream capture bound. A truncated report always declares how many
+per-stream capture bound. An over-long traceback keeps both ends of that
+4 KiB and declares the elided middle between them: the tail holds the
+assertion `--tb=native` guarantees it ends at, while the head holds the error
+identity a transport failure states first and buries under kilobytes of its
+own call log. A truncated report always declares how many
 tracebacks it omitted. Raw
 cohort output remains discarded; only the traceback of a test that already
 failed is reported, and it carries the runner's own repository paths. The
