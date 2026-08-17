@@ -153,6 +153,7 @@ of this table can be checked against the workflow rather than trusted.
 | Python formatting | gate | `uv run ruff format --check src tests scripts` in `fast-source` |
 | Python lint | gate | `uv run ruff check src tests scripts` in `fast-source` |
 | Python typing | gate | `uv run mypy src tests scripts` in `fast-source` |
+| Documentation reachability, relative links and the ADR index | gate | `scripts/verify_documentation_integrity.py` in `fast-source` |
 | Frontend typing, lint, formatting and Vitest suite | gate | `npm run typecheck`, `npm run lint`, `npm test`; `npm run lint` is what fails on unformatted source |
 | Frontend licence inventory and dependency advisories | gate | `npm run licenses`, `npm audit --audit-level=low` |
 | The exact Node and npm toolchain, in every job that builds the frontend | gate | `test "$(node --version)"` and `test "$(npm --version)"` |

@@ -57,6 +57,7 @@ dev = [
 [project.scripts]
 mechanical-librarian = "mechanical_librarian.bootstrap:main"
 mechanical-librarian-container = "mechanical_librarian.bootstrap.container:main"
+mechanical-librarian-container-health = "mechanical_librarian.bootstrap.container_health:main"
 
 [project.urls]
 Documentation = "https://github.com/atabbott/mechanical-librarian/tree/main/docs"

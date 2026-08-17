@@ -15,6 +15,11 @@ CONFIG = DATA / "config.json"
 DATABASE = DATA / "application.sqlite3"
 CATALOGUE = DATA / "catalogue.sqlite3"
 ARTIFACTS = DATA / "artifacts"
+# The in-container bind stays on every interface so a published port mapping
+# reaches it. Which interfaces the port is published *on* is the host's choice,
+# and `compose.yaml` makes it loopback by default.
+HOST = "0.0.0.0"
+PORT = 8443
 
 
 def main() -> None:
@@ -28,7 +33,7 @@ def main() -> None:
     repository.close()
     catalogue = open_catalogue(CATALOGUE, create=True)
     catalogue.close()
-    run_review_server(CONFIG, DATABASE, CATALOGUE, ARTIFACTS, "0.0.0.0", 8443)
+    run_review_server(CONFIG, DATABASE, CATALOGUE, ARTIFACTS, HOST, PORT)
 
 
 if __name__ == "__main__":

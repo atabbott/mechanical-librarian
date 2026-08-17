@@ -9,8 +9,41 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    # Loopback-only by default: reaching the review surface from another host
+    # is an explicit owner choice, made by overriding this line as described in
+    # docs/operations/deployment.md, not something the supported file does for
+    # you.
     ports:
-      - "8443:8443"
+      - "127.0.0.1:8443:8443"
+    healthcheck:
+      test:
+        ["CMD", "/opt/mechanical-librarian/bin/mechanical-librarian-container-health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      start_interval: 5s
+      retries: 3
+    # Measured, not assumed. A seeded container of this image, driven through 25
+    # rounds of authenticated login plus the Library, Attention, Policy and
+    # Activity documents and their asset bundle, reported a `memory.peak` of
+    # 167.8MiB and a `pids.peak` of 11 from its own cgroup.
+    #
+    # The serving process is only part of the budget: `review_pipeline.py` runs
+    # two preparation lanes, and each may hold one evidence child, which
+    # `epub_child.py` and `cover_child.py` cap at 256MiB of address space
+    # apiece. So the worst case the code itself admits is 167.8 + 2 x 256 =
+    # 680MiB, and 1GiB leaves roughly 1.5x over that -- about 6x the measured
+    # serving peak. `memswap_limit` matches `mem_limit` so the cap is a real
+    # ceiling rather than an invitation to swap.
+    mem_limit: 1g
+    memswap_limit: 1g
+    # 11 measured; the same two lanes add a child process, its watcher thread
+    # and the parent's drain reader each, which reasons to roughly 25 under
+    # concurrent preparation. That preparation path is the one a review server
+    # with no library attached cannot exercise, so this sits about 5x above the
+    # reasoned worst case rather than close to it. It still stops a runaway
+    # outright, which is what it is here to do.
+    pids_limit: 128
     volumes:
       - mechanical-librarian-data:/data
     tmpfs:

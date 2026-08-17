@@ -99,12 +99,17 @@ curl --cacert review-test.crt https://127.0.0.1:8443/health/live
 This synthetic command is not production certificate management. Operators
 remain responsible for obtaining, rotating, and securely mounting a certificate
 whose names cover the canonical origin; the application neither issues nor
-renews certificates. Container health probes must use the same HTTPS liveness
-URL and trust the mounted certificate rather than downgrading the endpoint.
+renews certificates. The container's own `HEALTHCHECK` works this way, trusting
+the mounted certificate as its anchor; any further health probe must trust that
+certificate too rather than downgrading the endpoint.
 
-Only `/health/live` is anonymous operational data. The login surface verifies
-the owner-only Argon2id hash file, applies a durable bounded throttle, and
-creates an opaque server-side session whose token is stored only as a digest.
+`/health/live` and `/health/ready` are the only anonymous operational data.
+Both are exempt from origin checking, neither takes a credential, and between
+them they return `ok`, `ready` or `draining` and nothing drawn from the
+library; [observability and support](observability.md) defines what each one
+means. The login surface verifies the owner-only Argon2id hash file, applies a
+durable bounded throttle, and creates an opaque server-side session whose token
+is stored only as a digest.
 All review responses are private/no-store and enforce the canonical HTTPS Host
 and Origin, restrictive CSP, secure HttpOnly SameSite cookies, CSRF on logout
 and decisions, and explicit proxy trust. The `/api/v1` surface exposes
