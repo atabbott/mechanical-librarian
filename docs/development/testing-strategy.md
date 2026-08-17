@@ -367,7 +367,10 @@ captured subprocess streams remain bounded and stay out of the failure evidence
 record, reaching only the redacted narrative account beside it.
 
 The public gate first installs the Chromium revision bound to pinned Playwright
-1.61.0 and verifies its repository-bound complete payload digest before launch.
+1.61.0 and records its complete payload digest before launch;
+`scripts/verify_playwright_browser.py` compares that digest to no stored
+constant and rejects only an unsupported platform, an unreadable layout, and an
+absent, empty, or symlinked payload.
 The installed-artifact suite then starts only disposable HTTPS review
 servers with synthetic credentials and databases. Its browser cohort exercises
 the complete three-action decision round trip at the primary desktop viewport,

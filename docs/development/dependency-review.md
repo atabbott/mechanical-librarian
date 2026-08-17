@@ -93,8 +93,8 @@ extra is installed, so no multipart parser, template engine, CLI, settings
 loader, or second HTTP client enters the closure.
 
 F16a #450 added one pinned development-only browser qualification dependency
-and its locked Python closure. The table and browser payload hashes are the
-introduction-time qualification baseline. A Playwright update requires explicit
+and its locked Python closure. The table is the introduction-time qualification
+baseline. A Playwright update requires explicit
 approval and must update the browser qualification evidence. None is imported
 by the runtime package or included as application authority.
 
@@ -106,14 +106,14 @@ by the runtime package or included as application authority.
 
 The pinned Playwright release supports Python 3.13/3.14 and binds Chromium
 149.0.7827.55 (browser revision 1228). The public gate downloads that browser
-before running the exact installed-artifact suite. Before any launch, the
-repository verifier hashes the complete sorted headless-shell payload with the
-`playwright-browser-tree-v1` framing and requires
-`8165f22c947b69d93b32288b8d00acde78f11e287da8084906c632c90b55781c`
-on Linux x86-64 or
-`ad7a45dccec74e1ceec66d023122a03d2c0351d25c169dfe18c9c4aec49a48b3`
-on macOS arm64. A changed, incomplete, symlinked, extra-file, or unsupported
-platform payload fails before browser execution. Tests use synthetic owner
+before running the exact installed-artifact suite. Before any launch,
+`scripts/verify_playwright_browser.py` hashes the complete sorted
+headless-shell payload with the `playwright-browser-tree-v1` framing and
+records that digest beside the Chromium revision and Playwright version. It
+compares the digest to no stored constant. What it rejects before browser
+execution is an unsupported platform, an unreadable payload layout, and a
+payload that is absent, empty, or symlinked. Corruption of an already-installed
+payload within one Playwright version is not detected. Tests use synthetic owner
 credentials, hostile strings, disposable owner-only databases, loopback HTTPS,
 and no production service. Playwright receives no target/provider credential,
 production path, target client, apply port, or publication authority. Browser
