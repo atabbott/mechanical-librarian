@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -217,7 +218,25 @@ def _server(
             access_log=False,
             ssl_certfile=str(certificate),
             ssl_keyfile=str(key),
-            timeout_keep_alive=1,
+            # Longer than any idle gap a test in this module leaves between
+            # requests on one connection, with room to spare. The longest is
+            # the 5,500 ms `page.wait_for_timeout` that proves the activity
+            # poll has settled; every other gap -- `expect()` retries,
+            # `press_sequentially`, viewport changes -- is shorter.
+            #
+            # It has to exceed them because `route.fetch()` is forwarded by
+            # Playwright's Node driver, which keeps its own per-origin
+            # keep-alive pool. That pool is not governed by the browser
+            # context, is not flushed by `context.close()`, and outlives
+            # `page.unroute()`. Under the previous one-second window a pooled
+            # socket idled out, uvicorn closed it server-side, and the driver
+            # selected that same socket inside the close race, reporting
+            # `Route.fetch: socket hang up`. Only the two `route.fetch()`
+            # tests ever showed it; the `route.continue_()` test never did,
+            # because the browser owns that connection. The container gate's
+            # `--cpus=2` widened the window, which is why it failed there
+            # while the same commit passed on macOS (#730).
+            timeout_keep_alive=30,
         )
     )
     thread = threading.Thread(target=server.run, daemon=True)
@@ -255,9 +274,26 @@ def _closing_context(context: BrowserContext) -> Iterator[None]:
 
 @pytest.fixture(scope="module", autouse=True)
 def _verified_playwright_browser() -> None:
-    """Refuse the module before its first test, as `setUpClass` did."""
+    """Refuse the module before its first test, as `setUpClass` did.
 
-    verify_playwright_browser()
+    The `browser-payload-evidence-v1` record it returns names the Chromium
+    revision, tree digest, Playwright version and platform, which is what
+    makes "did the browser change between the failing run and the passing
+    re-run" answerable. It was previously computed and discarded on the exact
+    path that then fails, so no sighting could answer it (#730).
+
+    It goes to `sys.__stderr__` because that is the only stream that survives
+    the tier. `scripts/run_test_tier.py` redirects `sys.stdout` and
+    `sys.stderr` to `os.devnull` around `pytest.main`, and `--capture=sys`
+    replaces them again, so a bare `print` from a test reaches nothing. The
+    tier's own stall breadcrumb uses this same seam for this same reason.
+    """
+
+    print(
+        json.dumps(verify_playwright_browser(), sort_keys=True, separators=(",", ":")),
+        file=sys.__stderr__,
+        flush=True,
+    )
 
 
 def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> None:
