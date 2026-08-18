@@ -7,7 +7,7 @@ import threading
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Literal, cast
 from unittest.mock import patch
 
 import pytest
@@ -1944,6 +1944,68 @@ def test_a_full_database_reports_the_disk_failure_from_a_record() -> None:
         assert "database or disk is full" == str(raised.value.__cause__)
         assert not store._connection.in_transaction
         store.close()
+
+
+def _schema_page_count() -> int:
+    """The pages a complete recovery schema occupies at 512-byte pages.
+
+    Measured rather than written down, so the cap below stays one page short
+    of what ``_CREATE`` needs however SQLite lays those pages out.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        connection = sqlite3.connect(
+            Path(directory) / "measure.sqlite", isolation_level=None
+        )
+        connection.execute("PRAGMA page_size=512")
+        connection.execute("VACUUM")
+        connection.execute("BEGIN IMMEDIATE")
+        for statement in recovery_persistence._CREATE:
+            connection.execute(statement)
+        connection.execute("COMMIT")
+        pages = connection.execute("PRAGMA page_count").fetchone()[0]
+        connection.close()
+    return cast(int, pages)
+
+
+def test_a_full_database_reports_the_disk_failure_from_schema_creation() -> None:
+    """The third site: ``open`` creates the schema on a disk with no room.
+
+    ``open`` owns the connection it fails on, so the cap is applied as that
+    connection is handed over rather than afterwards.  One page short of the
+    measured schema makes the last statement raise ``SQLITE_FULL`` after the
+    transaction has dirtied enough pages that SQLite abandons it itself; the
+    unguarded ``ROLLBACK`` then raised ``cannot rollback - no transaction is
+    active`` and buried the disk failure as ``__context__`` (#715).
+    """
+    limit = _schema_page_count() - 1
+    connect = sqlite3.connect
+
+    def _capped(
+        database: Path,
+        *,
+        isolation_level: Literal["DEFERRED", "EXCLUSIVE", "IMMEDIATE"] | None,
+        check_same_thread: bool,
+    ) -> sqlite3.Connection:
+        connection = connect(
+            database,
+            isolation_level=isolation_level,
+            check_same_thread=check_same_thread,
+        )
+        connection.execute("PRAGMA page_size=512")
+        connection.execute(f"PRAGMA max_page_count={limit}")
+        return connection
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "recovery.sqlite"
+        with patch.object(sqlite3, "connect", _capped):
+            with pytest.raises(ProviderRecoveryStoreError) as raised:
+                SQLiteProviderRecoveryStore.open(path)
+
+    assert "provider recovery database is unavailable or incompatible" == str(
+        raised.value
+    )
+    assert isinstance(raised.value.__cause__, sqlite3.OperationalError)
+    assert "database or disk is full" == str(raised.value.__cause__)
 
 
 def test_a_rejected_claim_argument_still_abandons_its_open_transaction() -> None:

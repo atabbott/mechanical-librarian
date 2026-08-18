@@ -1402,6 +1402,70 @@ def test_complete_library_includes_current_report_without_review_lineage(
     assert item["dispositions"] == []
 
 
+def test_library_reads_the_three_trailing_columns_its_row_declares(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    """`suspended`, `shadow_abstention` and `terminal` reach the reader.
+
+    `ReviewLibrarySnapshot.rows` declares seven columns and the double
+    emitted five, so `library()` padded the last three with `()` and `None`
+    behind four `len(row)` guards. Every assertion below therefore held on
+    padding the reader invented rather than on anything a repository said
+    (#711). The two works carry different values for each column, so an
+    answer that collapsed back to a constant fails here.
+    """
+    base = web.repository.report
+    successor = MetadataReport.create(
+        target=TargetFacts("primary", "ebooks", "item-2", base.target.fields),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=(),
+    )
+    successor_case = ReviewCase.create(evaluate_report(successor), successor)
+    web.repository.browse_cases.append((successor_case, successor))
+    web.repository.library_suspensions[web.case.review_case_id] = ("title",)
+    web.repository.library_shadow_abstentions[successor_case.review_case_id] = (
+        "subtitle",
+    )
+    web.repository.library_automatic_attention[successor_case.review_case_id] = (
+        "series",
+    )
+    web.repository.library_terminal_documents["item-2"] = json.dumps(
+        {
+            "attempt": 2,
+            "connection": "primary",
+            "failure_root": None,
+            "item": "item-2",
+            "lane": "projection",
+            "library": "ebooks",
+            "recovery_attempt": 1,
+            "schema_version": "review-terminal-work-v1",
+            "status": "projection",
+            "work_id": "review_work_" + "c" * 64,
+        }
+    )
+    web.login()
+
+    response = web.client.get("/api/v1/library?lens=all&limit=10")
+
+    assert response.status_code == 200, response.text
+    items = {item["item"]: item for item in response.json()["items"]}
+    assert {"item-1", "item-2"} == set(items)
+    # `title` is the one field this fixture leaves unresolved. Suspending it
+    # on the first work retires its attention; on the second work an abstained
+    # `subtitle` and a safety-suspended `series` each add one that no proposal
+    # asks for.
+    assert items["item-1"]["attention_count"] == 0
+    assert items["item-1"]["attention_state"] == "no_attention_needed"
+    assert items["item-2"]["attention_count"] == 3
+    assert items["item-2"]["attention_state"] == "needs_attention"
+    assert items["item-2"]["preparation"] is not None
+    assert items["item-2"]["preparation"]["stage"] == "projection"
+    assert items["item-2"]["preparation"]["status"] == "projection"
+    assert items["item-1"]["preparation"] is None
+
+
 def test_row_projection_refuses_every_document_the_parsers_cannot_read() -> None:
     """Every unreadable stored document is `unavailable`, surrogates included.
 

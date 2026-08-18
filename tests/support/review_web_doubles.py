@@ -65,6 +65,22 @@ from tests.unit.review_app_fixture import (
 # as `misc`, which the gate still enforces (#703).
 _AttentionRow = tuple[str, str, str, int, str | None, ReviewFieldCause | None]
 
+# The exact library row `ReviewLibrarySnapshot` declares, annotated for the
+# same reason (#711). The double emitted five of these seven columns behind a
+# standing `type: ignore[misc]`, so `suspended_destinations`,
+# `shadow_abstention_destinations` and `terminal_document` reached
+# `BrowseReviewLibrary.library()` as the padding its `len(row)` guards
+# supplied rather than as anything the double had said.
+_LibraryRow = tuple[
+    str | None,
+    str,
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    tuple[str, ...],
+    str | None,
+]
+
 
 class FakeReviewRepository:
     def __init__(self, case: ReviewCase, report) -> None:
@@ -99,6 +115,16 @@ class FakeReviewRepository:
         # automatic handling is suspended for it.
         self.attention_dispositions: dict[str, str] = {}
         self.attention_causes: dict[str, ReviewFieldCause] = {}
+        # The four library columns the real adapter derives per row, keyed so a
+        # page carries a different value for each work: the first three by the
+        # review case the adapter looks them up by, the terminal document by
+        # the target item the adapter reads it for. A work absent from a map
+        # gets the empty answer, which is the adapter's answer for a row with
+        # no case or no failed work.
+        self.library_automatic_attention: dict[str, tuple[str, ...]] = {}
+        self.library_suspensions: dict[str, tuple[str, ...]] = {}
+        self.library_shadow_abstentions: dict[str, tuple[str, ...]] = {}
+        self.library_terminal_documents: dict[str, str] = {}
 
     def review_case_ready_at(self, review_case_id: str) -> int | None:
         if review_case_id != self.case.review_case_id:
@@ -423,26 +449,39 @@ class FakeReviewRepository:
     ) -> ReviewLibrarySnapshot:
         rows = self.list_current_review_case_documents(search, limit, offset, attention)
         total, attention_total = self.count_current_review_cases(search)
+        identified = [
+            (
+                None
+                if case_document is None
+                else ReviewCase.from_json(case_document).review_case_id,
+                case_document,
+                report_document,
+            )
+            for case_document, report_document in rows
+        ]
+        # Annotated, and built as one comprehension, because that is the form
+        # mypy reports a narrowed row against as `misc`; appending to it
+        # reports `arg-type`, which is disabled for `tests.*` (#703, #711).
+        projected: list[_LibraryRow] = [
+            (
+                case_document,
+                report_document,
+                () if case_id is None else self.get_review_case_decisions(case_id),
+                ()
+                if case_id is None
+                else self.library_automatic_attention.get(case_id, ()),
+                () if case_id is None else self.library_suspensions.get(case_id, ()),
+                ()
+                if case_id is None
+                else self.library_shadow_abstentions.get(case_id, ()),
+                self.library_terminal_documents.get(
+                    MetadataReport.from_json(report_document).target.item
+                ),
+            )
+            for case_id, case_document, report_document in identified
+        ]
         return ReviewLibrarySnapshot(
-            # The fake deliberately emits the short five-element row that
-            # `BrowseReviewLibrary` pads with `row[n] if len(row) >= n + 1`,
-            # which is the tolerance this fixture exercises.
-            rows=tuple(
-                (  # type: ignore[misc]  # reason: the short library row is the tolerance this fixture exercises; padding it would delete the coverage
-                    case_document,
-                    report_document,
-                    (
-                        ()
-                        if case_document is None
-                        else self.get_review_case_decisions(
-                            ReviewCase.from_json(case_document).review_case_id
-                        )
-                    ),
-                    (),
-                    (),
-                )
-                for case_document, report_document in rows
-            ),
+            rows=tuple(projected),
             total=total,
             attention_total=attention_total,
         )
