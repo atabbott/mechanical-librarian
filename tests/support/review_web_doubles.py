@@ -59,10 +59,8 @@ from tests.unit.review_app_fixture import (
 )
 
 # The exact attention row `ReviewAttentionSnapshot` declares. `rows` below is
-# annotated with it because mypy resolves a bare `tuple(...)` against the
-# declared return type and reports a narrowed row as `arg-type`, which
-# `[tool.mypy.overrides]` disables for `tests.*`; an annotated local reports it
-# as `misc`, which the gate still enforces (#703).
+# annotated with it so a narrowed row fails the gate rather than reaching the
+# reader as padding (#703).
 _AttentionRow = tuple[str, str, str, int, str | None, ReviewFieldCause | None]
 
 # The exact library row `ReviewLibrarySnapshot` declares, annotated for the
@@ -459,9 +457,10 @@ class FakeReviewRepository:
             )
             for case_document, report_document in rows
         ]
-        # Annotated, and built as one comprehension, because that is the form
-        # mypy reports a narrowed row against as `misc`; appending to it
-        # reports `arg-type`, which is disabled for `tests.*` (#703, #711).
+        # Annotated so a narrowed row fails the gate. This once had to be one
+        # comprehension as well, because that form reports `misc` while
+        # appending reports `arg-type`, which was disabled for `tests.*`; #693
+        # enforces `arg-type` here, so both forms are now guarded (#703, #711).
         projected: list[_LibraryRow] = [
             (
                 case_document,

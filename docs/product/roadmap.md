@@ -173,6 +173,26 @@ prose becomes pointers, and CI enforces reachability and link integrity
 test-value audit with pruning, and container runtime hardening. Deletion pull
 requests name what they removed and the last SHA containing it.
 
+### Completed 0.16.2 write-path truth and signal integrity
+
+A guarded write that is refused reports the thing that refused it: a storage
+fault is no longer relabelled an unacceptable decision, a withdrawn consent or
+a revoked authority, startup recovery attempts every pending plan instead of
+stopping at the first, a permanent refusal answers 409 rather than inviting a
+retry, and a failed provider-recovery database or cover stage names the disk
+failure it hit (#677-#679, #715, #734). Qualification signals were repaired so
+a failure means what it says: a package-mirror stall no longer consumes the
+protected browser budget, the scale qualifier no longer fails for its own
+reasons, every direct dependency must carry an authority grant, a Library row
+is read at its declared width rather than padded by a narrow double, reserved
+test ports are held to the bind, and `bootstrap.composition`'s unreached
+mutants were judged rather than scored — 287 now tested, the rest accepted in
+writing beside what proves them, the largest of those accepted as unproved
+(#711, #755, #769, #770, #772-#774). The type gate now enforces `arg-type`
+across the test tree, so a double bound into a port it does not satisfy fails
+the gate; the 48 modules carrying findings are named as the burn-down backlog
+(#693).
+
 ## M0: Foundation
 
 - Enforce the recorded `AGPL-3.0-or-later` licence and notice policy.
