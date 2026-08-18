@@ -222,6 +222,31 @@ operations behind one serialization gate; SQLite remains the sole transaction
 owner. FastAPI retains only request bounds, exact Host/Origin enforcement,
 session/CSRF dependencies, response translation, and lifecycle delegation.
 
+The #641 live update stream is one further authenticated read on that same
+entry point and adds no authentication mechanism. `GET /api/v1/updates` requires
+the same unexpired opaque session, refuses a cross-origin subscribe, and is
+served private and `no-store` like every other response. Because it is the one
+read whose body keeps arriving after the check that admitted it, the session is
+re-checked as the stream runs and a lapsed session ends it rather than being
+allowed to keep reading through a connection opened while it was valid; the
+stream is also bounded by its own lifetime and closed by the existing
+graceful-shutdown path.
+
+Its frames carry invalidation and never state. Each frame's data is a closed
+object of exactly a sequence, a topic, and either null or a review case
+identity, so there is nowhere in the encoding to place a count, a work record, a
+status string, a path, a credential, a provider payload, an unfinished proposal,
+or book content; the browser discards whole any frame that is not exactly those
+three fields. A subscriber is told what changed and refetches the authoritative
+answer over the ordinary HTTP surface, which is what keeps every existing
+redaction, bound, and authority check on the only path that carries content. A
+reader whose pending set outgrows its bound is answered with more invalidation
+rather than less -- its identities collapse to whole topics -- which is sound
+only because a frame carries nothing that could be lost by collapsing it.
+Resume is the browser's own `Last-Event-ID`, and an identity minted by a
+previous process is answered with a full resync rather than a position in this
+order.
+
 The generated API contract declares that opaque owner session as an API-key
 cookie on every protected operation and marks mutation CSRF and idempotency
 headers as required. Runtime failures retain separate, value-free meanings:

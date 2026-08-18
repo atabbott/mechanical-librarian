@@ -1,0 +1,189 @@
+import { QueryClient } from '@tanstack/react-query'
+import { describe, expect, it, vi } from 'vitest'
+
+import { invalidationKeys, startLiveInvalidation } from '../src/liveInvalidation'
+import { createLiveUpdateStream, readLiveUpdate } from '../src/liveUpdates'
+import type { LiveUpdate } from '../src/liveUpdates'
+
+const CASE = `review_case_${'a'.repeat(64)}`
+
+class FakeEventSource {
+  readyState = 0
+  onopen: (() => void) | null = null
+  onerror: (() => void) | null = null
+  closed = false
+  private readonly handlers = new Map<string, ((event: { data: string }) => void)[]>()
+  addEventListener(name: string, handler: (event: { data: string }) => void) {
+    this.handlers.set(name, [...(this.handlers.get(name) ?? []), handler])
+  }
+  close() {
+    this.closed = true
+    this.readyState = 2
+  }
+  emit(name: string, data: unknown) {
+    for (const handler of this.handlers.get(name) ?? []) handler({ data: JSON.stringify(data) })
+  }
+}
+
+const openStream = () => {
+  const sources: FakeEventSource[] = []
+  const timers: (() => void)[] = []
+  const stream = createLiveUpdateStream({
+    open: () => {
+      const source = new FakeEventSource()
+      sources.push(source)
+      return source as unknown as EventSource
+    },
+    schedule: (run) => {
+      timers.push(run)
+      return timers.length
+    },
+    cancel: () => undefined,
+  })
+  const received: LiveUpdate[] = []
+  stream.subscribe((update) => received.push(update))
+  const source = sources[0]
+  if (!source) throw new Error('the stream opened no connection')
+  return { stream, source, sources, timers, received }
+}
+
+describe('live update frames', () => {
+  it('refuses anything that is not exactly the three invalidation fields', () => {
+    expect(
+      readLiveUpdate(JSON.stringify({ sequence: 4, subject: null, topic: 'library' })),
+    ).toEqual({ sequence: 4, subject: null, topic: 'library' })
+    expect(readLiveUpdate(JSON.stringify({ sequence: 4, subject: CASE, topic: 'case' }))).toEqual({
+      sequence: 4,
+      subject: CASE,
+      topic: 'case',
+    })
+    // A payload is the failure this refusal exists for: a server that started
+    // sending state must be discarded whole, never partially trusted.
+    expect(
+      readLiveUpdate(JSON.stringify({ sequence: 4, subject: null, topic: 'library', ready: 12 })),
+    ).toBeNull()
+    expect(readLiveUpdate(JSON.stringify({ sequence: 4, topic: 'library' }))).toBeNull()
+    expect(
+      readLiveUpdate(JSON.stringify({ sequence: -1, subject: null, topic: 'library' })),
+    ).toBeNull()
+    expect(
+      readLiveUpdate(JSON.stringify({ sequence: 1.5, subject: null, topic: 'library' })),
+    ).toBeNull()
+    expect(
+      readLiveUpdate(JSON.stringify({ sequence: 4, subject: null, topic: 'secrets' })),
+    ).toBeNull()
+    expect(
+      readLiveUpdate(JSON.stringify({ sequence: 4, subject: '../etc', topic: 'case' })),
+    ).toBeNull()
+    expect(readLiveUpdate(JSON.stringify([1, 2, 3]))).toBeNull()
+    expect(readLiveUpdate('not json')).toBeNull()
+    expect(readLiveUpdate(`"${'a'.repeat(600)}"`)).toBeNull()
+  })
+
+  it('drops a position it has already seen and adopts one a restart hands back', () => {
+    const { source, received } = openStream()
+
+    source.emit('resync', { sequence: 0, subject: null, topic: 'resync' })
+    source.emit('library', { sequence: 7, subject: null, topic: 'library' })
+    // Redelivery after a reconnect must not move a counter twice.
+    source.emit('library', { sequence: 7, subject: null, topic: 'library' })
+    source.emit('case', { sequence: 6, subject: CASE, topic: 'case' })
+    // A restarted server's order begins again. Its resync is adopted rather
+    // than compared, so the low positions that follow are not read as stale.
+    source.emit('resync', { sequence: 0, subject: null, topic: 'resync' })
+    source.emit('library', { sequence: 1, subject: null, topic: 'library' })
+
+    expect(received.map((update) => [update.topic, update.sequence])).toEqual([
+      ['resync', 0],
+      ['library', 7],
+      ['resync', 0],
+      ['library', 1],
+    ])
+  })
+
+  it('reports degraded and retries once only when the browser has given up', () => {
+    const { stream, source: first, sources, timers } = openStream()
+
+    first.onopen?.()
+    expect(stream.state).toBe('live')
+
+    // A break the browser will reconnect on its own: degraded, but no second
+    // connection of ours, which would leave two streams on one tab.
+    first.readyState = 0
+    first.onerror?.()
+    expect(stream.state).toBe('degraded')
+    expect(timers).toHaveLength(0)
+    expect(sources).toHaveLength(1)
+
+    // A refusal the browser will not retry -- an expired session -- is the one
+    // case that needs an attempt of our own.
+    first.readyState = 2
+    first.onerror?.()
+    expect(timers).toHaveLength(1)
+    timers[0]?.()
+    expect(sources).toHaveLength(2)
+    expect(first.closed).toBe(true)
+  })
+})
+
+describe('live invalidation', () => {
+  it('invalidates only the queries a topic names, never the whole Library', () => {
+    expect(invalidationKeys({ sequence: 1, subject: CASE, topic: 'case' })).toEqual([
+      ['review-case', CASE],
+    ])
+    // The load-bearing absence: one case changing must not rebuild Library.
+    expect(invalidationKeys({ sequence: 1, subject: CASE, topic: 'case' })).not.toContainEqual([
+      'library',
+    ])
+    expect(invalidationKeys({ sequence: 1, subject: null, topic: 'preparation' })).toEqual([
+      ['review-preparation'],
+    ])
+    expect(invalidationKeys({ sequence: 1, subject: null, topic: 'library' })).toEqual([
+      ['library'],
+      ['attention'],
+    ])
+    expect(invalidationKeys({ sequence: 1, subject: null, topic: 'activity' })).toEqual([
+      ['activity'],
+    ])
+    // Only a resync, which is the server admitting it cannot say what changed,
+    // is answered by asking about everything.
+    expect(invalidationKeys({ sequence: 1, subject: null, topic: 'resync' })).toHaveLength(5)
+  })
+
+  it('collapses a burst of announcements into one refetch of each distinct query', () => {
+    const queryClient = new QueryClient()
+    const invalidate = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue(undefined)
+    const timers: (() => void)[] = []
+    const listeners: ((update: LiveUpdate) => void)[] = []
+    const stream = {
+      state: 'live' as const,
+      subscribe(listener: (update: LiveUpdate) => void) {
+        listeners.push(listener)
+        return () => undefined
+      },
+      observeState: () => () => undefined,
+      close: () => undefined,
+    }
+    const stop = startLiveInvalidation(stream, queryClient, {
+      schedule: (run) => {
+        timers.push(run)
+        return timers.length
+      },
+      cancel: () => undefined,
+    })
+
+    // Fifty works finishing in one publication is the case that made polling
+    // hurt. It must cost two refetches -- the page and the rail -- not fifty.
+    for (let index = 0; index < 50; index += 1)
+      for (const listener of listeners)
+        listener({ sequence: index, subject: null, topic: 'library' })
+    expect(invalidate).not.toHaveBeenCalled()
+    timers[0]?.()
+
+    expect(invalidate.mock.calls.map(([argument]) => argument?.queryKey)).toEqual([
+      ['library'],
+      ['attention'],
+    ])
+    stop()
+  })
+})

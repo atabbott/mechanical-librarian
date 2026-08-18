@@ -32,6 +32,39 @@ from mechanical_librarian.application.review_pipeline import (
     pipeline_scan_id,
 )
 
+# The eight buckets #641 names, expressed once over the two persisted columns
+# that decide them. Order is the order an owner reads them in: the work has not
+# started, it is moving through the stages, it is ready, or it could not finish.
+#
+# A terminal state is tested before a stage, because `stage` on a failed row is
+# where it stopped rather than where it is. `extraction` is the one stage split
+# by state: a work queued for extraction has not started, and one running it is
+# being read, and those are different sentences to an owner watching.
+_STAGE_BUCKETS = (
+    ("queued", "w.state='queued' AND w.stage='extraction'"),
+    ("extracting", "w.state='running' AND w.stage='extraction'"),
+    ("providers", "w.state IN ('queued','running') AND w.stage='provider'"),
+    ("proposals", "w.state IN ('queued','running') AND w.stage='proposal'"),
+    ("admission", "w.state IN ('queued','running') AND w.stage='admission'"),
+    ("projection", "w.state IN ('queued','running') AND w.stage='projection'"),
+    ("ready", "w.state='complete'"),
+    ("failed", "w.state IN ('failed','stale')"),
+)
+_STAGE_COUNT_SQL = ",".join(
+    f"COALESCE(SUM(CASE WHEN {predicate} THEN 1 ELSE 0 END),0)"
+    for _name, predicate in _STAGE_BUCKETS
+)
+
+
+_EMPTY_STAGES = tuple((name, 0) for name, _predicate in _STAGE_BUCKETS)
+
+
+def _stages(row: tuple[object, ...], offset: int) -> tuple[tuple[str, int], ...]:
+    return tuple(
+        (name, int(cast(int, row[offset + index])))
+        for index, (name, _predicate) in enumerate(_STAGE_BUCKETS)
+    )
+
 
 class SQLiteReviewScanRepository(ConnectionScoped):
     """Admit, pause, recover and gate the scans review preparation may run."""
@@ -131,7 +164,17 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             self._refresh_target_connection_affected(connection)
             transaction.commit()
             return PipelineProgress(
-                scan_id, connection, library, "queued", 0, 0, 0, 0, False, requested_at
+                scan_id,
+                connection,
+                library,
+                "queued",
+                0,
+                0,
+                0,
+                0,
+                False,
+                requested_at,
+                _EMPTY_STAGES,
             )
         except (sqlite3.Error, MetadataReportError, ReviewPipelineError) as error:
             transaction.rollback()
@@ -155,10 +198,11 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 return None
             counts = self._connection.execute(
                 "SELECT "
-                "COALESCE(SUM(CASE WHEN state IN ('complete','failed','stale') THEN 1 ELSE 0 END),0),"
-                "COALESCE(SUM(CASE WHEN state='complete' AND review_case_id IS NOT NULL THEN 1 ELSE 0 END),0),"
-                "COALESCE(SUM(CASE WHEN state IN ('failed','stale') THEN 1 ELSE 0 END),0) "
-                "FROM review_preparation_work WHERE scan_id=?",
+                "COALESCE(SUM(CASE WHEN w.state IN ('complete','failed','stale') THEN 1 ELSE 0 END),0),"
+                "COALESCE(SUM(CASE WHEN w.state='complete' AND w.review_case_id IS NOT NULL THEN 1 ELSE 0 END),0),"
+                "COALESCE(SUM(CASE WHEN w.state IN ('failed','stale') THEN 1 ELSE 0 END),0),"
+                f"{_STAGE_COUNT_SQL} "
+                "FROM review_preparation_work w WHERE w.scan_id=?",
                 (row[0],),
             ).fetchone()
             return PipelineProgress(
@@ -172,6 +216,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 counts[2],
                 bool(row[3]),
                 row[4],
+                _stages(counts, 3),
             )
         except sqlite3.Error as error:
             raise MetadataReportError(
@@ -213,7 +258,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "s.rescan_requested,s.updated_at,"
                 "COALESCE(SUM(CASE WHEN w.state IN ('complete','failed','stale') THEN 1 ELSE 0 END),0),"
                 "COALESCE(SUM(CASE WHEN w.state='complete' AND w.review_case_id IS NOT NULL THEN 1 ELSE 0 END),0),"
-                "COALESCE(SUM(CASE WHEN w.state IN ('failed','stale') THEN 1 ELSE 0 END),0) "
+                "COALESCE(SUM(CASE WHEN w.state IN ('failed','stale') THEN 1 ELSE 0 END),0),"
+                f"{_STAGE_COUNT_SQL} "
                 "FROM review_preparation_scans s "
                 "LEFT JOIN review_preparation_work w ON w.scan_id=s.scan_id "
                 f"WHERE ({scope}) AND s.scan_id=(SELECT selected.scan_id "
@@ -238,6 +284,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     row[9],
                     bool(row[5]),
                     row[6],
+                    _stages(row, 10),
                 )
                 for row in rows
             }

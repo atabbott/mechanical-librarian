@@ -208,18 +208,20 @@ class _PagedRepository:
         return tuple(value.to_json() for value in values[:limit])
 
     def pending_field_effect_decision_counts(self):
-        counts: dict[str, int] = {}
+        counts: dict[tuple[str, str], int] = {}
         for value in self.decisions:
             library = "beta" if value.occurred_at == 101 else "alpha"
-            counts[library] = counts.get(library, 0) + 1
+            key = (library, value.destination)
+            counts[key] = counts.get(key, 0) + 1
         return tuple(
             {
                 "connection": "primary",
                 "library": library,
                 "origin": "human",
+                "destination": destination,
                 "count": count,
             }
-            for library, count in sorted(counts.items())
+            for (library, destination), count in sorted(counts.items())
         )
 
     def current_field_effect_consent(self, connection, library, destination):
@@ -533,6 +535,7 @@ def test_schedule_and_activity_accept_a_prior_persisted_f20_decision() -> None:
                     "connection": "primary",
                     "library": "alpha",
                     "origin": "automatic",
+                    "destination": "title",
                     "count": 1,
                 },
             )
@@ -1042,6 +1045,87 @@ def test_activity_exposes_incremental_consent_for_a_partially_enabled_library() 
     assert destinations["title"]["consented"]
     assert not destinations["authors"]["consented"]
     assert destinations["subtitle"]["state"] == "field_unavailable"
+
+
+def test_waiting_is_split_by_next_step_and_counted_per_destination() -> None:
+    """`46 Waiting safely` is four different next steps, and this separates them.
+
+    An owner reading one number cannot tell consent they can give from a retry
+    that time resolves, and cannot tell which permission would carry which
+    prepared work. Both are read off state the projection already assembled, so
+    a reason can never disagree with the queue it describes (#639).
+    """
+
+    class Repository(_PagedRepository):
+        def pending_field_effect_decision_counts(self):
+            return (
+                {
+                    "connection": "primary",
+                    "library": "alpha",
+                    "origin": "human",
+                    "destination": "title",
+                    "count": 2,
+                },
+                {
+                    "connection": "primary",
+                    "library": "alpha",
+                    "origin": "automatic",
+                    "destination": "authors",
+                    "count": 3,
+                },
+            )
+
+        def field_effect_activity_data(self, _limit):
+            return {
+                "consented_destinations": [
+                    {
+                        "connection": "primary",
+                        "library": "alpha",
+                        "destination": "title",
+                    }
+                ],
+                "counts": {
+                    "planned": 4,
+                    "retryable": 2,
+                    "claimed": 1,
+                    "applying": 1,
+                },
+                "events": [],
+                "paused": False,
+                "suspensions": [],
+            }
+
+    service = ContinuousGuardedApplication(
+        Repository([]),
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _MixedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+    )
+
+    activity = service.activity()
+
+    assert activity["waiting"] == {
+        # Prepared against `authors`, which no consent covers: only the owner
+        # resolves this, and the `Enable writes` action is what resolves it.
+        "awaiting_permission": 3,
+        "scheduled": 4,
+        "retrying": 2,
+        "held_for_recovery": 0,
+        "applying": 2,
+    }
+    destinations = {
+        destination["destination"]: destination
+        for destination in activity["capabilities"][0]["destinations"]
+    }
+    assert destinations["title"]["prepared"] == 2
+    assert destinations["authors"]["prepared"] == 3
+    assert destinations["series"]["prepared"] == 0
 
 
 def test_activity_only_projection_uses_only_persisted_capability_state() -> None:

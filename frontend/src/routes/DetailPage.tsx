@@ -485,6 +485,16 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                         aria-label={`Choose a ${labelWords(field.destination)} value`}
                       >
                         <p className="choice-intro">{field.classificationReason}</p>
+                        {/*
+                          The same promise the workspace makes, in the same
+                          words: what a tap records, and whether anything leaves
+                          for Audiobookshelf because of it (#639).
+                        */}
+                        <p className={`cm-write-state is-${data.writesConsented ? 'on' : 'off'}`}>
+                          {data.writesConsented
+                            ? 'Selecting an outcome records this field and prepares a guarded Audiobookshelf write.'
+                            : 'Selecting an outcome records this field only. Audiobookshelf is unchanged until writes are enabled.'}
+                        </p>
                         <div
                           className={`direct-choice-grid${field.preservationOnly ? ' preservation-only' : ''}`}
                         >

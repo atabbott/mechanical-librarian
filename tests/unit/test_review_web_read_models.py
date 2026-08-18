@@ -371,6 +371,9 @@ def test_shutdown_closes_both_admissions_before_one_shared_deadline(
                 raise GuardedApplicationError("shutdown_timeout")
 
     class FakePreparation:
+        def attach_updates(self, announce: object) -> None:
+            return None
+
         def start(self) -> None:
             calls.append("preparation-start")
 
@@ -527,6 +530,18 @@ def test_review_preparation_is_authenticated_csrf_bound_and_bounded(
         "ready": 1,
         "rescan_requested": False,
         "scan_id": "review_scan_" + "a" * 64,
+        # Every bucket #641 names, in owner reading order, carried whole rather
+        # than collapsed into the three "how far through" numbers beside it.
+        "stages": [
+            {"stage": "queued", "count": 1},
+            {"stage": "extracting", "count": 1},
+            {"stage": "providers", "count": 1},
+            {"stage": "proposals", "count": 0},
+            {"stage": "admission", "count": 0},
+            {"stage": "projection", "count": 0},
+            {"stage": "ready", "count": 1},
+            {"stage": "failed", "count": 1},
+        ],
         "state": "processing",
         "total": 5,
     }

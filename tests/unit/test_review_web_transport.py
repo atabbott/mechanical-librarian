@@ -906,6 +906,8 @@ def test_openapi_is_deterministic_and_secret_free(
         ),
         ("post", "/api/v1/metadata-policy/validate"),
         ("get", "/api/v1/review-preparation"),
+        # The live invalidation stream is a protected read like any other.
+        ("get", "/api/v1/updates"),
         ("get", "/api/v1/review-cases/{review_case_id}"),
         (
             "get",
