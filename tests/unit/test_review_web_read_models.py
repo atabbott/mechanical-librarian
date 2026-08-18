@@ -451,15 +451,25 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
         "/api/v1/activity?event_type=all&range_days=30&page=1&page_size=25"
     )
     assert filtered.status_code == 200, filtered.text
-    assert filtered.json()["ledger"] == {
-        "event_type": "all",
-        "page": 1,
-        "page_count": 1,
-        "page_size": 25,
-        "query": None,
-        "range_days": 30,
-        "total": 1,
-    }
+    # The ledger block is the projection's own, echoed unchanged. Comparing
+    # against the projection rather than a copied literal keeps this a proof
+    # that the transport does not reshape it, and stops the seeded ledger's
+    # size from being restated in a second place that can drift from it.
+    ledger = filtered.json()["ledger"]
+    assert (
+        ledger
+        == application.activity(event_type="all", range_days=30, page=1, page_size=25)[
+            "ledger"
+        ]
+    )
+    assert ledger["page_count"] > 1, "the seeded ledger must cross a page boundary"
+    assert (
+        ledger["event_type"],
+        ledger["page"],
+        ledger["page_size"],
+        ledger["query"],
+        ledger["range_days"],
+    ) == ("all", 1, 25, None, 30)
     assert web.client.get("/api/v1/activity?range_days=8").status_code == 422
     denied = web.client.post(
         "/api/v1/activity/consent",

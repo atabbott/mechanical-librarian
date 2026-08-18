@@ -19,6 +19,15 @@ LONG_TITLE = (
     f"{UNBROKEN_TITLE_SEGMENT} — an intentionally long synthetic title for "
     "narrow-layout qualification"
 )
+# A description long enough that the row's change column, and the expanded
+# fact beside it, are the only things bounding it.
+LONG_DESCRIPTION = (
+    "An intentionally unbounded synthetic description that keeps going well "
+    "past any width a row column has, so a projection that forgot to bound it "
+    f"is a layout fault rather than a subtle one. {UNBROKEN_TITLE_SEGMENT} "
+    "And it continues past that too, in ordinary prose with ordinary spaces, "
+    "so a wrap that is allowed to happen has somewhere to happen."
+)
 _F20_CANDIDATE_SHA256 = (
     "aba7b436d88bb4e884cda0c4b247aa871063dce459e0f5fbea298227a1e9b06c"
 )
@@ -872,6 +881,86 @@ def _attention() -> dict[str, object]:
     }
 
 
+# The value shapes an Activity row has to survive: a scalar, a joined list, a
+# series membership with an index, an opaque cover identity, an unbounded
+# description, and a policy setting. Each carries the compact form the row
+# shows and the whole sentence the row announces, exactly as the projection
+# emits them, so the layout is stressed by real widths rather than by labels.
+_COHORT_FIELD_LABELS = {
+    "authors": "Authors",
+    "cover": "Cover",
+    "description": "Description",
+    "policy": "Policy",
+    "series": "Series",
+    "title": "Title",
+}
+_COHORT_CHANGES = {
+    "title": (
+        "Paper Moons: Larkspur \u2192 Paper Moons over Larkspur Station",
+        "Set Title from Paper Moons: Larkspur to Paper Moons over Larkspur Station",
+        "Paper Moons over Larkspur Station",
+    ),
+    "authors": (
+        "Not set \u2192 Ursula K. Le Guin, Margaret Atwood, \u96e8\u306e\u5730\u56f3",
+        "Set Authors from Not set to Ursula K. Le Guin, Margaret Atwood, \u96e8\u306e\u5730\u56f3",
+        "Ursula K. Le Guin, Margaret Atwood, \u96e8\u306e\u5730\u56f3",
+    ),
+    "series": (
+        "Not set \u2192 Earthsea Cycle (1), Hainish Cycle (4)",
+        "Set Series from Not set to Earthsea Cycle (1), Hainish Cycle (4)",
+        "Earthsea Cycle (1), Hainish Cycle (4)",
+    ),
+    "cover": (
+        "Current cover \u2192 selected cover",
+        "Set Cover from the current image to the selected image",
+        "A recorded cover image",
+    ),
+    "description": (
+        LONG_DESCRIPTION[:119] + "\u2026",
+        "Set Description from Not set to " + LONG_DESCRIPTION[:119] + "\u2026",
+        LONG_DESCRIPTION[:511] + "\u2026",
+    ),
+    "policy": ("3 changes activated", "3 changes activated", "Updated"),
+}
+_COHORT_POLICY_CHANGES = [
+    {
+        "field": "Title layout",
+        "setting": "Review mode",
+        "previous": "Ask me",
+        "next": "Automatic",
+    },
+    {
+        "field": "Description fill",
+        "setting": "Representation",
+        "previous": "Safe plain text",
+        "next": "Visible Google text",
+    },
+    {
+        "field": "Cover",
+        "setting": "Review mode",
+        "previous": "Ask me",
+        "next": "Automatic",
+    },
+]
+
+
+def _cohort_event_type(destination: str, origin: str, failure: str | None) -> str:
+    if destination == "policy":
+        return "policy"
+    if failure:
+        return "safety"
+    return "review" if origin in {"human", "owner_retry"} else "metadata"
+
+
+def _cohort_category(destination: str, origin: str, failure: str | None) -> str:
+    return {
+        "policy": "policy",
+        "safety": "recovery",
+        "review": "owner",
+        "metadata": "automatic",
+    }[_cohort_event_type(destination, origin, failure)]
+
+
 def _activity(query: dict[str, list[str]]) -> dict[str, object]:
     events = [
         (
@@ -971,6 +1060,22 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
             "human",
             None,
         ),
+        (
+            "Work with an unbounded description",
+            "Household ebooks",
+            "description",
+            "verified",
+            "automatic_policy",
+            None,
+        ),
+        (
+            "Library policy",
+            "Library policy",
+            "policy",
+            "completed",
+            "policy",
+            None,
+        ),
     ]
     return {
         "schema_version": "continuous-field-activity-v2",
@@ -1060,10 +1165,18 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         "events": [
             {
                 "event_id": f"activity-event-{index}",
-                "event_type": ("review" if origin == "human" else "metadata"),
+                "event_type": _cohort_event_type(destination, origin, failure),
+                "category": _cohort_category(destination, origin, failure),
+                "change": _COHORT_CHANGES[destination][0],
+                "change_detail": _COHORT_CHANGES[destination][1],
+                "field_label": _COHORT_FIELD_LABELS[destination],
+                "policy_changes": (
+                    _COHORT_POLICY_CHANGES if destination == "policy" else []
+                ),
                 "evidence": [
-                    {"label": "Recorded origin", "value": origin},
-                    {"label": "Outcome", "value": state},
+                    {"label": "Previous value", "value": "Not set"},
+                    {"label": "New value", "value": _COHORT_CHANGES[destination][2]},
+                    {"label": "Chosen by", "value": "Library owner"},
                 ],
                 "work_id": f"book-{index}",
                 "work_label": work,

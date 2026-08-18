@@ -153,6 +153,19 @@ acceptance, not directional evidence. #589, #590, #591, #607, #608, and #609
 are merged and the installed surfaces verified against the protected reference
 and accepted refinements. No release or deployment is implied.
 
+### Completed 0.15.4 real-library correctness and recovery
+
+Every surface tells the truth about a real library rather than about a healthy
+one. A failed provider lane recovers through one scoped canary instead of
+stranding the works behind it; a shared connection failure is named and
+recovered rather than reported as a metadata problem; preparation and completed
+work reach the open tab as they happen; and Library, Policy and Activity stay
+reversible, unclipped and readable at every accepted width. Review choices,
+Policy state, write permission, and Activity records each say what they are in
+the owner's words and carry the evidence behind that claim. The 24 issues from
+#408 through #644 are merged and verified against the protected reference. No
+release or deployment is implied.
+
 ### Completed 0.16.0 engineering health
 
 Every check the contributor documentation promises is enforced by the public

@@ -166,7 +166,13 @@ describe('Library route', () => {
     const user = userEvent.setup()
     const { router } = renderRoute('/library?lens=needs_attention&preview=case-1&cursor=page-2')
 
-    const box = await screen.findByLabelText('Search title, author, identifier, library, or format')
+    // Wait for the route to finish arriving before taking the keyboard. The
+    // arrival re-renders the panel, and a box grabbed before that is a
+    // detached node every keystroke goes into and nothing comes out of --
+    // which passes whenever the machine is quick and fails whenever the rest
+    // of the suite is competing for it.
+    await waitFor(() => expect(document.querySelector('[data-route-focus]')).toHaveFocus())
+    const box = screen.getByLabelText('Search title, author, identifier, library, or format')
     await user.type(box, 'clock')
     await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'needs_attention', preview: 'case-1', q: 'clock' }))
     await user.click(screen.getByRole('button', { name: 'Clear' }))

@@ -1,9 +1,13 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
-
 import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../api/http'
-import type { ActivityEventType, ActivitySearch, ActivityView } from '../api/http'
+import type {
+  ActivityCategory,
+  ActivityLibraryView,
+  ActivitySearch,
+  ActivityView,
+} from '../api/http'
 import { activityOutcome } from '../activityState'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
@@ -16,24 +20,9 @@ import {
   usePreparation,
   useReviewContext,
 } from '../router'
-
-const records = (value: unknown): readonly Record<string, unknown>[] =>
-  Array.isArray(value)
-    ? value.filter(
-        (item): item is Record<string, unknown> =>
-          typeof item === 'object' && item !== null && !Array.isArray(item),
-      )
-    : []
-const text = (value: unknown, fallback = '') => (typeof value === 'string' ? value : fallback)
-const count = (value: unknown) =>
-  typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0
-const capabilityDestinations = (capability: Record<string, unknown> | undefined) =>
-  records(capability?.destinations).map((destination) => ({
-    destination: text(destination.destination),
-    state: text(destination.state, 'not_ready'),
-    consented: destination.consented === true,
-    prepared: count(destination.prepared),
-  }))
+// The activity response is validated into `ActivityDisplayView` at the
+// transport boundary, so this route reads it as the typed view it already is
+// rather than re-deriving `unknown` shapes a second time (#636).
 const capabilityLabel = (state: string) =>
   ({
     allowed: 'Ready for consent',
@@ -64,19 +53,22 @@ const stateLabel = (state: string) =>
     superseded: 'Superseded',
     abandoned: 'Stopped safely',
   })[state] ?? 'Recorded'
-const categoryLabel: Record<ActivityEventType, string> = {
-  review: 'Review',
-  policy: 'Policy',
-  metadata: 'Metadata',
-  safety: 'Safety',
-  unknown: 'Recorded',
+// What the owner calls a record, on the row and on the control that filters
+// for it, so a chip and the rows it selects never use different words. The
+// filter axis is still the durable event type the ledger is indexed by; only
+// the language is the owner's.
+const categoryLabel: Record<ActivityCategory, string> = {
+  owner: 'Owner choice',
+  automatic: 'Automatic choice',
+  policy: 'Policy change',
+  recovery: 'Recovery',
 }
 const typeOptions = [
   { id: 'all', label: 'All' },
-  { id: 'review', label: 'Reviews' },
-  { id: 'policy', label: 'Policy' },
-  { id: 'metadata', label: 'Metadata' },
-  { id: 'safety', label: 'Safety' },
+  { id: 'review', label: 'Owner choices' },
+  { id: 'metadata', label: 'Automatic choices' },
+  { id: 'policy', label: 'Policy changes' },
+  { id: 'safety', label: 'Recovery' },
 ] as const
 type ActivitySearchUpdate = Partial<Omit<ActivitySearch, 'q'>> & { q?: string | undefined }
 const locationIdentity = (location: { href: string; state: { __TSR_key?: string } }) =>
@@ -94,7 +86,6 @@ const dateParts = (value: number | null) => {
     }).format(date),
   }
 }
-
 function PageJump({
   page,
   pageCount,
@@ -153,7 +144,6 @@ function PageJump({
     </label>
   )
 }
-
 export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const { http, queryClient } = useReviewContext()
   const router = useRouter()
@@ -298,29 +288,24 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const connection =
     connectionConditions.find((item) => item.state !== 'recovered') ?? connectionConditions[0]
   const ledger = data.ledger
-  const configured = records(data.configured_libraries)
-  const enabled = records(data.enabled_libraries)
-  const capabilities = records(data.capabilities)
-  const capability = (library: string) =>
-    capabilities.find((item) => text(item.library) === library)
-  const preparedCount = (library: Record<string, unknown>) =>
-    typeof library.prepared === 'object' && library.prepared
-      ? count((library.prepared as Record<string, unknown>).total)
-      : 0
+  const configured = data.configured_libraries
+  const enabled = data.enabled_libraries
+  const capability = (library: string) => data.capabilities.find((item) => item.library === library)
+  const preparedCount = (library: ActivityLibraryView) => library.prepared?.total ?? 0
   const consentCandidates = configured.filter((item) =>
-    capabilityDestinations(capability(text(item.library))).some(
+    (capability(item.library)?.destinations ?? []).some(
       (destination) => destination.state === 'allowed' && !destination.consented,
     ),
   )
   const selectable = consentCandidates.filter((item) => {
-    const state = text(capability(text(item.library))?.state, 'not_ready')
+    const state = capability(item.library)?.state ?? 'not_ready'
     return (
       data.backup_ready &&
       ['allowed', 'partially_allowed'].includes(state) &&
       preparedCount(item) > 0
     )
   })
-  const selectableNames = new Set(selectable.map((item) => text(item.library)))
+  const selectableNames = new Set(selectable.map((item) => item.library))
   const [selection, setSelection] = useState(() => ({ source: data, names: new Set<string>() }))
   if (selection.source !== data)
     setSelection({
@@ -367,12 +352,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     },
   })
   const selectedGrants = selectable.flatMap((library) => {
-    const name = text(library.library)
+    const name = library.library
     return selected.has(name)
       ? [
           {
             library: name,
-            destinations: capabilityDestinations(capability(name))
+            destinations: (capability(name)?.destinations ?? [])
               .filter((destination) => destination.state === 'allowed')
               .map((destination) => destination.destination),
           },
@@ -457,9 +442,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       if (restoredKey) restoreFocus(restoredKey, version)
     })
   }
-  const suspensions = records(data.suspensions)
+  const suspensions = data.suspensions
   const writes = ['claimed', 'applying', 'reconciling'].reduce(
-    (total, state) => total + count(data.counts[state]),
+    (total, state) => total + (data.counts[state] ?? 0),
     0,
   )
   const providerRecovery = data.provider_recovery ?? []
@@ -492,9 +477,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const consentState = consent.state
   const consentBlocked = consent.blocked
   const consentActionable = consent.actionable
-
+  // One reading of "prepared work is waiting on the owner", shared by the
+  // masthead pill, the status panel and the current waiting item. #639 asks
+  // that no screen say no action is required while its own displayed prepared
+  // work requires consent, and three cascades each deciding that separately is
+  // how one of them came to say it directly above the count that refutes it.
+  const permissionNeeded = consentState === 'off' && offeredGrants.length > 0
   const hasAuthority = enabled.length > 0 || suspensions.length > 0 || needsConsent
-
   return (
     <div
       className="cm-activity-route"
@@ -519,7 +508,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 ? 'Connection recovered'
                 : recoveryCount
                   ? 'Recovery available'
-                  : consentState === 'off' && offeredGrants.length
+                  : permissionNeeded
                     ? 'Action needed'
                     : consentState === 'enabling'
                       ? 'Enabling writes'
@@ -645,9 +634,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   ? 'Library connection recovered'
                   : recoveryCount
                     ? 'Recovery needs attention'
-                    : data.paused
-                      ? 'New work is paused'
-                      : 'No intervention needed'}
+                    : permissionNeeded
+                      ? 'Prepared work needs your permission'
+                      : data.paused
+                        ? 'New work is paused'
+                        : 'No intervention needed'}
           </h2>
           <p>
             {connection?.state === 'checking'
@@ -660,9 +651,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.`
                     : recoveryCount
                       ? 'Affected work remains held until its current state can be reconciled safely.'
-                      : data.paused
-                        ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
-                        : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}
+                      : permissionNeeded
+                        ? `${String(offeredChanges)} prepared ${offeredChanges === 1 ? 'change is' : 'changes are'} ready and will stay unwritten until you enable writes.`
+                        : data.paused
+                          ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
+                          : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}
           </p>
         </div>
         <dl>
@@ -699,9 +692,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 {waitingEvent.work_label} · {fieldLabel(waitingEvent.destination)} update
               </strong>
               <span>
-                {data.paused
-                  ? 'Resume new work when you are ready. No automatic check will start while new work is paused.'
-                  : 'Next exact-current check runs automatically. No action is required.'}
+                {permissionNeeded
+                  ? 'This change stays prepared and unwritten until you enable writes.'
+                  : data.paused
+                    ? 'Resume new work when you are ready. No automatic check will start while new work is paused.'
+                    : 'Next exact-current check runs automatically. No action is required.'}
               </span>
             </div>
           </div>
@@ -770,15 +765,15 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               {enabled.map((library) => (
                 <button
                   className="activity-revoke"
-                  key={`${text(library.connection)}:${text(library.library)}`}
+                  key={`${library.connection}:${library.library}`}
                   disabled={mutation.isPending}
                   onClick={() =>
                     mutation.mutate({
-                      path: `activity/${encodeURIComponent(text(library.connection))}/${encodeURIComponent(text(library.library))}/revoke`,
+                      path: `activity/${encodeURIComponent(library.connection)}/${encodeURIComponent(library.library)}/revoke`,
                     })
                   }
                 >
-                  Remove write permission for {text(library.library)}
+                  Remove write permission for {library.library}
                 </button>
               ))}
               {needsConsent ? (
@@ -793,9 +788,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               {suspensions.length ? (
                 <div className="cm-activity-recovery-facts" aria-label="Recovery facts">
                   {suspensions.map((item, index) => (
-                    <p key={`${text(item.connection)}:${text(item.destination)}:${String(index)}`}>
+                    <p key={`${item.connection}:${item.destination ?? ''}:${String(index)}`}>
                       <strong>Recovery:</strong>{' '}
-                      {fieldLabel(text(item.reason, 'A shared condition is being checked'))}. No
+                      {fieldLabel(item.reason || 'A shared condition is being checked')}. No
                       accepted decision is retried blindly.
                     </p>
                   ))}
@@ -812,8 +807,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     </p>
                   </div>
                   {configured.map((library) => {
-                    const name = text(library.library)
-                    const state = text(capability(name)?.state, 'not_ready')
+                    const name = library.library
+                    const state = capability(name)?.state ?? 'not_ready'
                     const disabled = !selectableNames.has(name)
                     return (
                       <label className="activity-consent-library" key={name}>
@@ -907,8 +902,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         <div className="cm-activity-columns" aria-hidden="true">
           <span>When</span>
           <span>Type</span>
-          <span>Outcome</span>
-          <span>Status</span>
+          <span>Work and field</span>
+          <span>Change</span>
+          <span>Result</span>
           <span />
         </div>
         <div className="cm-activity-events">
@@ -924,14 +920,23 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   {currentDate.day !== previousDate ? <h3>{currentDate.day}</h3> : null}
                   <article className={expanded ? 'is-expanded' : ''}>
                     <time>{currentDate.time}</time>
-                    <span className={`cm-activity-category is-${event.event_type}`}>
-                      {categoryLabel[event.event_type]}
+                    <span className={`cm-activity-category is-${event.category}`}>
+                      {categoryLabel[event.category]}
                     </span>
-                    <div className="cm-activity-outcome">
+                    <div className="cm-activity-work">
                       <strong title={event.work_label}>{event.work_label}</strong>
                       <span>
-                        {fieldLabel(event.destination)} · {event.library}
+                        {event.field_label} · {event.library}
                       </span>
+                    </div>
+                    {/*
+                      The arrow in `change` is a glyph most screen readers drop,
+                      so the announced row carries the same change as a whole
+                      sentence. Both come from the one projection, so they
+                      cannot come to disagree.
+                    */}
+                    <div className="cm-activity-change" aria-label={event.change_detail}>
+                      <span aria-hidden="true">{event.change}</span>
                     </div>
                     <b>{stateLabel(event.state)}</b>
                     <button
@@ -939,17 +944,43 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                       aria-controls={`activity-evidence-${event.event_id}`}
                       onClick={() => setExpandedId(expanded ? null : event.event_id)}
                     >
-                      {expanded ? 'Close' : 'Inspect'}
+                      {expanded ? 'Hide details' : 'Details'}
                     </button>
                     {expanded ? (
                       <div
-                        className="cm-activity-evidence"
+                        className={`cm-activity-evidence${
+                          event.policy_changes.length ? ' has-policy-changes' : ''
+                        }`}
                         id={`activity-evidence-${event.event_id}`}
                       >
-                        <header>
-                          <strong>Durable evidence</strong>
-                          <span>Recorded with this outcome</span>
-                        </header>
+                        {event.policy_changes.length ? (
+                          <section
+                            className="cm-activity-policy-changes"
+                            aria-label={`${String(event.policy_changes.length)} exact policy changes`}
+                          >
+                            <header>
+                              <strong>
+                                {event.policy_changes.length} exact{' '}
+                                {event.policy_changes.length === 1 ? 'change' : 'changes'}
+                              </strong>
+                              <span>Field and setting</span>
+                              <span>From</span>
+                              <span>To</span>
+                            </header>
+                            <ul>
+                              {event.policy_changes.map((change) => (
+                                <li key={`${change.field}-${change.setting}`}>
+                                  <span>
+                                    <strong>{change.field}</strong>
+                                    <small>{change.setting}</small>
+                                  </span>
+                                  <b>{change.previous}</b>
+                                  <b>{change.next}</b>
+                                </li>
+                              ))}
+                            </ul>
+                          </section>
+                        ) : null}
                         <dl>
                           {event.evidence.map((item) => (
                             <div key={item.label}>

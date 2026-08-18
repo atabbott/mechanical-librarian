@@ -56,6 +56,7 @@ from mechanical_librarian.domain.field_effect import (
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
+    OPTION_CATALOGUE,
     MetadataPolicyProfile,
     resolve_policy,
 )
@@ -297,10 +298,71 @@ def test_activity_ignores_consent_orphaned_by_policy_activation(
         page=1,
         page_size=25,
     )
-    assert policy["events"][0]["evidence"][0] == {
-        "label": "Recorded policy transition",
-        "value": "completed",
+    # The replacement profile differs from the built-in one only by name, so
+    # the transition's own two profiles diff to no changed setting. A Policy
+    # row reports that rather than inventing a From/To for a rename.
+    assert policy["events"][0]["record"] == {
+        "source_kind": "policy_transition",
+        "generation": "Policy generation 2",
+        "policy_changes": [],
     }
+
+
+def test_a_policy_row_carries_the_exact_settings_its_own_transition_moved(
+    effects: _EffectEnvironment,
+) -> None:
+    """The From/To comes from the transition's two profiles, not from now.
+
+    The activation below moves one review mode and one representation. Both
+    reach the row as the owner's words for the exact settings that moved, and
+    the settings that did not move are absent rather than listed as unchanged.
+    """
+    builtin = MetadataPolicyProfile.builtin()
+    options = dict(builtin.options)
+    destinations = dict(builtin.destinations)
+    # Both settings moved on fields the owner reviews by hand, so the exact
+    # From/To under test is not entangled with automatic qualification.
+    reviewed = sorted(field for field, value in destinations.items() if value == "ask")
+    moved_option, replacement_option = next(
+        (field, choice)
+        for field in reviewed
+        for choice in sorted(OPTION_CATALOGUE[field])
+        if choice != options[field]
+    )
+    moved_destination = next(field for field in reviewed if field != moved_option)
+    options[moved_option] = replacement_option
+    destinations[moved_destination] = "ignore"
+    replacement = MetadataPolicyProfile.create("Replacement", options, destinations)
+    effects.repository.create_metadata_policy_draft(replacement.canonical_json)
+    remaining = resolve_policy(replacement, "remaining")
+    effects.repository.activate_metadata_policy(
+        replacement.policy_id,
+        builtin.policy_id,
+        (("remaining", remaining.resolved_id, remaining.canonical_json),),
+        2,
+    )
+
+    page = effects.repository.field_effect_activity_page(
+        search=None, event_type="policy", occurred_after=0, page=1, page_size=25
+    )
+    record = page["events"][0]["record"]
+    assert record["source_kind"] == "policy_transition"
+    changes = record["policy_changes"]
+    assert {change["setting"] for change in changes} == {
+        "Review mode",
+        "Representation",
+    }
+    review_mode = next(
+        change for change in changes if change["setting"] == "Review mode"
+    )
+    assert (review_mode["previous"], review_mode["next"]) == ("Ask me", "Skip it")
+    representation = next(
+        change for change in changes if change["setting"] == "Representation"
+    )
+    assert representation["previous"] != representation["next"]
+    assert representation["next"][:1].isupper()
+    # Only what moved is named; the profile's other settings are not listed.
+    assert len(changes) == 2
 
 
 def test_activity_fetches_one_current_report_document_for_repeated_events(
@@ -329,8 +391,7 @@ def test_activity_fetches_one_current_report_document_for_repeated_events(
     assert page["total"] == 2
     assert all(event["work_label"] == "Readable work" for event in page["events"])
     assert all(
-        event["evidence"][0]["label"] == "Recorded field effect"
-        for event in page["events"]
+        event["record"]["source_kind"] == "field_effect" for event in page["events"]
     )
 
 

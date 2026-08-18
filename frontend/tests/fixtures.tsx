@@ -72,7 +72,12 @@ export const activity = (value: Partial<Omit<ActivityDisplayView, 'events'>> & {
     waiting: { applying: 0, awaiting_permission: 0, held_for_recovery: 0, retrying: 0, scheduled: 0 },
     ledger: { event_type: 'all', page: 1, page_count: 1, page_size: 25, query: null, range_days: 30, total: events.length },
     prepared: { automatic: 0, human: 0, total: 0 }, suspensions: [], ...rest,
-    events: events.map((event, index) => ({ event_id: `event-${String(index)}`, event_type: 'metadata', evidence: [], author_label: 'Author details are not recorded', destination: '', failure: null, library: '', occurred_at: null, origin: 'automatic_policy', state: 'verified', work_id: '', work_label: 'Recorded work', ...event })),
+    // Captured from the real projection in tests/support/activity_seed.py rather
+    // than written by hand. The previous defaults were the API schema's absent-field
+    // fallbacks ('Recorded', 'Recorded field'), which no producer emits: the
+    // application always derives field_label from the destination. That made a row
+    // no backend can produce the baseline every component test was measured against.
+    events: events.map((event, index) => ({ event_id: `effect_event_${String(index).padStart(64, '0')}`, event_type: 'review', category: 'owner', change: 'Not set \u2192 9780060512750', change_detail: 'Set ISBN from Not set to 9780060512750', field_label: 'ISBN', policy_changes: [], evidence: [{ label: 'Previous value', value: 'Not set' }, { label: 'New value', value: '9780060512750' }, { label: 'Chosen by', value: 'Library owner' }, { label: 'Confirmed in Audiobookshelf', value: 'Confirmed as 9780060512750' }], author_label: 'Author details are not recorded', destination: 'isbn', failure: null, library: 'books', occurred_at: 1785742465, origin: 'human', state: 'verified', work_id: 'book-1', work_label: 'Paper Moons: Larkspur', ...event })),
   }
 }
 

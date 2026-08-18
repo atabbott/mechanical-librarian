@@ -236,7 +236,7 @@ describe('ReviewApiClient', () => {
       consented_libraries: [], enabled_libraries: [], counts: { verified: 1 },
       capabilities: [{ connection: 'primary', library: 'Fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: true, prepared: 4 }] }],
       waiting: { applying: 1, awaiting_permission: 2, held_for_recovery: 3, retrying: 4, scheduled: 5 },
-      events: [{ destination: 'title', event_id: 'event-1', event_type: 'review', evidence: [{ label: 'Decision', value: 'Owner choice recorded' }], library: 'Fiction', occurred_at: 1, origin: 'human', state: 'verified', work_id: 'work-1' }],
+      events: [{ destination: 'title', event_id: 'event-1', event_type: 'review', category: 'owner', change: 'Not set → Earthsea Cycle', change_detail: 'Set Series from Not set to Earthsea Cycle', field_label: 'Series', policy_changes: [{ field: 'Title', setting: 'Review mode', previous: 'Ask me', next: 'Automatic' }], evidence: [{ label: 'Previous value', value: 'Not set' }], library: 'Fiction', occurred_at: 1, origin: 'human', state: 'verified', work_id: 'work-1' }],
       ledger: { event_type: 'all', page: 1, page_count: 1, page_size: 25, query: null, range_days: 30, total: 1 },
       example: { after: 'After', before: 'Before', destination: 'title', library: 'Fiction', work_id: 'work-1' }, last_failure: null, prepared: { automatic: 1, human: 2, total: 3 }, suspensions: [{ connection: 'primary', destination: null, reason: 'recovery', scope: 'library', updated_at: 1 }],
     })
@@ -246,7 +246,9 @@ describe('ReviewApiClient', () => {
     expect(activity.waiting).toEqual({ applying: 1, awaiting_permission: 2, held_for_recovery: 3, retrying: 4, scheduled: 5 })
     expect(() => mapActivity({ ...activity, waiting: { applying: 1 } })).toThrow(ApiError)
     expect(activity.events[0]).toMatchObject({ library: 'Fiction', state: 'verified', origin: 'human' })
-    expect(activity.events[0]).toMatchObject({ work_label: 'Recorded work' })
+    expect(activity.events[0]).toMatchObject({ work_label: 'Recorded work', category: 'owner', field_label: 'Series', change_detail: 'Set Series from Not set to Earthsea Cycle' })
+    expect(activity.events[0]?.policy_changes[0]).toEqual({ field: 'Title', setting: 'Review mode', previous: 'Ask me', next: 'Automatic' })
+    expect(() => mapActivity({ ...activity, events: [{ ...activity.events[0], category: 'review' }] })).toThrow(ApiError)
     expect(activity.suspensions[0]).toMatchObject({ scope: 'library', destination: null })
     expect(() => mapActivity({ ...activity, suspensions: [{ connection: 'primary', destination: null, reason: 'recovery', scope: 'library', updated_at: 'later' }] })).toThrow(ApiError)
     expect(() => mapActivity({ ...activity, example: { after: 'After' } })).toThrow(ApiError)

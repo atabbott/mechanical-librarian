@@ -61,6 +61,11 @@ _CONTENT_OVERFLOW = """
   if (root === null) return null;
   let worst = 0;
   for (const node of [root, ...root.querySelectorAll('*')]) {
+    // A node with no layout box has no width to overrun, and measuring one
+    // reports its own padding as an overflow: the rect is all zeros while
+    // `getComputedStyle` still answers with the padding it would have had.
+    // A surface that hides at a breakpoint is not a surface that overflows.
+    if (node.getClientRects().length === 0) continue;
     worst = Math.max(worst, node.scrollWidth - node.clientWidth);
     const style = getComputedStyle(node);
     const right = node.getBoundingClientRect().right -
@@ -69,6 +74,41 @@ _CONTENT_OVERFLOW = """
       worst = Math.max(worst, Math.round(child.getBoundingClientRect().right - right));
   }
   return worst;
+}
+"""
+
+
+# The same measurement, reported as the node that lost rather than as the
+# number it lost by. A bare pixel count says a surface is wrong; this says
+# which element inside it is, which is the difference between a finding and a
+# hunt (#636).
+_WORST_OVERFLOWING_NODE = r"""
+(selector) => {
+  const root = document.querySelector(selector);
+  if (root === null) return null;
+  let worst = 0;
+  let where = null;
+  const name = (node) => node.tagName.toLowerCase() +
+    (node.className && typeof node.className === 'string'
+      ? '.' + node.className.trim().split(/\s+/).join('.') : '');
+  for (const node of [root, ...root.querySelectorAll('*')]) {
+    if (node.getClientRects().length === 0) continue;
+    if (node.scrollWidth - node.clientWidth > worst) {
+      worst = node.scrollWidth - node.clientWidth;
+      where = name(node) + ' scrolls its own content (' +
+        node.scrollWidth + ' in ' + node.clientWidth + ', parent ' +
+        name(node.parentElement) + ', text ' +
+        JSON.stringify((node.textContent || '').slice(0, 40)) + ')';
+    }
+    const style = getComputedStyle(node);
+    const right = node.getBoundingClientRect().right -
+      parseFloat(style.borderRightWidth || 0) - parseFloat(style.paddingRight || 0);
+    for (const child of node.children) {
+      const past = Math.round(child.getBoundingClientRect().right - right);
+      if (past > worst) { worst = past; where = name(child) + ' inside ' + name(node); }
+    }
+  }
+  return where;
 }
 """
 
@@ -106,11 +146,77 @@ def _fits_every_width(page: Page, selector: str) -> None:
         overflow = page.evaluate(_CONTENT_OVERFLOW, selector)
         assert overflow is not None, f"{selector} is absent at {width}px"
         assert overflow <= 0, (
-            f"{selector} overflows its container by {overflow}px at {width}px"
+            f"{selector} overflows its container by {overflow}px at {width}px: "
+            f"{page.evaluate(_WORST_OVERFLOWING_NODE, selector)}"
         )
         document = page.evaluate("() => document.documentElement.scrollWidth")
         assert document <= width, (
             f"{selector}'s page is {document}px wide in a {width}px viewport"
+        )
+
+
+# An Activity row is built on ellipsis: a long title and a long change are
+# meant to be cut at desktop, and `_fits_every_width` would read every one of
+# those as an overrun. What must never be cut is different and smaller -- the
+# grid must not push past the ledger, the category pill must show its whole
+# word rather than wrapping or clipping, and the disclosure must keep its whole
+# label on screen. Those are measured against the boxes that constrain them,
+# and the two things the compact card promises to show whole are measured only
+# where it promises them (#636).
+_ROW_PROMISES = """
+(compact) => {
+  const failures = [];
+  const ledger = document.querySelector('.cm-activity-ledger');
+  if (ledger === null) return ['the ledger is absent'];
+  const ledgerStyle = getComputedStyle(ledger);
+  const ledgerRight = ledger.getBoundingClientRect().right -
+    parseFloat(ledgerStyle.borderRightWidth) - parseFloat(ledgerStyle.paddingRight);
+  const viewport = document.documentElement.clientWidth;
+  const clipped = (node) => node.scrollWidth - node.clientWidth;
+  const rows = [...document.querySelectorAll('.cm-activity-event-group article')];
+  if (rows.length === 0) return ['the ledger has no rows'];
+  for (const row of rows) {
+    const past = Math.round(row.getBoundingClientRect().right - ledgerRight);
+    if (past > 0) failures.push(`a row runs ${past}px past the ledger`);
+    const pill = row.querySelector('.cm-activity-category');
+    if (pill === null) failures.push('a row has no category');
+    else {
+      if (clipped(pill) > 0) failures.push(`the ${pill.textContent} pill is clipped`);
+      if (pill.getClientRects().length !== 1)
+        failures.push(`the ${pill.textContent} pill wrapped internally`);
+    }
+    const action = row.querySelector('button');
+    if (action === null) failures.push('a row has no disclosure');
+    else {
+      const box = action.getBoundingClientRect();
+      if (clipped(action) > 0)
+        failures.push(`the ${action.textContent} label is clipped`);
+      if (box.right > viewport || box.left < 0)
+        failures.push(`the ${action.textContent} action is off screen`);
+      if (box.width < 44 || box.height < 40)
+        failures.push(`the ${action.textContent} target is ${box.width}x${box.height}`);
+    }
+    if (compact)
+      for (const selector of ['.cm-activity-work > strong', '.cm-activity-change'])
+        for (const node of row.querySelectorAll(selector))
+          if (clipped(node) > 0)
+            failures.push(`${selector} is clipped on a compact card`);
+  }
+  return failures;
+}
+"""
+
+
+def _rows_keep_their_promises(page: Page) -> None:
+    """Assert what an Activity row may never do, at each protected width."""
+    for width in (1440, 1100, 1044, 800, 761, 760, 390):
+        page.set_viewport_size({"width": width, "height": 844})
+        page.evaluate("() => document.documentElement.offsetWidth")
+        failures = page.evaluate(_ROW_PROMISES, width <= 760)
+        assert failures == [], f"at {width}px: {failures}"
+        document = page.evaluate("() => document.documentElement.scrollWidth")
+        assert document <= width, (
+            f"the Activity page is {document}px wide in a {width}px viewport"
         )
 
 
@@ -280,6 +386,125 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                 page.locator(".cm-write-consent").wait_for(timeout=8_000)
                 _fits_every_width(page, ".cm-write-consent")
                 _fits_every_width(page, ".cm-activity-status")
+                # The Activity row gained two flexible columns and a policy
+                # table, and every one of them is sized by its own text: an
+                # exact change, a category pill, a setting name and two policy
+                # values. Measured against their own containers under the same
+                # widened glyphs, because a six-track grid whose content is
+                # text is exactly the shape that fits on one platform's fonts
+                # and overruns on another's (#636).
+                ledger = page.locator(".cm-activity-ledger")
+                ledger.wait_for(timeout=8_000)
+                page.locator(".cm-activity-event-group article").first.wait_for(
+                    timeout=8_000
+                )
+                # Everything measured below is only worth measuring if it is
+                # real. This surface used to be served one hand-written event,
+                # so the widths this guard proved were the widths of a string
+                # no event produces. Assert the ledger is the seeded projection
+                # -- past a page boundary, with a real work and a real change
+                # -- before believing any measurement taken from it.
+                assert (
+                    "of 1 events"
+                    not in page.locator(".cm-activity-pagination").inner_text()
+                ), "the ledger is serving a single stub row again"
+                page.get_by_text("Paper Moons: Larkspur", exact=False).first.wait_for(
+                    timeout=8_000
+                )
+                assert page.locator(".cm-activity-event-group article").count() > 1, (
+                    "a seeded ledger should render many rows"
+                )
+                _fits_every_width(page, ".cm-activity-columns")
+                _fits_every_width(page, ".cm-activity-tools")
+                _fits_every_width(page, ".cm-activity-pagination")
+                _rows_keep_their_promises(page)
+                # Expanded, the widest record on the page is a Policy one, and
+                # its three-column From/To table is measured open rather than
+                # closed.
+                page.get_by_role("button", name="Details").first.click()
+                page.locator(".cm-activity-evidence").first.wait_for(timeout=8_000)
+                _fits_every_width(page, ".cm-activity-evidence")
+                _rows_keep_their_promises(page)
+                _an_open_record_survives_a_viewport_change(page)
+                _reflows_at_two_hundred_percent_zoom(page)
+                _long_values_stay_inside_the_narrowest_card(page)
+
+
+def _an_open_record_survives_a_viewport_change(page: Page) -> None:
+    """An expansion the owner opened stays open, and stays whole, when the
+    layout changes underneath it.
+
+    The row switches between a six-track grid and a compact card at 760px, and
+    the expansion is a child of the row in both. Rotating a phone or splitting
+    a window mid-read is the ordinary way to reach that switch with a record
+    already open, and it is the case a layout built for the closed row is most
+    likely to have missed.
+    """
+    page.set_viewport_size({"width": 1440, "height": 900})
+    page.evaluate("() => document.documentElement.offsetWidth")
+    evidence = page.locator(".cm-activity-evidence").first
+    assert evidence.is_visible(), "the record was not open before the change"
+    opened = evidence.inner_text()
+
+    for width in (760, 390, 1100, 1440):
+        page.set_viewport_size({"width": width, "height": 844})
+        page.evaluate("() => document.documentElement.offsetWidth")
+        assert evidence.is_visible(), f"the open record closed itself at {width}px"
+        assert evidence.inner_text() == opened, (
+            f"the open record's facts changed at {width}px"
+        )
+        _fits_every_width(page, ".cm-activity-evidence")
+        failures = page.evaluate(_ROW_PROMISES, width <= 760)
+        assert failures == [], f"at {width}px with a record open: {failures}"
+
+
+def _reflows_at_two_hundred_percent_zoom(page: Page) -> None:
+    """The page reflows rather than scrolling sideways at 200% zoom.
+
+    Doubling the zoom halves the usable CSS viewport, so it is applied here as
+    the width an owner is actually left with rather than as a scale factor --
+    the layout cannot tell the difference, and stating it as a width keeps the
+    assertion measurable. WCAG 1.4.10 is the reason this is a promise and not a
+    preference: content must reflow without a horizontal scrollbar.
+    """
+    for device_width, zoomed in ((1440, 720), (1280, 640), (780, 390)):
+        page.set_viewport_size({"width": zoomed, "height": 844})
+        page.evaluate("() => document.documentElement.offsetWidth")
+        sideways = page.evaluate(
+            "() => document.documentElement.scrollWidth -"
+            " document.documentElement.clientWidth"
+        )
+        assert sideways <= 0, (
+            f"{device_width}px at 200% zoom scrolls {sideways}px sideways"
+        )
+        failures = page.evaluate(_ROW_PROMISES, zoomed <= 760)
+        assert failures == [], f"at {device_width}px zoomed to 200%: {failures}"
+
+
+def _long_values_stay_inside_the_narrowest_card(page: Page) -> None:
+    """The unbounded description and the longest label, on the smallest screen.
+
+    A catalogue description has no length an interface may assume, and the
+    seeded ledger carries a real one. At 390px the compact card promises to
+    show the work and the change whole, so the description is the value most
+    able to break that promise.
+    """
+    page.set_viewport_size({"width": 390, "height": 844})
+    page.evaluate("() => document.documentElement.offsetWidth")
+    search = page.get_by_role("searchbox")
+    search.fill("description")
+    page.wait_for_timeout(400)
+    rows = page.locator(".cm-activity-event-group article")
+    rows.first.wait_for(timeout=8_000)
+    failures = page.evaluate(_ROW_PROMISES, True)
+    assert failures == [], f"a long description breaks the compact card: {failures}"
+    sideways = page.evaluate(
+        "() => document.documentElement.scrollWidth -"
+        " document.documentElement.clientWidth"
+    )
+    assert sideways <= 0, f"a long description scrolls the page {sideways}px sideways"
+    search.fill("")
+    page.wait_for_timeout(400)
 
 
 def _masthead_overflow(page: Page) -> list[int]:
