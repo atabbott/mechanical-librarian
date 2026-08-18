@@ -12,6 +12,7 @@ import pytest
 
 from mechanical_librarian.bootstrap import container, container_health
 from mechanical_librarian.bootstrap.container_health import HEALTHY, check, main
+from tests.support.ports import ReservedPort
 from tests.support.tls import synthetic_tls_identity
 
 READY = (
@@ -169,13 +170,20 @@ def test_an_unparseable_response_is_not_taken_for_readiness(tmp_path: Path) -> N
 
 def test_a_closed_port_is_reported_as_unreachable(tmp_path: Path) -> None:
     certificate, private_key = synthetic_tls_identity(tmp_path)
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        port = int(listener.getsockname()[1])
-    config = _configuration(
-        tmp_path, f"https://127.0.0.1:{port}", certificate, private_key
-    )
-    assert check(config, port=port, timeout=1.0) == "unreachable"
+    # The reservation is held across the probe rather than dropped once the
+    # number is read. Nothing binds this port on purpose, so holding it is
+    # what keeps some other automatic allocation on the host from binding it
+    # by accident and answering in place of the closed port under test; a
+    # bound socket that never listens still refuses the connection, which is
+    # the condition being asserted.
+    with contextlib.closing(ReservedPort()) as reservation:
+        config = _configuration(
+            tmp_path,
+            f"https://127.0.0.1:{reservation.number}",
+            certificate,
+            private_key,
+        )
+        assert check(config, port=reservation.number, timeout=1.0) == "unreachable"
 
 
 def test_an_absent_or_invalid_configuration_is_reported(tmp_path: Path) -> None:
