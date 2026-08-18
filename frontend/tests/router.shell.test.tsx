@@ -160,7 +160,7 @@ describe('Application shell', () => {
     else await user.keyboard('{Enter}')
 
     expect(http.preparationAction).toHaveBeenCalledOnce()
-    expect(document.getElementById('main-content')).toHaveAttribute('data-route-focus-identity', '/:all:::::')
+    expect(document.getElementById('main-content')).toHaveAttribute('data-route-focus-identity', '/:all::::::')
     const checking = screen.getByRole('button', { name: 'Checking connection…' })
     expect(checking).toBe(check)
     expect(checking).toHaveFocus()

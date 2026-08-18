@@ -66,6 +66,7 @@ def _work(
     dispositions: list[str],
     preparation: dict[str, object] | None = None,
     preparation_outcomes: list[dict[str, object]] | None = None,
+    summary: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "work_id": f"library_work_{number:064d}",
@@ -81,6 +82,7 @@ def _work(
         "dispositions": dispositions,
         "preparation": preparation,
         "preparation_outcomes": preparation_outcomes or [],
+        "summary": summary,
     }
 
 
@@ -162,6 +164,11 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
                 "status": "authentication",
             }
         ],
+        summary={
+            "fields": [],
+            "reason": "Provider credentials need owner attention.",
+            "state": "preparation_failed",
+        },
     ),
     _work(
         7,
@@ -192,6 +199,38 @@ LIBRARY_WORKS: tuple[dict[str, object], ...] = (
         case=None,
         attention=0,
         dispositions=["pre_admission"],
+        preparation_outcomes=[
+            {
+                "provider_requests": 2,
+                "lane_kind": "work",
+                "provider": "hardcover-main",
+                "reason": "Returned matching metadata for this work.",
+                "status": "candidates",
+            },
+            {
+                "provider_requests": 0,
+                "lane_kind": "work",
+                "provider": "google-books",
+                "reason": "Was not enabled for this lane, so it was never asked.",
+                "status": "disabled",
+            },
+        ],
+        summary={
+            "fields": [
+                {
+                    "destination": "title",
+                    "state": "value",
+                    "value": "Pre-admission observation",
+                },
+                {"destination": "authors", "state": "value", "value": ["Ember Lane"]},
+                {"destination": "series", "state": "missing", "value": None},
+            ],
+            "reason": (
+                "No review decision is recorded for this work. Its current values "
+                "are shown exactly as Mechanical Librarian last read them."
+            ),
+            "state": "no_decision_recorded",
+        },
     ),
     _work(
         10,
@@ -779,6 +818,8 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
         "lens": lens,
         "query": needle or None,
         "next_cursor": f"page-{page + 1}" if len(works) > end else None,
+        "previous_cursor": f"page-{page - 1}" if page > 1 else None,
+        "page": page,
         "counts": {
             "needs_attention": sum(
                 int(cast(int, item["attention_count"])) > 0 for item in LIBRARY_WORKS
@@ -1365,6 +1406,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             "total": 12,
             "failed": 1,
             "acknowledged": False,
+            "origin": "activation",
         }
     if path == "/api/v1/activity":
         return _activity(query)

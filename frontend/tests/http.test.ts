@@ -126,6 +126,8 @@ describe('ReviewApiClient', () => {
         lens: 'all',
         query: null,
         next_cursor: null,
+        previous_cursor: 'page-1',
+        page: 2,
         counts: { needs_attention: 1, all: 2, no_attention_needed: 1 },
         items: [{
           review_case_id: 'case-1',
@@ -141,6 +143,7 @@ describe('ReviewApiClient', () => {
           work_id: 'library_work_1',
           preparation: null,
           preparation_outcomes: [],
+          summary: null,
         }, {
           review_case_id: null,
           title: 'Catalogue-only work',
@@ -154,7 +157,8 @@ describe('ReviewApiClient', () => {
           dispositions: [],
           work_id: 'library_work_2',
           preparation: null,
-          preparation_outcomes: [{ provider_requests: 2, lane_kind: 'isbn', provider: 'google-books', reason: 'Provider returned no matching metadata.', status: 'no_match' }],
+          preparation_outcomes: [{ provider_requests: 2, lane_kind: 'isbn', provider: 'google-books', reason: 'Returned no matching metadata, so nothing was retained.', status: 'no_match' }],
+          summary: { state: 'no_decision_recorded', reason: 'No review decision is recorded for this work.', fields: [{ destination: 'title', state: 'value', value: 'Catalogue-only work' }, { destination: 'subtitle', state: 'missing', value: null }] },
         }],
       }),
     )
@@ -163,9 +167,13 @@ describe('ReviewApiClient', () => {
     const controller = new AbortController()
     const view = await client.getLibrary({ lens: 'all' }, controller.signal)
 
+    expect(view.page).toBe(2)
+    expect(view.previousCursor).toBe('page-1')
     expect(view.works[0]).toEqual({
       id: 'case-1',
       reviewCaseId: 'case-1',
+      workId: 'library_work_1',
+      summary: null,
       title: 'A Book',
       authors: ['Ada Example'],
       library: 'Books',
@@ -177,6 +185,7 @@ describe('ReviewApiClient', () => {
     })
     expect(view.works[1]).toEqual({
       id: 'library_work_2',
+      workId: 'library_work_2',
       title: 'Catalogue-only work',
       authors: ['Grace Example'],
       library: 'Books',
@@ -184,7 +193,10 @@ describe('ReviewApiClient', () => {
       attentionCount: 0,
       attention: 'no_attention_needed',
       preparation: null,
-      preparationOutcomes: [{ providerRequests: 2, laneKind: 'isbn', provider: 'google-books', reason: 'Provider returned no matching metadata.', status: 'no_match' }],
+      preparationOutcomes: [{ providerRequests: 2, laneKind: 'isbn', provider: 'google-books', reason: 'Returned no matching metadata, so nothing was retained.', status: 'no_match' }],
+      // A work with no review case still travels with its current values, so
+      // Library can open a summary for it without a case identity.
+      summary: { state: 'no_decision_recorded', reason: 'No review decision is recorded for this work.', fields: [{ destination: 'title', state: 'value', value: 'Catalogue-only work' }, { destination: 'subtitle', state: 'missing', value: 'Unavailable' }] },
     })
     expect(JSON.stringify(view)).not.toContain('internal-item-2')
     expect(fetchMock).toHaveBeenCalledWith('/api/v1/library?lens=all', expect.objectContaining({
@@ -238,11 +250,22 @@ describe('ReviewApiClient', () => {
   })
 
   it('distinguishes matching active policy values from a changed local draft', () => {
+    const defaults = { title_layout: { option: 'preserve', destination: 'ask' } }
+    const pair = { first: { option: 'one', destination: 'ask' }, second: { option: 'two', destination: 'ignore' } }
     const active = { schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v2', name: 'Active', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } } } as never
-    expect(derivePolicyDraftDisplay(active, { name: 'Active', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } })).toMatchObject({ changed: false, activeName: 'Active' })
+    expect(derivePolicyDraftDisplay(active, { name: 'Active', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } }, defaults)).toMatchObject({ changed: false, activeName: 'Active' })
     const reordered = { schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v2', name: 'Active', options: { first: 'one', second: 'two' }, destinations: { first: 'ask', second: 'ignore' } } } as never
-    expect(derivePolicyDraftDisplay(reordered, { name: 'Active', options: { second: 'two', first: 'one' }, destinations: { second: 'ignore', first: 'ask' } })).toMatchObject({ changed: false })
-    expect(derivePolicyDraftDisplay(active, { name: 'Draft', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } })).toMatchObject({ changed: true, draftName: 'Draft' })
+    expect(derivePolicyDraftDisplay(reordered, { name: 'Active', options: { second: 'two', first: 'one' }, destinations: { second: 'ignore', first: 'ask' } }, pair)).toMatchObject({ changed: false })
+    expect(derivePolicyDraftDisplay(active, { name: 'Draft', options: { title_layout: 'preserve' }, destinations: { title_layout: 'ask' } }, defaults)).toMatchObject({ changed: true, draftName: 'Draft' })
+  })
+
+  it('reads an omitted field as the default it stands for, so an exact revert is not a change', () => {
+    const defaults = { title_layout: { option: 'preserve', destination: 'ask' }, tags: { option: 'off', destination: 'ask' } }
+    const active = { schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v2', name: 'Active', options: { title_layout: 'preserve' }, destinations: {} } } as never
+    // The draft spells out what the active document leaves to the default; the
+    // two describe the same policy, so nothing is offered for validation.
+    expect(derivePolicyDraftDisplay(active, { name: 'Active', options: { title_layout: 'preserve', tags: 'off' }, destinations: { title_layout: 'ask', tags: 'ask' } }, defaults)).toMatchObject({ changed: false })
+    expect(derivePolicyDraftDisplay(active, { name: 'Active', options: { title_layout: 'preserve', tags: 'replace' }, destinations: {} }, defaults)).toMatchObject({ changed: true })
   })
 
   it('renews CSRF once but requires an explicit retry of an unsafe request', async () => {

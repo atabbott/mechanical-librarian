@@ -2390,6 +2390,21 @@
             ],
             "title": "Next Cursor"
           },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "previous_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Cursor"
+          },
           "query": {
             "anyOf": [
               {
@@ -2411,6 +2426,8 @@
           "items",
           "lens",
           "next_cursor",
+          "page",
+          "previous_cursor",
           "query",
           "schema_version"
         ],
@@ -2493,6 +2510,16 @@
             ],
             "title": "Review Case Id"
           },
+          "summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_LibraryWorkSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -2517,6 +2544,33 @@
           "preparation_outcomes"
         ],
         "title": "_LibraryWork",
+        "type": "object"
+      },
+      "_LibraryWorkSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/_TargetField"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "state": {
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fields",
+          "reason",
+          "state"
+        ],
+        "title": "_LibraryWorkSummary",
         "type": "object"
       },
       "_LoginRequest": {
@@ -2932,6 +2986,10 @@
             "title": "Generation",
             "type": "integer"
           },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          },
           "schema_version": {
             "const": "metadata-policy-transition-v1",
             "default": "metadata-policy-transition-v1",
@@ -2964,7 +3022,8 @@
           "completed",
           "total",
           "failed",
-          "acknowledged"
+          "acknowledged",
+          "origin"
         ],
         "title": "_PolicyTransitionResponse",
         "type": "object"
