@@ -108,6 +108,16 @@ describe('Library route', () => {
     expect(screen.queryByRole('heading', { level: 2, name: 'Unfiled observation' })).toBeNull()
   })
 
+  it('normalises an unresolvable work selection out of the URL', async () => {
+    const http: ReviewHttp = { ...createHttp(), getLibrary: vi.fn(async () => library) }
+    const { router } = renderRoute('/library?lens=all&work=work-that-is-not-on-this-page', http)
+
+    // The URL asserted a selection nothing can render, so it stops asserting it
+    // rather than leaving the view and the address bar disagreeing.
+    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all' }))
+    expect(screen.getByRole('heading', { name: 'Choose a work' })).toBeVisible()
+  })
+
   it.each([
     ['candidates', 'Match'],
     ['no_match', 'No match'],

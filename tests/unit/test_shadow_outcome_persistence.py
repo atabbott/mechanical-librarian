@@ -3101,12 +3101,39 @@ def test_paused_or_category_suspended_automatic_tuple_remains_in_every_attention
             repository.close()
 
 
-def test_bootstrap_transition_acknowledgement_is_durable() -> None:
+def test_owner_activation_acknowledgement_is_durable() -> None:
+    """Dismissing a completed activation survives a restart.
+
+    This once acknowledged the seeded bootstrap row, because that row was what
+    a fresh container reported. The interface now names generation 1 as the
+    active baseline and never offers it for dismissal, so the durability this
+    proves is bound to the transition an owner can actually dismiss.
+    """
+
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "reports.sqlite"
         repository = open_repository(path)
+        report = _report()
+        repository.publish(report, lambda: True)
+        profile = MetadataPolicyProfile.create(
+            "Owner policy",
+            dict(DEFAULT_OPTIONS),
+            {
+                name: "unsupported" if name == "explicit" else "ask"
+                for name in OPTION_CATALOGUE
+            },
+        )
+        resolved = resolve_policy(profile, report.target.library)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
         transition = repository.metadata_policy_transition()
         assert transition is not None
+        assert transition.origin == "activation"
         acknowledged = repository.acknowledge_metadata_policy_transition(
             transition.transition_id, 4
         )
@@ -3115,5 +3142,5 @@ def test_bootstrap_transition_acknowledgement_is_durable() -> None:
         reopened = open_repository(path)
         persisted = reopened.metadata_policy_transition()
         assert persisted is not None
-        assert persisted.acknowledged
+        assert (persisted.acknowledged, persisted.origin) == (True, "activation")
         reopened.close()

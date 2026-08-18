@@ -481,6 +481,37 @@ def test_initial_resolution_binding_joins_an_existing_transaction(
     repository.close()
 
 
+def test_bootstrap_generation_is_a_baseline_and_owner_activation_is_not(
+    state_path: Path,
+) -> None:
+    """A fresh container has activated nothing, and the projection says so.
+
+    `_create_schema` seeds one completed generation-1 transition so the
+    built-in policy has an activation history. Read without a discriminator
+    that row is indistinguishable from an owner activation over zero works,
+    which is exactly what the interface reported.
+    """
+
+    repository, report, _, _ = _current_case_with_completed_work(state_path)
+    seeded = repository.metadata_policy_transition()
+    assert seeded is not None
+    assert (seeded.origin, seeded.generation, seeded.total) == ("baseline", 1, 0)
+
+    draft = _draft()
+    repository.create_metadata_policy_draft(draft.canonical_json)
+    resolved = resolve_policy(draft, report.target.library)
+    activated = repository.activate_metadata_policy(
+        draft.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+        30,
+    )
+    assert activated is not None
+    assert (activated.origin, activated.generation) == ("activation", 2)
+    assert repository.metadata_policy_transition() == activated
+    repository.close()
+
+
 def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(
     state_path: Path,
 ) -> None:

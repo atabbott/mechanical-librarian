@@ -754,6 +754,23 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     ? (data.works.find((work) => work.workId === search.work) ??
       (openedWork?.workId === search.work ? openedWork : undefined))
     : undefined
+  const unresolvableWork = Boolean(search.work) && selectedWork === undefined
+  // URL-owned selection has to stay truthful. A ?work= that resolves to nothing
+  // on the bounded page in hand, and was not opened in this session, asserts a
+  // selection the view cannot render, so it is normalised out of the URL. The
+  // entry is replaced rather than pushed, so Back still leaves for wherever the
+  // owner arrived from instead of returning to the unresolvable link.
+  useEffect(() => {
+    if (!unresolvableWork) return
+    void navigate({
+      replace: true,
+      search: (current) => {
+        const next = { ...current }
+        delete next.work
+        return next
+      },
+    })
+  }, [unresolvableWork, navigate])
   const hasSelection = Boolean(search.preview) || selectedWork !== undefined
   const selectedLibraryWork = search.preview
     ? data.works.find((work) => work.reviewCaseId === search.preview)
