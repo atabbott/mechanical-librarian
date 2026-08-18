@@ -15,6 +15,7 @@ export interface LibrarySearch {
   q?: string
   cursor?: string
   preview?: string
+  work?: string
   field?: string
   attention?: 'open'
 }
@@ -46,9 +47,20 @@ export interface PreparationFailureView {
   stage: string
   status: string
 }
+export interface WorkSummaryFieldView {
+  destination: string
+  state: string
+  value: string
+}
+export interface WorkSummaryView {
+  fields: readonly WorkSummaryFieldView[]
+  reason: string
+  state: string
+}
 export interface LibraryWorkView {
   id: string
   reviewCaseId?: string
+  workId: string
   title: string
   authors: readonly string[]
   library: string
@@ -57,11 +69,14 @@ export interface LibraryWorkView {
   attention: string
   preparation: PreparationFailureView | null
   preparationOutcomes: readonly ProviderOutcomeView[]
+  summary: WorkSummaryView | null
 }
 export interface LibraryView {
   lens: LibraryLens
   query?: string
   nextCursor?: string
+  previousCursor?: string
+  page: number
   counts: { attention: number; all: number; clear: number }
   works: readonly LibraryWorkView[]
 }
@@ -288,26 +303,50 @@ export interface PolicyDraftDisplayView {
   changed: boolean
 }
 
-const sameStringMap = (left: Record<string, string>, right: Record<string, string>) => {
-  const leftKeys = Object.keys(left)
-  const rightKeys = Object.keys(right)
-  return (
-    leftKeys.length === rightKeys.length &&
-    leftKeys.every((key) => Object.hasOwn(right, key) && left[key] === right[key])
-  )
+export interface PolicyFieldDefault {
+  readonly destination: string
+  readonly option: string
 }
+
+// Two documents describe the same policy when every field in the closed
+// catalogue resolves to the same option and destination. Comparing the raw maps
+// instead made an omitted key differ from the default it stands for, so a draft
+// that was semantically identical to the active policy still reported a change
+// and still offered validation. The catalogue is supplied by its owner rather
+// than duplicated here, which is also what keeps the chapter badges and this
+// comparison from ever disagreeing.
+const sameResolvedPolicy = (
+  left: Record<string, string>,
+  right: Record<string, string>,
+  defaults: Readonly<Record<string, string>>,
+) =>
+  Object.keys(defaults).every(
+    (key) => (left[key] ?? defaults[key]) === (right[key] ?? defaults[key]),
+  ) &&
+  [...Object.keys(left), ...Object.keys(right)].every(
+    (key) => Object.hasOwn(defaults, key) || left[key] === right[key],
+  )
 
 export const derivePolicyDraftDisplay = (
   active: PolicyStateView,
   draft: PolicyDraft,
-): PolicyDraftDisplayView => ({
-  activeName: active.profile.name,
-  draftName: draft.name,
-  changed:
-    draft.name !== active.profile.name ||
-    !sameStringMap(draft.options, active.profile.options) ||
-    !sameStringMap(draft.destinations, active.profile.destinations),
-})
+  fieldDefaults: Readonly<Record<string, PolicyFieldDefault>>,
+): PolicyDraftDisplayView => {
+  const options = Object.fromEntries(
+    Object.entries(fieldDefaults).map(([key, value]) => [key, value.option]),
+  )
+  const destinations = Object.fromEntries(
+    Object.entries(fieldDefaults).map(([key, value]) => [key, value.destination]),
+  )
+  return {
+    activeName: active.profile.name,
+    draftName: draft.name,
+    changed:
+      draft.name !== active.profile.name ||
+      !sameResolvedPolicy(draft.options, active.profile.options, options) ||
+      !sameResolvedPolicy(draft.destinations, active.profile.destinations, destinations),
+  }
+}
 
 export interface DecisionCommand {
   destination: string
@@ -1009,10 +1048,13 @@ export const mapLibrary = (value: unknown): LibraryView => {
   stringValue(dto.schema_version, 'schema_version')
   const query = optionalString(dto.query, 'library_query')
   const nextCursor = optionalString(dto.next_cursor, 'library_cursor')
+  const previousCursor = optionalString(dto.previous_cursor, 'library_previous_cursor')
   return {
     lens: lens as LibraryLens,
     ...(query ? { query } : {}),
     ...(nextCursor ? { nextCursor } : {}),
+    ...(previousCursor ? { previousCursor } : {}),
+    page: integerValue(dto.page, 'library_page'),
     counts: {
       attention: integerValue(dto.counts.needs_attention, 'attention_count'),
       all: integerValue(dto.counts.all, 'all_count'),
@@ -1050,9 +1092,31 @@ export const mapLibrary = (value: unknown): LibraryView => {
           status: stringValue(outcome.status, `provider_outcome_${String(index)}_status`),
         }
       })
+      const workId = stringValue(item.work_id, 'work_id')
+      const summary =
+        item.summary == null
+          ? null
+          : {
+              fields: (Array.isArray(item.summary.fields) ? item.summary.fields : []).map(
+                (field, index) => {
+                  if (!record(field)) throw new ApiError(502, `invalid_summary_${String(index)}`)
+                  return {
+                    destination: stringValue(
+                      field.destination,
+                      `summary_${String(index)}_destination`,
+                    ),
+                    state: stringValue(field.state, `summary_${String(index)}_state`),
+                    value: displayValue(field.value),
+                  }
+                },
+              ),
+              reason: stringValue(item.summary.reason, 'summary_reason'),
+              state: stringValue(item.summary.state, 'summary_state'),
+            }
       return {
-        id: reviewCaseId ?? stringValue(item.work_id, 'work_id'),
+        id: reviewCaseId ?? workId,
         ...(reviewCaseId ? { reviewCaseId } : {}),
+        workId,
         title: stringValue(item.title, 'title'),
         authors: stringArray(item.authors, 'authors'),
         library: stringValue(item.library, 'library'),
@@ -1061,6 +1125,7 @@ export const mapLibrary = (value: unknown): LibraryView => {
         attention: stringValue(item.attention_state, 'attention_state'),
         preparation,
         preparationOutcomes,
+        summary,
       }
     }),
   }

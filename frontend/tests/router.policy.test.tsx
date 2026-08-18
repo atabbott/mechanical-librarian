@@ -15,6 +15,66 @@ describe('Policy route', () => {
     expect(normalizePolicySearch({ section: 'effects' })).toEqual({ section: 'identity' })
   })
 
+  const transition = (overrides: Record<string, unknown> = {}) => ({
+    schema_version: 'metadata-policy-transition-v1' as const, transition_id: 'policy_transition_1', from_policy_id: 'policy-a', to_policy_id: 'policy-a', generation: 1, state: 'completed', completed: 0, total: 0, failed: 0, acknowledged: false, origin: 'baseline', ...overrides,
+  })
+
+  it('never reports the bootstrap baseline as a completed owner activation', async () => {
+    const http: ReviewHttp = { ...createHttp(), getPolicyTransition: vi.fn(async () => transition() as never) }
+    renderRoute('/policy', http)
+
+    expect(await screen.findByRole('heading', { name: 'Library policy' })).toBeVisible()
+    // The fresh container's seeded generation-1 row is the active baseline, not
+    // an update the owner completed over zero items.
+    expect(await screen.findByText(/^Active baseline ·/u)).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Activation complete' })).toBeNull()
+    expect(screen.queryByText(/Policy update complete/u)).toBeNull()
+    expect(screen.queryByText(/0 of 0/u)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Dismiss update' })).toBeNull()
+  })
+
+  it('keeps an owner activation that still needs attention visible in any session', async () => {
+    const failing = transition({ generation: 2, origin: 'activation', state: 'completed_with_failures', completed: 9, total: 11, failed: 2 })
+    const http: ReviewHttp = { ...createHttp(), getPolicyTransition: vi.fn(async () => failing as never) }
+    renderRoute('/policy', http)
+
+    expect(await screen.findByRole('heading', { name: 'Activation completed with failures' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Retry failed reconciliation' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Dismiss update' })).toBeVisible()
+    expect(screen.getByText(/^Active policy ·/u)).toBeVisible()
+  })
+
+  it('does not carry a clean completion into an unrelated session', async () => {
+    const settled = transition({ generation: 2, origin: 'activation', completed: 11, total: 11 })
+    const http: ReviewHttp = { ...createHttp(), getPolicyTransition: vi.fn(async () => settled as never) }
+    renderRoute('/policy', http)
+
+    expect(await screen.findByText(/^Active policy ·/u)).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Activation complete' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Dismiss update' })).toBeNull()
+  })
+
+  it('returns every draft signal to Draft matches active policy after an exact revert', async () => {
+    const user = userEvent.setup()
+    renderRoute('/policy?section=curation')
+
+    const tags = await screen.findByRole('region', { name: 'Tags' })
+    expect(screen.getByRole('button', { name: /^Curation/u })).toHaveAccessibleDescription('0 changed fields')
+    await user.click(within(tags).getByRole('button', { name: 'Ignore' }))
+
+    expect(screen.getByRole('button', { name: /^Curation/u })).toHaveAccessibleDescription('1 changed field')
+    expect(screen.getByText('Draft has unreviewed changes.')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Validate and preview' })).toBeEnabled()
+
+    await user.click(within(tags).getByRole('button', { name: 'Ask me' }))
+
+    expect(screen.getByRole('button', { name: /^Curation/u })).toHaveAccessibleDescription('0 changed fields')
+    expect(screen.getByText('Draft matches active policy.')).toBeVisible()
+    expect(screen.getByText('Draft matches the active policy')).toBeVisible()
+    expect(screen.getByText(/^Active policy · draft matches active$/u)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Validate and preview' })).toBeDisabled()
+  })
+
   it('presents Policy as a semantic notebook and preserves guarded activation currentness', async () => {
     const user = userEvent.setup()
     const options = {
@@ -75,7 +135,7 @@ describe('Policy route', () => {
     expect(screen.getByRole('button', { name: /^Unsupported/ })).toHaveTextContent('Fields Mechanical Librarian can detect but cannot change yet.')
     const isbn = screen.getByRole('region', { name: 'ISBN' })
     expect(within(isbn).getByRole('button', { name: 'Automatic' })).toBeDisabled()
-    expect(within(isbn).getByText('Enter Preview for Automatic')).toBeVisible()
+    expect(within(isbn).getByText('Automatic mode not supported')).toBeVisible()
     await user.click(within(isbn).getByRole('button', { name: 'Ignore' }))
     expect(screen.getByRole('button', { name: /^Publication/ })).toHaveAccessibleDescription('1 changed field')
     const publisher = screen.getByRole('region', { name: 'Publisher' })
@@ -83,24 +143,29 @@ describe('Policy route', () => {
     expect(screen.getByRole('button', { name: /^Publication/ })).toHaveAccessibleDescription('2 changed fields')
     await user.click(screen.getByRole('button', { name: /Curation/ }))
     const tags = screen.getByRole('region', { name: 'Tags' })
-    expect(within(tags).getByText(/Manual review only: this policy option is intentionally off/i)).toBeVisible()
+    expect(within(tags).getByText('Automatic mode not supported')).toBeVisible()
     expect(within(tags).getByRole('button', { name: 'Ask me' })).toBeEnabled()
     expect(within(tags).getByRole('button', { name: 'Ignore' })).toBeEnabled()
     const asin = screen.getByRole('region', { name: 'ASIN' })
-    expect(within(asin).getByText(/Manual review only: this representation has insufficient Automatic qualification coverage/i)).toBeVisible()
+    expect(within(asin).getByText('Automatic mode not supported')).toBeVisible()
     expect(within(asin).getByRole('button', { name: 'Ask me' })).toBeEnabled()
     expect(within(asin).getByRole('button', { name: 'Ignore' })).toBeEnabled()
     const description = screen.getByRole('region', { name: 'Description' })
-    expect(within(description).getByText('Policy preview context:').parentElement).toHaveTextContent('one exact bounded plain-text description')
-    expect(within(description).getByText(/does not transform HTML/i)).toBeVisible()
+    // Field help is collapsed until asked for, and then names every
+    // representation on its own line as Option: owner-readable consequence.
+    const help = within(description).getByText('What this changes')
+    expect(help.closest('details')).not.toHaveAttribute('open')
+    await user.click(help)
+    expect(help.closest('details')).toHaveAttribute('open')
+    const helpLines = within(description).getAllByRole('listitem')
+    expect(helpLines).toHaveLength(2)
+    expect(helpLines[0]).toHaveTextContent('Safe plain text: Fills an empty Description only; abstains when text is transformed, ambiguous, missing, or unsupported.')
+    expect(helpLines[1]).toHaveTextContent('Visible Google text: Fills an empty Description only; abstains without it and never falls back to Hardcover.')
     await user.click(within(description).getByRole('combobox', { name: 'Description representation' }))
     await user.click(screen.getByRole('option', { name: 'Visible Google text' }))
     expect(await screen.findByText('Description now uses a Manual review only representation, so review mode changed from Automatic to Ask me.')).toBeVisible()
     expect(within(description).getByRole('button', { name: 'Ask me' })).toHaveAttribute('aria-pressed', 'true')
-    expect(within(description).getByText(/eligible Google Books visible text only/i)).toBeVisible()
-    expect(within(description).getByText(/bounded Google HTML into inert visible text/i)).toBeVisible()
     expect(within(description).getByText(/never falls back to Hardcover/i)).toBeVisible()
-    expect(within(description).getByText('Ask me:').parentElement).toHaveTextContent('applies the exact displayed proposal')
     const changedGenres = screen.getByRole('region', { name: 'Genres' })
     await user.click(within(changedGenres).getByRole('button', { name: 'Ignore' }))
     expect(screen.getByRole('button', { name: /^Curation/ })).toHaveAccessibleDescription('2 changed fields')
@@ -118,7 +183,7 @@ describe('Policy route', () => {
     expect(within(explicit).getByText('Unsupported destination')).toBeVisible()
     expect(within(explicit).getByText(/shown for context only.*cannot be changed in this draft/i)).toBeVisible()
     expect(screen.queryByRole('region', { name: 'Title and subtitle' })).toBeNull()
-    expect(screen.getAllByText('Draft has unreviewed changes').length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/draft has unreviewed changes/u).length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(await screen.findByText('The draft is not valid. Review its field choices and try again.')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))

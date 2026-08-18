@@ -252,6 +252,12 @@ class PolicyTransition:
     total: int
     failed: int
     acknowledged: bool
+    # ``baseline`` is the generation the container was created with; every owner
+    # activation raises the generation, so nothing else can occupy generation 1.
+    # Without this the fresh container's seeded row was indistinguishable from a
+    # completed owner activation, and the interface reported one that never
+    # happened.
+    origin: str = "activation"
 
 
 @dataclass(frozen=True, slots=True)

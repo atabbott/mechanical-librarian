@@ -836,6 +836,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 row[5],
                 row[8],
                 bool(row[6]),
+                "baseline" if row[3] == 1 else "activation",
             )
         except sqlite3.Error as error:
             raise MetadataReportError(

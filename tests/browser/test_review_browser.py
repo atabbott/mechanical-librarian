@@ -365,6 +365,21 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.get_by_role("button", name="Curation").click()
                 page.wait_for_url("**/policy?section=curation")
                 expect(page.locator("#policy-curation")).to_be_focused()
+                # A fresh container activated nothing. The seeded built-in
+                # policy is named as the active baseline and never reported as
+                # a completed owner activation over zero works.
+                page.get_by_text("Active baseline \u00b7", exact=False).wait_for()
+                policy_body = page.locator("body").inner_text()
+                assert "Activation complete" not in policy_body
+                assert "Policy update complete" not in policy_body
+                assert "0 of 0" not in policy_body
+                assert "Draft is separate from the active policy" not in policy_body
+                assert page.locator(".policy-cutover").count() == 0
+                page.locator(".cm-policy-finish").get_by_text(
+                    "Change any field to create a new draft \u2014 validation always "
+                    "covers the whole policy.",
+                    exact=True,
+                ).wait_for()
                 policy_chapters = page.get_by_role("navigation", name="Policy chapters")
                 assert policy_chapters.locator("button b").all_inner_texts() == [
                     "0",
@@ -441,6 +456,36 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 )
                 page.emulate_media(reduced_motion="reduce")
                 assert page.locator(".cm-dropdown-menu").count() == 0
+                genres_mode = genres.get_by_role("group", name="Genres review mode")
+                original_mode = next(
+                    button.inner_text()
+                    for button in genres_mode.get_by_role("button").all()
+                    if button.get_attribute("aria-pressed") == "true"
+                )
+                genres.get_by_role("button", name="Ignore").click()
+                assert policy_chapters.locator("button b").all_inner_texts() == [
+                    "0",
+                    "0",
+                    "1",
+                    "0",
+                ]
+                # An exact revert returns every surface to the clean state: no
+                # chapter count, no dirty header, no validation action.
+                genres.get_by_role("button", name=original_mode, exact=True).click()
+                assert policy_chapters.locator("button b").all_inner_texts() == [
+                    "0",
+                    "0",
+                    "0",
+                    "0",
+                ]
+                page.locator(".cm-policy-finish").get_by_text(
+                    "Draft matches the active policy", exact=True
+                ).wait_for()
+                page.get_by_text("Draft matches active policy.", exact=True).wait_for()
+                page.get_by_text("draft matches active", exact=False).first.wait_for()
+                assert page.get_by_role(
+                    "button", name="Validate and preview"
+                ).is_disabled()
                 genres.get_by_role("button", name="Ignore").click()
                 assert policy_chapters.locator("button b").all_inner_texts() == [
                     "0",
@@ -534,6 +579,50 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 assert page.get_by_role(
                     "navigation", name="Policy chapters"
                 ).is_visible()
+                # The sticky finish tray spans both columns and never covers a
+                # sidebar safety control, with the safety group expanded.
+                if not page.locator(".cm-policy-mode").evaluate("node => node.open"):
+                    page.locator(".cm-policy-mode summary").click()
+                page.get_by_role("button", name="Enter Preview mode").wait_for()
+                sidebar_box = page.locator(".cm-policy-sidebar").bounding_box()
+                tray_box = page.locator(".cm-policy-finish").bounding_box()
+                assert sidebar_box is not None and tray_box is not None
+                sidebar_right = sidebar_box["x"] + sidebar_box["width"]
+                assert tray_box["x"] < sidebar_right
+                assert (tray_box["x"] + tray_box["width"]) > sidebar_right
+                covered = """() => {
+                    const rail = document.querySelector('.cm-policy-sidebar')
+                    const side = rail.getBoundingClientRect()
+                    const tray = document.querySelector(
+                        '.cm-policy-finish').getBoundingClientRect()
+                    return [...rail.querySelectorAll('button, summary')]
+                        .map(node => [node, node.getBoundingClientRect()])
+                        .filter(([, box]) => {
+                            const top = Math.max(box.top, side.top)
+                            const bottom = Math.min(box.bottom, side.bottom)
+                            return bottom > top && bottom > tray.top &&
+                                top < tray.bottom && box.right > tray.left &&
+                                box.left < tray.right
+                        })
+                        .map(([node]) => node.textContent.slice(0, 48))
+                    }"""
+                assert page.evaluate(covered) == []
+                # Anything the bounded rail clips stays reachable by scrolling
+                # the rail itself, and is still never under the tray.
+                assert (
+                    page.locator(".cm-policy-sidebar").evaluate(
+                        "node => getComputedStyle(node).overflowY"
+                    )
+                    != "visible"
+                )
+                page.locator(".cm-policy-sidebar").evaluate(
+                    "node => { node.scrollTop = node.scrollHeight }"
+                )
+                page.get_by_role("button", name="Pause automatic decisions").click()
+                page.get_by_role("button", name="Resume automatic decisions").wait_for()
+                assert page.evaluate(covered) == []
+                page.get_by_role("button", name="Resume automatic decisions").click()
+                page.get_by_role("button", name="Pause automatic decisions").wait_for()
                 review_activation.click()
                 page.get_by_role("button", name="Back to preview").click()
                 review_activation.wait_for()
@@ -983,7 +1072,7 @@ def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:
 
                 page.route("**/api/v1/review-cases/**", delay_selected_detail)
                 _login(page, origin)
-                page.locator(".work-select").first.click()
+                page.locator(".library-work-row").first.click()
                 page.get_by_text("Loading selected work…").wait_for()
                 pending_detail = page.locator(".workspace-detail")
                 expect(pending_detail).to_be_focused()

@@ -457,6 +457,12 @@ class _ProviderOutcome(_ClosedModel):
     status: str
 
 
+class _LibraryWorkSummary(_ClosedModel):
+    fields: list[_TargetField]
+    reason: str
+    state: str
+
+
 class _LibraryWork(_ClosedModel):
     authors: list[str]
     attention_count: int
@@ -467,6 +473,7 @@ class _LibraryWork(_ClosedModel):
     library: str
     media_kind: str
     review_case_id: str | None
+    summary: _LibraryWorkSummary | None = None
     title: str
     work_id: str
     preparation: _PreparationFailure | None = None
@@ -478,6 +485,8 @@ class _LibraryResponse(_ClosedModel):
     items: list[_LibraryWork]
     lens: str
     next_cursor: str | None
+    page: int
+    previous_cursor: str | None
     query: str | None
     schema_version: str
 
@@ -827,6 +836,7 @@ class _PolicyTransitionResponse(_ClosedModel):
     total: int
     failed: int
     acknowledged: bool
+    origin: str
     schema_version: Literal["metadata-policy-transition-v1"] = (
         "metadata-policy-transition-v1"
     )
@@ -948,6 +958,7 @@ class _PolicyTransitionFields(TypedDict):
     total: int
     failed: int
     acknowledged: bool
+    origin: str
 
 
 def _policy_transition_response(value: PolicyTransition) -> _PolicyTransitionResponse:
@@ -964,6 +975,7 @@ def _policy_transition_response(value: PolicyTransition) -> _PolicyTransitionRes
                 "total": value.total,
                 "failed": value.failed,
                 "acknowledged": value.acknowledged,
+                "origin": value.origin,
             },
         )
     )

@@ -79,9 +79,9 @@ def test_terminal_provider_taxonomy_projects_closed_safe_outcomes() -> None:
         ),
     )
     outcomes = _provider_outcomes(report)
-    assert {outcome["status"] for outcome in outcomes} == (
-        {status.value for status in statuses} - {"disabled", "insufficient_input"}
-    )
+    assert {outcome["status"] for outcome in outcomes} == {
+        status.value for status in statuses
+    }
     assert all(
         set(outcome)
         == {"lane_kind", "provider", "provider_requests", "reason", "status"}

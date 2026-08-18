@@ -10,6 +10,7 @@ import type {
   DecisionCommand,
   LibraryView,
   LibraryWorkView,
+  ProviderOutcomeView,
 } from '../api/http'
 import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
@@ -23,12 +24,28 @@ type ReviewField = CaseDetailView['fields'][number]
 
 const authorLine = (work: LibraryWorkView) =>
   work.authors.length ? work.authors.join(', ') : 'Author details unavailable'
-const providerOutcomeSummary = (work: LibraryWorkView) =>
-  work.preparation
-    ? 'Preparation needs owner recovery'
-    : work.preparationOutcomes.length
-      ? `${String(work.preparationOutcomes.length)} provider outcome${work.preparationOutcomes.length === 1 ? '' : 's'} retained`
-      : undefined
+// The server's closed lane status is an audit token, not something an owner can
+// read: `candidates` and `candidate_limit_exceeded` differ by one word and mean
+// opposite things. The consequence beside it is the server's own owner-facing
+// sentence; this names the outcome the owner is looking for.
+// The static map is exercised directly by the source-status content proof.
+// eslint-disable-next-line react-refresh/only-export-components
+export const sourceStatusLabel = (status: string) =>
+  status === 'candidates'
+    ? 'Match'
+    : status === 'no_match'
+      ? 'No match'
+      : status === 'candidate_limit_exceeded'
+        ? 'Too many candidates'
+        : status === 'rate_limited' || status === 'unavailable'
+          ? 'Retry scheduled'
+          : status === 'disabled'
+            ? 'Not enabled'
+            : status === 'insufficient_input'
+              ? 'Not enough identity'
+              : status === 'query_limit_exceeded'
+                ? 'Query allowance reached'
+                : 'Provider failure'
 const initials = (title: string) =>
   title
     .split(/\s+/u)
@@ -138,6 +155,81 @@ const comparisonNotices = (field: ReviewField) =>
   )
     ? []
     : field.notices.filter((notice) => materialComparisonReasons.has(notice))
+
+function WorkSources({ outcomes }: { outcomes: readonly ProviderOutcomeView[] }) {
+  if (!outcomes.length) return null
+  return (
+    <details className="work-sources">
+      <summary>
+        <span>Sources</span>
+        <small>{String(outcomes.length)} consulted for this work</small>
+      </summary>
+      <ul>
+        {outcomes.map((outcome, index) => (
+          <li key={`${outcome.provider}:${outcome.laneKind}:${outcome.status}:${String(index)}`}>
+            <strong>{outcome.provider}</strong>
+            <b>{sourceStatusLabel(outcome.status)}</b>
+            <span>{outcome.reason}</span>
+            <small>
+              {fieldLabel(outcome.laneKind)} lookup · {String(outcome.providerRequests)} bounded
+              request{outcome.providerRequests === 1 ? '' : 's'}
+            </small>
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+function WorkSummary({ work, onBack }: { work: LibraryWorkView; onBack: () => void }) {
+  const summary = work.summary
+  return (
+    <>
+      <header className="selected-work-header" tabIndex={-1} data-route-focus="true">
+        <span className="library-book-mark" aria-hidden="true">
+          {initials(work.title)}
+        </span>
+        <div>
+          <h2>{work.title}</h2>
+          <p>
+            {authorLine(work)} · {work.library} · {labelWords(work.mediaKind)}
+          </p>
+        </div>
+      </header>
+      <p className="library-work-summary-reason" role="status">
+        {summary?.reason ?? 'No review decision is recorded for this work.'}
+      </p>
+      {work.preparation ? (
+        <aside className="comparison-notice" aria-label="Preparation condition">
+          <p>
+            <strong>
+              {fieldLabel(work.preparation.status)} at {fieldLabel(work.preparation.stage)}
+            </strong>
+          </p>
+          <p>
+            {work.preparation.reason} {work.preparation.recovery}
+          </p>
+        </aside>
+      ) : null}
+      {summary?.fields.length ? (
+        <dl className="library-work-values">
+          {summary.fields.map((field) => (
+            <div key={field.destination}>
+              <dt>{fieldLabel(field.destination)}</dt>
+              <dd>{field.state === 'value' ? field.value : fieldLabel(field.state)}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : null}
+      <WorkSources outcomes={work.preparationOutcomes} />
+      <div className="work-summary-controls">
+        <button type="button" onClick={onBack}>
+          Back to works
+        </button>
+      </div>
+    </>
+  )
+}
 
 function ChoiceEvidencePanel({
   context,
@@ -642,11 +734,30 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     identity: { title: string; authors: readonly string[]; library: string; mediaKind: string }
   } | null>(null)
   const [completionInspection, setCompletionInspection] = useState<string | null>(null)
+  const [openedWork, setOpenedWork] = useState<LibraryWorkView | null>(null)
   const [expandedChoiceState, setExpandedChoiceState] = useState<{
     work: string
     keys: ReadonlySet<string>
   }>({ work: '', keys: new Set() })
+  // The URL owns the query. This holds only the exact characters typed since the
+  // last URL move, so a trailing space survives the round trip; the moment the
+  // URL says something this echo does not, the URL wins — which is what makes
+  // Back, Forward and a deep link reseed the box instead of fighting it.
+  const [typedQuery, setTypedQuery] = useState({ echo: search.q ?? '', text: search.q ?? '' })
+  const urlQuery = search.q ?? ''
+  const queryText = typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
   const selectedReviewCaseId = search.preview ?? ''
+  // A search or lens may temporarily hide the open work's card. The row the
+  // owner opened is kept so the summary does not vanish mid-inspection and
+  // send them back to the list; clearing the selection releases it.
+  const selectedWork = search.work
+    ? (data.works.find((work) => work.workId === search.work) ??
+      (openedWork?.workId === search.work ? openedWork : undefined))
+    : undefined
+  const hasSelection = Boolean(search.preview) || selectedWork !== undefined
+  const selectedLibraryWork = search.preview
+    ? data.works.find((work) => work.reviewCaseId === search.preview)
+    : undefined
   const detail = useQuery({
     ...detailQuery(http, selectedReviewCaseId),
     enabled: Boolean(search.preview),
@@ -740,7 +851,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     },
   })
 
-  const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.preview ?? ''}:${search.field ?? ''}:${search.attention ?? ''}`
+  const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.field ?? ''}:${search.attention ?? ''}`
   useRouteReadyFocus(routeIdentity)
   useEffect(() => {
     currentSearch.current = search
@@ -808,34 +919,68 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     return () => media.removeEventListener('change', selectWideDefault)
   }, [data.works, navigate])
 
-  const select = (reviewCaseId: string, field?: string) => {
+  const selectCase = (reviewCaseId: string, field?: string) => {
     if (reviewCaseId !== selectedReviewCaseId)
       setExpandedChoiceState({ work: reviewCaseId, keys: new Set() })
     if (complete?.id !== reviewCaseId) {
       setComplete(null)
       setCompletionInspection(null)
     }
+    setOpenedWork(null)
     void navigate({
       search: (current) => {
         const next = { ...current, preview: reviewCaseId }
+        delete next.work
         if (field) next.field = field
         else delete next.field
         return next
       },
     })
   }
-  const submitSearch = (event: SyntheticEvent<HTMLFormElement, SubmitEvent>) => {
-    event.preventDefault()
-    const value = new FormData(event.currentTarget).get('q')
-    const q = typeof value === 'string' ? value : ''
+  const select = (work: LibraryWorkView) => {
+    if (work.reviewCaseId) {
+      selectCase(work.reviewCaseId)
+      return
+    }
+    setComplete(null)
+    setCompletionInspection(null)
+    setOpenedWork(work)
     void navigate({
+      search: (current) => {
+        const next = { ...current, work: work.workId }
+        delete next.preview
+        delete next.field
+        return next
+      },
+    })
+  }
+  // Progressive filtering keeps the typed text local so each keystroke paints,
+  // and moves the URL a frame later. The URL stays the single owner of the
+  // query: a Back, a deep link, or a lens change reseeds the box below.
+  const runSearch = (value: string) => {
+    const q = value.trim()
+    setTypedQuery({ echo: q, text: value })
+    void navigate({
+      replace: true,
       search: (current) => {
         const next = { ...current }
         delete next.cursor
-        delete next.preview
-        delete next.field
         if (q) next.q = q
         else delete next.q
+        return next
+      },
+    })
+  }
+  const submitSearch = (event: SyntheticEvent<HTMLFormElement, SubmitEvent>) => {
+    event.preventDefault()
+    runSearch(queryText)
+  }
+  const movePage = (cursor: string | undefined) => {
+    void navigate({
+      search: (current) => {
+        const next = { ...current }
+        if (cursor) next.cursor = cursor
+        else delete next.cursor
         return next
       },
     })
@@ -867,10 +1012,12 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const clearSelection = () => {
     setComplete(null)
     setCompletionInspection(null)
+    setOpenedWork(null)
     void navigate({
       search: (current) => {
         const next = { ...current }
         delete next.preview
+        delete next.work
         delete next.field
         delete next.attention
         return next
@@ -882,9 +1029,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       setExpandedChoiceState({ work: reviewCaseId, keys: new Set() })
     setComplete(null)
     setCompletionInspection(null)
+    setOpenedWork(null)
     void navigate({
       search: (current) => {
         const next = { ...current, preview: reviewCaseId, field }
+        delete next.work
         delete next.attention
         return next
       },
@@ -905,17 +1054,14 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const effect = selected ? effectSummary(selected) : undefined
 
   return (
-    <div
-      className={`library-page variant-m-workspace${search.preview ? ' has-selected-work' : ''}`}
-    >
+    <div className={`library-page variant-m-workspace${hasSelection ? ' has-selected-work' : ''}`}>
       <header
         className="library-header"
         tabIndex={-1}
-        {...(search.preview ? {} : { 'data-route-focus': 'true' })}
+        {...(search.preview || search.work ? {} : { 'data-route-focus': 'true' })}
       >
         <div>
           <h1>Every work, with exceptions first</h1>
-          <p>Library keeps the current collection and human attention in one workspace.</p>
         </div>
         <button
           className="attention-toggle"
@@ -937,7 +1083,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       </header>
       <PreparationNotice routeIdentity={routeIdentity} />
       <div
-        className={`library-workspace${search.preview ? ' has-selection' : ''}${search.attention === 'open' ? ' attention-open' : ''}`}
+        className={`library-workspace${hasSelection ? ' has-selection' : ''}${search.attention === 'open' ? ' attention-open' : ''}`}
       >
         <section className="library-works" aria-labelledby="library-works-title">
           <div className="library-works-heading">
@@ -949,7 +1095,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
               <Link
                 key={lens}
                 to="/library"
-                search={{ lens, ...(search.q ? { q: search.q } : {}) }}
+                search={{
+                  lens,
+                  ...(search.q ? { q: search.q } : {}),
+                  ...(search.preview ? { preview: search.preview } : {}),
+                  ...(search.work ? { work: search.work } : {}),
+                  ...(search.field ? { field: search.field } : {}),
+                }}
                 preload="intent"
                 activeProps={{ 'aria-current': 'page' }}
               >
@@ -957,140 +1109,124 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
               </Link>
             ))}
           </nav>
-          <form className="search library-search" onSubmit={submitSearch}>
+          <form className="search library-search" role="search" onSubmit={submitSearch}>
             <label className="sr-only" htmlFor="library-query">
-              Search title, author, library, or media
+              Search title, author, identifier, library, or format
             </label>
             <div>
               <input
-                key={search.q}
                 id="library-query"
                 name="q"
                 type="search"
                 maxLength={128}
-                defaultValue={search.q ?? ''}
+                value={queryText}
                 placeholder="Search title, author, library…"
+                onChange={(event) => runSearch(event.target.value)}
               />
-              <button>Search</button>
+              <button type="button" disabled={!queryText} onClick={() => runSearch('')}>
+                Clear
+              </button>
             </div>
           </form>
-          <p className="library-order">Attention first · bounded current results</p>
           <div className="library-work-list">
             {data.works.length === 0 ? (
-              <p className="empty-copy">No exact-current works match this search and lens.</p>
+              <div className="empty-copy">
+                <p>No exact-current works match this search and lens.</p>
+                {search.q ? (
+                  <button type="button" onClick={() => runSearch('')}>
+                    Clear search
+                  </button>
+                ) : null}
+              </div>
             ) : (
               data.works.map((work) => {
-                const selectedWorkRow = search.preview === work.reviewCaseId
+                const selectedWorkRow = work.reviewCaseId
+                  ? search.preview === work.reviewCaseId
+                  : search.work === work.workId
                 const needsAttention = work.attentionCount > 0
-                const providerSummary = providerOutcomeSummary(work)
+                const status = work.preparation
+                  ? 'Preparation failed safely'
+                  : needsAttention
+                    ? work.attentionCount === 1
+                      ? '1 field needs attention'
+                      : `${String(work.attentionCount)} fields need attention`
+                    : 'No attention needed'
                 return (
-                  <article
+                  <button
                     key={work.id}
+                    type="button"
                     className={`library-work-row${selectedWorkRow ? ' active' : ''}`}
+                    aria-current={selectedWorkRow ? 'true' : undefined}
+                    aria-label={`${work.title}. ${authorLine(work)}. ${status}`}
+                    onClick={() => select(work)}
                   >
                     <span className="library-book-mark" aria-hidden="true">
                       {initials(work.title)}
                     </span>
-                    <div className="library-work-copy">
-                      <h3>
-                        {work.reviewCaseId ? (
-                          <button
-                            className="work-select"
-                            type="button"
-                            aria-pressed={selectedWorkRow}
-                            onClick={() => select(work.reviewCaseId ?? '')}
-                          >
-                            {work.title}
-                          </button>
-                        ) : (
-                          work.title
-                        )}
-                      </h3>
-                      <p>{authorLine(work)}</p>
-                      <p>
+                    <span className="library-work-copy">
+                      <strong className="library-work-title">{work.title}</strong>
+                      <span className="library-work-author">{authorLine(work)}</span>
+                      <span className="library-work-origin">
                         {work.library} · {fieldLabel(work.mediaKind)}
-                      </p>
-                      <div className="library-work-status">
+                      </span>
+                      <span className="library-work-status">
                         <span
                           className={
                             needsAttention || work.preparation ? 'needs-attention' : 'handled'
                           }
                         >
-                          {work.preparation
-                            ? 'Preparation failed safely'
-                            : needsAttention
-                              ? work.attentionCount === 1
-                                ? '1 field needs attention'
-                                : `${String(work.attentionCount)} fields need attention`
-                              : 'No attention needed'}
+                          {status}
                         </span>
-                      </div>
-                      {providerSummary ? (
-                        <details className="provider-outcomes">
-                          <summary>{providerSummary}</summary>
-                          {work.preparation ? (
-                            <p>
-                              <strong>
-                                {fieldLabel(work.preparation.status)} at{' '}
-                                {fieldLabel(work.preparation.stage)}
-                              </strong>{' '}
-                              · {work.preparation.reason} {work.preparation.recovery}
-                            </p>
-                          ) : null}
-                          <ul>
-                            {work.preparationOutcomes.map((outcome, index) => (
-                              <li
-                                key={`${outcome.provider}:${outcome.laneKind}:${outcome.status}:${String(index)}`}
-                              >
-                                <strong>{outcome.provider}</strong> · {fieldLabel(outcome.laneKind)}{' '}
-                                · {fieldLabel(outcome.status)} · {String(outcome.providerRequests)}{' '}
-                                bounded provider request{outcome.providerRequests === 1 ? '' : 's'}.{' '}
-                                {outcome.reason}
-                              </li>
-                            ))}
-                          </ul>
-                        </details>
-                      ) : null}
-                    </div>
-                  </article>
+                      </span>
+                    </span>
+                  </button>
                 )
               })
             )}
           </div>
           <div className="library-pager">
+            <button
+              type="button"
+              disabled={!data.previousCursor}
+              onClick={() => movePage(data.previousCursor)}
+            >
+              ← Previous
+            </button>
             <span>
-              {data.nextCursor
-                ? 'More current works are available'
-                : 'End of the bounded current result'}
+              Page {String(data.page)}
+              {data.nextCursor ? '' : ' · end of the bounded current result'}
             </span>
-            {data.nextCursor ? (
-              <Link to="/library" search={{ ...search, cursor: data.nextCursor }}>
-                Next page →
-              </Link>
-            ) : null}
+            <button
+              type="button"
+              disabled={!data.nextCursor}
+              onClick={() => movePage(data.nextCursor)}
+            >
+              Next →
+            </button>
           </div>
         </section>
         <section
           className="workspace-detail"
           aria-live="polite"
           tabIndex={-1}
-          {...(search.preview &&
+          {...(!selectedWork &&
+          search.preview &&
           search.attention !== 'open' &&
           (!displayedIdentity || detail.isPending || detail.isError)
             ? { 'data-route-focus': 'true' }
             : {})}
         >
-          {!search.preview ? (
+          {selectedWork ? (
+            <WorkSummary work={selectedWork} onBack={clearSelection} />
+          ) : !search.preview ? (
             <div className="library-selection">
               <h2>Choose a work</h2>
               <p>
-                Its current values, field position, and bounded reviewer context stay here while you
-                move through attention.
+                Its current values and field position stay here while you move through attention.
               </p>
             </div>
           ) : !displayedIdentity ? (
             <div className="library-selection">
-              <p>Progressive detail</p>
               <h2>Selected work</h2>
               <p>Readable work identity is not available on this Library page.</p>
               <Link
@@ -1137,7 +1273,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   {initials(displayedIdentity.title)}
                 </span>
                 <div>
-                  <p>Progressive detail</p>
                   <h2>{displayedIdentity.title}</h2>
                   <p>
                     {displayedIdentity.authors.length
@@ -1183,7 +1318,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       onClick={() => {
                         if (complete?.id === selectedReviewCaseId)
                           setCompletionInspection(field.destination)
-                        select(selectedReviewCaseId, field.destination)
+                        selectCase(selectedReviewCaseId, field.destination)
                       }}
                     >
                       <small>{String(position)}</small>
@@ -1228,7 +1363,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           type="button"
                           onClick={() => {
                             setCompletionInspection(field.destination)
-                            select(selectedReviewCaseId, field.destination)
+                            selectCase(selectedReviewCaseId, field.destination)
                           }}
                         >
                           <small>
@@ -1250,7 +1385,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         onClick={() => {
                           setComplete(null)
                           setCompletionInspection(null)
-                          select(nextWork.id, nextWork.destination)
+                          selectCase(nextWork.id, nextWork.destination)
                         }}
                       >
                         Review next work →
@@ -1484,6 +1619,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   </div>
                 </details>
               ) : null}
+              <WorkSources outcomes={selectedLibraryWork?.preparationOutcomes ?? []} />
               <div className="workspace-utilities">
                 <Link
                   className="full-review-link"

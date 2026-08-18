@@ -760,11 +760,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.locator(".workspace-detail").wait_for()
         page.get_by_role("button", name="Evidence for Current cover").click()
         page.get_by_text("Local library record", exact=True).wait_for()
-        work_b = (
-            page.locator(".library-work-row")
-            .filter(has_text=LONG_TITLE)
-            .locator(".work-select")
-        )
+        work_b = page.locator(".library-work-row").filter(has_text=LONG_TITLE)
         assert 1 == work_b.count()
         work_b.click()
         page.locator(".field-filmstrip").wait_for()
@@ -773,11 +769,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         ).click()
         page.get_by_role("region", name="Choose a cover").wait_for()
         assert 0 == page.locator(".choice-evidence").count()
-        work_a = (
-            page.locator(".library-work-row")
-            .filter(has_text=_HOSTILE)
-            .locator(".work-select")
-        )
+        work_a = page.locator(".library-work-row").filter(has_text=_HOSTILE)
         assert 1 == work_a.count()
         work_a.click()
         page.locator(".field-filmstrip").wait_for()
@@ -882,8 +874,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "Guarded from external update"
             in page.locator(".field-apply-context").inner_text()
         )
-        assert page.get_by_role("button", name="Previous").count() == 0
-        assert page.get_by_role("button", name="Next").count() == 0
+        # The workspace never grows a field stepper. The Library pager is a
+        # separate, list-scoped control and is asserted where the list is.
+        detail_workspace = page.locator(".workspace-detail")
+        assert detail_workspace.get_by_role("button", name="Previous").count() == 0
+        assert detail_workspace.get_by_role("button", name="Next").count() == 0
         page.locator(".attention-toggle").click()
         expect(page).to_have_url(
             "https://react-platform.invalid/library?lens=all&preview=case-1&attention=open"
@@ -920,47 +915,87 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             has_text="Catalogue-only work"
         )
         assert no_case_row.get_by_role("link").count() == 0
-        assert no_case_row.locator(".work-select").count() == 0
-        no_case_row.get_by_text("Preparation needs owner recovery").click()
-        assert "Authentication at Provider" in no_case_row.inner_text()
-        assert "hardcover-main · Work · Authentication" in no_case_row.inner_text()
-        assert "1 bounded provider request" in no_case_row.inner_text()
-        assert "Retry review preparation" in no_case_row.inner_text()
+        # A work with no review case is still openable: the row is one target
+        # and the detail pane names the condition and every source consulted.
+        no_case_row.click()
+        work_detail = page.locator(".workspace-detail")
+        work_detail.get_by_role("heading", name="Catalogue-only work").wait_for()
+        assert "Authentication at Provider" in work_detail.inner_text()
+        assert "Retry review preparation" in work_detail.inner_text()
+        sources = work_detail.locator(".work-sources")
+        assert sources.count() == 1
+        assert sources.evaluate("node => node.open") is False
+        sources.get_by_text("Sources", exact=True).click()
+        assert sources.evaluate("node => node.open") is True
+        assert "hardcover-main" in sources.inner_text()
+        assert "Work lookup · 1 bounded request" in sources.inner_text()
+        capture_visual_proof("library-work-summary")
+        work_detail.get_by_role("button", name="Back to works").click()
         page.get_by_role("link", name="Needs attention", exact=True).click()
         expect(page.locator(".library-work-row")).to_have_count(5)
         page.get_by_role("link", name="No attention needed", exact=True).click()
         expect(page.locator(".library-work-row")).to_have_count(6)
         page.get_by_role("link", name="All", exact=True).click()
         expect(page.locator(".library-work-row")).to_have_count(6)
-        page.get_by_role("link", name="Next page").click()
+        page.get_by_role("button", name="Next \u2192").click()
         page.get_by_text("Unicode shelves:", exact=False).wait_for()
         assert page.locator(".library-work-row").count() == 6
-        assert page.get_by_text("Library could not be loaded", exact=False).count() == 0
-        page.get_by_label("Search title, author, library, or media").fill(
-            "Spoken stories"
+        page.get_by_text("Page 2", exact=False).wait_for()
+        # A published work with no review case still opens, and says so.
+        page.locator(".library-work-row").filter(
+            has_text="Pre-admission observation"
+        ).click()
+        work_detail.get_by_role("heading", name="Pre-admission observation").wait_for()
+        assert (
+            "No review decision is recorded for this work." in work_detail.inner_text()
         )
-        page.get_by_role("button", name="Search").click()
+        assert "Ember Lane" in work_detail.locator(".library-work-values").inner_text()
+        assert (
+            "2 consulted for this work"
+            in work_detail.locator(".work-sources").inner_text()
+        )
+        work_detail.get_by_role("button", name="Back to works").click()
+        # Browsing is reversible: the same pager walks the bounded window back.
+        page.get_by_role("button", name="\u2190 Previous").click()
+        page.get_by_text("Catalogue-only work", exact=True).wait_for()
+        page.get_by_text("Page 1", exact=False).wait_for()
+        capture_visual_proof("library-pager")
+        assert page.get_by_role("button", name="\u2190 Previous").is_disabled()
+        page.get_by_role("button", name="Next \u2192").click()
+        page.get_by_text("Unicode shelves:", exact=False).wait_for()
+        page.get_by_role("button", name="\u2190 Previous").click()
+        page.get_by_text("Catalogue-only work", exact=True).wait_for()
+        assert page.get_by_text("Library could not be loaded", exact=False).count() == 0
+        search_box = page.get_by_label(
+            "Search title, author, identifier, library, or format"
+        )
+        # Searching narrows as the owner types and returns to the first page.
+        search_box.fill("Spoken stories")
         page.get_by_text("The Glass Orchard", exact=True).wait_for()
         assert page.locator(".library-work-row").count() == 3
-        page.get_by_label("Search title, author, library, or media").fill(
-            "no synthetic work has this phrase"
-        )
-        page.get_by_role("button", name="Search").click()
+        page.get_by_text("Page 1", exact=False).wait_for()
+        assert search_box.input_value() == "Spoken stories"
+        search_box.fill("no synthetic work has this phrase")
         page.get_by_text(
             "No exact-current works match this search and lens."
         ).wait_for()
+        page.get_by_role("button", name="Clear search").click()
+        page.get_by_text("Catalogue-only work", exact=True).wait_for()
+        assert search_box.input_value() == ""
         stage[0] = "library:touch-targets"
         page.goto("https://react-platform.invalid/library?lens=all")
         for control in page.locator(".masthead nav a, .shell-actions button").all():
             assert control.bounding_box()["height"] >= 44
-        for control in page.locator(".lenses a, .work-select, .library-pager a").all():
+        for control in page.locator(
+            ".lenses a, .library-work-row, .library-pager button"
+        ).all():
             assert control.bounding_box()["height"] >= 44
         for lens in page.locator(".lenses a").all():
             assert lens.bounding_box()["width"] >= 44
         long_title = (
             page.locator(".library-work-row")
             .filter(has_text=LONG_TITLE)
-            .locator(".library-work-copy .work-select")
+            .locator(".library-work-title")
         )
         assert long_title.inner_text() == LONG_TITLE
         assert UNBROKEN_TITLE_SEGMENT in long_title.inner_text()
@@ -1005,11 +1040,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         for _ in range(10):
             page.keyboard.press("Tab")
             if page.evaluate(
-                "() => document.activeElement.matches('.library-work-copy .work-select')"
+                "() => document.activeElement.matches('.library-work-row')"
             ):
                 break
         assert page.evaluate(
-            "() => document.activeElement.matches('.library-work-copy .work-select')"
+            "() => document.activeElement.matches('.library-work-row')"
         )
         assert (
             page.evaluate("() => getComputedStyle(document.activeElement).outlineStyle")
@@ -1075,7 +1110,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page).to_have_url("https://react-platform.invalid/library?lens=all")
         expect(page.locator(".library-works")).to_be_visible()
         expect(page.locator(".workspace-detail")).to_be_hidden()
-        page.locator(".work-select").first.click()
+        page.locator(".library-work-row").first.click()
         expect(page).to_have_url(
             "https://react-platform.invalid/library?lens=all&preview=case-1"
         )
@@ -1355,14 +1390,16 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.locator(".attention-rail").wait_for()
         page.go_back()
         page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
-        for control in page.locator(".lenses a, .library-pager a, .work-select").all():
+        for control in page.locator(
+            ".lenses a, .library-pager button, .library-work-row"
+        ).all():
             assert control.bounding_box()["height"] >= 44
         for lens in page.locator(".lenses a").all():
             assert lens.bounding_box()["width"] >= 44
         compact_title = (
             page.locator(".library-work-row")
             .filter(has_text=LONG_TITLE)
-            .locator(".library-work-copy .work-select")
+            .locator(".library-work-title")
         )
         assert compact_title.inner_text() == LONG_TITLE
         assert UNBROKEN_TITLE_SEGMENT in compact_title.inner_text()
@@ -1404,8 +1441,32 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         expect(cover_representation).to_be_disabled()
         expect(cover_representation).to_have_text("Fixed supported source order")
-        assert "Manual review only" in cover_policy.inner_text()
+        # Unsupported automatic mode says so plainly; gate mechanics are gone.
+        assert "Automatic mode not supported" in cover_policy.inner_text()
         assert "Automatic writes" not in cover_policy.inner_text()
+        assert "qualified" not in cover_policy.inner_text()
+        assert "Enter Preview" not in cover_policy.inner_text()
+        cover_help = cover_policy.locator(".cm-policy-field-guidance")
+        assert cover_help.evaluate("node => node.open") is False
+        assert (
+            cover_help.evaluate(
+                "node => getComputedStyle(node.querySelector('summary'), '::after')"
+                ".content"
+            )
+            == '"\u25b8"'
+        )
+        cover_help.get_by_text("What this changes", exact=True).click()
+        capture_visual_proof("policy-field-guidance")
+        assert cover_help.evaluate("node => node.open") is True
+        assert cover_help.locator("li").count() >= 1
+        assert (
+            cover_help.evaluate(
+                "node => getComputedStyle(node.querySelector('summary'), '::after')"
+                ".content"
+            )
+            == '"\u25be"'
+        )
+        cover_help.get_by_text("What this changes", exact=True).click()
         capture_visual_proof("policy-cover")
         page.get_by_role("navigation", name="Policy chapters").get_by_role(
             "button", name="Identity"

@@ -131,6 +131,8 @@ class LibraryView:
     items: tuple[dict[str, object], ...]
     lens: str
     next_cursor: str | None
+    page: int
+    previous_cursor: str | None
     query: str | None
     schema_version: str
 
@@ -145,6 +147,10 @@ class LibraryView:
             tuple(dict(item) for item in items),
             str(value["lens"]),
             value["next_cursor"] if isinstance(value["next_cursor"], str) else None,
+            int(cast("int", value["page"])),
+            value["previous_cursor"]
+            if isinstance(value["previous_cursor"], str)
+            else None,
             value["query"] if isinstance(value["query"], str) else None,
             str(value["schema_version"]),
         )
@@ -155,6 +161,8 @@ class LibraryView:
             "items": [dict(item) for item in self.items],
             "lens": self.lens,
             "next_cursor": self.next_cursor,
+            "page": self.page,
+            "previous_cursor": self.previous_cursor,
             "query": self.query,
             "schema_version": self.schema_version,
         }
