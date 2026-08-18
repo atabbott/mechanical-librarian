@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Say what an Activity record actually changed. Each row reads work, field,
+  exact change, and result in the owner's words, with the before/after, who
+  chose it, and whether Audiobookshelf confirmed it behind one disclosure; a
+  Policy record lists each setting it moved with readable From and To. A
+  recovery keeps its compact detail rather than empty before/after fields, and
+  every value comes from that event's own record, not the current library. (#636)
+
 - Stop making the owner wait for a poll, and make write permission actionable
   where they already are. Preparation and completed works reach the open tab as
   they happen, over one authenticated stream that says what changed and never

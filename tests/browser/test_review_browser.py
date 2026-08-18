@@ -701,7 +701,20 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
 
                 page.route("**/api/v1/activity?*", activity_poll)
                 page.get_by_role("link", name="Activity", exact=True).click()
-                page.get_by_role("heading", name="No intervention needed").wait_for()
+                # This harness serves prepared work with no consent yet, and
+                # that is what the panel says. It used to claim "No
+                # intervention needed" directly above its own
+                # `3 Awaiting permission`, which is the claim #639 forbids.
+                page.get_by_role(
+                    "heading", name="Prepared work needs your permission"
+                ).wait_for()
+                expect(page.get_by_text("Awaiting permission")).to_be_visible()
+                for calm in (
+                    "No intervention needed",
+                    "No action required",
+                    "No action is required.",
+                ):
+                    expect(page.get_by_text(calm, exact=True)).to_have_count(0)
                 assert activity_requests >= 1
                 activity_search = page.get_by_role("searchbox", name="Search activity")
                 activity_search.click()

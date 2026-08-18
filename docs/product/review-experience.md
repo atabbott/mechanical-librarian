@@ -446,6 +446,19 @@ origins remain neutral bounded text, and pause/resume/revoke remain the only
 prominent controls. Activity does not expose internal jobs or rates, add a
 badge, or turn operational failure into a metadata decision.
 
+Every Activity record reads in one order: the work or setting, the field, the
+exact change, and the current result. A metadata or Policy change names the
+exact before and after, who or what chose it, and whether Audiobookshelf
+confirmed it; a Policy record additionally lists each setting it moved with
+readable From and To values. A record that was not a change -- a paused or
+closed preparation, a recovery, a cover safeguard -- keeps the compact detail
+density and says what happened instead of being given empty previous and new
+fields. Categories are the owner's four: owner choice, automatic choice, policy
+change, and recovery, so a verified write is never labelled a review because
+its authority happened to be human. Every value comes from the event's own
+immutable decision, plan or verification document, admitted by that document's
+own fingerprint, so a later catalogue change cannot alter a historical record.
+
 The delivered F16a detail page uses a bounded horizontally scrollable field
 attention-only strip inside a non-overflowing document. For each genuinely
 unresolved field, the current value and every specific eligible proposed value

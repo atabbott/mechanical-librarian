@@ -86,6 +86,11 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
     ProposalValueError,
 )
+from mechanical_librarian.domain.readable_activity import (
+    ABSENT,
+    destination_label,
+    policy_option_label,
+)
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
@@ -113,6 +118,52 @@ def _operational_signal(
         "scope": scope,
         "work_id": work_id,
     }
+
+
+def _policy_changes(
+    profiles: dict[str, MetadataPolicyProfile],
+    from_policy_id: object,
+    to_policy_id: object,
+) -> list[dict[str, str]]:
+    """Diff the two immutable profiles one transition names, in owner terms.
+
+    A profile carries two independent settings per field -- how it is reviewed
+    (``destinations``) and how its value is represented (``options``) -- so an
+    entry names both the field and which of its settings moved. Ordering is by
+    field so the same transition always reads the same way.
+    """
+    before = profiles.get(cast(str, from_policy_id))
+    after = profiles.get(cast(str, to_policy_id))
+    if before is None or after is None:
+        return []
+    changes: list[dict[str, str]] = []
+    for setting, previous_pairs, next_pairs in (
+        ("Review mode", before.destinations, after.destinations),
+        ("Representation", before.options, after.options),
+    ):
+        previous_values, next_values = dict(previous_pairs), dict(next_pairs)
+        for field in sorted(set(previous_values) | set(next_values)):
+            previous_value = previous_values.get(field)
+            next_value = next_values.get(field)
+            if previous_value == next_value:
+                continue
+            changes.append(
+                {
+                    "field": destination_label(field),
+                    "setting": setting,
+                    "previous": (
+                        ABSENT
+                        if previous_value is None
+                        else policy_option_label(previous_value)
+                    ),
+                    "next": (
+                        ABSENT
+                        if next_value is None
+                        else policy_option_label(next_value)
+                    ),
+                }
+            )
+    return changes
 
 
 class SQLiteFieldEffectActivityRepository(ConnectionScoped):
@@ -887,7 +938,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         WHEN CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END='human' THEN 'review'
                         WHEN CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END='automatic_policy' THEN 'metadata'
                         ELSE 'unknown' END,
-                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'field_effect', NULL, event.plan_id, event.sequence, effect.decision_id,
+                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'field_effect', NULL, event.plan_id, event.sequence, effect.decision_id, NULL, NULL,
                    CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END
               FROM field_effect_events event
               JOIN field_effects effect ON effect.plan_id=event.plan_id
@@ -898,7 +949,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             UNION ALL
             SELECT event.event_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, event.destination,
                    CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END, event.occurred_at, 'human', review.report_id,
-                   decision.outcome, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END, event.document, 'review', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'human_decision', decision.document, event.review_case_id, NULL, event.decision_id,
+                   decision.outcome, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END, event.document, 'review', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'human_decision', decision.document, event.review_case_id, NULL, event.decision_id, NULL, NULL,
                    CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END
               FROM human_decision_events event
               JOIN human_decisions decision ON decision.decision_id=event.decision_id
@@ -907,7 +958,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             UNION ALL
             SELECT decision.decision_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, decision.destination,
                    CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END, decision.occurred_at, 'automatic_policy', review.report_id,
-                   'recorded', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END, decision.document, 'metadata', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'automatic_decision', NULL, decision.review_case_id, NULL, decision.decision_id,
+                   'recorded', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END, decision.document, 'metadata', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'automatic_decision', NULL, decision.review_case_id, NULL, decision.decision_id, NULL, NULL,
                    CASE WHEN typeof(decision.document)='text' AND length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(decision.document) THEN 1 ELSE 0 END
               FROM automatic_decisions decision
               JOIN review_cases review ON review.review_case_id=decision.review_case_id
@@ -918,7 +969,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                    no_change.report_id, 'no_change_required', no_change.work_id, '{}',
                    'metadata', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END,
                    NULL, 'field_effect_no_change', NULL, no_change.review_case_id,
-                   NULL, no_change.decision_id, 1
+                   NULL, no_change.decision_id, NULL, NULL, 1
               FROM field_effect_no_changes no_change
               JOIN metadata_reports report ON report.report_id=no_change.report_id
             UNION ALL
@@ -927,7 +978,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                    CASE WHEN event.kind IN ('automatic_prepared','owner_retry_prepared') THEN json_extract(consideration.document, '$.reviewer_status') ELSE event.kind END, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END,
                    event.document,
                    CASE WHEN event.kind IN ('stale','superseded') THEN 'safety' WHEN event.kind='automatic_prepared' THEN 'metadata' WHEN event.kind IN ('owner_retry_prepared','selected','kept_incumbent','no_action') THEN 'review' ELSE 'unknown' END,
-                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'cover_safeguard', CASE WHEN json_extract(consideration.document, '$.reviewer_status') IN ('completed','unavailable','failed') THEN json_object('reviewer_status', json_extract(consideration.document, '$.reviewer_status')) ELSE '{}' END, event.review_case_id, NULL, event.consideration_id,
+                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'cover_safeguard', CASE WHEN json_extract(consideration.document, '$.reviewer_status') IN ('completed','unavailable','failed') THEN json_object('reviewer_status', json_extract(consideration.document, '$.reviewer_status')) ELSE '{}' END, event.review_case_id, NULL, event.consideration_id, NULL, NULL,
                    CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) AND typeof(consideration.document)='text' AND length(CAST(consideration.document AS BLOB)) BETWEEN 2 AND 12582912 AND json_valid(consideration.document) THEN 1 ELSE 0 END
               FROM cover_consideration_events event
               JOIN cover_considerations consideration ON consideration.consideration_id=event.consideration_id
@@ -936,7 +987,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             UNION ALL
             SELECT transition.transition_id, NULL, 'policy', 'Library policy', transition.updated_at,
                    'policy', NULL, transition.state, 'Library policy', '{}', 'policy',
-                   'Library policy', 'Policy generation ' || transition.generation, 'policy_transition', NULL, NULL, NULL, NULL, 1
+                   'Library policy', 'Policy generation ' || transition.generation, 'policy_transition', NULL, NULL, NULL, NULL, transition.from_policy_id, transition.to_policy_id, 1
               FROM metadata_policy_transitions transition
         """
         where = ["occurred_at>=?"]
@@ -960,7 +1011,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             parameters.extend((like, like, like, like, like, like))
         predicate = " WHERE " + " AND ".join(where)
         projection = (
-            "WITH activity_events(event_id,connection,destination,library,occurred_at,origin,report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,source_valid) AS ("
+            "WITH activity_events(event_id,connection,destination,library,occurred_at,origin,report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,policy_from,policy_to,source_valid) AS ("
             + cast(str, events)
             + ") "
         )
@@ -984,7 +1035,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             rows = self._connection.execute(
                 projection
                 + "SELECT event_id,connection,destination,library,occurred_at,origin,"
-                "report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,source_valid FROM activity_events"
+                "report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,policy_from,policy_to,source_valid FROM activity_events"
                 + predicate
                 + " ORDER BY occurred_at DESC,event_id DESC LIMIT ? OFFSET ?",
                 (*parameters, page_size, (selected_page - 1) * page_size),
@@ -1017,6 +1068,32 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # a bounded poll proportional to unrelated history.
             if set(report_documents) != set(report_ids):
                 raise FieldEffectError("persistence")
+            # A Policy row's exact From/To comes from the two immutable
+            # profiles its own transition names, not from whatever policy is
+            # active now. At most two per row on a closed page, each capped at
+            # 16KB by the schema, so this stays a bounded page read.
+            policy_ids = sorted(
+                {value for row in rows for value in row[18:20] if value is not None}
+            )
+            policy_profiles: dict[str, MetadataPolicyProfile] = {}
+            if policy_ids:
+                try:
+                    for policy_id, policy_document in self._connection.execute(
+                        "SELECT policy_id,document FROM metadata_policy_drafts WHERE policy_id IN ("
+                        + ",".join("?" for _ in policy_ids)
+                        + ")",
+                        policy_ids,
+                    ).fetchall():
+                        profile = MetadataPolicyProfile.from_data(
+                            json.loads(policy_document)
+                        )
+                        if profile.policy_id != policy_id:
+                            raise FieldEffectError("persistence")
+                        policy_profiles[policy_id] = profile
+                except MetadataPolicyError as error:
+                    raise FieldEffectError("persistence") from error
+                if set(policy_profiles) != set(policy_ids):
+                    raise FieldEffectError("persistence")
             events = []
             decision: HumanDecision | AutomaticDecision
             for (
@@ -1038,6 +1115,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 source_parent_id,
                 source_sequence,
                 source_identity,
+                policy_from,
+                policy_to,
                 source_valid,
             ) in rows:
                 if (
@@ -1306,35 +1385,44 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 failure = scalar(raw.get("failure"), nullable=True)
                 if report_id is not None:
                     scalar(report_id)
-                source_label = {
-                    "field_effect": "Recorded field effect",
-                    "field_effect_no_change": "Recorded no-change decision",
-                    "human_decision": "Recorded human decision",
-                    "automatic_decision": "Recorded automatic decision",
-                    "cover_safeguard": "Recorded cover safeguard",
-                    "policy_transition": "Recorded policy transition",
-                }[source_kind]
-                evidence = [{"label": source_label, "value": state.replace("_", " ")}]
-                lifecycle = scalar(raw.get("state"), nullable=True)
-                if source_kind == "field_effect" and lifecycle is not None:
-                    evidence.append(
-                        {
-                            "label": "Recorded lifecycle",
-                            "value": lifecycle.replace("_", " "),
-                        }
+                # Every fact below leaves this loop from the document that
+                # was just checked against its own identity above, so an
+                # Activity row is a function of one immutable event and
+                # nothing else -- a later catalogue change cannot move it.
+                # The owner-facing words are composed one layer out, where the
+                # pinned report is already parsed; ``record`` is the closed
+                # private carrier the application consumes and removes, the
+                # same way ``connection`` and ``report_id`` are consumed there.
+                durable: dict[str, object] = {"source_kind": source_kind}
+                if source_kind == "field_effect":
+                    durable["pre_value"] = raw["pre_value"]
+                    durable["desired_value"] = raw["desired_value"]
+                elif source_kind == "human_decision":
+                    if not isinstance(decision, HumanDecision):
+                        raise FieldEffectError("persistence")
+                    durable["selected_value"] = decision.selected_value
+                    durable["target_fingerprint"] = decision.target_fingerprint
+                elif source_kind == "automatic_decision":
+                    if not isinstance(decision, AutomaticDecision):
+                        raise FieldEffectError("persistence")
+                    durable["policy_category"] = decision.policy_category
+                    durable["policy_option"] = decision.policy_option
+                    durable["policy_generation"] = decision.policy_generation
+                    durable["target_fingerprint"] = decision.target_fingerprint
+                elif source_kind == "field_effect_no_change":
+                    durable["target_fingerprint"] = self._connection.execute(
+                        "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
+                        (source_identity,),
+                    ).fetchone()[0]
+                elif source_kind == "cover_safeguard":
+                    durable["kind"] = raw["kind"]
+                elif source_kind == "policy_transition":
+                    durable["generation"] = scalar(detail)
+                    durable["policy_changes"] = _policy_changes(
+                        policy_profiles, policy_from, policy_to
                     )
                 if failure is not None:
-                    evidence.append(
-                        {
-                            "label": "Recorded failure",
-                            "value": failure.replace("_", " "),
-                        }
-                    )
-                if source_kind == "policy_transition":
-                    transition = scalar(detail)
-                    evidence.append(
-                        {"label": "Transition generation", "value": transition}
-                    )
+                    durable["failure"] = failure
                 if (
                     type(occurred_at) is not int
                     or not 0 <= occurred_at <= 253_402_300_799
@@ -1354,7 +1442,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         "state": state,
                         "work_id": work_id,
                         **({"work_label": event_title} if event_title else {}),
-                        "evidence": evidence,
+                        "record": durable,
                     }
                 )
             waiting = self._connection.execute(

@@ -548,13 +548,33 @@ class _ActivityEvidence(_ClosedModel):
     value: str = Field(max_length=512)
 
 
+class _ActivityPolicyChange(_ClosedModel):
+    field: str = Field(max_length=64)
+    setting: str = Field(max_length=64)
+    previous: str = Field(max_length=512)
+    next: str = Field(max_length=512)
+
+
 class _ActivityEvent(_ClosedModel):
     author_label: str = Field(default="Author details are not recorded", max_length=512)
+    # What the owner reads across the row, in order: which work or setting
+    # changed, the exact change, and the result. ``change_detail`` is the same
+    # change as a whole sentence, for the reader who hears the row rather than
+    # seeing the arrow (#636).
+    category: Literal["owner", "automatic", "policy", "recovery"] = "recovery"
+    change: str = Field(default="Recorded", max_length=512)
+    change_detail: str = Field(default="Recorded", max_length=512)
     destination: str = Field(max_length=512)
     event_id: str = Field(default="recorded-event", max_length=128)
     event_type: str = Field(default="unknown", max_length=32)
     evidence: list[_ActivityEvidence] = Field(default_factory=list, max_length=8)
     failure: str | None = Field(default=None, max_length=512)
+    field_label: str = Field(default="Recorded field", max_length=64)
+    # A Policy row's exact From/To. Every other category keeps the compact
+    # detail density rather than inheriting policy-detail bulk.
+    policy_changes: list[_ActivityPolicyChange] = Field(
+        default_factory=list, max_length=32
+    )
     library: str = Field(max_length=512)
     occurred_at: int | None = None
     origin: str = Field(max_length=512)

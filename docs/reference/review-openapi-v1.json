@@ -117,6 +117,29 @@
             "title": "Author Label",
             "type": "string"
           },
+          "category": {
+            "default": "recovery",
+            "enum": [
+              "owner",
+              "automatic",
+              "policy",
+              "recovery"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "change": {
+            "default": "Recorded",
+            "maxLength": 512,
+            "title": "Change",
+            "type": "string"
+          },
+          "change_detail": {
+            "default": "Recorded",
+            "maxLength": 512,
+            "title": "Change Detail",
+            "type": "string"
+          },
           "destination": {
             "maxLength": 512,
             "title": "Destination",
@@ -154,6 +177,12 @@
             ],
             "title": "Failure"
           },
+          "field_label": {
+            "default": "Recorded field",
+            "maxLength": 64,
+            "title": "Field Label",
+            "type": "string"
+          },
           "library": {
             "maxLength": 512,
             "title": "Library",
@@ -174,6 +203,14 @@
             "maxLength": 512,
             "title": "Origin",
             "type": "string"
+          },
+          "policy_changes": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityPolicyChange"
+            },
+            "maxItems": 32,
+            "title": "Policy Changes",
+            "type": "array"
           },
           "state": {
             "maxLength": 512,
@@ -356,6 +393,39 @@
           "library"
         ],
         "title": "_ActivityLibrary",
+        "type": "object"
+      },
+      "_ActivityPolicyChange": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "maxLength": 64,
+            "title": "Field",
+            "type": "string"
+          },
+          "next": {
+            "maxLength": 512,
+            "title": "Next",
+            "type": "string"
+          },
+          "previous": {
+            "maxLength": 512,
+            "title": "Previous",
+            "type": "string"
+          },
+          "setting": {
+            "maxLength": 64,
+            "title": "Setting",
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "setting",
+          "previous",
+          "next"
+        ],
+        "title": "_ActivityPolicyChange",
         "type": "object"
       },
       "_ActivityPrepared": {

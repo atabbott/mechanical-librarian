@@ -7,9 +7,11 @@ previously reached into another module's tests to get them.
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
@@ -20,6 +22,9 @@ from typing import Generic, TypeVar, cast
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
+from mechanical_librarian.adapters.field_effect_authority import (
+    PersistedFieldEffectAuthority,
+)
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
@@ -44,14 +49,20 @@ from mechanical_librarian.domain.metadata_policy import (
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
+    FileFacts,
     MetadataReport,
     TargetDestination,
+    TargetFacts,
+    TargetField,
+    TargetFieldState,
+    TargetSeries,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
 )
+from tests.support.activity_seed import seed_activity  # noqa: E402
 from tests.support.review_cases import _report
 from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
@@ -597,6 +608,89 @@ class FakePreparation:
         return self.progress(connection, library)
 
 
+# A ledger the installed surface can actually be looked at.
+#
+# The row this harness used to serve was one hand-written display literal with
+# no work title, no field, and no values, so every Activity proof that drove a
+# browser -- including the glyph-width guard -- was measuring an eight-character
+# change column and a fabricated evidence label. It could not have shown the row
+# #636 exists to produce, and it could not have failed if that row were wrong.
+#
+# So the events below are not display text. They are the durable records each
+# source kind actually carries, run through the same `readable_activity_event`
+# the application layer calls, against a report the decision records name by
+# fingerprint. Break the projection and this ledger changes; the fixture cannot
+# quietly disagree with the product because it does not restate any of its
+# words. The values are chosen to be the widest realistic ones a real library
+# produces -- a long title, a series with an index, unicode contributors, an
+# unbounded description -- so a layout measured here is measured against
+# something that can overflow.
+_LEDGER_DESCRIPTION = (
+    "A quiet, unhurried account of the salt marshes east of the station, "
+    "collected over eleven winters and set down without much hurry, which is "
+    "the sort of description a real catalogue supplies and a row column has "
+    "to survive without growing to meet it."
+)
+
+
+def _ledger_report() -> MetadataReport:
+    """One report the decision records below are pinned to by fingerprint."""
+    values: dict[TargetDestination, object] = {
+        TargetDestination.TITLE: "Paper Moons: Larkspur",
+        TargetDestination.AUTHORS: ("Ursula K. Le Guin", "雨の地図"),
+        TargetDestination.SERIES: (TargetSeries("Earthsea Cycle", "1"),),
+        TargetDestination.DESCRIPTION: _LEDGER_DESCRIPTION,
+    }
+    fields = tuple(
+        TargetField(destination, TargetFieldState.VALUE, values[destination])  # type: ignore[arg-type]
+        if destination in values
+        else TargetField(destination, TargetFieldState.MISSING)
+        for destination in TargetDestination
+    )
+    return MetadataReport.create(
+        target=TargetFacts("primary", "fiction", "book-1", fields),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(),
+        local_reasons=("no_opening_claims",),
+        providers=(),
+    )
+
+
+def _seeded_projection() -> ContinuousGuardedApplication:
+    """One real, seeded Activity projection shared by every fake application.
+
+    The ledger this serves is written through the real guarded application and
+    read through the real activity query, so the installed surface shows rows
+    an owner could actually have produced. Before this, the page was served a
+    single hand-written literal, which meant every width measurement, filter
+    chip, search box, date range and page control on it had only ever been
+    exercised against text no event produces (#636).
+
+    Seeding costs well under a tenth of a second, but it is built once per
+    process because the ledger is immutable once written and every caller
+    wants the identical one.
+    """
+    global _SEEDED_PROJECTION
+    if _SEEDED_PROJECTION is None:
+        root = Path(tempfile.mkdtemp(prefix="ml-activity-seed-"))
+        atexit.register(shutil.rmtree, root, True)
+        seeded = seed_activity(root)
+        _SEEDED_PROJECTION = ContinuousGuardedApplication(
+            seeded.repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(seeded.repository),
+            (("primary", "books"),),
+            seeded.reader_now,
+            lambda *_: None,
+            activity_only=True,
+        )
+    return _SEEDED_PROJECTION
+
+
+_SEEDED_PROJECTION: ContinuousGuardedApplication | None = None
+
+
 class FakeActivityApplication(ContinuousGuardedApplication):
     # The base `__init__` never runs here, so the real consent read has no
     # state to read. A review surface asks this to choose between "nothing is
@@ -635,6 +729,11 @@ class FakeActivityApplication(ContinuousGuardedApplication):
         return None
 
     def activity(self, **query):
+        # Only the ledger halves are answered by the real projection. Consent,
+        # capabilities and the waiting counts stay with the double because
+        # they are what #639's proofs drive, and moving them would put that
+        # unit's coverage at risk to improve this one's.
+        projected = _seeded_projection().activity(**query)
         return {
             "backup_ready": True,
             "configured_libraries": [
@@ -686,22 +785,7 @@ class FakeActivityApplication(ContinuousGuardedApplication):
                 {"connection": "primary", "library": library}
                 for library in sorted(self.enabled_libraries)
             ],
-            "events": [
-                {
-                    "destination": "title",
-                    "event_id": "event-1",
-                    "event_type": "metadata",
-                    "evidence": [
-                        {"label": "Recorded automatic decision", "value": "verified"}
-                    ],
-                    "failure": None,
-                    "library": "fiction",
-                    "occurred_at": 1,
-                    "origin": "automatic_policy",
-                    "state": "verified",
-                    "work_id": "book-1",
-                }
-            ],
+            "events": projected["events"],
             "example": {
                 "after": "After",
                 "before": "Before",
@@ -711,15 +795,7 @@ class FakeActivityApplication(ContinuousGuardedApplication):
             },
             "last_failure": None,
             "paused": self.paused,
-            "ledger": {
-                "event_type": query.get("event_type", "all"),
-                "page": query.get("page", 1),
-                "page_count": 1,
-                "page_size": query.get("page_size", 25),
-                "query": query.get("search"),
-                "range_days": query.get("range_days", 30),
-                "total": 1,
-            },
+            "ledger": projected["ledger"],
             "current_waiting": None,
             "prepared": {"automatic": 1, "human": 1, "total": 2},
             "schema_version": "continuous-field-activity-v2",

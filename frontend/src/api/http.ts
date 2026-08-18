@@ -230,20 +230,36 @@ export interface ActivityCapabilityView {
   state: string
 }
 export type ActivityEventType = 'review' | 'policy' | 'metadata' | 'safety' | 'unknown'
+/** How a record reached the ledger, in the owner's terms rather than the event's. */
+export type ActivityCategory = 'owner' | 'automatic' | 'policy' | 'recovery'
 export interface ActivityEvidenceView {
   label: string
   value: string
 }
+/** One exact policy setting a Policy record moved, and what it moved between. */
+export interface ActivityPolicyChangeView {
+  field: string
+  setting: string
+  previous: string
+  next: string
+}
 export interface ActivityEventView {
   author_label?: string
+  category: ActivityCategory
+  /** The exact change, compact enough for one row column. */
+  change: string
+  /** The same change as a whole sentence, for a reader who hears the row. */
+  change_detail: string
   destination: string
   event_id: string
   event_type: ActivityEventType
   evidence: readonly ActivityEvidenceView[]
   failure: string | null
+  field_label: string
   library: string
   occurred_at: number | null
   origin: string
+  policy_changes: readonly ActivityPolicyChangeView[]
   state: string
   work_id: string
   work_label: string
@@ -985,12 +1001,30 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
           ? undefined
           : stringValue(event.author_label, 'activity_author_label')
       const eventType = stringValue(event.event_type, 'activity_event_type')
+      const category = stringValue(event.category, 'activity_event_category')
+      const policyChanges = event.policy_changes === undefined ? [] : event.policy_changes
       if (
         !['review', 'policy', 'metadata', 'safety', 'unknown'].includes(eventType) ||
+        !['owner', 'automatic', 'policy', 'recovery'].includes(category) ||
+        !Array.isArray(policyChanges) ||
+        policyChanges.length > 32 ||
         event.evidence.length > 8
       )
         throw new ApiError(502, 'invalid_activity_event')
       return {
+        category: category as ActivityCategory,
+        change: stringValue(event.change, 'activity_event_change'),
+        change_detail: stringValue(event.change_detail, 'activity_event_change_detail'),
+        field_label: stringValue(event.field_label, 'activity_event_field_label'),
+        policy_changes: policyChanges.map((item) => {
+          if (!record(item)) throw new ApiError(502, 'invalid_activity_policy_change')
+          return {
+            field: stringValue(item.field, 'activity_policy_change_field'),
+            setting: stringValue(item.setting, 'activity_policy_change_setting'),
+            previous: stringValue(item.previous, 'activity_policy_change_previous'),
+            next: stringValue(item.next, 'activity_policy_change_next'),
+          }
+        }),
         destination: stringValue(event.destination, 'activity_event_destination'),
         event_id: stringValue(event.event_id, 'activity_event_id'),
         event_type: eventType as ActivityEventType,

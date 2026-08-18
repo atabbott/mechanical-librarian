@@ -177,9 +177,14 @@ media, covers and recovery bytes are categorically excluded.
 
 The private no-store Activity history retains and returns only one bounded page
 of existing ledger facts: opaque event/work identities, configured logical
-library and destination names, state, bounded timestamp, and a bounded readable
-report title where it is already retained. It is not an export or a write
-surface, and grants no recovery or target authority. Search, range, page, and
+library and destination names, state, bounded timestamp, a bounded readable
+report title where it is already retained, and the exact before/after field
+values the event's own decision, plan or verification document already holds,
+rendered as bounded readable text. Those values are the owner's own library
+metadata, already readable on Library and review; nothing is joined in to
+produce them, and an opaque durable identity -- a cover token, a candidate
+identity, a provider origin -- is described rather than printed. It is not an
+export or a write surface, and grants no recovery or target authority. Search, range, page, and
 page size are bounded; the parameterized query and closed response prevent
 caller-supplied SQL or arbitrary stored JSON from becoming output. Corrupt or
 hostile stored documents fail closed with a redacted diagnostic, never raw JSON,
