@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Let the type gate catch a test that binds a double into a port the double
+  does not satisfy. `arg-type` is enforced for `tests/` and `scripts/` rather
+  than suppressed, re-arming the guards written against it — one passed
+  silently whenever the list it protects was built with `append`. The 48
+  modules with findings are named in `pyproject.toml` as the backlog; the
+  other 90 and every new one are gated. (#693)
 - Hold every reserved test port with an open socket until its server binds it.
   One reservation under `tests/support/` now defines that for all five sites
   instead of one, and any site that cannot hold the socket to the point of use
