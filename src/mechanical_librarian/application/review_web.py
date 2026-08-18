@@ -56,7 +56,7 @@ class CurrentReviewCaseSnapshot:
     automatic_attention_destinations: tuple[str, ...] = ()
     automatic_safety_suspended_destinations: tuple[str, ...] = ()
     shadow_abstention_destinations: tuple[str, ...] = ()
-    automatic_override_blocked_destinations: tuple[str, ...] = ()
+    override_blocked_destinations: tuple[str, ...] = ()
     suspended_destinations: tuple[str, ...] = ()
     suspension_causes: tuple[tuple[str, ReviewFieldCause], ...] = ()
     cover_consideration_document: str | None = None
@@ -341,6 +341,11 @@ class InspectCurrentReviewCase:
             decisions.pop("cover", None)
         fields = []
         suspension_causes = dict(snapshot.suspension_causes)
+        # One index per case, not one per field. This read is what next-field
+        # authority waits on after a decision, and the index is a pure function
+        # of the report, so rebuilding it inside the loop multiplied the only
+        # cost on that path by the number of fields under review.
+        evidence = _evidence_by_reference(report)
         for proposal in case.proposals:
             result = proposal["result"]
             assert type(result) is dict
@@ -374,7 +379,6 @@ class InspectCurrentReviewCase:
                     **automatic_decision,
                     "selected_value": selected,
                 }
-            evidence = _evidence_by_reference(report)
             choice_contexts = _choice_contexts(
                 alternatives,
                 result,
@@ -395,8 +399,8 @@ class InspectCurrentReviewCase:
                     if automatic_decision is None
                     else str(automatic_decision["outcome"])
                 ),
-                automatic_override_available=(
-                    destination not in snapshot.automatic_override_blocked_destinations
+                override_available=(
+                    destination not in snapshot.override_blocked_destinations
                 ),
                 has_human_decision=decision is not None,
                 suspended=destination in snapshot.suspended_destinations,
@@ -457,6 +461,10 @@ class InspectCurrentReviewCase:
                 "fields": fields,
                 "review_case_id": case.review_case_id,
                 "schema_version": "review-case-detail-v1",
+                # Read models never learn write authority. The composition root
+                # stamps the truth before the view leaves the application, and
+                # the default keeps a surface that never asks honest.
+                "writes_consented": False,
                 "target": {
                     "authors": _report_authors(report),
                     "connection": report.target.connection,

@@ -393,6 +393,30 @@ class ContinuousGuardedApplication:
         self.wake()
         return self.activity()
 
+    def destinations_consented(
+        self, connection: str, library: str, destinations: tuple[str, ...]
+    ) -> bool:
+        """Answer whether a decision on any of these destinations would apply.
+
+        This reads the same consent the applier reads at
+        `current_field_effect_consent`; it grants nothing and changes nothing.
+        A review surface needs it so its reassurance copy can say what is
+        actually true of a recorded decision instead of assuming one branch.
+        """
+        if (connection, library) not in self._applications:
+            return False
+        for destination in destinations:
+            try:
+                self._repository.current_field_effect_consent(
+                    connection, library, destination
+                )
+            except FieldEffectError as error:
+                if error.code == "consent":
+                    continue
+                return False
+            return True
+        return False
+
     def revoke(self, connection: str, library: str) -> dict[str, object]:
         if (connection, library) not in self._applications:
             raise GuardedApplicationError("consent")

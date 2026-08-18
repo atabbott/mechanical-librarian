@@ -207,11 +207,14 @@ describe('Detail route', () => {
     expect((await screen.findAllByLabelText('Reviewer facts')).at(0)).toHaveTextContent('Available choices4')
     await user.click(await screen.findByRole('button', { name: 'Choose proposed value 2: Another title' }))
 
-    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledWith('case-1', expect.objectContaining({ selectedValue: second })))
-    expect(await screen.findByText('Decision recorded. Continuing with authors.')).toBeVisible()
+    // The next field arrives from the field list already in hand; only the
+    // exact case is refetched behind it, and never the Library.
     await waitFor(() => expect(router.state.location.search).toEqual({ field: 'authors', subview: 'review' }))
     expect(await screen.findByRole('heading', { name: 'Authors' })).toBeVisible()
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledWith('case-1', expect.objectContaining({ selectedValue: second })))
+    expect(await screen.findByText('Decision recorded from the authoritative case.')).toBeVisible()
     expect(http.getCaseDetail).toHaveBeenCalledTimes(2)
+    expect(http.getLibrary).not.toHaveBeenCalled()
   })
 
   it('offers only the current-value choice when an unresolved field has no proposal', async () => {
@@ -245,7 +248,8 @@ describe('Detail route', () => {
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
 
     expect(await screen.findByText('Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.')).toBeVisible()
-    expect(router.state.location.search).toEqual({ field: 'title', subview: 'review' })
+    // The optimistic advance is withdrawn onto the field whose outcome is in doubt.
+    await waitFor(() => expect(router.state.location.search).toEqual({ field: 'title', subview: 'review' }))
     expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
     expect(screen.getAllByLabelText('Reviewer facts').at(0)).toHaveTextContent('Available choices0')
@@ -268,7 +272,6 @@ describe('Detail route', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
 
-    expect(await screen.findByText('Decision recorded. Continuing with series.')).toBeVisible()
     await waitFor(() => expect(router.state.location.search).toEqual({ field: 'series', subview: 'review' }))
   })
 
@@ -388,14 +391,18 @@ describe('Detail route', () => {
     expect(screen.queryByText('Review state')).toBeNull()
     expect(screen.getByText('The response was lost. The current case was reloaded before any retry.')).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
-    expect(screen.queryByRole('button', { name: /Choose current value/ })).toBeNull()
+    // Reconciled to a recorded outcome, the field keeps every eligible option
+    // and marks the one that is recorded, so the owner can still change it.
+    expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Choose proposed value 1: New title' })).toHaveAttribute('aria-pressed', 'false')
     expect(ambiguous).toHaveBeenCalledOnce()
+  })
 
+  it('routes a superseded case back to Library instead of advancing it', async () => {
+    const user = userEvent.setup()
     const staleHttp: ReviewHttp = { ...createHttp(), recordDecision: vi.fn(async () => { throw new ApiError(409, 'stale') }) }
     const stale = renderRoute('/review/case-1?field=title&subview=review', staleHttp)
-    const keep = (await screen.findAllByRole('button', { name: 'Choose current value: Old title' })).at(-1)
-    if (!keep) throw new Error('stale fixture requires a decision control')
-    await user.click(keep)
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
     await waitFor(() => expect(stale.router.state.location.pathname).toBe('/library'))
   })
 

@@ -1611,3 +1611,118 @@ def test_large_library_payload_and_dom_inputs_remain_page_bounded(
     assert len(attention.json()["items"]) == 50
     assert attention.json()["next_cursor"] is not None
     assert len(attention.content) < 100_000
+
+
+def _decide(web: ReviewWebContext[_CloseRecordingRepository]) -> str:
+    """Record one owner decision through the exact-case command."""
+    login = web.login()
+    detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}").json()
+    field = detail["fields"][0]
+    recorded = web.client.post(
+        f"/api/v1/review-cases/{web.case.review_case_id}/decisions",
+        headers={
+            **web.origin,
+            "X-CSRF-Token": str(login["csrf_token"]),
+            "Idempotency-Key": "revisable-decision-0001",
+        },
+        json={
+            "destination": field["destination"],
+            "outcome": "accept",
+            "proposal_id": field["proposal_id"],
+            "selected_value": field["proposed_values"][0],
+            "target_fingerprint": field["target_fingerprint"],
+        },
+    )
+    assert recorded.status_code == 200, recorded.text
+    return str(field["destination"])
+
+
+def test_a_recorded_decision_stays_revisable_until_its_effect_leaves_reversible_states(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    destination = _decide(web)
+    revisable = next(
+        field
+        for field in web.client.get(
+            f"/api/v1/review-cases/{web.case.review_case_id}"
+        ).json()["fields"]
+        if field["destination"] == destination
+    )
+    assert revisable["classification"] == "human_recorded"
+    assert revisable["needs_attention"] is False
+    # Editability is what lets the surface show every eligible option again and
+    # mark the recorded one, and the store would accept the change.
+    assert revisable["editable"] is True
+    assert "You can change it here." in revisable["classification_reason"]
+
+    web.repository.override_blocked_destinations = (destination,)
+    advanced = next(
+        field
+        for field in web.client.get(
+            f"/api/v1/review-cases/{web.case.review_case_id}"
+        ).json()["fields"]
+        if field["destination"] == destination
+    )
+    assert advanced["classification"] == "human_recorded"
+    assert advanced["editable"] is False
+    assert "can no longer be changed" in advanced["classification_reason"]
+
+
+def test_one_decision_and_its_exact_case_read_never_project_the_whole_library(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    projections: list[str] = []
+    for name in ("read_review_library", "read_review_attention"):
+        original = getattr(web.repository, name)
+
+        def record(*arguments: object, _name: str = name, _original: Any = original):
+            projections.append(_name)
+            return _original(*arguments)
+
+        setattr(web.repository, name, record)
+
+    _decide(web)
+    detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}").json()
+    # Next-field authority is available from the exact case alone.
+    assert projections == []
+    assert any(field["needs_attention"] for field in detail["fields"]) or all(
+        field["classification"] != "needs_attention" for field in detail["fields"]
+    )
+
+    # The counter is real: the Library lens does reach the projection it is for.
+    assert web.client.get("/api/v1/library?lens=all&limit=5").status_code == 200
+    assert web.client.get("/api/v1/attention?limit=5").status_code == 200
+    assert projections == ["read_review_library", "read_review_attention"]
+
+
+@pytest.mark.parametrize("consented", (False, True))
+def test_case_detail_reports_write_consent_it_never_asked_the_read_model_for(
+    web: ReviewWebContext[_CloseRecordingRepository], consented: bool
+) -> None:
+    """The surface's reassurance copy needs the truth, and reads cannot know it.
+
+    A read model has no write authority and must not acquire one. The
+    composition root stamps what the applier's own consent says, so a recorded
+    decision can be described as "nothing is written yet" or as "applying
+    began when you decided it" without either being a guess.
+    """
+    application = FakeActivityApplication()
+    application.writes_consented = consented
+    web.client.close()
+    web.client = TestClient(
+        create_transport_test_app(
+            web.repository,
+            ReviewWebConfiguration(
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(web.hash_path),
+                session_lifetime_seconds=600,
+            ),
+            clock=lambda: web.now,
+            field_application=application,
+        ),
+        base_url="https://review.test",
+    )
+    web.login()
+    detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["writes_consented"] is consented
