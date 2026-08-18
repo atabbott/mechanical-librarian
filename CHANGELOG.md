@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Stop a package mirror from spending the protected browser job's whole budget
+  before a test runs: `playwright install` no longer carries `--with-deps`,
+  whose only contribution on a Chromium cache hit was `apt-get`, and the step
+  is time-bounded. A runner image that stops supplying one of Chromium's shared
+  libraries now fails in a named launch step instead of reading as a
+  browser-tier regression. (#772)
+- Stop the continuous-review scale qualification failing for its own reasons.
+  Its restart killed the first server, leaving the SQLite recovery sidecars the
+  supported operating contract rejects, so the restart exited 1 before serving;
+  it now stops that server and reports a leftover sidecar as itself. The review
+  port is held by an open socket until the spawn rather than returned as a hint
+  anything could take. (#770)
+- Enforce that every direct dependency carries an authority grant.
+  `scripts/verify_dependency_authority.py` fails the gate when `pyproject.toml`
+  declares a dependency `docs/development/dependencies.md` does not grant, when
+  a grant outlives its dependency, and when a grant's own spelled count no
+  longer matches what it covers. (#769)
+- Record the twelve checkpoints delivered since 0.10.1 in the roadmap, silent
+  from 0.10.2 onward. Each outcome is transcribed from that milestone's own
+  description rather than written fresh. (#755)
 - Test the hypothesis that this suite carries deletable tests, and record that
   it does not. A coverage run and a mutation run over the highest-churn modules
   found four deletable lines: 48% of tests add no unique coverage yet assert

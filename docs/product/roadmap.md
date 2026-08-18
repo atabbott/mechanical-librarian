@@ -31,6 +31,148 @@ event/manifestation linkage is unresolved. These increments add no ranking,
 retry, cache, scheduler, generic provider framework, service write, media
 write, tag, or release publication.
 
+### Completed 0.10.2 shadow decision qualification
+
+F19 qualifies the provider-independent, report-only deterministic
+shadow-decision preview on a private production-derived corpus, preferring
+existing complete snapshots. Where corpus evidence had to be constructed, a
+separately isolated, non-model, read-only one-library acquisition operation
+used the existing fixed provider adapters and confined credentials; it is not
+part of the decision path. The decision CLI itself has no provider or model
+egress and no credential use. The checkpoint adds no production target,
+application database, or media write, no default recommendation integration,
+no release, and no tag. #384 is the F19 activation tracker; #147 retains F11
+terminal history.
+
+### Completed 0.11.0 authenticated human-exception review
+
+F16a #152 is delivered through increments #447, #448, #449 and #450, the
+substantiated merged findings corrected through #456-#462, and the protected
+variant M frontend restored through #455 as the final exact-head visual and
+functional round-trip. Variant M at 026e338 is the authoritative visual
+contract for the in-scope Library, Attention, and Detail surfaces, including
+light and dark modes and the 1440, 884, 390, and 320 CSS-pixel responsive
+compositions. F16a owns bounded current-case history only; library-wide
+activity and history remain deferred to #195. The checkpoint excludes automatic
+authority, apply/write, bulk/reversal, migrations, release, tag, deployment,
+and production-service access.
+
+### Completed 0.12.0 quiet background metadata decisions
+
+New and meaningfully changed Audiobookshelf books are continuously prepared for
+review, the authenticated owner configures one immutable versioned global
+metadata policy with exceptional sparse per-library overrides, and every exact
+qualified deterministic outcome becomes an auditable automatic field decision,
+so only genuine exceptions remain in the human queue. Work progresses
+independently with bounded persisted orchestration, shared provider budgets,
+restart recovery, and calm aggregate activity. It is decision-only and
+report-only: no apply plan, target/media write, destructive authority,
+migration, release, or tag. Completion required the three ordered slices F17a,
+F09p, and F19a plus cumulative exact-container qualification; a partial
+milestone is not a release boundary.
+
+### Completed 0.13.0 continuous guarded application
+
+Exact-current human and qualified automatic ebook decisions enter one persisted
+guarded apply path through supported Audiobookshelf APIs, with informed
+low-friction consent, unattended application, verification, audit, focused
+recovery, and disposable real-work qualification. The delivered 0.12.0
+decision-side contracts are reused as black boxes and the accepted Library,
+Attention, and Policy experience is preserved; frontend change is limited to
+effect-labelled actions and status required by guarded application plus the
+permanent Activity destination. It supports one Audiobookshelf instance and any
+accessible libraries, covering all 14 reviewable ebook destinations. It
+excludes contributor or owner production libraries, audiobooks, destructive or
+embedded-media writes, bulk operation, general rollback, older-schema
+migration, release, and tag.
+
+### Completed 0.14.0 release-candidate simplification
+
+The completed 0.13 application moves onto a reproducible React/TypeScript
+frontend platform, the supported CLI and contained-reviewer surfaces contract,
+the authenticated browser/application/state seams deepen, superseded machinery
+and tests are deleted, current documentation is reconciled, and one coherent
+wheel/container is qualified. Known interface-fidelity restoration is excluded
+to 0.14.1. This internal checkpoint is not a release, tag, compatibility
+promise, or production-library authorization.
+
+### Completed 0.14.1 interface fidelity restoration
+
+After the 0.14.0 frontend-platform cutover, the authenticated interface is
+restored against selected Variant M Library/Attention/detail, Variant B Policy,
+and Variant B Activity references, including direct
+current-or-specific-candidate outcome selection and installed-artifact
+desktop/compact visual proof. The checkpoint was reopened on 2026-08-11 after
+direct installed-interface review and an independent Impeccable critique proved
+that the first pass did not preserve Variant M's regular-width
+Library/Attention operating composition. Corrective delivery was ordered: #554
+restored an exact protected desktop workspace while retaining a coherent
+compact flow, and #555 then repaired and polished the remaining accepted
+frontend findings and performed final exact-head reconciliation. Closed #499
+remains the historical tracker for the completed first pass; it is not evidence
+that those follow-up defects were resolved. The checkpoint adds no new metadata
+capability, authority, release, or tag.
+
+### Completed 0.15.0 semantic cover decision workbench
+
+Accepted 2026-08-12. Report-only semantic cover identity, contained
+observation, taxonomy, and policy-guided adjudication are proved through the
+isolated source-only workbench using bounded typed evidence and no runtime UI,
+production-library access, or write authority. The reusable benchmark showed
+useful medium, promotional-text, tie-in, and deterministic policy results;
+composition remains below the useful band. This internal checkpoint is not a
+release or tag.
+
+### Completed 0.15.1 owner-confirmed semantic cover decisions
+
+After the 0.15.0 workbench proof and 0.15.2 rich-metadata completion, the
+owner-confirmed semantic-cover path compares the incumbent with exact bounded
+alternatives, shows contained-reviewer observations and a deterministic
+recommendation as advice, records one explicit owner choice, and applies a
+selected cover through the existing guarded Audiobookshelf effect path with
+immutable history. Automatic cover choice/application, silent learning, bulk
+reevaluation, provider reacquisition campaigns, release, and tag are excluded.
+
+### Completed 0.15.2 complete qualified ebook metadata decisions
+
+Before the first release, subtitle, series, genres, description, ISBN, ASIN,
+explicit, and tags are settled with closed owner policies, exact evidence and
+target semantics, independent field-local qualification, and guarded activation
+only for passing options. This checkpoint is independent of cover milestones
+0.15.0 and 0.15.1; narrators and cover are excluded. It is an internal
+checkpoint, not a release or tag.
+
+### Completed 0.15.3 protected interface implementation
+
+The owner-selected protected interface reference at commit
+377b8456d6f0070d703b7ed3fd372c5c0ac81366 is implemented through independently
+verifiable Library/review, Policy, and Activity units, plus the exact Policy
+residuals admitted after installed real-library QA in #607, #608, and #609.
+Observable prototype fidelity and the refined owner-facing behavior are
+acceptance, not directional evidence. #589, #590, #591, #607, #608, and #609
+are merged and the installed surfaces verified against the protected reference
+and accepted refinements. No release or deployment is implied.
+
+### Completed 0.16.0 engineering health
+
+Every check the contributor documentation promises is enforced by the public
+gate, the worst structural debt is paid down, and a clean checkout passes every
+documented source check on the first run. The milestone ends with the same
+product behaviour under a stricter, truthful quality floor, and with measurably
+less code: duplication and longhand ceremony are removed wherever a refactor
+already touches them, never at the cost of an invariant, an assertion, or a
+bound.
+
+### Completed 0.16.1 documentation economy
+
+The corpus and the runtime contract shrink to what is load-bearing. Superseded
+historical documents are deleted, git history being the archive and ADRs
+untouched; duplicated contracts collapse to single authorities, code-shadowing
+prose becomes pointers, and CI enforces reachability and link integrity
+(#683-#686, #717). The capped engineering follow-ups are an evidence-based
+test-value audit with pruning, and container runtime hardening. Deletion pull
+requests name what they removed and the last SHA containing it.
+
 ## M0: Foundation
 
 - Enforce the recorded `AGPL-3.0-or-later` licence and notice policy.
