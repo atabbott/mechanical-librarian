@@ -688,7 +688,6 @@ def test_five_candidate_scenario_binds_packet_attempt_and_image_order() -> None:
     assert observed[0][2] == packet.document.encode()
     image_arguments = observed[0][4]
     assert isinstance(image_arguments, tuple)
-    assert isinstance(image_arguments, tuple)
     assert [(value[0], value[1]) for value in image_arguments] == [
         (value.reference, value.digest) for value in packet.images
     ]
