@@ -320,7 +320,7 @@ module = ["tests.*", "scripts.*"]
 # annotation requirements. #652 scopes strict to `src/`, which is what ships
 # with `py.typed`; a test's job is to prove behaviour, and requiring a full
 # signature on every fixture and fake would be a 70k-line annotation project
-# rather than this gate. Bodies are still checked, and 18 of the 21 error
+# rather than this gate. Bodies are still checked, and 19 of the 21 error
 # classes these trees produce are enforced.
 disallow_untyped_defs = false
 disallow_incomplete_defs = false
@@ -329,12 +329,106 @@ disallow_untyped_decorators = false
 disallow_any_generics = false
 disallow_subclassing_any = false
 warn_return_any = false
-# reason: these three are the classes a test suite provokes by design. Tests
-# pass deliberately narrow fakes and partial doubles where production types are
-# declared (`arg-type`), reach for members that only a double defines
-# (`attr-defined`), and index the JSON-shaped documents the code under test
-# returns (`index`). Enforcing them would mean annotating the fixtures rather
-# than finding defects. They account for 999 of the 1,300 findings in these two
-# trees; the remaining 301 are fixed, and every other class stays enforced so a
-# new kind of finding here still fails the gate.
+# reason: these two are classes a test suite provokes by design. Tests reach
+# for members that only a double defines (`attr-defined`) and index the
+# JSON-shaped documents the code under test returns (`index`). Enforcing them
+# would mean annotating the fixtures rather than finding defects, and every
+# other class stays enforced so a new kind of finding here still fails the
+# gate.
+#
+# `arg-type` was suppressed here too, for the same stated reason, and #693
+# reversed that. It is the code that fires when a test binds a double into a
+# port the double does not satisfy, and by then four defects had turned on it:
+# #658's six-facade capability outage that 1,532 tests missed, #667's
+# acceptance that had to be met by runtime reflection because no typing
+# argument could reach it, #658's finding that no test composed the
+# application the way `run_review_server` does, and #711 — where the
+# suppression did not merely fail to catch the defect but disarmed the guard
+# written to stop it recurring. That guard annotates a double's emitted row so
+# a future narrowing fails the gate; appending a narrowed tuple to it reports
+# `arg-type` and passed silently, and it only reported the enforced `misc`
+# because the list happened to be built as one comprehension. A suppression
+# that makes a broken guard indistinguishable from a working one is a
+# different thing from one that leaves a defect uncaught.
+#
+# Measured before reversing it, by copying this file with only this line
+# changed and running `mypy src tests scripts --config-file <copy>`: 480
+# findings in 48 files. Passing `--enable-error-code arg-type` on the command
+# line instead reports a clean run — a per-module `disable_error_code` wins
+# over it — so that is a false negative, not a measurement. Of the 480, 143
+# are a double bound into a port it does not satisfy, and 43 of those name the
+# missing protocol member outright; the other 337 are value widening from the
+# JSON-shaped read idiom, whose remedy is a cast at the fixture site. Burning
+# down all 480 would therefore buy the composition class at the price of the
+# annotation project this override exists to avoid, so the default was
+# inverted instead: `arg-type` is enforced here, and the 48 modules carrying
+# findings today are named in the override below. That gates 90 of the 137
+# test modules at once, including every shared double under `tests/support/`,
+# and gates every module written from now on.
+disable_error_code = ["attr-defined", "index"]
+
+[[tool.mypy.overrides]]
+# reason: the `arg-type` burn-down backlog from #693, and nothing else. Each
+# module below carried at least one `arg-type` finding when the code was
+# enforced above, and suppressing it per module keeps the enforced default
+# correct for every module not on this list. The list can only shrink: fix a
+# module's findings and delete its entry. It is not a judgement that the
+# findings are noise — `tests/unit/test_review_application.py` is here because
+# the shared `FakeReviewRepository` satisfies none of `BrowserStateOwner`'s
+# three members and 12 of `ReviewPolicyStore`'s 19, `automatic_safety_state`
+# among them, which is the member #658's outage was about. Removing an entry
+# is real work with real risk, because a double that starts satisfying a port
+# can change what a test proves: `AutomaticSafetyControls` reports a missing
+# member as "automatic safety is unavailable", so a test proving that state
+# may depend on the double lacking it.
+module = [
+  "scripts.qualify_audiobookshelf_field_effect",
+  "tests.unit.test_audiobookshelf_field_effect",
+  "tests.unit.test_automatic_decision",
+  "tests.unit.test_batch",
+  "tests.unit.test_batch_composition",
+  "tests.unit.test_bibliographic_bundles",
+  "tests.unit.test_catalogue",
+  "tests.unit.test_contained_reviewer",
+  "tests.unit.test_continuous_field_effects",
+  "tests.unit.test_cover_activation",
+  "tests.unit.test_cover_consideration",
+  "tests.unit.test_cover_observer",
+  "tests.unit.test_cover_packets",
+  "tests.unit.test_cover_review_cli",
+  "tests.unit.test_epub_child",
+  "tests.unit.test_epub_inspection",
+  "tests.unit.test_epub_opening",
+  "tests.unit.test_exact_artifact_qualification",
+  "tests.unit.test_field_effects",
+  "tests.unit.test_hardcover_lanes",
+  "tests.unit.test_hardcover_rich_projection",
+  "tests.unit.test_human_decision",
+  "tests.unit.test_metadata_policy",
+  "tests.unit.test_metadata_policy_activation",
+  "tests.unit.test_metadata_report_application",
+  "tests.unit.test_metadata_report_discovery",
+  "tests.unit.test_metadata_report_evidence",
+  "tests.unit.test_open_library_batch",
+  "tests.unit.test_playwright_browser_verification",
+  "tests.unit.test_policy_preview_cli",
+  "tests.unit.test_proposal_corroboration",
+  "tests.unit.test_provider_recovery",
+  "tests.unit.test_provider_retry_successor",
+  "tests.unit.test_remote_cover",
+  "tests.unit.test_review_application",
+  "tests.unit.test_review_case_persistence",
+  "tests.unit.test_review_field_classification",
+  "tests.unit.test_review_library_persistence",
+  "tests.unit.test_review_pipeline",
+  "tests.unit.test_review_session_persistence",
+  "tests.unit.test_review_tls",
+  "tests.unit.test_review_web_read_models",
+  "tests.unit.test_review_web_transport",
+  "tests.unit.test_shadow_decision",
+  "tests.unit.test_shadow_outcome_persistence",
+  "tests.unit.test_shadow_review_actions",
+  "tests.unit.test_shadow_review_packets",
+  "tests.unit.test_validation_vocabulary",
+]
 disable_error_code = ["arg-type", "attr-defined", "index"]
