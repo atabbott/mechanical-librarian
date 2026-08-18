@@ -952,6 +952,10 @@
           },
           "target": {
             "$ref": "#/components/schemas/_TargetIdentity"
+          },
+          "writes_consented": {
+            "title": "Writes Consented",
+            "type": "boolean"
           }
         },
         "required": [
@@ -960,7 +964,8 @@
           "fields",
           "review_case_id",
           "schema_version",
-          "target"
+          "target",
+          "writes_consented"
         ],
         "title": "_CaseDetailResponse",
         "type": "object"

@@ -17,10 +17,16 @@ import { useRouteReadyFocus } from '../focus'
 import { fieldLabel, labelWords, opaqueSource } from '../labels'
 import { detailQuery, libraryRoute, PreparationNotice, useReviewContext } from '../router'
 import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
-import { automaticChoiceSelected } from '../reviewAutomaticSelection'
+import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomaticSelection'
 import { ownerChoiceCount } from '../reviewChoiceCounts'
 
 type ReviewField = CaseDetailView['fields'][number]
+// What the owner has chosen for one field and how far that choice has got.
+// `null` means this field carries no choice of theirs in this session.
+type ChoiceProgress = {
+  command: DecisionCommand
+  phase: 'recording' | 'confirmed' | 'failed'
+} | null
 
 const authorLine = (work: LibraryWorkView) =>
   work.authors.length ? work.authors.join(', ') : 'Author details unavailable'
@@ -122,21 +128,27 @@ const commandSelected = (
   command?.destination === destination &&
   command.outcome === outcome &&
   sameSelectedValue(command.selectedValue, selectedValue)
+// A recorded field is revisited with every option still shown, so which one
+// is the recorded answer has to be readable. The owner's own decision is the
+// answer whenever there is one; an automatic decision only speaks for a field
+// they have not decided themselves.
 const recordedSelected = (
   field: ReviewField,
   outcome: DecisionCommand['outcome'],
   selectedValue: DecisionCommand['selectedValue'] = null,
 ) =>
-  field.automaticDecision !== null &&
-  automaticChoiceSelected(field.automaticDecision, outcome, selectedValue)
+  field.humanDecision !== null
+    ? humanChoiceSelected(field.humanDecision, outcome, selectedValue)
+    : field.automaticDecision !== null &&
+      automaticChoiceSelected(field.automaticDecision, outcome, selectedValue)
 const choiceSelected = (
   field: ReviewField,
-  pending: DecisionCommand | null,
+  progress: ChoiceProgress,
   outcome: DecisionCommand['outcome'],
   selectedValue: DecisionCommand['selectedValue'] = null,
 ) =>
-  commandSelected(pending, field.destination, outcome, selectedValue) ||
-  recordedSelected(field, outcome, selectedValue)
+  commandSelected(progress?.command ?? null, field.destination, outcome, selectedValue) ||
+  (progress === null && recordedSelected(field, outcome, selectedValue))
 const choiceContext = (field: ReviewField, alternativeId: string | null) =>
   field.choiceContexts.find((context) => context.alternativeId === alternativeId)
 const materialComparisonReasons = new Set([
@@ -156,13 +168,30 @@ const comparisonNotices = (field: ReviewField) =>
     ? []
     : field.notices.filter((notice) => materialComparisonReasons.has(notice))
 
-function WorkSources({ outcomes }: { outcomes: readonly ProviderOutcomeView[] }) {
+// Two surfaces, one disclosure. The review comparison carries the protected
+// evidence footer -- one line, no subtitle -- while the work summary, which is
+// not a comparison, keeps naming what it consulted.
+function WorkSources({
+  outcomes,
+  comparison = false,
+}: {
+  outcomes: readonly ProviderOutcomeView[]
+  comparison?: boolean
+}) {
   if (!outcomes.length) return null
   return (
     <details className="work-sources">
       <summary>
-        <span>Sources</span>
-        <small>{String(outcomes.length)} consulted for this work</small>
+        {comparison ? (
+          <span>
+            {`${String(outcomes.length)} ${outcomes.length === 1 ? 'source supports' : 'sources support'} this comparison`}
+          </span>
+        ) : (
+          <>
+            <span>Sources</span>
+            <small>{String(outcomes.length)} consulted for this work</small>
+          </>
+        )}
       </summary>
       <ul>
         {outcomes.map((outcome, index) => (
@@ -298,7 +327,7 @@ function MetadataChoice({
   const evidenceLabel = `Evidence for ${label}: ${value}`
   return (
     <article
-      className={`metadata-choice${current ? ' is-current' : ''}${selected ? ' is-selected' : ''}${expanded ? ' is-evidence-open' : ''}`}
+      className={`metadata-choice${current ? ' is-current' : ''}${context?.recommendation === 'recommended' ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}${expanded ? ' is-evidence-open' : ''}`}
     >
       <button
         type="button"
@@ -368,8 +397,7 @@ function LibraryCoverChoices(props: {
   reviewCaseId: string
   field: ReviewField
   disabled: boolean
-  pending: DecisionCommand | null
-  phase: 'recording' | 'confirmed' | 'failed' | null
+  progress: ChoiceProgress
   choose: (
     outcome: DecisionCommand['outcome'],
     selectedValue?: DecisionCommand['selectedValue'],
@@ -382,15 +410,13 @@ function LibraryCoverChoicesContent({
   reviewCaseId,
   field,
   disabled,
-  pending,
-  phase,
+  progress,
   choose,
 }: {
   reviewCaseId: string
   field: ReviewField
   disabled: boolean
-  pending: DecisionCommand | null
-  phase: 'recording' | 'confirmed' | 'failed' | null
+  progress: ChoiceProgress
   choose: (
     outcome: DecisionCommand['outcome'],
     selectedValue?: DecisionCommand['selectedValue'],
@@ -488,7 +514,7 @@ function LibraryCoverChoicesContent({
     const value: DecisionCommand['selectedValue'] = candidate.incumbent
       ? null
       : { kind: 'cover', value: candidate.artifactId }
-    const selected = choiceSelected(field, pending, outcome, value)
+    const selected = choiceSelected(field, progress, outcome, value)
     const context = candidate.incumbent
       ? currentContext
       : coverContexts.find((item) => item.alternativeId === candidate.reference)
@@ -536,7 +562,7 @@ function LibraryCoverChoicesContent({
                 ? context.recommendationReason
                 : 'No recommendation retained'}
             </span>
-            {selected && phase === 'recording' ? <b>Recording…</b> : null}
+            {selected && progress?.phase === 'recording' ? <b>Recording…</b> : null}
           </span>
         </button>
         <button
@@ -583,6 +609,10 @@ function LibraryCoverChoicesContent({
             : 'Recommendation is unavailable; comparison remains manual.'}
         </small>
       </header>
+      <p className="cover-track-hint">
+        Every cover is shown whole in one row. Scroll the row, or tab between covers, to compare
+        them.
+      </p>
       {reviewerUnavailable ? (
         <button
           className="secondary-action"
@@ -621,8 +651,8 @@ function LibraryCoverChoicesContent({
         <article className="cover-choice">
           <button
             type="button"
-            aria-pressed={choiceSelected(field, pending, 'keep_current')}
-            className={`library-cover-card is-current${choiceSelected(field, pending, 'keep_current') ? ' is-selected' : ''}`}
+            aria-pressed={choiceSelected(field, progress, 'keep_current')}
+            className={`library-cover-card is-current${choiceSelected(field, progress, 'keep_current') ? ' is-selected' : ''}`}
             disabled={disabled}
             onClick={() => choose('keep_current')}
           >
@@ -640,8 +670,8 @@ function LibraryCoverChoicesContent({
                   ? currentContext.recommendationReason
                   : 'No recommendation retained'}
               </span>
-              {commandSelected(pending, field.destination, 'keep_current') &&
-              phase === 'recording' ? (
+              {commandSelected(progress?.command ?? null, field.destination, 'keep_current') &&
+              progress?.phase === 'recording' ? (
                 <b>Recording…</b>
               ) : null}
             </span>
@@ -692,14 +722,15 @@ function LibraryCoverChoicesContent({
         </details>
       ) : null}
       <button
-        className={`library-no-action${choiceSelected(field, pending, 'reject') ? ' is-selected' : ''}`}
+        className={`library-no-action${choiceSelected(field, progress, 'reject') ? ' is-selected' : ''}`}
         type="button"
-        aria-pressed={choiceSelected(field, pending, 'reject')}
+        aria-pressed={choiceSelected(field, progress, 'reject')}
         disabled={disabled}
         onClick={() => choose('reject')}
       >
         Take no action
-        {commandSelected(pending, field.destination, 'reject') && phase === 'recording'
+        {commandSelected(progress?.command ?? null, field.destination, 'reject') &&
+        progress?.phase === 'recording'
           ? ' · Recording…'
           : ''}
       </button>
@@ -714,7 +745,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const currentSearch = useRef(search)
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
-  const confirmationRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
   const attentionRail = useRef<HTMLElement>(null)
   const selectedIdentityRef = useRef<{
@@ -837,11 +867,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const controller = useReviewDecisionController({
     reviewCaseId: selectedReviewCaseId,
     fields: detail.data?.fields ?? [],
-    active: (command) =>
+    active: (destination) =>
       currentSearch.current.preview === search.preview &&
       search.preview !== undefined &&
-      (currentSearch.current.field === undefined ||
-        currentSearch.current.field === command.destination),
+      (currentSearch.current.field === undefined || currentSearch.current.field === destination),
     onAdvance: async (field) => {
       await navigate({
         search: (current) => (current.preview === search.preview ? { ...current, field } : current),
@@ -880,9 +909,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     if (complete?.id === selectedReviewCaseId && completionInspection === null)
       completionRegion.current?.focus({ preventScroll: true })
   }, [complete, completionInspection, selectedReviewCaseId])
-  useEffect(() => {
-    if (controller.phase === 'confirmed') confirmationRegion.current?.focus({ preventScroll: true })
-  }, [controller.phase])
   useEffect(() => {
     const reducedMotion =
       typeof window.matchMedia === 'function' &&
@@ -1069,6 +1095,28 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     })
 
   const effect = selected ? effectSummary(selected) : undefined
+  const selectedProgress = selected ? controller.phase(selected.destination) : null
+  const remainingFields = actionableFields.filter(
+    (field) => controller.phase(field.destination) === null,
+  ).length
+  const railPosition =
+    complete?.id === selectedReviewCaseId && completionInspection === null
+      ? `${String(railFields.length)} recorded · work complete`
+      : `${String(remainingFields)} remaining · field ${String(
+          Math.max(1, frozenDestinations.indexOf(selected?.destination ?? '') + 1),
+        )} of ${String(railFields.length)}`
+  // The one-tap teaching line is for someone who has not yet seen what a tap
+  // does. It says so on the first field only, and gives way to what is actually
+  // happening once they have chosen.
+  const teachingLine =
+    selectedProgress?.phase === 'recording'
+      ? 'Recording choice…'
+      : selectedProgress
+        ? 'Recorded. Opening the next field…'
+        : selected && frozenDestinations.indexOf(selected.destination) === 0
+          ? 'One tap records and opens the next field'
+          : ''
+  const writesActive = detail.data?.writesConsented === true
 
   return (
     <div className={`library-page variant-m-workspace${hasSelection ? ' has-selected-work' : ''}`}>
@@ -1321,10 +1369,12 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   ))}
                 </aside>
               ) : null}
-              <nav className="field-filmstrip" aria-label="Review fields">
-                {railFields.map((field) => {
-                  const position = frozenDestinations.indexOf(field.destination) + 1
-                  return (
+              <section className="field-map" aria-label={`Fields in ${displayedIdentity.title}`}>
+                <header>
+                  <strong>{railPosition}</strong>
+                </header>
+                <nav className="field-filmstrip" aria-label="Review fields">
+                  {railFields.map((field) => (
                     <button
                       key={field.destination}
                       ref={
@@ -1338,7 +1388,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         selectCase(selectedReviewCaseId, field.destination)
                       }}
                     >
-                      <small>{String(position)}</small>
                       <strong>{fieldLabel(field.destination)}</strong>
                       <span
                         aria-label={
@@ -1354,9 +1403,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         {actionable(field) ? '•' : '✓'}
                       </span>
                     </button>
-                  )
-                })}
-              </nav>
+                  ))}
+                </nav>
+              </section>
               {complete?.id === selectedReviewCaseId && completionInspection === null ? (
                 <article
                   className="review-complete"
@@ -1366,11 +1415,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 >
                   <span className="review-complete-mark">✓</span>
                   <div>
-                    <p>Review complete</p>
-                    <h2>{displayedIdentity.title}</h2>
+                    <h2>Review complete</h2>
                     <span>
                       {String(complete.fields.length)} recorded field outcome
-                      {complete.fields.length === 1 ? '' : 's'}. No library data changed.
+                      {complete.fields.length === 1 ? '' : 's'}
+                      {writesActive
+                        ? ' — each began applying the moment you decided it.'
+                        : '. No library data changed.'}
                     </span>
                   </div>
                   <ol>
@@ -1392,8 +1443,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                     ))}
                   </ol>
                   <p>
-                    Preparation, authorization, apply, and read-back verification remain separate
-                    guarded stages.
+                    {writesActive
+                      ? 'Every write is logged in Activity, and read-back verification remains a separate guarded stage.'
+                      : 'Nothing is written yet — applying happens separately, behind your consent.'}
                   </p>
                   <footer>
                     {nextWork ? (
@@ -1423,7 +1475,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 </article>
               ) : selected ? (
                 <article
-                  className={`decision-canvas${controller.isPending ? ' is-recording' : ''}`}
+                  className={`decision-canvas${controller.recording ? ' is-recording' : ''}`}
                 >
                   {complete?.id === selectedReviewCaseId ? (
                     <button
@@ -1454,30 +1506,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       </div>
                     </dl>
                   </header>
-                  {controller.phase === 'confirmed' &&
-                  controller.pending?.destination === selected.destination ? (
-                    <section
-                      className="decision-confirmed"
-                      role="status"
-                      tabIndex={-1}
-                      ref={confirmationRegion}
-                    >
-                      <span aria-hidden="true">✓</span>
-                      <div>
-                        <strong>Decision recorded</strong>
-                        <p>The authoritative case confirms this exact field outcome.</p>
-                      </div>
-                    </section>
-                  ) : selected.editable &&
-                    selected.humanDecision === null &&
-                    !controller.reloadRequired ? (
+                  {selected.editable && !controller.reloadRequired ? (
                     selected.destination === 'cover' ? (
                       <LibraryCoverChoices
                         reviewCaseId={selectedReviewCaseId}
                         field={selected}
-                        disabled={controller.isPending}
-                        pending={controller.pending}
-                        phase={controller.phase}
+                        disabled={false}
+                        progress={selectedProgress}
                         choose={(outcome, value) => choose(selected, outcome, value)}
                       />
                     ) : (
@@ -1491,23 +1526,32 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           <MetadataChoice
                             context={choiceContext(selected, null)}
                             current
-                            disabled={controller.isPending}
+                            disabled={false}
                             expanded={expandedChoices.has(`${selected.destination}:current`)}
                             label="Current value"
                             onChoose={() => choose(selected, 'keep_current')}
                             recording={
                               commandSelected(
-                                controller.pending,
+                                selectedProgress?.command ?? null,
                                 selected.destination,
                                 'keep_current',
-                              ) && controller.phase === 'recording'
+                              ) && selectedProgress?.phase === 'recording'
                             }
-                            selected={choiceSelected(selected, controller.pending, 'keep_current')}
+                            selected={choiceSelected(selected, selectedProgress, 'keep_current')}
                             toggle={() => toggleChoiceEvidence(`${selected.destination}:current`)}
                             value={selected.currentValue}
                           />
                           {selected.preservationOnly ? null : (
                             <div className="proposed-choice-list">
+                              <header>
+                                <strong>Choose a new value</strong>
+                                <small
+                                  aria-live="polite"
+                                  className={teachingLine ? 'is-active' : ''}
+                                >
+                                  {teachingLine}
+                                </small>
+                              </header>
                               {selected.proposedValues.map((value, index) => {
                                 const context = choiceContext(
                                   selected,
@@ -1520,21 +1564,21 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                                   <MetadataChoice
                                     context={context}
                                     current={false}
-                                    disabled={controller.isPending}
+                                    disabled={false}
                                     expanded={expandedChoices.has(key)}
                                     label={`Alternative ${String(index + 1)}`}
                                     onChoose={() => choose(selected, 'accept', value)}
                                     recording={
                                       commandSelected(
-                                        controller.pending,
+                                        selectedProgress?.command ?? null,
                                         selected.destination,
                                         'accept',
                                         value,
-                                      ) && controller.phase === 'recording'
+                                      ) && selectedProgress?.phase === 'recording'
                                     }
                                     selected={choiceSelected(
                                       selected,
-                                      controller.pending,
+                                      selectedProgress,
                                       'accept',
                                       value,
                                     )}
@@ -1548,10 +1592,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           )}
                         </div>
                         <button
-                          className={`library-no-action${choiceSelected(selected, controller.pending, 'reject') ? ' is-selected' : ''}`}
+                          className={`library-no-action${choiceSelected(selected, selectedProgress, 'reject') ? ' is-selected' : ''}`}
                           type="button"
-                          aria-pressed={choiceSelected(selected, controller.pending, 'reject')}
-                          disabled={controller.isPending}
+                          aria-pressed={choiceSelected(selected, selectedProgress, 'reject')}
+                          disabled={false}
                           onClick={() => choose(selected, 'reject')}
                         >
                           Take no action
@@ -1573,8 +1617,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       ))}
                     </aside>
                   ) : null}
-                  {controller.canRetry &&
-                  controller.pending?.destination === selected.destination ? (
+                  {controller.canRetry && selectedProgress?.phase === 'failed' ? (
                     <button
                       ref={retryButton}
                       className="decision-retry"
@@ -1636,7 +1679,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   </div>
                 </details>
               ) : null}
-              <WorkSources outcomes={selectedLibraryWork?.preparationOutcomes ?? []} />
+              <WorkSources comparison outcomes={selectedLibraryWork?.preparationOutcomes ?? []} />
               <div className="workspace-utilities">
                 <Link
                   className="full-review-link"

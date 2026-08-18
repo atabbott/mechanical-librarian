@@ -15,7 +15,7 @@ import { useRouteReadyFocus } from '../focus'
 import { fieldLabel, labelWords, opaqueSource } from '../labels'
 import { detailRoute, PreparationNotice, useReviewContext } from '../router'
 import { requestKey, useReviewDecisionController } from '../reviewDecisionController'
-import { automaticChoiceSelected } from '../reviewAutomaticSelection'
+import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomaticSelection'
 import { ownerChoiceCount } from '../reviewChoiceCounts'
 
 const reviewedSource = (value: string, index: number) =>
@@ -26,11 +26,14 @@ const recordedValue = (value: unknown, current: string) =>
     : typeof value === 'object' && 'value' in value
       ? displayValue(value.value)
       : displayValue(value)
-const automaticSelection = (
+const recordedSelection = (
   field: CaseDetailView['fields'][number],
   outcome: DecisionOutcome,
   value: DecisionCommand['selectedValue'] = null,
-) => automaticChoiceSelected(field.automaticDecision, outcome, value)
+) =>
+  field.humanDecision !== null
+    ? humanChoiceSelected(field.humanDecision, outcome, value)
+    : automaticChoiceSelected(field.automaticDecision, outcome, value)
 
 function HistoryItem({ item, index }: { item: HistoryView['items'][number]; index: number }) {
   if (!('consideration' in item))
@@ -97,7 +100,10 @@ function CoverChoices({
   const coverSelected = (
     outcome: DecisionOutcome,
     value: DecisionCommand['selectedValue'] = null,
-  ) => automaticChoiceSelected(field.automaticDecision, outcome, value)
+  ) =>
+    field.humanDecision !== null
+      ? humanChoiceSelected(field.humanDecision, outcome, value)
+      : automaticChoiceSelected(field.automaticDecision, outcome, value)
   if (!consideration)
     return (
       <section aria-label="Prepare cover comparison">
@@ -318,10 +324,10 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   const controller = useReviewDecisionController({
     reviewCaseId,
     fields: data.fields,
-    active: (command) =>
+    active: (destination) =>
       currentLocation.current.pathname === `/review/${reviewCaseId}` &&
       currentSearch.current.subview === 'review' &&
-      currentSearch.current.field === command.destination,
+      currentSearch.current.field === destination,
     onAdvance: async (field) => {
       await navigate({ search: { ...currentSearch.current, field, subview: 'review' } })
     },
@@ -439,8 +445,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
           </nav>
           <section className="field-list" aria-label="Review fields">
             {data.fields.map((field) => {
-              const choicesVisible =
-                field.editable && field.humanDecision === null && !controller.reloadRequired
+              const choicesVisible = field.editable && !controller.reloadRequired
               const availableChoiceCount = choicesVisible ? ownerChoiceCount(field) : 0
               return (
                 <article
@@ -471,7 +476,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                       <CoverChoices
                         reviewCaseId={reviewCaseId}
                         field={field}
-                        disabled={controller.isPending}
+                        disabled={controller.reloadRequired}
                         submit={(outcome, value) => submit(field, outcome, value)}
                       />
                     ) : (
@@ -485,9 +490,9 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                         >
                           <button
                             aria-label={`Choose current value: ${field.currentValue}`}
-                            aria-pressed={automaticSelection(field, 'keep_current')}
-                            className={`value-choice current-value${automaticSelection(field, 'keep_current') ? ' is-selected' : ''}`}
-                            disabled={controller.isPending}
+                            aria-pressed={recordedSelection(field, 'keep_current')}
+                            className={`value-choice current-value${recordedSelection(field, 'keep_current') ? ' is-selected' : ''}`}
+                            disabled={controller.reloadRequired}
                             onClick={() => submit(field, 'keep_current')}
                           >
                             <small>Current value</small>
@@ -499,10 +504,10 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                             : field.proposedValues.map((value, index) => (
                                 <button
                                   aria-label={`Choose proposed value ${String(index + 1)}: ${displayValue(value.value)}`}
-                                  aria-pressed={automaticSelection(field, 'accept', value)}
-                                  className={`value-choice proposed-value${automaticSelection(field, 'accept', value) ? ' is-selected' : ''}`}
+                                  aria-pressed={recordedSelection(field, 'accept', value)}
+                                  className={`value-choice proposed-value${recordedSelection(field, 'accept', value) ? ' is-selected' : ''}`}
                                   key={`${value.kind}:${String(index)}`}
-                                  disabled={controller.isPending}
+                                  disabled={controller.reloadRequired}
                                   onClick={() => submit(field, 'accept', value)}
                                 >
                                   <small>
@@ -515,13 +520,13 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                               ))}
                         </div>
                         <button
-                          aria-pressed={automaticSelection(field, 'reject')}
+                          aria-pressed={recordedSelection(field, 'reject')}
                           className={
-                            automaticSelection(field, 'reject')
+                            recordedSelection(field, 'reject')
                               ? 'secondary-action is-selected'
                               : 'secondary-action'
                           }
-                          disabled={controller.isPending}
+                          disabled={controller.reloadRequired}
                           onClick={() => submit(field, 'reject')}
                         >
                           Take no action

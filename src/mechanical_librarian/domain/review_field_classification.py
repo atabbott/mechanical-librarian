@@ -56,7 +56,7 @@ def classify_review_field(
     cause: ReviewFieldCause | None = None,
     current_value: object,
     proposed_values: tuple[object, ...],
-    automatic_override_available: bool = True,
+    override_available: bool = True,
 ) -> ReviewFieldClassification:
     """Classify a field consistently for queue, detail, and navigation use."""
     preservation_only = bool(proposed_values) and all(
@@ -64,11 +64,20 @@ def classify_review_field(
         for value in proposed_values
     )
     if has_human_decision:
+        # A recorded decision stays revisable for exactly as long as the store
+        # will supersede it.  `record_human_decision` refuses only once an
+        # effect for the previous decision has left the reversible states, so
+        # editability here reports that same boundary rather than a second,
+        # stricter rule the API would not actually enforce.
         return ReviewFieldClassification(
             "human_recorded",
-            "Your recorded decision is retained.",
+            (
+                "Your recorded decision is retained. You can change it here."
+                if override_available
+                else "Your recorded decision has advanced to external application and can no longer be changed."
+            ),
             False,
-            False,
+            override_available,
             True,
             "inspect",
             preservation_only,
@@ -98,11 +107,11 @@ def classify_review_field(
             "automatic_recorded",
             (
                 "Automatic handling recorded this field; you may inspect or override it."
-                if automatic_override_available
+                if override_available
                 else "Automatic handling has advanced to external application and can no longer be overridden."
             ),
             False,
-            automatic_override_available,
+            override_available,
             True,
             "inspect",
             preservation_only,

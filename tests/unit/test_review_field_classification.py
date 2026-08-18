@@ -61,7 +61,7 @@ from mechanical_librarian.domain.review_field_classification import (
             },
             "human_recorded",
             False,
-            False,
+            True,
         ),
         (
             {
@@ -190,7 +190,7 @@ def test_advanced_automatic_effect_is_inspect_only() -> None:
     value = classify_review_field(
         attention_candidate=True,
         automatic_outcome="candidate",
-        automatic_override_available=False,
+        override_available=False,
         has_human_decision=False,
         suspended=False,
         current_value="Current",

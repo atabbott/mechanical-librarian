@@ -10,6 +10,7 @@ import sqlite3
 import tempfile
 import threading
 from pathlib import Path
+from typing import cast
 from unittest.mock import Mock, patch
 
 import pytest
@@ -25,9 +26,15 @@ from mechanical_librarian.application.review_application import (
 from mechanical_librarian.application.review_web import (
     BrowseReviewLibrary,
     InspectCurrentReviewCase,
+    RecordHumanDecision,
     _library_item,
     _provider_comparison_notices,
     _provider_outcomes,
+)
+from mechanical_librarian.domain.field_effect import (
+    EffectAuthority,
+    FieldEffectOperation,
+    FieldEffectPlan,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -855,4 +862,93 @@ def test_sqlite_library_order_is_total_across_duplicate_work_identity() -> None:
         assert (
             repository.list_current_review_case_documents(None, 1, 0, None) == pages[0]
         )
+        repository.close()
+
+
+def test_a_recorded_owner_decision_is_blocked_only_once_its_effect_advances() -> None:
+    """The override boundary reads the owner's decisions, not only automatic ones.
+
+    `record_human_decision` refuses a replacement exactly when an effect for the
+    previous decision has left the reversible states. This projection is what
+    tells the surface the same thing before the owner tries.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "override.sqlite3")
+        report = _bibliographic_report(
+            current_title="Mistborn Secret History",
+            providers=(
+                _bibliographic_source(
+                    "catalogue", "edition-1", titles=(), series="Mistborn"
+                ),
+            ),
+        )
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        review_case_id = json.loads(repository.admit_review_case(proposal))[
+            "review_case_id"
+        ]
+        cases = InspectCurrentReviewCase(repository)
+
+        def series_field() -> dict[str, object]:
+            return next(
+                cast("dict[str, object]", item)
+                for item in cast("list[object]", cases.run(review_case_id)["fields"])
+                if cast("dict[str, object]", item)["destination"] == "series"
+            )
+
+        field = series_field()
+        selected = cast("list[object]", field["proposed_values"])[0]
+        decision = RecordHumanDecision(repository, clock=lambda: 10).run(
+            review_case_id,
+            proposal_id=str(field["proposal_id"]),
+            target_fingerprint=str(field["target_fingerprint"]),
+            destination="series",
+            actor="owner",
+            outcome="accept",
+            selected_value=cast("dict[str, object]", selected),
+            idempotency_key="override-boundary-0001",
+        )
+        recorded = series_field()
+        assert recorded["classification"] == "human_recorded"
+        assert recorded["editable"] is True
+
+        consent = repository.grant_field_effect_consents(
+            "primary", ("ebooks",), ("series",), 11
+        )[0]
+        plan = FieldEffectPlan.create(
+            connection=report.target.connection,
+            library=report.target.library,
+            work_id=report.target.item,
+            destination="series",
+            pre_value=None,
+            desired_value=cast("dict[str, object]", selected)["value"],
+            target_fingerprint=str(field["target_fingerprint"]),
+            target_version="version-before-write",
+            dependency_digests=("d" * 64,),
+            authority=EffectAuthority(
+                str(decision["decision_id"]),
+                review_case_id,
+                str(field["target_fingerprint"]),
+                "persisted_review_case",
+                "human",
+                "candidate",
+                None,
+                None,
+            ),
+            consent=consent,
+            capability_digest="c" * 64,
+            created_at=12,
+        )
+        repository.record_field_effect(FieldEffectOperation(plan, updated_at=12))
+        # `planned` is still reversible, so the owner may still change their mind.
+        assert series_field()["editable"] is True
+
+        repository.claim_field_effect(plan.plan_id, "planned", "a" * 64, 13)
+        assert repository.read_current_review_case(
+            review_case_id, None
+        ).override_blocked_destinations == ("series",)
+        advanced = series_field()
+        assert advanced["classification"] == "human_recorded"
+        assert advanced["editable"] is False
         repository.close()

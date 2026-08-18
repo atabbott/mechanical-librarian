@@ -62,7 +62,7 @@ describe('ReviewApiClient', () => {
   })
   it('preserves present and absent series sequences in the mapped review value', () => {
     const detail = (series: readonly Record<string, unknown>[], choiceContexts: unknown = [{ alternative_id: null, evidence: [], limitations: [], rationale: 'The local library has no retained value for this field.', recommendation: 'no_recommendation', recommendation_reason: 'No deterministic recommendation is retained for the current value.', selection: 'current' }]) => mapCaseDetail({
-      schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true, comparison_notices: [],
+      schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true, comparison_notices: [], writes_consented: false,
       target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
       fields: [{
         classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, navigation_role: 'attention', preservation_only: false,
@@ -81,7 +81,7 @@ describe('ReviewApiClient', () => {
 
   it('requires exact creator corroboration source lists in case-detail responses', () => {
     const response = (corroboration_sources: unknown) => ({
-      schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true, comparison_notices: [],
+      schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true, comparison_notices: [], writes_consented: false,
       target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
       fields: [{
         classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, navigation_role: 'attention', preservation_only: false,
@@ -109,7 +109,7 @@ describe('ReviewApiClient', () => {
       corroboration_sources: [], ...overrides,
     })
     const response = (fields: readonly unknown[]) => ({
-      schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true, comparison_notices: [],
+      schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true, comparison_notices: [], writes_consented: false,
       target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
       fields,
     })

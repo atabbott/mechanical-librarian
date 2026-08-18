@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import cast
 from unittest.mock import patch
@@ -378,3 +379,50 @@ def test_assembly_fault_after_the_reviewer_returns_is_not_reviewer_failure(
     assert surfaced.value is fault
     assert len(dispatches) == 2
     assert "review_case_" + "5" * 64 not in case.store.current
+
+
+def test_each_served_image_is_the_artifact_that_choice_would_apply(
+    case: _Case,
+) -> None:
+    """The bytes under a reference and the artifact a decision records are one row.
+
+    #644 accepts that "the image shown for selection is the exact admitted
+    artifact that the guarded cover path would apply". The surface addresses an
+    image by `reference`; `validate_decision` addresses a choice by
+    `artifact_id`. Both resolve against the same candidate row of one current
+    consideration document, so this asserts the pairing directly rather than
+    trusting that two lookups happen to agree.
+    """
+    case_id = "review_case_" + "d" * 64
+    value = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    consideration_id = str(value["consideration_id"])
+    served: dict[str, bytes] = {}
+    for candidate in value["candidates"]:
+        payload = case.service.image(
+            case_id, consideration_id, str(candidate["reference"])
+        )
+        assert hashlib.sha256(payload).hexdigest() == candidate["preview_sha256"]
+        assert payload == case.payload_by_artifact[candidate["artifact_id"]]
+        served[str(candidate["reference"])] = payload
+    # Distinct references never serve one another's bytes.
+    assert len(set(served.values())) == len(served)
+    selectable = next(
+        candidate
+        for candidate in value["candidates"]
+        if candidate["selectable"] and not candidate["incumbent"]
+    )
+    case.service.validate_decision(
+        case_id,
+        consideration_id,
+        "accept",
+        {"kind": "cover", "value": selectable["artifact_id"]},
+    )
+    with pytest.raises(CoverConsiderationError, match="not_found"):
+        case.service.image(case_id, consideration_id, "cover_ref_" + "f" * 64)
+    with pytest.raises(CoverConsiderationError, match="invalid_choice"):
+        case.service.validate_decision(
+            case_id,
+            consideration_id,
+            "accept",
+            {"kind": "cover", "value": "cover_artifact_" + "f" * 64},
+        )

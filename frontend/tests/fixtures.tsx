@@ -37,6 +37,7 @@ export const detail: CaseDetailView = {
   authors: [],
   subtitle: 'Books · local',
   comparisonNotices: [],
+  writesConsented: false,
   fields: [{
     classification: 'needs_attention',
     classificationReason: 'This field needs your review.',
