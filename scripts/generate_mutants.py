@@ -26,6 +26,7 @@ Writes `mutants/` and `mutants/mutmut-stats.json`. Both are ignored by git.
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import sys
@@ -61,7 +62,15 @@ def generate(root: Path) -> None:
     # `PYTHONPATH` already names `mutants/src`, and importlib caches a path
     # entry that does not exist when the interpreter starts. Creating it before
     # anything imports through it is what keeps the mutated package importable.
+    # Creating it is not sufficient on its own: a path entry that was missing
+    # at start-up is cached as `None`, and `None` is never revalidated by
+    # directory mtime the way a real finder is, so the cache has to be dropped
+    # explicitly. Without this, the first run in a tree with no `mutants/`
+    # imports the unmutated package throughout stats collection and records an
+    # empty map -- which `run_mutation_audit.py` then reports as every mutant
+    # reached by no test.
     (mutants / "src").mkdir(parents=True)
+    importlib.invalidate_caches()
     shutil.copytree(root / "src", mutants / "src", dirs_exist_ok=True)
 
     ensure_config_loaded()
@@ -132,6 +141,18 @@ def collect_stats(root: Path) -> int:
     )
     for name in sorted(set(failures)):
         print(f"  failed during stats collection: {name}")
+    if not reached:
+        # The cohort ran and reached nothing, which no arrangement of these
+        # tests can mean: it means the trampoline never executed, so the tests
+        # imported the unmutated package. Every mutant would then be recorded
+        # as reached by no test -- a total failure that reads as a clean
+        # result, which is the one outcome this audit must never produce.
+        print(
+            "no test reached any mutated function, so the mutated package was "
+            "not the one under test; the snapshot is not usable",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

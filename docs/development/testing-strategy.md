@@ -343,6 +343,56 @@ that `interfaces/cli`'s `main` catches regardless of its message — cannot be
 observed without pinning a string no operator ever sees. Record those; do not
 write a test for them.
 
+**A snapshot can also be taken against the unmutated package.** A path
+entry that does not exist when the interpreter starts is cached as `None` and
+is never revalidated, so creating `mutants/src` inside the run does not by
+itself make it importable. On the first generation in a tree with no
+`mutants/`, the stats phase therefore imported the unmutated package, the
+trampoline never fired, and the map came back empty — which
+`run_mutation_audit.py` would have reported as every mutant reached by no
+test. `generate_mutants.py` now drops the import caches after creating the
+directory and refuses to finish on an empty map, and the audit refuses to
+start on one, because that failure is indistinguishable by inspection from a
+module nothing covers.
+
+**`reached by no test` is a claim about the map, not about the suite.** The map
+is built from `tests/unit` and `tests/integration` less the three files
+`[tool.mutmut]` excludes, and only from what runs in the collecting process. A
+path a test drives through a subprocess, the installed console script, or a
+container is invisible to it. `scripts/qualify_container_lifecycle.py` starts
+the real container on every run, so everything `run_review_server` reaches on
+the way to `uvicorn.run` is exercised there and appears nowhere in the map.
+Establish what else exercises the code before reading a count as a gap.
+
+### `bootstrap.composition`, judged rather than chased
+
+Its 590 unreached mutants are not diffuse: they are 14 functions of 45, and
+each was classified rather than sampled. 287 were unproved by anything and are
+now covered by tests named for what they prove; the remaining 303 are accepted
+here, and this is the record. (2026-08-18)
+
+- `_IsolatedEpubInspector.inspect` and `.unchanged` (186) — the adapter around
+  the EPUB inspector child. The child itself is proved by
+  `tests/unit/test_epub_child.py`; the wrapper runs only against real media,
+  which no tier supplies and every test in the map substitutes. It is accepted
+  as the largest unproved seam in the module, not as a proved one: closing it
+  needs a real-file fixture and a child process, and that is a unit of its own.
+- `compose_continuous_guarded_application` (115) — composed unmocked by
+  `run_review_server` on every started container, so the container lifecycle
+  qualifier proves it end to end against a real SQLite store. This is the case
+  the module was expected to be full of, and it is the only one.
+- `_PublicationReceiptRepository.complete_review_extraction_publication` (2) —
+  a `Protocol` body. Nothing can observe a mutation of it.
+
+The 287 were not accepted because none of them had another prover.
+`run_cover_review` (150) is a CLI subcommand no qualifier invokes; the five
+`reopen_*` read seams, `create_proposal_set`, `run_metadata_report` and
+`inspect_batch` (107) are bound only by the source-only workbench, whose own
+test substitutes every operation and asserts the binding by identity; and
+`compose_audiobookshelf_field_effect_capabilities` (30) is the untested twin of
+a composer beside it that was tested. None of them was expensive, which is the
+whole reason they are not on the list above.
+
 ## Fixtures, hostile input and privacy
 
 Hostile files, network responses, configuration, credentials, SQLite rows, and

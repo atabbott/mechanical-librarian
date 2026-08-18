@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import json
 import os
-import socket
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -43,6 +42,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
+from tests.support.ports import ReservedPort
 from tests.support.review_web_doubles import FakeActivityApplication
 from tests.unit.review_app_fixture import create_transport_test_app
 from tests.unit.test_bibliographic_bundles import (
@@ -67,12 +67,6 @@ _PASSWORD = "synthetic browser password"
 class _BrowserActivityApplication(FakeActivityApplication):
     def wake(self) -> None:
         return None
-
-
-def _unused_port() -> int:
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        return int(listener.getsockname()[1])
 
 
 def _certificate(root: Path) -> tuple[Path, Path]:
@@ -124,7 +118,7 @@ def _server(
     hash_path: Path,
     certificate: Path,
     key: Path,
-    port: int,
+    port: ReservedPort,
     cover: bool = False,
     automatic_fixture: bool = False,
 ):
@@ -196,7 +190,7 @@ def _server(
     proposal_set = evaluate_report(report)
     repository.publish_proposal(proposal_set)
     case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
-    origin = f"https://127.0.0.1:{port}"
+    origin = f"https://127.0.0.1:{port.number}"
     app = create_transport_test_app(
         repository,
         ReviewWebConfiguration(
@@ -213,7 +207,7 @@ def _server(
         uvicorn.Config(
             app,
             host="127.0.0.1",
-            port=port,
+            port=port.number,
             log_level="error",
             access_log=False,
             ssl_certfile=str(certificate),
@@ -239,6 +233,12 @@ def _server(
             timeout_keep_alive=30,
         )
     )
+    # Everything above -- opening the repository, staging cover artifacts,
+    # publishing the report and admitting the case -- ran while the port was
+    # still held. It is given up here because uvicorn binds it inside
+    # `server.run`, and two live binds on one loopback port is what the
+    # operating system exists to refuse.
+    port.release()
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     deadline = time.monotonic() + 10
@@ -320,12 +320,13 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 ),
             )
             with (
+                closing(ReservedPort()) as reserved_port,
                 _server(
                     database=root / "review.sqlite3",
                     hash_path=hash_path,
                     certificate=certificate,
                     key=key,
-                    port=_unused_port(),
+                    port=reserved_port,
                 ) as (origin, case_id),
                 _closing_context(context),
             ):
@@ -727,12 +728,13 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 ),
             )
             with (
+                closing(ReservedPort()) as reserved_port,
                 _server(
                     database=root / "review.sqlite3",
                     hash_path=hash_path,
                     certificate=certificate,
                     key=key,
-                    port=_unused_port(),
+                    port=reserved_port,
                     cover=True,
                     automatic_fixture=True,
                 ) as (origin, case_id),
@@ -963,12 +965,13 @@ def test_z_compact_uncached_library_detail_keeps_visible_focus() -> None:
             )
             page = context.new_page()
             with (
+                closing(ReservedPort()) as reserved_port,
                 _server(
                     database=root / "review.sqlite3",
                     hash_path=hash_path,
                     certificate=certificate,
                     key=key,
-                    port=_unused_port(),
+                    port=reserved_port,
                 ) as (origin, case_id),
                 _closing_context(context),
             ):

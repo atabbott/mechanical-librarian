@@ -3,13 +3,13 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import socket
 import ssl
 import subprocess
 import sys
 import tempfile
 import time
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -36,13 +36,8 @@ from mechanical_librarian.infrastructure.security.review_tls import (
     REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
     open_review_tls_identity,
 )
+from tests.support.ports import ReservedPort
 from tests.support.tls import synthetic_tls_identity
-
-
-def _unused_port() -> int:
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        return int(listener.getsockname()[1])
 
 
 def _encrypted_private_key(source: Path, destination: Path, password: str) -> Path:
@@ -213,7 +208,10 @@ def test_excess_connections_are_closed_before_request_processing(
 
 
 def test_installed_command_serves_only_the_canonical_https_boundary() -> None:
-    with tempfile.TemporaryDirectory() as directory:
+    with (
+        tempfile.TemporaryDirectory() as directory,
+        closing(ReservedPort()) as reservation,
+    ):
         root = Path(directory)
         certificate, private_key = synthetic_tls_identity(root)
         owner_hash = root / "owner.hash"
@@ -223,7 +221,7 @@ def test_installed_command_serves_only_the_canonical_https_boundary() -> None:
         os.chmod(owner_hash, 0o600)
         database = root / "application.sqlite3"
         open_repository(database).close()
-        port = _unused_port()
+        port = reservation.number
         origin = f"https://127.0.0.1:{port}"
         config = root / "config.json"
         config.write_text(
@@ -260,6 +258,10 @@ def test_installed_command_serves_only_the_canonical_https_boundary() -> None:
             ),
             encoding="utf-8",
         )
+        # The child binds the number it is handed on its command line, so the
+        # reservation cannot be carried past this statement: two live binds on
+        # one loopback port is what the operating system exists to refuse.
+        reservation.release()
         process = subprocess.Popen(
             [
                 sys.executable,
