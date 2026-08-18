@@ -10,7 +10,7 @@ import time
 from collections.abc import Iterator
 from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -34,6 +34,7 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.domain.metadata_report import (
+    FileFacts,
     MetadataReport,
     TargetDestination,
     TargetFacts,
@@ -43,6 +44,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from tests.support.ports import ReservedPort
+from tests.support.proposal_evidence import _fields as _bibliographic_fields
 from tests.support.review_web_doubles import FakeActivityApplication
 from tests.unit.review_app_fixture import create_transport_test_app
 from tests.unit.test_bibliographic_bundles import (
@@ -121,14 +123,22 @@ def _server(
     port: ReservedPort,
     cover: bool = False,
     automatic_fixture: bool = False,
+    cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
+    cohort: int = 0,
 ):
     repository = open_repository(database, create=True, cross_thread=True)
     cover_considerations = None
     if cover:
-        payloads = (_cover_preview(1), _cover_preview(2))
-        sources = (
-            _cover_source(1, payloads[0], incumbent=True),
-            _cover_source(2, payloads[1], embedded=True),
+        # Real pixel dimensions, because containment is a property of the
+        # rendered image's intrinsic ratio against its frame and a 1x1 preview
+        # would make every ratio assertion vacuously true (#644).
+        payloads = tuple(
+            _cover_preview(index, width=width, height=height)
+            for index, (width, height) in enumerate(cover_shapes, 1)
+        )
+        sources = tuple(
+            _cover_source(index, payload, incumbent=index == 1, embedded=index == 2)
+            for index, payload in enumerate(payloads, 1)
         )
         base = _cover_report(sources)
         incumbent = sources[0].artifact
@@ -190,6 +200,41 @@ def _server(
     proposal_set = evaluate_report(report)
     repository.publish_proposal(proposal_set)
     case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
+    # A cohort large enough that a whole-Library projection is measurably
+    # slower than one exact-case read. #635's acceptance is about what the
+    # next field waits on, and one work cannot tell those two apart.
+    for index in range(cohort):
+        extra = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "ebooks",
+                f"cohort-item-{index:03d}",
+                _bibliographic_fields(
+                    f"Cohort work {index:03d}",
+                    subtitle=TargetField(
+                        TargetDestination.SUBTITLE, TargetFieldState.MISSING
+                    ),
+                    series=TargetField(
+                        TargetDestination.SERIES, TargetFieldState.MISSING
+                    ),
+                ),
+            ),
+            file=FileFacts(0, f"{index:064x}", f"{index + 5_000:064x}"),
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(
+                _bibliographic_source(
+                    "catalogue",
+                    f"edition-{index}",
+                    titles=(),
+                    series="Mistborn",
+                ),
+            ),
+        )
+        repository.publish(extra, lambda: True)
+        extra_proposal = evaluate_report(extra)
+        repository.publish_proposal(extra_proposal)
+        repository.admit_review_case(extra_proposal)
     origin = f"https://127.0.0.1:{port.number}"
     app = create_transport_test_app(
         repository,
@@ -756,18 +801,22 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.get_by_role(
                     "button", name="Choose current value:", exact=False
                 ).first.click()
-                page.get_by_text("Decision recorded.", exact=False).wait_for()
+                page.get_by_text(
+                    "Decision recorded from the authoritative case.", exact=True
+                ).wait_for()
                 page.get_by_role("button", name="Series", exact=True).click()
                 page.get_by_text(
                     "Human decision: keep current by owner. Recorded value:",
                     exact=False,
                 ).wait_for()
-                assert (
-                    page.get_by_role(
-                        "button", name="Choose current value:", exact=False
-                    ).count()
-                    == 0
+                # #635: revisiting a recorded field restores the whole choice
+                # composition and marks the recorded answer, rather than
+                # replacing it with prose.
+                recorded_series = page.get_by_role(
+                    "button", name="Choose current value:", exact=False
                 )
+                assert recorded_series.count() == 1
+                expect(recorded_series).to_have_attribute("aria-pressed", "true")
                 page.get_by_role("button", name="Evidence").click()
                 page.get_by_role(
                     "heading", name="Evidence and source ledger"
@@ -930,6 +979,12 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     title_current.focus()
                     page.keyboard.press("Enter")
                 assert 200 == override_response.value.status
+                # Recording advances off the title field, so its recorded state
+                # is read where the owner would find it: back on that field.
+                page.get_by_text(
+                    "Decision recorded from the authoritative case.", exact=True
+                ).wait_for()
+                page.goto(f"{origin}/review/{case_id}?field=title&subview=review")
                 page.get_by_text(
                     "Human decision: keep current by owner", exact=False
                 ).wait_for()
@@ -1011,7 +1066,18 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 page.get_by_text(
                     "Human decision: accept by owner", exact=False
                 ).wait_for()
-                assert page.get_by_role("button", name="Choose this cover").count() == 0
+                # #635: a recorded field keeps its full choice composition and
+                # marks the recorded answer, so the owner can change it. The
+                # previous expectation -- that recording removes the choices --
+                # is the defect that ticket names.
+                recorded_cover = page.get_by_role("button", name="Choose this cover")
+                expect(recorded_cover).to_have_attribute("aria-pressed", "true")
+                assert recorded_cover.evaluate(
+                    "node => node.classList.contains('is-selected')"
+                )
+                expect(
+                    page.get_by_role("button", name="Keep current cover")
+                ).to_have_attribute("aria-pressed", "false")
                 history_button = page.get_by_role("button", name="History", exact=True)
                 history_button.focus()
                 page.keyboard.press("Enter")
@@ -1034,6 +1100,432 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 )
                 assert responses
                 assert all(status == 200 for _, status in responses), responses
+                assert errors == []
+            browser.close()
+
+
+# Measure each rendered cover against its own frame's content box. A cover that
+# overruns its frame is clipped by `overflow:hidden` and is invisible to
+# `document.scrollWidth`, so the document-level check cannot see it at all --
+# the same trap `overrunning_rail_controls` exists to avoid (#644).
+_COVER_CONTAINMENT = """(selector) => {
+  const frames = [...document.querySelectorAll(selector)]
+  if (frames.length === 0) return [{ error: 'no cover frames', selector }]
+  const inside = (box, content) =>
+    box.left >= content.left - 0.5 && box.right <= content.right + 0.5 &&
+    box.top >= content.top - 0.5 && box.bottom <= content.bottom + 0.5
+  return frames.map((frame) => {
+    const style = getComputedStyle(frame)
+    const box = frame.getBoundingClientRect()
+    const content = {
+      left: box.left + parseFloat(style.paddingLeft) + parseFloat(style.borderLeftWidth),
+      right: box.right - parseFloat(style.paddingRight) - parseFloat(style.borderRightWidth),
+      top: box.top + parseFloat(style.paddingTop) + parseFloat(style.borderTopWidth),
+      bottom: box.bottom - parseFloat(style.paddingBottom) - parseFloat(style.borderBottomWidth),
+    }
+    const shared = {
+      background: style.backgroundColor,
+      frame_ratio: (content.right - content.left) / (content.bottom - content.top),
+      frame_top: Math.round(box.top),
+      frame_width: Math.round(content.right - content.left),
+    }
+    const image = frame.querySelector('img')
+    if (image === null) {
+      const alternative = frame.matches('[role="img"]') ? frame : frame.querySelector('[role="img"]')
+      return {
+        ...shared,
+        kind: 'alternative',
+        label: alternative === null ? null : alternative.getAttribute('aria-label'),
+        text: (frame.textContent || '').trim(),
+        bounded: alternative !== null && inside(alternative.getBoundingClientRect(), content),
+      }
+    }
+    const imageBox = image.getBoundingClientRect()
+    const natural = [image.naturalWidth, image.naturalHeight]
+    // `object-fit: contain` paints inside the element box; the painted area is
+    // what the owner actually sees, so containment is measured on that, not on
+    // the element box alone.
+    const scale = Math.min(imageBox.width / natural[0], imageBox.height / natural[1])
+    const painted = { width: natural[0] * scale, height: natural[1] * scale }
+    const paintedBox = {
+      left: imageBox.left + (imageBox.width - painted.width) / 2,
+      right: imageBox.right - (imageBox.width - painted.width) / 2,
+      top: imageBox.top + (imageBox.height - painted.height) / 2,
+      bottom: imageBox.bottom - (imageBox.height - painted.height) / 2,
+    }
+    return {
+      ...shared,
+      kind: 'image',
+      alt: image.alt,
+      loaded: image.complete && natural[0] > 0 && natural[1] > 0,
+      natural,
+      object_fit: getComputedStyle(image).objectFit,
+      element_in_frame: inside(imageBox, content),
+      painted_in_frame: inside(paintedBox, content),
+      ratio_error: Math.abs(painted.width / painted.height - natural[0] / natural[1]),
+      painted_ratio: painted.width / painted.height,
+    }
+  })
+}"""
+
+# Very tall, wide, portrait and square, all within the 320x480 preview
+# bound the cover packet enforces. Four ratios that no single frame can
+# satisfy is the point: containment has to hold for all of them at once.
+# The first two are the incumbent and the embedded candidate, which are
+# the pair #640's Library track shows without a provider identity, so the
+# widest ratio spread lands on the surface with the least room for it.
+_COVER_SHAPES = ((120, 480), (320, 140), (200, 300), (280, 280))
+_LIBRARY_SHAPES = _COVER_SHAPES[:2]
+
+
+def test_protected_cover_comparison_contains_every_image_without_cropping() -> None:
+    """#644: every cover is shown whole, in a quiet 5:8 frame, at every width.
+
+    The frames are measured against their own content boxes because a cropped
+    cover is clipped inside `overflow:hidden` and never reaches the document
+    scroll width. Real mixed-ratio PNGs are served so the intrinsic ratio the
+    browser reports is the ratio being contained.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on(
+                "console",
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    cover=True,
+                    cover_shapes=_COVER_SHAPES,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/review/{case_id}?field=cover&subview=review")
+                page.get_by_role("button", name="Prepare cover comparison").click()
+                page.get_by_role("heading", name="Available").first.wait_for()
+
+                def measured(selector: str) -> list[dict[str, Any]]:
+                    page.wait_for_function(
+                        "(selector) => [...document.querySelectorAll(selector)]"
+                        ".every((image) => image.complete)",
+                        arg=f"{selector} img",
+                    )
+                    return cast(
+                        "list[dict[str, Any]]",
+                        page.evaluate(_COVER_CONTAINMENT, selector),
+                    )
+
+                def assert_contained(
+                    selector: str,
+                    viewport: int,
+                    *,
+                    label: str,
+                    shapes: tuple[tuple[int, int], ...],
+                ) -> list[dict[str, Any]]:
+                    frames = measured(selector)
+                    images = [frame for frame in frames if frame["kind"] == "image"]
+                    assert len(images) == len(shapes), (label, frames)
+                    for frame in images:
+                        context_line = (label, frame)
+                        assert frame["loaded"], context_line
+                        assert frame["object_fit"] == "contain", context_line
+                        assert frame["element_in_frame"], context_line
+                        assert frame["painted_in_frame"], context_line
+                        assert frame["ratio_error"] < 0.02, context_line
+                        # A quiet 5:8 comparison frame, not the image's ratio.
+                        assert abs(frame["frame_ratio"] - 5 / 8) < 0.02, context_line
+                        # Transparent letterboxing paints the choice card's own
+                        # surface, so unused frame area cannot read as content.
+                        assert frame["background"] == "rgba(0, 0, 0, 0)", context_line
+                    # Mixed proportions coexist without being normalised.
+                    assert {tuple(frame["natural"]) for frame in images} == {
+                        shape for shape in shapes
+                    }, (label, images)
+                    assert (
+                        page.evaluate("() => document.documentElement.scrollWidth")
+                        <= viewport
+                    ), label
+                    return frames
+
+                assert_contained(
+                    ".cover-image-frame",
+                    1440,
+                    label="detail:desktop",
+                    shapes=_COVER_SHAPES,
+                )
+                page.goto(f"{origin}/library?preview={case_id}&field=cover")
+                page.get_by_role("heading", name="Choose a cover").or_(
+                    page.locator("section[aria-label='Choose a cover']")
+                ).first.wait_for()
+                assert_contained(
+                    ".library-cover-image",
+                    1440,
+                    label="library:desktop",
+                    shapes=_LIBRARY_SHAPES,
+                )
+
+                # 200% zoom is a halved CSS-pixel viewport at twice the device
+                # scale, which is exactly the layout the owner gets when they
+                # zoom a 1440x900 window to 200%.
+                page.set_viewport_size({"width": 720, "height": 450})
+                assert_contained(
+                    ".library-cover-image",
+                    720,
+                    label="library:zoom200",
+                    shapes=_LIBRARY_SHAPES,
+                )
+
+                page.set_viewport_size({"width": 390, "height": 844})
+                compact = assert_contained(
+                    ".library-cover-image",
+                    390,
+                    label="library:compact",
+                    shapes=_LIBRARY_SHAPES,
+                )
+                # Below 900px the current cover joins the same scrollable row
+                # as every replacement rather than sitting above them.
+                assert len({frame["frame_top"] for frame in compact}) == 1, compact
+                track = page.locator(
+                    ".library-cover-pinned, .library-cover-layout"
+                ).first
+                assert track.evaluate(
+                    "node => node.scrollWidth > node.clientWidth + 1"
+                ), "the compact comparison row provides no scroll affordance"
+                assert (
+                    track.evaluate("node => getComputedStyle(node).overscrollBehaviorX")
+                    == "contain"
+                )
+                expect(page.locator(".cover-track-hint")).to_be_visible()
+
+                assert errors == []
+                # A cover whose bytes never arrive keeps a bounded, labelled
+                # alternative inside the same frame. The aborted requests are
+                # the only console errors this test tolerates, and they are
+                # named rather than admitted by an empty allowance.
+                page.route(
+                    "**/cover-considerations/**/images/**",
+                    lambda route: route.abort(),
+                )
+                page.reload()
+                page.get_by_text("Image unavailable").first.wait_for()
+                unavailable = cast(
+                    "list[dict[str, Any]]",
+                    page.evaluate(_COVER_CONTAINMENT, ".library-cover-image"),
+                )
+                alternatives = [
+                    frame for frame in unavailable if frame["kind"] == "alternative"
+                ]
+                assert len(alternatives) == len(unavailable), unavailable
+                for frame in alternatives:
+                    assert frame["bounded"], frame
+                    assert frame["text"] == "Image unavailable", frame
+                    assert frame["label"] == "Cover unavailable", frame
+                assert (
+                    page.evaluate("() => document.documentElement.scrollWidth") <= 390
+                )
+                assert errors and all(
+                    "Failed to load resource" in error for error in errors
+                ), errors
+            browser.close()
+
+
+_CURRENT_FIELD_SELECTOR = '.field-filmstrip button[aria-current="true"]'
+_CURRENT_FIELD_CHANGED = (
+    "(previous) => { const cell = document.querySelector("
+    f"{_CURRENT_FIELD_SELECTOR!r}"
+    "); return cell !== null && cell.innerText !== previous }"
+)
+_COHORT_WORKS = 50
+
+
+def test_recorded_decision_advances_without_whole_library_projection() -> None:
+    """#635: the next field arrives from exact-case state, not from a Library rebuild.
+
+    Fifty works, because one work cannot tell a whole-Library projection apart
+    from a single exact-case read. The assertion is ordering rather than a
+    wall-clock threshold: the Library refetch is allowed to be issued, and is
+    expected to be, but no Library response may complete before the next field
+    is actionable. A settlement that awaits the projection fails this whatever
+    the machine's speed.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        errors: list[str] = []
+        library_responses: list[float] = []
+        decision_responses: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on(
+                "console",
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            page.on(
+                "response",
+                lambda response: (
+                    library_responses.append(time.monotonic())
+                    if "/api/v1/library" in response.url
+                    else decision_responses.append(response.url)
+                    if response.url.endswith("/decisions")
+                    else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    cohort=_COHORT_WORKS - 1,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                search = f"?lens=needs_attention&q=Mistborn&preview={case_id}"
+                page.goto(f"{origin}/library{search}")
+                page.locator(".field-map").wait_for()
+                page.wait_for_load_state("networkidle")
+
+                def current_field() -> str:
+                    return page.locator(_CURRENT_FIELD_SELECTOR).first.inner_text()
+
+                def advance() -> tuple[float, int, str]:
+                    before = current_field()
+                    settled = len(library_responses)
+                    choice = page.get_by_role(
+                        "button", name="Choose current value:", exact=False
+                    ).first
+                    choice.focus()
+                    started = time.monotonic()
+                    page.keyboard.press("Enter")
+                    page.wait_for_function(
+                        _CURRENT_FIELD_CHANGED,
+                        arg=before,
+                    )
+                    return (
+                        time.monotonic() - started,
+                        len(library_responses) - settled,
+                        before,
+                    )
+
+                elapsed, projections, first_field = advance()
+                # The projection is invalidated, not awaited. Anything that
+                # completed inside this window was waited on.
+                assert projections == 0, (elapsed, projections)
+                # A generous ceiling: the measured exact-case read is single
+                # figures of milliseconds, and a whole-Library projection over
+                # this cohort is two orders of magnitude slower.
+                assert elapsed < 1.0, elapsed
+                # The acknowledgement is local: the durable write has not even
+                # answered yet, which is what "immediate" has to mean.
+                assert decision_responses == [], decision_responses
+                # It still lands, and the authoritative case replaces the
+                # local acknowledgement rather than standing in for it.
+                page.get_by_text(
+                    "Decision recorded from the authoritative case.", exact=True
+                ).wait_for()
+                assert len(decision_responses) == 1, decision_responses
+
+                # The next field is actionable by keyboard without a pointer.
+                assert page.evaluate(
+                    "() => document.activeElement !== null &&"
+                    " document.activeElement !== document.body"
+                )
+                # Convergence never changes the active search, lens or work.
+                # Only `field` moves, which is the advance itself.
+                preserved = parse_qs(urlparse(page.url).query)
+                assert preserved["lens"] == ["needs_attention"]
+                assert preserved["q"] == ["Mistborn"]
+                assert preserved["preview"] == [case_id]
+                assert preserved["field"] != []
+
+                # A second choice is accepted while the first settlement is
+                # still converging, in order, without a reload.
+                second_elapsed, second_projections, second_field = advance()
+                assert second_projections == 0, (second_elapsed, second_projections)
+                assert second_field != first_field
+                deadline = time.monotonic() + 10
+                while len(decision_responses) < 2 and time.monotonic() < deadline:
+                    page.wait_for_timeout(25)
+                assert len(decision_responses) == 2, decision_responses
+
+                # Reduced motion receives the same state change with no
+                # spatial animation.
+                assert (
+                    page.locator(".decision-canvas").first.evaluate(
+                        "node => getComputedStyle(node).animationName"
+                    )
+                    == "none"
+                )
+
+                # The recorded field is revisitable and still shows every
+                # eligible option, with the recorded one marked.
+                page.locator(".field-filmstrip button").filter(
+                    has_text=first_field.split("\n")[0]
+                ).first.click()
+                recorded = page.get_by_role(
+                    "button", name="Choose current value:", exact=False
+                ).first
+                expect(recorded).to_have_attribute("aria-pressed", "true")
+                # Every eligible option for this field is offered again. It is
+                # preservation-only, so those are keeping the current value and
+                # taking no action -- not a narrowed inspect-only view.
+                assert (
+                    page.get_by_role(
+                        "button", name="Take no action", exact=True
+                    ).count()
+                    == 1
+                )
+                assert (
+                    "You can change it here"
+                    in page.locator(".decision-canvas").first.inner_text()
+                )
+
+                # Back and Forward keep the same Library position.
+                page.go_back()
+                page.wait_for_load_state("networkidle")
+                page.go_forward()
+                page.wait_for_load_state("networkidle")
+                assert page.url.startswith(f"{origin}/library")
+                assert "lens=needs_attention" in page.url
                 assert errors == []
             browser.close()
 

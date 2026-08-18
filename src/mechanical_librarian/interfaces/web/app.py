@@ -326,6 +326,7 @@ class _CaseDetailResponse(_ClosedModel):
     review_case_id: str
     schema_version: str
     target: _TargetIdentity
+    writes_consented: bool
 
 
 class _EvidenceItem(_ClosedModel):

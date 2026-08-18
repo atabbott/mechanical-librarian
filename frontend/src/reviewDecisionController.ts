@@ -9,6 +9,11 @@ import { detailQuery, useReviewContext } from './router'
 export const actionable = (field: CaseDetailView['fields'][number]) => field.needsAttention
 export const reconciliationKey = (id: string) => ['decision-reconciliation', id] as const
 const decisionStatusKey = (id: string) => ['decision-status', id] as const
+// One case's owner cannot outrun their own reading of the next field by more
+// than a handful of choices, and an unbounded backlog would be a durable queue
+// in all but name. Beyond this the surface says so rather than accepting a
+// choice it has not started.
+export const outstandingDecisionLimit = 8
 export interface ReconciliationLock {
   message: string
   detailUpdatedAt: number
@@ -17,10 +22,12 @@ const nextUnresolved = (
   order: readonly string[],
   fields: CaseDetailView['fields'],
   destination: string,
+  settled: ReadonlySet<string>,
 ) => {
   const index = order.indexOf(destination)
   const ordered = index < 0 ? order : [...order.slice(index + 1), ...order.slice(0, index)]
   return ordered
+    .filter((name) => !settled.has(name))
     .map((name) => fields.find((field) => field.destination === name))
     .find(
       (field): field is CaseDetailView['fields'][number] =>
@@ -47,7 +54,7 @@ export const useReviewDecisionController = ({
 }: {
   reviewCaseId: string
   fields: CaseDetailView['fields']
-  active: (command: DecisionCommand) => boolean
+  active: (destination: string) => boolean
   onAdvance: (field: string) => Promise<void> | void
   onComplete?: (fields: CaseDetailView['fields']) => Promise<void> | void
   onStale: () => Promise<void> | void
@@ -57,11 +64,16 @@ export const useReviewDecisionController = ({
     caseId: reviewCaseId,
     text: null,
   })
-  const [progress, setProgress] = useState<{
+  // Every choice the owner has made on this case that the server has not yet
+  // confirmed or refused. It is what makes a choice readable in place the
+  // instant it is made, and what a later field's arrival must not erase.
+  const [acknowledged, setAcknowledged] = useState<{
     caseId: string
-    command: DecisionCommand
-    phase: 'recording' | 'confirmed' | 'failed'
-  } | null>(null)
+    entries: readonly {
+      command: DecisionCommand
+      phase: 'recording' | 'confirmed' | 'failed'
+    }[]
+  }>({ caseId: reviewCaseId, entries: [] })
   const reconciliation = useQuery<ReconciliationLock | null>({
     queryKey: reconciliationKey(reviewCaseId),
     queryFn: () => Promise.resolve(null),
@@ -83,20 +95,48 @@ export const useReviewDecisionController = ({
   const mounted = useRef(true)
   const isMounted = () => mounted.current
   const order = useRef<readonly string[]>([])
-  const settle = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['library'] }),
-      queryClient.invalidateQueries({ queryKey: ['attention'] }),
-      queryClient.invalidateQueries({
-        queryKey: ['review-case', reviewCaseId, 'history'],
-        exact: true,
-      }),
-    ])
+  // Destinations this case has already been given a choice for. Advancement
+  // reads it so a decision still in flight is never offered again, and so the
+  // next field is chosen from what the owner has done rather than from what the
+  // server has finished writing.
+  const decided = useRef<{ caseId: string; destinations: Set<string> }>({
+    caseId: reviewCaseId,
+    destinations: new Set(),
+  })
+  const settledFor = (caseId: string) =>
+    decided.current.caseId === caseId ? decided.current.destinations : new Set<string>()
+  // Commands leave in the order they were chosen. Each one waits only for the
+  // request before it, never for a Library projection, so a second choice can
+  // be made while the first settles without the two arriving out of order.
+  const chain = useRef<{ caseId: string; tail: Promise<unknown> }>({
+    caseId: reviewCaseId,
+    tail: Promise.resolve(),
+  })
+  // Where each command sent the owner. The optimistic advance reads the field
+  // list in hand; if the authoritative case then says that field no longer
+  // needs them, this is what lets the correction be made without having made
+  // them wait for it in the first place.
+  const advanced = useRef(new Map<string, string>())
+  // The exact case, and only the exact case. Next-field authority comes from
+  // here; Library counts and the case's own history converge behind it.
+  const refreshCase = async () => {
     try {
       return await queryClient.fetchQuery({ ...detailQuery(http, reviewCaseId), staleTime: 0 })
     } catch {
       return undefined
     }
+  }
+  const converge = () => {
+    void queryClient.invalidateQueries({ queryKey: ['library'] })
+    void queryClient.invalidateQueries({ queryKey: ['attention'] })
+    void queryClient.invalidateQueries({
+      queryKey: ['review-case', reviewCaseId, 'history'],
+      exact: true,
+    })
+  }
+  const settle = async () => {
+    converge()
+    return await refreshCase()
   }
   const lock = (message: string) =>
     queryClient.setQueryData(reconciliationKey(reviewCaseId), {
@@ -107,73 +147,89 @@ export const useReviewDecisionController = ({
     queryClient.setQueryData(decisionStatusKey(caseId), text)
     setStatus((current) => (current.caseId === caseId ? { ...current, text } : current))
   }
+  const forget = (command: DecisionCommand) =>
+    setAcknowledged((current) =>
+      current.caseId === reviewCaseId
+        ? {
+            ...current,
+            entries: current.entries.filter((entry) => !sameCommand(entry.command, command)),
+          }
+        : current,
+    )
+  const mark = (command: DecisionCommand, phase: 'recording' | 'confirmed' | 'failed') =>
+    setAcknowledged((current) =>
+      current.caseId === reviewCaseId
+        ? {
+            ...current,
+            entries: current.entries.map((entry) =>
+              sameCommand(entry.command, command) ? { command, phase } : entry,
+            ),
+          }
+        : current,
+    )
+  // A refusal stops this case advancing any further on its own. Queued choices
+  // are dropped rather than resent blindly, and the owner is left with one
+  // focused action over an authoritative case.
+  const halt = () => {
+    chain.current = { caseId: reviewCaseId, tail: Promise.resolve() }
+    decided.current = { caseId: reviewCaseId, destinations: new Set() }
+  }
   const decision = useMutation({
     mutationFn: (command: DecisionCommand) => http.recordDecision(reviewCaseId, command),
     retry: false,
     onSuccess: async (_, command) => {
-      const refreshed = await settle()
+      converge()
+      const refreshed = await refreshCase()
       if (!refreshed) {
-        setProgress((current) => (current?.caseId === reviewCaseId ? null : current))
+        halt()
+        forget(command)
         lock(
           'Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.',
         )
         announce(reviewCaseId, '')
+        // The optimistic advance is withdrawn: the owner is returned to the
+        // field whose outcome is in doubt rather than left on the next one.
+        await onAdvance(command.destination)
         return
       }
-      const next = nextUnresolved(order.current, refreshed.fields, command.destination)
-      if (!mounted.current) {
+      if (!isMounted()) {
         queryClient.setQueryData(
           decisionStatusKey(reviewCaseId),
           'Decision recorded from the authoritative case.',
         )
         return
       }
-      if (!active(command)) {
-        setProgress((current) => (current?.caseId === reviewCaseId ? null : current))
-        announce(reviewCaseId, 'Decision recorded from the authoritative case.')
-        return
-      }
-      setProgress({ caseId: reviewCaseId, command, phase: 'confirmed' })
-      setStatus((current) =>
-        current.caseId === reviewCaseId
-          ? { ...current, text: 'Decision recorded from the authoritative case.' }
-          : current,
+      mark(command, 'confirmed')
+      announce(reviewCaseId, 'Decision recorded from the authoritative case.')
+      const next = nextUnresolved(
+        order.current,
+        refreshed.fields,
+        command.destination,
+        settledFor(reviewCaseId),
       )
-      await new Promise<void>((resolve) => setTimeout(resolve, 320))
-      if (!isMounted()) return
-      if (!active(command)) {
-        setProgress((current) =>
-          current?.caseId === reviewCaseId && sameCommand(current.command, command)
-            ? null
-            : current,
-        )
-        if (!next) await onComplete?.(refreshed.fields)
+      const arrival = advanced.current.get(command.idempotencyKey)
+      advanced.current.delete(command.idempotencyKey)
+      if (!next) {
+        await onComplete?.(refreshed.fields)
         return
       }
-      setProgress((current) =>
-        current?.caseId === reviewCaseId && sameCommand(current.command, command) ? null : current,
+      if (
+        arrival === undefined ||
+        arrival === next.destination ||
+        !(active(arrival) || active(command.destination))
       )
-      if (next) {
-        setStatus((current) =>
-          current.caseId === reviewCaseId
-            ? {
-                ...current,
-                text: `Decision recorded. Continuing with ${labelWords(next.destination)}.`,
-              }
-            : current,
-        )
-        await onAdvance(next.destination)
         return
-      }
-      await onComplete?.(refreshed.fields)
+      const settled = refreshed.fields.find((field) => field.destination === arrival)
+      if (settled !== undefined && !actionable(settled)) await onAdvance(next.destination)
     },
     onError: async (error, command) => {
-      const refreshed = await settle()
+      halt()
+      converge()
+      const refreshed = await refreshCase()
       const refreshedField = refreshed?.fields.find(
         (field) => field.destination === command.destination,
       )
-      if (refreshedField && !actionable(refreshedField))
-        setProgress((current) => (current?.caseId === reviewCaseId ? null : current))
+      if (refreshedField && !actionable(refreshedField)) forget(command)
       if (error instanceof ApiError && error.code === 'stale') {
         setStatus((current) =>
           current.caseId === reviewCaseId
@@ -187,9 +243,8 @@ export const useReviewDecisionController = ({
         return
       }
       if (!refreshed) {
-        setProgress((current) =>
-          current?.caseId === reviewCaseId ? { ...current, phase: 'failed' } : current,
-        )
+        mark(command, 'failed')
+        await onAdvance(command.destination)
         lock(
           error instanceof AmbiguousMutationError
             ? 'The decision outcome is uncertain and the current case could not be refreshed. Reload to reconcile it before reviewing another value.'
@@ -199,7 +254,8 @@ export const useReviewDecisionController = ({
         return
       }
       if (error instanceof ApiError && error.code === 'already_decided') {
-        setProgress((current) => (current?.caseId === reviewCaseId ? null : current))
+        forget(command)
+        await onAdvance(command.destination)
         setStatus((current) =>
           current.caseId === reviewCaseId
             ? { ...current, text: 'The authoritative decision was reloaded.' }
@@ -207,9 +263,8 @@ export const useReviewDecisionController = ({
         )
         return
       }
-      setProgress((current) =>
-        current?.caseId === reviewCaseId ? { ...current, phase: 'failed' } : current,
-      )
+      mark(command, 'failed')
+      await onAdvance(command.destination)
       setStatus((current) =>
         current.caseId === reviewCaseId
           ? {
@@ -236,36 +291,93 @@ export const useReviewDecisionController = ({
     )
       queryClient.setQueryData(reconciliationKey(reviewCaseId), null)
   }, [detailState?.dataUpdatedAt, queryClient, reconciliation.data, reviewCaseId])
-  const currentProgress = progress?.caseId === reviewCaseId ? progress : null
-  const currentPending = currentProgress?.command ?? null
+  const entries = acknowledged.caseId === reviewCaseId ? acknowledged.entries : []
+  const failed = entries.find((entry) => entry.phase === 'failed') ?? null
+  const outstanding = entries.filter((entry) => entry.phase === 'recording')
+  const chosen = (destination: string) =>
+    entries.find((entry) => entry.command.destination === destination) ?? null
   const retry = () => {
-    if (!currentPending || reconciliation.data !== null || decision.isPending) return
-    announce(reviewCaseId, `Retrying ${labelWords(currentPending.outcome)}…`)
-    setProgress((current) =>
-      current?.caseId === reviewCaseId ? { ...current, phase: 'recording' } : current,
+    if (!failed || reconciliation.data !== null) return
+    announce(reviewCaseId, `Retrying ${labelWords(failed.command.outcome)}…`)
+    mark(failed.command, 'recording')
+    decided.current = {
+      caseId: reviewCaseId,
+      destinations: new Set([...settledFor(reviewCaseId), failed.command.destination]),
+    }
+    chain.current = { caseId: reviewCaseId, tail: decision.mutateAsync(failed.command) }
+  }
+  const submit = (command: DecisionCommand) => {
+    if (reconciliation.data !== null) return
+    const settled = settledFor(reviewCaseId)
+    // Two presses of the same choice, or a second choice for a field whose
+    // first is still in flight, are the same decision. Neither becomes a
+    // second command.
+    if (settled.has(command.destination)) return
+    if (outstanding.length >= outstandingDecisionLimit) {
+      announce(
+        reviewCaseId,
+        'Earlier choices are still being recorded. This one was not sent; try it again in a moment.',
+      )
+      return
+    }
+    order.current = fields.map((field) => field.destination)
+    decided.current = {
+      caseId: reviewCaseId,
+      destinations: new Set([...settled, command.destination]),
+    }
+    setAcknowledged((current) => ({
+      caseId: reviewCaseId,
+      entries: [
+        ...(current.caseId === reviewCaseId ? current.entries : []),
+        { command, phase: 'recording' as const },
+      ],
+    }))
+    // The advance happens now, from the field list already in hand. Nothing
+    // about it waits on the network, and nothing about it waits on a Library
+    // projection; the recording below reconciles behind it.
+    const next = nextUnresolved(
+      order.current,
+      fields,
+      command.destination,
+      decided.current.destinations,
     )
-    decision.mutate(currentPending)
+    announce(
+      reviewCaseId,
+      next
+        ? `Recording ${labelWords(command.outcome)}. Continuing with ${labelWords(next.destination)}.`
+        : `Recording ${labelWords(command.outcome)}…`,
+    )
+    if (next && active(command.destination)) {
+      advanced.current.set(command.idempotencyKey, next.destination)
+      void onAdvance(next.destination)
+    }
+    const previous = chain.current.caseId === reviewCaseId ? chain.current.tail : Promise.resolve()
+    chain.current = {
+      caseId: reviewCaseId,
+      tail: previous.then(
+        () => decision.mutateAsync(command).catch(() => undefined),
+        () => undefined,
+      ),
+    }
   }
   return {
     status:
       status.caseId === reviewCaseId
         ? (status.text ?? durableStatus.data ?? '')
         : (durableStatus.data ?? ''),
-    pending: currentPending,
-    phase: currentProgress?.phase ?? null,
-    isPending: decision.isPending && currentProgress?.phase === 'recording',
-    canRetry: decision.isError && currentPending !== null && reconciliation.data === null,
+    pending: failed?.command ?? outstanding[0]?.command ?? entries[0]?.command ?? null,
+    phase: chosen,
+    // Choices stay live while a decision settles: the surface acknowledges in
+    // place and moves on, so nothing is disabled waiting for a round trip.
+    // What a caller may still want to know is whether anything is in flight.
+    recording: outstanding.length > 0,
+    canRetry: failed !== null && reconciliation.data === null,
     retry,
     reloadRequired: reconciliation.data !== null,
     message: reconciliation.data?.message,
     decision,
     settle,
     announce: (text: string) => announce(reviewCaseId, text),
-    submit: (command: DecisionCommand) => {
-      order.current = fields.map((field) => field.destination)
-      setProgress({ caseId: reviewCaseId, command, phase: 'recording' })
-      announce(reviewCaseId, `Recording ${labelWords(command.outcome)}…`)
-      decision.mutate(command)
-    },
+    submit,
   }
 }

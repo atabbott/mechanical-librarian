@@ -457,6 +457,7 @@ def _case(case_id: str) -> dict[str, object]:
     if case_id == "case-stale":
         return {
             "schema_version": "review-case-v1",
+            "writes_consented": False,
             "review_case_id": case_id,
             "current": False,
             "comparison_notices": [],
@@ -773,6 +774,7 @@ def _case(case_id: str) -> dict[str, object]:
     )
     return {
         "schema_version": "review-case-v1",
+        "writes_consented": False,
         "review_case_id": case_id,
         "current": True,
         "comparison_notices": [],

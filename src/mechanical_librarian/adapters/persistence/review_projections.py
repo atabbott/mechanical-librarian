@@ -197,7 +197,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 shadow_abstention_destinations=self._shadow_abstention_destinations(
                     review_case_id
                 ),
-                automatic_override_blocked_destinations=self._automatic_override_blocked_destinations(
+                override_blocked_destinations=self._override_blocked_destinations(
                     review_case_id
                 ),
                 suspended_destinations=self._field_effect_capability_suspended_destinations(
@@ -339,16 +339,24 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             raise MetadataReportError("review attention is unavailable")
         return tuple(row[0] for row in rows)
 
-    def _automatic_override_blocked_destinations(
+    def _override_blocked_destinations(
         self,
         review_case_id: str,
     ) -> tuple[str, ...]:
+        # An owner's own recorded decision is superseded by the next one, so it
+        # is blocked by exactly what blocks an automatic one: an effect that has
+        # left the reversible states.  `record_human_decision` enforces that
+        # boundary on the write; reporting a narrower one here would hide a
+        # change the store would have accepted.
         rows = self._connection.execute(
-            "SELECT DISTINCT automatic.destination FROM automatic_decisions automatic "
-            "JOIN field_effects effect ON effect.decision_id=automatic.decision_id "
-            "WHERE automatic.review_case_id=? AND effect.state IN "
-            "('claimed','applying','reconciling','verified') ORDER BY automatic.destination",
-            (review_case_id,),
+            "SELECT DISTINCT recorded.destination FROM ("
+            "SELECT destination,decision_id FROM automatic_decisions WHERE review_case_id=? "
+            "UNION ALL "
+            "SELECT destination,decision_id FROM human_decisions WHERE review_case_id=?"
+            ") recorded JOIN field_effects effect ON effect.decision_id=recorded.decision_id "
+            "WHERE effect.state IN "
+            "('claimed','applying','reconciling','verified') ORDER BY recorded.destination",
+            (review_case_id, review_case_id),
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):
             raise MetadataReportError("review attention is unavailable")

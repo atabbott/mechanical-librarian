@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -457,7 +457,6 @@ describe('Library route', () => {
 
     expect(await screen.findByRole('button', { name: /Authors.*Needs review/u })).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Choose current value: Old title' }))
-    expect(await screen.findByText('Decision recorded. Continuing with authors.')).toBeVisible()
     await waitFor(() => expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).toHaveAttribute('aria-current', 'true'))
     expect(screen.getByRole('button', { name: /Title.*Decision recorded/u })).toBeVisible()
   })
@@ -502,128 +501,7 @@ describe('Library route', () => {
     expect(document.activeElement).toHaveClass('review-complete')
   })
 
-  it('marks the exact choice while recording and focuses authoritative confirmation before advancing', async () => {
-    const user = userEvent.setup()
-    const titleField = detail.fields[0]
-    if (!titleField) throw new Error('workspace fixture requires a title field')
-    const authorsField = { ...titleField, destination: 'authors', proposalId: 'proposal-authors', targetFingerprint: 'fingerprint-authors' }
-    const settled: CaseDetailView = { ...detail, fields: [{ ...titleField, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }, authorsField] }
-    let current: CaseDetailView = { ...detail, fields: [titleField, authorsField] }
-    let release: (() => void) | undefined
-    const deferred = new Promise<void>((resolve) => { release = resolve })
-    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { await deferred; current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }) }
-    renderRoute('/library?lens=all&preview=case-1&field=title', http)
-
-    const choice = await screen.findByRole('button', { name: 'Choose current value: Old title' })
-    await user.click(choice)
-    expect(choice).toHaveAttribute('aria-pressed', 'true')
-    expect(choice).toHaveTextContent('Recording…')
-    const competing = screen.getByRole('button', { name: 'Choose proposed value: New title' })
-    expect(competing).toBeDisabled()
-    fireEvent.click(competing)
-    expect(http.recordDecision).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).not.toHaveAttribute('aria-current', 'true')
-
-    await act(async () => { release?.() })
-    const confirmationText = await screen.findByText('The authoritative case confirms this exact field outcome.')
-    const confirmed = confirmationText.closest<HTMLElement>('[role="status"]')
-    if (!confirmed) throw new Error('authoritative confirmation region is required')
-    expect(confirmed).toHaveTextContent('The authoritative case confirms this exact field outcome.')
-    expect(confirmed).toHaveFocus()
-    await waitFor(() => expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).toHaveAttribute('aria-current', 'true'))
-  })
-
-  it('suspends the confirmation dwell for its whole interval before continuing', async () => {
-    const titleField = detail.fields[0]
-    if (!titleField) throw new Error('workspace fixture requires a title field')
-    const authorsField = { ...titleField, destination: 'authors', proposalId: 'proposal-authors', targetFingerprint: 'fingerprint-authors' }
-    const settled: CaseDetailView = { ...detail, fields: [{ ...titleField, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }, authorsField] }
-    let current: CaseDetailView = { ...detail, fields: [titleField, authorsField] }
-    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }) }
-    // Fake clock installed before the first decision, and `settle` pinned to
-    // interval 0, for the reason recorded on the navigation test below.
-    vi.useFakeTimers()
-    try {
-      const settle = async (until: () => unknown) => { await vi.waitFor(until, { interval: 0 }) }
-      const continued = () => screen.queryByText('Decision recorded. Continuing with authors.')
-      const choice = () => screen.getByRole('button', { name: 'Choose current value: Old title' })
-      renderRoute('/library?lens=all&preview=case-1&field=title', http)
-
-      await vi.waitFor(() => expect(choice()).toBeEnabled())
-      fireEvent.click(choice())
-      await settle(() => expect(screen.getByText('The authoritative case confirms this exact field outcome.')).toBeVisible())
-
-      // Only the code after the awaited dwell writes this status, so its absence
-      // at 319 ms and its arrival at 320 ms pin the controller to that timer. A
-      // timer-count delta cannot: it survives a dwell that schedules the 320 ms
-      // timer and then awaits a different one.
-      await act(async () => { await vi.advanceTimersByTimeAsync(319) })
-      expect(continued()).toBeNull()
-      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
-      await settle(() => expect(continued()).toBeVisible())
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('clears authoritative confirmation when the reviewer navigates during its dwell', async () => {
-    const titleField = detail.fields[0]
-    if (!titleField) throw new Error('workspace fixture requires a title field')
-    const authorsField = { ...titleField, destination: 'authors', proposalId: 'proposal-authors', targetFingerprint: 'fingerprint-authors' }
-    const settled: CaseDetailView = { ...detail, fields: [{ ...titleField, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } }, authorsField] }
-    let current: CaseDetailView = { ...detail, fields: [titleField, authorsField] }
-    let rejectAuthors: ((error: unknown) => void) | undefined
-    const authorsDecision = new Promise<never>((_resolve, reject) => { rejectAuthors = reject })
-    const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async (_id, command) => { if (command.destination === 'authors') return authorsDecision; current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-title', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: titleField.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: titleField.targetFingerprint } })
-    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision }
-    // The dwell is scheduled the instant the confirmation renders, so the fake
-    // clock has to be installed before the first decision is recorded: a timer
-    // created on the real clock cannot be advanced afterwards. That rules out
-    // `userEvent` and `findBy*` for the whole block — see Test economy in
-    // docs/development/testing-strategy.md. `settle` polls on the real clock
-    // and advances the fake one by nothing, so the dwell elapses only where
-    // this test says it does.
-    vi.useFakeTimers()
-    try {
-      const settle = async (until: () => unknown) => { await vi.waitFor(until, { interval: 0 }) }
-      const confirmation = () => screen.queryByText('The authoritative case confirms this exact field outcome.')
-      const choice = () => screen.getByRole('button', { name: 'Choose current value: Old title' })
-      renderRoute('/library?lens=all&preview=case-1&field=title', http)
-
-      // The route's own load needs the clock; no dwell exists yet to disturb.
-      await vi.waitFor(() => expect(choice()).toBeEnabled())
-      fireEvent.click(choice())
-      await settle(() => expect(confirmation()).toBeVisible())
-      fireEvent.click(screen.getByRole('button', { name: /Authors.*Needs review/u }))
-      await settle(() => expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).toHaveAttribute('aria-current', 'true'))
-      const authorsChoice = choice()
-      fireEvent.click(authorsChoice)
-      await settle(() => expect(authorsChoice).toHaveTextContent('Recording…'))
-
-      // Navigating away is what hides the confirmation, so here the dwell's
-      // expiry shows in nothing the reviewer can see — its only duty is to
-      // leave the decision started after it alone. The advance is made
-      // load-bearing on the timer instead: still scheduled a millisecond short
-      // of 320 ms, retired on the millisecond it was set for. That is all a
-      // count delta can show; the dwell itself is pinned to the controller by
-      // the continuation test above.
-      await act(async () => { await vi.advanceTimersByTimeAsync(319) })
-      const pendingDwell = vi.getTimerCount()
-      await act(async () => { await vi.advanceTimersByTimeAsync(1) })
-      expect(vi.getTimerCount()).toBe(pendingDwell - 1)
-
-      expect(confirmation()).toBeNull()
-      expect(authorsChoice).toHaveTextContent('Recording…')
-      await act(async () => { rejectAuthors?.(new ApiError(503, 'decision_failed')) })
-      await settle(() => expect(screen.getByRole('button', { name: 'Try the same decision again' })).toBeVisible())
-      fireEvent.click(screen.getByRole('button', { name: /Title.*Decision recorded/u }))
-      await settle(() => expect(screen.getByText(/The recorded value remains Old title/u)).toBeVisible())
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('preserves final completion when navigation ends the confirmation dwell', async () => {
+  it('preserves final completion when the reviewer moves on while a decision settles', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
@@ -634,8 +512,10 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
-    expect(await screen.findByText('The authoritative case confirms this exact field outcome.')).toBeVisible()
+    expect(await screen.findByText('Review complete')).toBeVisible()
+    // A recorded field opens for inspection and hands the completion back.
     await user.click(screen.getByRole('button', { name: /Authors.*Decision recorded/u }))
+    await user.click(await screen.findByRole('button', { name: '← Back to completion' }))
 
     expect(await screen.findByText('Review complete')).toBeVisible()
     expect(screen.getByRole('button', { name: /Title.*Old title/u })).toBeVisible()
@@ -768,14 +648,322 @@ describe('Library route', () => {
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
     const complete = (await screen.findByText('Review complete')).closest('article')
     if (!complete) throw new Error('completion boundary is required')
-    expect(within(complete).getByRole('heading', { name: 'A Book' })).toBeVisible()
+    expect(within(complete).getByRole('heading', { name: 'Review complete' })).toBeVisible()
+    expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Review next work →' })).toBeVisible()
 
     await user.click(screen.getByRole('button', { name: /Title.*Old title/u }))
     expect(await screen.findByRole('button', { name: '← Back to completion' })).toBeVisible()
-    expect(screen.getByText(/The recorded value remains Old title/u)).toBeVisible()
+    // Revisiting a recorded field restores every eligible option and marks the
+    // recorded one, so the owner can change it rather than only read it.
+    expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Choose proposed value: New title' })).toHaveAttribute('aria-pressed', 'false')
     await user.click(screen.getByRole('button', { name: '← Back to completion' }))
     expect(await screen.findByText('Review complete')).toBeVisible()
+  })
+
+  it('acknowledges a choice in place and opens the next field before the server answers', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const authorsField = {
+      ...titleField,
+      destination: 'authors',
+      proposalId: 'proposal-authors',
+      targetFingerprint: 'fingerprint-authors',
+    }
+    let release: (() => void) | undefined
+    const deferred = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
+      recordDecision: vi.fn(async () => {
+        await deferred
+        return {
+          schema_version: 'review-decision-v1',
+          actor: 'owner',
+          decision_id: 'decision-title',
+          destination: 'title',
+          occurred_at: 1,
+          outcome: 'keep_current',
+          proposal_id: titleField.proposalId,
+          review_case_id: 'case-1',
+          selected_value: null,
+          target_fingerprint: titleField.targetFingerprint,
+        }
+      }),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    const choice = await screen.findByRole('button', { name: 'Choose current value: Old title' })
+    const readsBefore = vi.mocked(http.getLibrary).mock.calls.length
+    const caseReadsBefore = vi.mocked(http.getCaseDetail).mock.calls.length
+    await user.click(choice)
+
+    // The next field is current while the decision is still in flight, so no
+    // Library projection and no second case read stood between the choice and
+    // the field that followed it.
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).toHaveAttribute(
+        'aria-current',
+        'true',
+      ),
+    )
+    expect(vi.mocked(http.recordDecision)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(http.getLibrary).mock.calls.length).toBe(readsBefore)
+    expect(vi.mocked(http.getCaseDetail).mock.calls.length).toBe(caseReadsBefore)
+
+    // The chosen field keeps its whole composition: the choice is marked in
+    // place and its sibling is still there to be read.
+    await user.click(
+      screen.getByRole('button', { name: /Title.*Needs review|Title.*Decision recorded/u }),
+    )
+    const chosen = await screen.findByRole('button', { name: 'Choose current value: Old title' })
+    expect(chosen).toHaveAttribute('aria-pressed', 'true')
+    expect(chosen).toHaveTextContent('Recording…')
+    expect(screen.getByRole('button', { name: 'Choose proposed value: New title' })).toBeEnabled()
+    await act(async () => {
+      release?.()
+    })
+  })
+
+  it('records one command per field however often its choices are pressed', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const authorsField = {
+      ...titleField,
+      destination: 'authors',
+      proposalId: 'proposal-authors',
+      targetFingerprint: 'fingerprint-authors',
+    }
+    let release: (() => void) | undefined
+    const deferred = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async (_id, command) => {
+      await deferred
+      return {
+        schema_version: 'review-decision-v1' as const,
+        actor: 'owner' as const,
+        decision_id: `decision-${command.destination}`,
+        destination: command.destination,
+        occurred_at: 1,
+        outcome: 'keep_current' as const,
+        proposal_id: command.proposalId,
+        review_case_id: 'case-1',
+        selected_value: null,
+        target_fingerprint: command.targetFingerprint,
+      }
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
+      recordDecision,
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).toHaveAttribute(
+        'aria-current',
+        'true',
+      ),
+    )
+    await user.click(screen.getByRole('button', { name: /Title.*/u }))
+    await user.click(
+      await screen.findByRole('button', { name: 'Choose proposed value: New title' }),
+    )
+
+    expect(recordDecision).toHaveBeenCalledTimes(1)
+    expect(recordDecision.mock.calls[0]?.[1].destination).toBe('title')
+    await act(async () => {
+      release?.()
+    })
+  })
+
+  it('sends sequential choices in the order they were made while the first settles', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const authorsField = {
+      ...titleField,
+      destination: 'authors',
+      proposalId: 'proposal-authors',
+      targetFingerprint: 'fingerprint-authors',
+    }
+    let release: (() => void) | undefined
+    const deferred = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const sent: string[] = []
+    const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async (_id, command) => {
+      sent.push(command.destination)
+      if (command.destination === 'title') await deferred
+      return {
+        schema_version: 'review-decision-v1' as const,
+        actor: 'owner' as const,
+        decision_id: `decision-${command.destination}`,
+        destination: command.destination,
+        occurred_at: 1,
+        outcome: 'keep_current' as const,
+        proposal_id: command.proposalId,
+        review_case_id: 'case-1',
+        selected_value: null,
+        target_fingerprint: command.targetFingerprint,
+      }
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
+      recordDecision,
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /Authors.*Needs review/u })).toHaveAttribute(
+        'aria-current',
+        'true',
+      ),
+    )
+    // The second choice is made while the first is unanswered.
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    expect(sent).toEqual(['title'])
+
+    await act(async () => {
+      release?.()
+    })
+    await waitFor(() => expect(sent).toEqual(['title', 'authors']))
+  })
+
+  it('states what write consent makes true when the work is complete', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const settled = (writesConsented: boolean): CaseDetailView => ({
+      ...detail,
+      writesConsented,
+      fields: [
+        {
+          ...titleField,
+          needsAttention: false,
+          humanDecision: {
+            actor: 'owner',
+            decision_id: 'decision-title',
+            destination: 'title',
+            occurred_at: 1,
+            outcome: 'keep_current',
+            proposal_id: titleField.proposalId,
+            review_case_id: 'case-1',
+            selected_value: null,
+            target_fingerprint: titleField.targetFingerprint,
+          },
+        },
+      ],
+    })
+    for (const [writesConsented, expected] of [
+      [false, 'Nothing is written yet — applying happens separately, behind your consent.'],
+      [
+        true,
+        'Every write is logged in Activity, and read-back verification remains a separate guarded stage.',
+      ],
+    ] as const) {
+      const user = userEvent.setup()
+      let current: CaseDetailView = { ...detail, writesConsented }
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => current),
+        recordDecision: vi.fn(async () => {
+          current = settled(writesConsented)
+          return {
+            schema_version: 'review-decision-v1',
+            actor: 'owner',
+            decision_id: 'decision-title',
+            destination: 'title',
+            occurred_at: 1,
+            outcome: 'keep_current',
+            proposal_id: titleField.proposalId,
+            review_case_id: 'case-1',
+            selected_value: null,
+            target_fingerprint: titleField.targetFingerprint,
+          }
+        }),
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=title', http)
+      const choices = await screen.findAllByRole('button', {
+        name: 'Choose current value: Old title',
+      })
+      const latest = choices[choices.length - 1]
+      if (!latest) throw new Error('the current route rendered no choice')
+      await user.click(latest)
+      expect(await screen.findByText(expected)).toBeVisible()
+      expect(
+        screen.queryByText(
+          writesConsented
+            ? 'Nothing is written yet — applying happens separately, behind your consent.'
+            : 'Every write is logged in Activity, and read-back verification remains a separate guarded stage.',
+        ),
+      ).toBeNull()
+      cleanup()
+    }
+  })
+
+  it('gives the review comparison a one-line evidence footer and the summary its own', async () => {
+    const first = library.works[0]
+    if (!first) throw new Error('library fixture requires a work')
+    const consulted = {
+      ...first,
+      preparationOutcomes: [
+        {
+          providerRequests: 1,
+          laneKind: 'work',
+          provider: 'hardcover-main',
+          reason: 'Answered with one candidate.',
+          status: 'candidates',
+        },
+      ],
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({ ...library, works: [consulted] })),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    // The protected footer: one line, no subtitle, and it says what it is
+    // evidence for. The work summary is not a comparison and keeps its own.
+    expect(await screen.findByText('1 source supports this comparison')).toBeVisible()
+    expect(screen.queryByText(/consulted for this work$/u)).toBeNull()
+  })
+
+  it('names every field in the rail and carries the count in the field-map header', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const authorsField = {
+      ...titleField,
+      destination: 'authors',
+      proposalId: 'proposal-authors',
+      targetFingerprint: 'fingerprint-authors',
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    const rail = await screen.findByRole('navigation', { name: 'Review fields' })
+    for (const cell of within(rail).getAllByRole('button')) {
+      expect(cell.textContent).toMatch(/[A-Za-z]/u)
+      expect(cell.textContent).not.toMatch(/^\s*\d/u)
+    }
+    expect(within(rail).getByRole('button', { name: /^Title/u })).toBeVisible()
+    expect(within(rail).getByRole('button', { name: /^Authors/u })).toBeVisible()
+    expect(screen.getByText('2 remaining · field 1 of 2')).toBeVisible()
+    // The teaching line is offered once, on the first field.
+    expect(screen.getByText('One tap records and opens the next field')).toBeVisible()
+    await userEvent.setup().click(within(rail).getByRole('button', { name: /^Authors/u }))
+    expect(await screen.findByText('2 remaining · field 2 of 2')).toBeVisible()
+    expect(screen.queryByText('One tap records and opens the next field')).toBeNull()
   })
 
   it('uses non-animated rail movement when reduced motion is requested', async () => {

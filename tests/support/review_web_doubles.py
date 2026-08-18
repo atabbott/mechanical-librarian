@@ -93,6 +93,12 @@ class FakeReviewRepository:
         self.failures: list[int] = []
         self.sessions: dict[str, tuple[str, str, int, int | None]] = {}
         self.decisions: dict[str, str] = {}
+        # Destinations whose recorded decision has advanced past the reversible
+        # effect states, and can therefore no longer be changed.
+        self.override_blocked_destinations: tuple[str, ...] = ()
+        # Capability suspensions keyed by `(connection, destination)`, read by
+        # the detail composition whenever a real applier is attached.
+        self.capability_suspensions: dict[tuple[str, str], str] = {}
         self.revoke_failure = False
         self.revoke_result = "revoked"
         self.rotate_failure = False
@@ -337,7 +343,13 @@ class FakeReviewRepository:
                 if history_limit is None
                 else self.get_review_case_history(review_case_id, history_limit)
             ),
+            override_blocked_destinations=self.override_blocked_destinations,
         )
+
+    def field_effect_capability_suspension(
+        self, connection: str, destination: str
+    ) -> str | None:
+        return self.capability_suspensions.get((connection, destination))
 
     @staticmethod
     def _field_attention(case: ReviewCase, proposal: dict[str, object]) -> bool:
@@ -572,9 +584,21 @@ class FakePreparation:
 
 
 class FakeActivityApplication(ContinuousGuardedApplication):
+    # The base `__init__` never runs here, so the real consent read has no
+    # state to read. A review surface asks this to choose between "nothing is
+    # written yet" and "each decision began applying"; the double answers for
+    # the whole fake so a test can put the surface on either branch.
+    writes_consented = False
+
     def __init__(self) -> None:
         self.enabled_libraries: set[str] = set()
         self.paused = False
+
+    def destinations_consented(
+        self, connection: str, library: str, destinations: tuple[str, ...]
+    ) -> bool:
+        del connection, library, destinations
+        return self.writes_consented
 
     def attach_serialization(self, serialize) -> None:
         self.serialize = serialize

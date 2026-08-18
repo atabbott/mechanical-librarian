@@ -98,6 +98,7 @@ class CaseDetailView:
     review_case_id: str
     schema_version: str
     target: dict[str, object]
+    writes_consented: bool
 
     @classmethod
     def from_data(cls, value: dict[str, object]) -> "CaseDetailView":
@@ -112,6 +113,7 @@ class CaseDetailView:
             str(value["review_case_id"]),
             str(value["schema_version"]),
             dict(cast("dict[str, object]", value["target"])),
+            bool(value["writes_consented"]),
         )
 
     def to_data(self) -> dict[str, object]:
@@ -122,6 +124,7 @@ class CaseDetailView:
             "review_case_id": self.review_case_id,
             "schema_version": self.schema_version,
             "target": dict(self.target),
+            "writes_consented": self.writes_consented,
         }
 
 
@@ -504,6 +507,16 @@ class ReviewApplication:
                     )
                 else:
                     field["effect_capability"] = "unavailable"
+            detail["writes_consented"] = isinstance(
+                self._field_application, ContinuousGuardedApplication
+            ) and self._field_application.destinations_consented(
+                str(target["connection"]),
+                str(target["library"]),
+                tuple(
+                    str(cast("dict[str, object]", field)["destination"])
+                    for field in cast("list[object]", detail["fields"])
+                ),
+            )
             return CaseDetailView.from_data(detail)
 
         return self.serialized(read)

@@ -179,6 +179,7 @@ export interface CaseDetailView {
   authors: readonly string[]
   subtitle: string
   comparisonNotices: readonly string[]
+  writesConsented: boolean
   fields: readonly ReviewFieldView[]
 }
 export type EvidenceView = Schema<'_EvidenceResponse'>
@@ -1177,6 +1178,7 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
     authors: stringArray(dto.target.authors, 'target_authors'),
     subtitle: `${stringValue(dto.target.library, 'target_library')} · ${stringValue(dto.target.media_kind, 'target_media_kind')} · ${stringValue(dto.target.connection, 'target_connection')}`,
     comparisonNotices: stringArray(dto.comparison_notices, 'comparison_notices'),
+    writesConsented: booleanValue(dto.writes_consented, 'writes_consented'),
     fields: dto.fields.map((field) => {
       // The three fields dereferenced without a validator below: an entry that
       // is not an object, or that omits `current` or `proposed_values`, used to

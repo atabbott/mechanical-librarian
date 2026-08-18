@@ -1649,3 +1649,73 @@ def test_shutdown_timeout_retains_live_claimed_worker() -> None:
     assert service._thread.is_alive()
     shared["release"].set()
     service.begin_drain()
+
+
+class _ConsentRepository(_Repository):
+    def __init__(self, consented: tuple[str, ...], fault: str | None = None) -> None:
+        super().__init__()
+        self.consented = consented
+        self.fault = fault
+        self.asked: list[str] = []
+
+    def current_field_effect_consent(self, connection, library, destination):
+        del connection, library
+        self.asked.append(destination)
+        if self.fault is not None:
+            raise FieldEffectError(self.fault)
+        if destination not in self.consented:
+            raise FieldEffectError("consent")
+        return {"consent_id": f"consent-{destination}"}
+
+
+def _consent_service(repository: _ConsentRepository) -> ContinuousGuardedApplication:
+    return ContinuousGuardedApplication(
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: SimpleNamespace(
+            scan_id="review_scan",
+            state="completed",
+            rescan_requested=False,
+            updated_at=10,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("consented", "fault", "answer", "asked"),
+    (
+        ((), None, False, ["title", "series", "cover"]),
+        (("series",), None, True, ["title", "series"]),
+        (("title",), None, True, ["title"]),
+        ((), "persistence", False, ["title"]),
+    ),
+    ids=("none", "later", "first", "fault"),
+)
+def test_destination_consent_is_reported_without_granting_anything(
+    consented: tuple[str, ...], fault: str | None, answer: bool, asked: list[str]
+) -> None:
+    """A review surface may read this consent; it may not acquire it.
+
+    The reassurance copy after a decision differs by whether applying has
+    already begun, so the surface has to ask. Asking must stop at the first
+    consented destination, must fail closed on anything that is not a plain
+    refusal, and must leave no consent behind.
+    """
+    repository = _ConsentRepository(consented, fault)
+    service = _consent_service(repository)
+    assert (
+        service.destinations_consented("primary", "alpha", ("title", "series", "cover"))
+        is answer
+    )
+    assert repository.asked == asked
+    # An unconfigured library is answered without asking the store at all.
+    repository.asked.clear()
+    assert service.destinations_consented("primary", "gamma", ("title",)) is False
+    assert repository.asked == []

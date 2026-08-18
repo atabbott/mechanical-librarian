@@ -282,19 +282,31 @@ It does not imply external application or verification.
 
 Cover review remains advisory: small eligible sets compare current and
 candidates equally; larger sets retain the incumbent while exposing the full
-eligible gallery. Excluded candidates remain subordinate with their recorded
-reason. Reduced motion preserves the same status text, success state, focus,
-and polite announcement without nonessential movement.
+eligible gallery. Below 900px the incumbent becomes the first item of the same
+horizontally scrollable comparison track as every candidate, so covers stay in
+one row rather than stacking the current cover above the alternatives. Every
+image is contained whole at its intrinsic aspect ratio inside a quiet 5:8
+frame; unused frame area is the choice card's own surface, so letterboxing
+cannot be mistaken for cover content. Excluded candidates remain subordinate
+with their recorded reason. Reduced motion preserves the same status text,
+success state, focus, and polite announcement without nonessential movement.
 
 An unresolved field with no eligible proposal still presents its current value
 as the one direct choice; automatic, resolved, and stale fields never present a
 false choice.
 
-After a decision, the detail refreshes the authoritative case, then advances
-forward through the displayed unresolved field order, wrapping once. If no
-other unresolved field remains, the recorded field stays as the terminal case.
-Deliberate navigation away from that field while the refresh is pending is
-preserved rather than overwritten by automatic advancement.
+A decision is acknowledged locally and advances immediately through the
+displayed unresolved field order, wrapping once. The authoritative exact-case
+read follows and corrects the arrival if it disagrees; Library counts and
+attention totals converge afterwards and are never waited on, so next-field
+authority never depends on a whole-Library projection. Commands leave in the
+order they were chosen, bounded per case, and a duplicate choice for a field
+already settled becomes no second command. If no other unresolved field
+remains, the recorded field stays as the terminal case. Deliberate navigation
+away from that field while the refresh is pending is preserved rather than
+overwritten by automatic advancement. Revisiting a recorded field restores its
+full current-and-alternatives composition with the recorded answer marked, for
+as long as the store would still accept a replacement.
 
 Recorded human decisions retain their exact selected value in the detail view.
 The deterministic disposition remains distinct from that live decision record.
