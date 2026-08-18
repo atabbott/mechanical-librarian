@@ -552,4 +552,19 @@ describe('Detail route', () => {
     expect(await screen.findByRole('heading', { name: 'Current review case' })).toBeVisible()
     await waitFor(() => expect(router.state.location.search).toEqual({ field: 'title', subview: 'review' }))
   })
+
+  it.each([
+    [false, 'Selecting an outcome records this field only. Audiobookshelf is unchanged until writes are enabled.'],
+    [true, 'Selecting an outcome records this field and prepares a guarded Audiobookshelf write.'],
+  ])('says what a decision will do while writes are %s', async (writesConsented, copy) => {
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async (): Promise<CaseDetailView> => ({ ...detail, writesConsented })),
+    }
+    renderRoute('/review/case-1?field=title&subview=review', http)
+
+    // Said before the tap, in the present tense of this work's write state, so
+    // the promise made here is the one the completion summary keeps (#639).
+    expect(await screen.findByText(copy)).toBeVisible()
+  })
 })

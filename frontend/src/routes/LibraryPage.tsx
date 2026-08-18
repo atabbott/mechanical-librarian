@@ -16,6 +16,7 @@ import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
 import { fieldLabel, labelWords, opaqueSource } from '../labels'
 import { detailQuery, libraryRoute, PreparationNotice, useReviewContext } from '../router'
+import { WriteReadyNotice } from '../components/WriteReadyNotice'
 import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
 import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomaticSelection'
 import { ownerChoiceCount } from '../reviewChoiceCounts'
@@ -1147,6 +1148,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         </button>
       </header>
       <PreparationNotice routeIdentity={routeIdentity} />
+      <WriteReadyNotice />
       <div
         className={`library-workspace${hasSelection ? ' has-selection' : ''}${search.attention === 'open' ? ' attention-open' : ''}`}
       >
@@ -1520,6 +1522,18 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         className="direct-choice protected-choice"
                         aria-label={`Choose a ${labelWords(selected.destination)} value`}
                       >
+                        {/*
+                          What a tap will do, said before the tap and in the
+                          present tense of this work's actual write state. The
+                          same words after the fact are what the completion
+                          summary says, so the promise made here is the one kept
+                          there (#639).
+                        */}
+                        <p className={`cm-write-state is-${writesActive ? 'on' : 'off'}`}>
+                          {writesActive
+                            ? 'Selecting an outcome records this field and prepares a guarded Audiobookshelf write.'
+                            : 'Selecting an outcome records this field only. Audiobookshelf is unchanged until writes are enabled.'}
+                        </p>
                         <div
                           className={`direct-choice-grid${selected.preservationOnly ? ' preservation-only' : ''}`}
                         >

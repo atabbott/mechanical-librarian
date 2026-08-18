@@ -16,6 +16,7 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.live_updates import LiveUpdateChannel
 from mechanical_librarian.application.metadata_policy import (
     AutomaticSafetyControls,
     AutomaticSafetyRepository,
@@ -344,8 +345,10 @@ class ReviewApplication:
         | None,
         operations: OperationalStatus | None,
         gate: RLock,
+        updates: LiveUpdateChannel,
         cover_considerations: CoverConsiderationService | None = None,
     ) -> None:
+        self._updates = updates
         self._state_owner = state_owner
         self._sessions = sessions
         self._cases = cases
@@ -363,6 +366,11 @@ class ReviewApplication:
         self._field_application = field_application
         self._operations = operations
         self._cover_considerations = cover_considerations
+
+    @property
+    def updates(self) -> LiveUpdateChannel:
+        """The one invalidation channel every owner surface subscribes to."""
+        return self._updates
 
     @property
     def preparation_available(self) -> bool:
@@ -400,6 +408,11 @@ class ReviewApplication:
         # it rather than lost -- a second lane that also failed to stop has to
         # stay visible to whoever reads the first.
         failures: list[Exception] = []
+        # First, because a reader that is still being pushed to while its
+        # producers stop would be told about a library that is going away. A
+        # closed channel ends every open stream, and the browser's own reconnect
+        # is what brings them back when the process returns (#641).
+        self._updates.close()
         if isinstance(self._field_application, ContinuousGuardedApplication):
             try:
                 self._field_application.close_admission()
@@ -597,6 +610,12 @@ class ReviewApplication:
             raise ReviewApplicationError(error.code) from error
         if isinstance(self._field_application, ContinuousGuardedApplication):
             self._field_application.wake()
+        # A recorded decision changes this work's package and can queue a
+        # guarded write. Both are announced so a second tab, and the Library row
+        # behind this one, see it without waiting for a poll.
+        self._updates.publish("case", review_case_id)
+        self._updates.publish("library", review_case_id)
+        self._updates.publish("activity")
         return result
 
     def cover_image(
@@ -670,11 +689,15 @@ class ReviewApplication:
         self, grants: tuple[tuple[str, tuple[str, ...]], ...]
     ) -> dict[str, object]:
         application = self._continuous_application()
-        return self.serialized(lambda: application.enable(grants))
+        result = self.serialized(lambda: application.enable(grants))
+        self._updates.publish("activity")
+        return result
 
     def revoke_activity(self, connection: str, library: str) -> dict[str, object]:
         application = self._continuous_application()
-        return self.serialized(lambda: application.revoke(connection, library))
+        result = self.serialized(lambda: application.revoke(connection, library))
+        self._updates.publish("activity")
+        return result
 
     def return_to_automatic(self, review_case_id: str, destination: str) -> None:
         if destination not in SUPPORTED_DESTINATIONS:
@@ -683,6 +706,8 @@ class ReviewApplication:
         self.serialized(
             lambda: application.return_to_automatic(review_case_id, destination)
         )
+        self._updates.publish("case", review_case_id)
+        self._updates.publish("activity")
 
     def field_effect_status(self, plan_id: str) -> dict[str, object]:
         return self._field_effect("status", plan_id)
@@ -738,6 +763,11 @@ class ReviewApplication:
                 "rescan_requested": False
                 if progress is None
                 else progress.rescan_requested,
+                "stages": []
+                if progress is None
+                else [
+                    {"stage": stage, "count": count} for stage, count in progress.stages
+                ],
             }
             for (connection, library, library_id), progress in zip(
                 self._preparation.libraries, progress_values, strict=True
@@ -808,6 +838,9 @@ class ReviewApplication:
             "ready": progress.ready,
             "blocked": progress.blocked,
             "rescan_requested": progress.rescan_requested,
+            "stages": [
+                {"stage": stage, "count": count} for stage, count in progress.stages
+            ],
         }
 
     def _set_preparation_paused(self, paused: bool) -> PreparationView:
@@ -980,10 +1013,14 @@ def compose_review_application(
             return call()
 
     timing = operational_timer or StageTimer(operational_timings, clock=clock)
+    updates = LiveUpdateChannel()
     if field_application is not None:
         field_application.attach_timing(timing)
     if isinstance(field_application, ContinuousGuardedApplication):
         field_application.attach_serialization(serialized)
+        field_application.attach_updates(updates.publish)
+    if preparation is not None:
+        preparation.attach_updates(updates.publish)
     operations = (
         None
         if operational_timings is None
@@ -1015,6 +1052,7 @@ def compose_review_application(
         field_application=field_application,
         operations=operations,
         gate=gate,
+        updates=updates,
         cover_considerations=cover_considerations,
     )
     return application

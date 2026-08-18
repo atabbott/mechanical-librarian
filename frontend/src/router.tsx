@@ -27,6 +27,9 @@ import type {
   ShadowPostureView,
 } from './api/http'
 import { ChunkRecoveryError, recoverableLazy, reloadCurrentApplication } from './chunkRecovery'
+import { LiveStreamNotice } from './components/LiveStreamNotice'
+import { useLiveInvalidation, useLiveStreamState } from './liveInvalidation'
+import type { LiveUpdateStream } from './liveUpdates'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
 const AttentionPage = recoverableLazy(() => import('./routes/AttentionPage'))
@@ -37,6 +40,15 @@ const ActivityPage = recoverableLazy(() => import('./routes/ActivityPage'))
 export interface RouterContext {
   http: ReviewHttp
   queryClient: QueryClient
+  /**
+   * The tab's one live-update stream, absent where a composition has none.
+   *
+   * Absent is a supported posture rather than a broken one: every surface falls
+   * back to the polling cadence it had before the stream existed, and says it
+   * is doing so. That is also exactly the degraded posture, so the fallback is
+   * exercised by the ordinary case rather than only by a failure (#641).
+   */
+  updates?: LiveUpdateStream
 }
 const bounded = (value: unknown) =>
   typeof value === 'string' && value.length > 0 && value.length <= 128 ? value : undefined
@@ -156,13 +168,17 @@ const activityQuery = (http: ReviewHttp, search: ActivitySearch) =>
     staleTime: 4_000,
     retry: false,
   })
-export const preparationQuery = (http: ReviewHttp) =>
+export const preparationQuery = (http: ReviewHttp, live = false) =>
   queryOptions({
     queryKey: ['review-preparation'] as const,
     queryFn: ({ signal }) => http.getPreparation(signal),
     staleTime: 1_000,
     retry: false,
+    // The cadence survives only as the degraded fallback. While the stream is
+    // up the snapshot is refetched when preparation actually advances, which is
+    // both sooner than 1.5 seconds and, for an idle library, never.
     refetchInterval: (result) => {
+      if (live) return false
       const value = result.state.data
       return value?.active || value?.actionable || value?.paused ? 1_500 : 15_000
     },
@@ -181,10 +197,16 @@ const routeTitle = (path: string) =>
             ? 'Activity'
             : 'Page unavailable'
 
+export const useLiveStream = () => {
+  const { updates } = rootRoute.useRouteContext()
+  return useLiveStreamState(updates)
+}
+
 export const usePreparation = () => {
   const { http, queryClient } = rootRoute.useRouteContext()
+  const live = useLiveStream() === 'live'
   const previousSnapshot = useRef<string | null>(null)
-  const query = useQuery(preparationQuery(http))
+  const query = useQuery(preparationQuery(http, live))
   const data = query.data
   const snapshot = data ? JSON.stringify(data) : null
   useEffect(() => {
@@ -195,12 +217,18 @@ export const usePreparation = () => {
     }
     if (previousSnapshot.current === snapshot) return
     previousSnapshot.current = snapshot
+    // Only while polling. A snapshot that changed used to be the only sign that
+    // a work might have been published, so every poll that saw a difference
+    // rebuilt the Library and the attention rail. With a stream, the cutover
+    // announces itself and names the work, so this cascade would be a second,
+    // coarser copy of an invalidation that already arrived (#641).
+    if (live) return
     void Promise.all([
       queryClient.invalidateQueries({ queryKey: ['library'] }),
       queryClient.invalidateQueries({ queryKey: ['attention'] }),
     ])
-  }, [queryClient, snapshot])
-  return { data, queryClient, http }
+  }, [live, queryClient, snapshot])
+  return { data, queryClient, http, live }
 }
 
 const connectionCopy = (code: 'tls' | 'authentication' | 'authorization' | 'unavailable') =>
@@ -335,6 +363,26 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
   )
 }
 
+/**
+ * The eight buckets a work moves through, in the order an owner reads them.
+ *
+ * The stage names the store uses are engineering words; these are what the
+ * owner is actually waiting for. Naming every bucket -- including the empty
+ * ones -- keeps the pipeline in one stable order as counts move through it,
+ * which is what makes a live update read as progress rather than as a redraw
+ * (#641).
+ */
+const stageLabels: Readonly<Record<string, string>> = {
+  queued: 'Not started',
+  extracting: 'Reading your files',
+  providers: 'Asking providers',
+  proposals: 'Comparing sources',
+  admission: 'Finding safe automatic choices',
+  projection: 'Preparing the review',
+  ready: 'Ready to browse',
+  failed: 'Could not finish',
+}
+
 export const PreparationActivity = () => {
   const { data, queryClient, http } = usePreparation()
   const [open, setOpen] = useState(false)
@@ -386,6 +434,14 @@ export const PreparationActivity = () => {
               <span>
                 {item.state} · {item.checked}/{item.total}
               </span>
+              <dl className="preparation-stages">
+                {(item.stages ?? []).map((stage) => (
+                  <div key={stage.stage}>
+                    <dt>{stageLabels[stage.stage] ?? stage.stage}</dt>
+                    <dd>{stage.count}</dd>
+                  </div>
+                ))}
+              </dl>
               <button
                 disabled={
                   action.isPending ||
@@ -464,7 +520,9 @@ const Shell = () => {
   const navigation = useRouterState({
     select: (state) => ({ href: state.location.href, status: state.status }),
   })
-  const { http } = rootRoute.useRouteContext()
+  const { http, queryClient, updates } = rootRoute.useRouteContext()
+  useLiveInvalidation(updates, queryClient)
+  const streamState = useLiveStreamState(updates)
   const path = new URL(navigation.href, window.location.origin).pathname
   const title = routeTitle(path)
   const [mismatch, setMismatch] = useState(false)
@@ -550,6 +608,7 @@ const Shell = () => {
           </Link>
         </nav>
         <div className="shell-actions">
+          <LiveStreamNotice state={streamState} />
           <PreparationActivity />
           <ThemeControl />
           <span className="private-session">
@@ -781,10 +840,11 @@ export const createApplicationRouter = (
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   }),
   history?: ReturnType<typeof createMemoryHistory>,
+  updates?: LiveUpdateStream,
 ) =>
   createRouter({
     routeTree,
-    context: { http, queryClient },
+    context: { http, queryClient, ...(updates ? { updates } : {}) },
     ...(history ? { history } : {}),
     defaultPreload: 'intent',
     defaultPreloadStaleTime: 15_000,

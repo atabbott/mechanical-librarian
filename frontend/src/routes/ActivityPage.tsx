@@ -8,7 +8,14 @@ import { activityOutcome } from '../activityState'
 import { Dropdown } from '../components/Dropdown'
 import { useRouteReadyFocus } from '../focus'
 import { fieldLabel } from '../labels'
-import { activityRoute, PreparationNotice, usePreparation, useReviewContext } from '../router'
+import { destinationReason, readWriteConsent } from '../writeConsent'
+import {
+  activityRoute,
+  PreparationNotice,
+  useLiveStream,
+  usePreparation,
+  useReviewContext,
+} from '../router'
 
 const records = (value: unknown): readonly Record<string, unknown>[] =>
   Array.isArray(value)
@@ -25,6 +32,7 @@ const capabilityDestinations = (capability: Record<string, unknown> | undefined)
     destination: text(destination.destination),
     state: text(destination.state, 'not_ready'),
     consented: destination.consented === true,
+    prepared: count(destination.prepared),
   }))
 const capabilityLabel = (state: string) =>
   ({
@@ -265,6 +273,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   }, [focusRequest, search.eventType, search.page, search.pageSize, search.q, search.rangeDays])
   const routeIdentity = 'activity'
   useRouteReadyFocus(routeIdentity)
+  const live = useLiveStream() === 'live'
   const query = useQuery({
     queryKey: [
       'activity',
@@ -278,7 +287,10 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     initialData: initial,
     staleTime: 4_000,
     retry: false,
-    refetchInterval: 5_000,
+    // Five seconds was the only reason a write that started between polls ever
+    // became visible. It survives as the fallback for a stream that is down;
+    // while one is up, the write lane announces each transition itself (#641).
+    refetchInterval: live ? false : 5_000,
   })
   const data = query.data
   const preparation = usePreparation().data
@@ -461,9 +473,25 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     0,
   )
   const recoveryCount = suspensions.length + dormantRecovery + connectionRecovery
-  const waiting = data.prepared.total + count(data.counts.planned) + count(data.counts.retryable)
+  const reasons = data.waiting
   const waitingEvent = data.current_waiting
   const needsConsent = consentCandidates.length > 0 || (!enabled.length && configured.length > 0)
+  const enabling = mutation.isPending && mutation.variables.path === 'activity/consent'
+  // Library states the same offer compactly, from this same reading, so the two
+  // routes into the decision can never disagree about it (#639).
+  const consent = readWriteConsent(data, {
+    enabling,
+    // A connection that needs an owner check is the one condition that makes
+    // enabling writes the wrong next step. Preparation still running is not:
+    // permission given now covers the work preparation is still finding.
+    connectionUnavailable: Boolean(connection),
+  })
+  const offer = consent.scopes
+  const offeredGrants = consent.grants
+  const offeredChanges = consent.changes
+  const consentState = consent.state
+  const consentBlocked = consent.blocked
+  const consentActionable = consent.actionable
 
   const hasAuthority = enabled.length > 0 || suspensions.length > 0 || needsConsent
 
@@ -491,12 +519,121 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 ? 'Connection recovered'
                 : recoveryCount
                   ? 'Recovery available'
-                  : data.paused
-                    ? 'New work paused'
-                    : 'No action required'}
+                  : consentState === 'off' && offeredGrants.length
+                    ? 'Action needed'
+                    : consentState === 'enabling'
+                      ? 'Enabling writes'
+                      : consentState === 'enabled' || consentState === 'applying'
+                        ? 'Writes enabled'
+                        : data.paused
+                          ? 'New work paused'
+                          : 'No action required'}
         </span>
       </header>
       <PreparationNotice routeIdentity={routeIdentity} />
+      {consentActionable ? (
+        <section
+          className={`cm-write-consent is-${consentState}`}
+          aria-labelledby="write-consent-title"
+          aria-live="polite"
+        >
+          <div className="cm-write-consent-summary">
+            <div>
+              <h2 id="write-consent-title">
+                {consentState === 'off'
+                  ? `${String(offeredChanges)} prepared ${offeredChanges === 1 ? 'change is' : 'changes are'} ready. Writes are off.`
+                  : consentState === 'enabling'
+                    ? 'Enabling writes…'
+                    : consentState === 'enabled'
+                      ? 'Writes are enabled.'
+                      : 'Applying prepared changes.'}
+              </h2>
+              <p>
+                {consentState === 'off'
+                  ? `Enable writes for ${offer.map((item) => item.library).join(', ')} to apply these prepared changes.`
+                  : consentState === 'enabling'
+                    ? 'Confirming permission with the authoritative server. No change is sent twice.'
+                    : consentState === 'enabled'
+                      ? 'Permission is confirmed. Mechanical Librarian is starting the prepared changes.'
+                      : `${String(reasons.applying)} ${reasons.applying === 1 ? 'change is' : 'changes are'} in progress; the remaining ${String(reasons.scheduled)} stay ready.`}
+              </p>
+            </div>
+            <dl>
+              <div>
+                <dt>Ready for permission</dt>
+                <dd>{reasons.awaiting_permission}</dd>
+              </div>
+              <div>
+                <dt>Ready to apply</dt>
+                <dd>{reasons.scheduled}</dd>
+              </div>
+              <div>
+                <dt>Applying now</dt>
+                <dd>{reasons.applying}</dd>
+              </div>
+              <div>
+                <dt>Retrying</dt>
+                <dd>{reasons.retrying}</dd>
+              </div>
+              <div>
+                <dt>Held for recovery</dt>
+                <dd>{reasons.held_for_recovery}</dd>
+              </div>
+            </dl>
+          </div>
+          {offer.map((item) => (
+            <div className="cm-write-consent-scope" key={item.library}>
+              <div>
+                <strong>{item.library}</strong>
+                <span>
+                  {item.eligible
+                    .map(
+                      (entry) =>
+                        `${String(entry.prepared)} ${fieldLabel(entry.destination).toLowerCase()} ${entry.prepared === 1 ? 'change' : 'changes'}`,
+                    )
+                    .join(' · ') || 'No eligible destination'}
+                </span>
+              </div>
+              <dl>
+                {[...item.eligible, ...item.excluded].map((entry) => (
+                  <div key={entry.destination}>
+                    <dt>{fieldLabel(entry.destination)}</dt>
+                    <dd>
+                      {entry.state === 'allowed'
+                        ? consentState === 'off' || consentState === 'enabling'
+                          ? 'Writes off'
+                          : 'Writes enabled'
+                        : `Excluded — ${destinationReason(entry.state)}`}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ))}
+          <div className="cm-write-consent-action">
+            <button
+              className="cm-primary"
+              type="button"
+              disabled={consentState !== 'off' || consentBlocked !== null}
+              onClick={() =>
+                mutation.mutate({
+                  path: 'activity/consent',
+                  body: { grants: offeredGrants },
+                })
+              }
+            >
+              {consentState === 'off'
+                ? 'Enable writes'
+                : consentState === 'enabling'
+                  ? 'Enabling writes…'
+                  : consentState === 'applying'
+                    ? 'Applying changes…'
+                    : 'Writes enabled'}
+            </button>
+            {consentBlocked ? <p className="cm-write-consent-reason">{consentBlocked}</p> : null}
+          </div>
+        </section>
+      ) : null}
       <section className="cm-activity-status" aria-labelledby="activity-status-title">
         <div className="cm-activity-status-copy">
           <h2 id="activity-status-title">
@@ -534,8 +671,20 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             <dd>{writes}</dd>
           </div>
           <div>
-            <dt>Waiting safely</dt>
-            <dd>{waiting}</dd>
+            <dt>Awaiting permission</dt>
+            <dd>{reasons.awaiting_permission}</dd>
+          </div>
+          <div>
+            <dt>Scheduled</dt>
+            <dd>{reasons.scheduled}</dd>
+          </div>
+          <div>
+            <dt>Retrying</dt>
+            <dd>{reasons.retrying}</dd>
+          </div>
+          <div>
+            <dt>Held for recovery</dt>
+            <dd>{reasons.held_for_recovery}</dd>
           </div>
           <div>
             <dt>Recovery needed</dt>

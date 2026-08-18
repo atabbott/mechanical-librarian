@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import urlsplit
 
-from playwright.sync_api import Route, expect, sync_playwright
+from playwright.sync_api import Page, Route, expect, sync_playwright
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from mechanical_librarian.interfaces.web.react_assets import (
@@ -66,6 +66,42 @@ def _report(record: dict[str, object]) -> None:
     )
 
 
+_CONTENT_OVERFLOW = """
+(selector) => {
+  const root = document.querySelector(selector);
+  if (root === null) return null;
+  let worst = 0;
+  for (const node of [root, ...root.querySelectorAll('*')]) {
+    worst = Math.max(worst, node.scrollWidth - node.clientWidth);
+    const style = getComputedStyle(node);
+    const box = node.getBoundingClientRect();
+    const right = box.right - parseFloat(style.borderRightWidth || 0) -
+      parseFloat(style.paddingRight || 0);
+    for (const child of node.children)
+      worst = Math.max(worst, Math.round(child.getBoundingClientRect().right - right));
+  }
+  return worst;
+}
+"""
+
+
+def _fits_its_container(page: Page, selector: str, width: int) -> None:
+    """Assert a section's content stays inside the box that holds it.
+
+    Measured against the container rather than the document -- both what
+    overflows a box and what sticks out past one -- because a document-level
+    assertion only notices an overrun once it is already wider than the
+    viewport. By then the layout has been wrong for many pixels; this is wrong
+    at one. Whether it stays inside when the same text renders wider is proved
+    against a real server in `test_live_updates_browser` (#641, #639).
+    """
+    overflow = page.evaluate(_CONTENT_OVERFLOW, selector)
+    assert overflow is not None, f"{selector} is absent at {width}px"
+    assert overflow <= 0, (
+        f"{selector} overflows its container by {overflow}px at {width}px"
+    )
+
+
 def test_exact_built_shell_supports_every_direct_route_and_client_navigation() -> None:
     # The stage record is emitted from inside the browser context by
     # `report_stage` below, which is the only place the page is still
@@ -117,6 +153,18 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             if path.endswith("/return-to-automatic") and route.request.method == "POST":
                 return_automatic_requests += 1
                 route.fulfill(status=204, body="")
+                return
+            if path == "/api/v1/updates":
+                # The artifact cohort measures the shell against stubbed reads;
+                # a stream would never complete and there is nothing here to
+                # announce. It is answered with a stream that ends immediately,
+                # which leaves the surfaces on their polling fallback -- the
+                # state every assertion in this module was written against.
+                route.fulfill(
+                    status=200,
+                    content_type="text/event-stream",
+                    body="retry: 3000\n\n",
+                )
                 return
             if path == "/api/v1/session/logout":
                 route.fulfill(
@@ -435,6 +483,19 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         "const top = document.elementFromPoint(box.x + box.width / 2, "
                         "box.y + box.height / 2); return top === node || node.contains(top); }"
                     )
+                    # The masthead now carries a status message whose width is
+                    # its text, and this cohort's stream ends immediately, so
+                    # the degraded notice is present on every route here.
+                    # The masthead now carries a status message whose width
+                    # is its text, and this cohort's stream ends at once, so
+                    # the degraded notice is present on every route here. The
+                    # row it sits in is measured with the text enlarged; the
+                    # masthead around it is measured as installed.
+                    # The masthead now carries a status message whose width
+                    # is its own text, and this cohort's stream ends at once,
+                    # so the degraded notice is present on every route here.
+                    _fits_its_container(page, ".shell-actions", width)
+                    _fits_its_container(page, ".masthead", width)
             if path == "/attention":
                 page.get_by_text(
                     "This field needs your review.", exact=True

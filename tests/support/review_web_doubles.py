@@ -539,6 +539,9 @@ class FakePreparation:
         self.is_paused = False
         self.status_calls = 0
 
+    def attach_updates(self, announce: object) -> None:
+        return None
+
     def start(self) -> None:
         return None
 
@@ -558,6 +561,17 @@ class FakePreparation:
             1,
             0,
             False,
+            0,
+            (
+                ("queued", 1),
+                ("extracting", 1),
+                ("providers", 1),
+                ("proposals", 0),
+                ("admission", 0),
+                ("projection", 0),
+                ("ready", 1),
+                ("failed", 1),
+            ),
         )
 
     def request(self, connection: str, library: str):
@@ -649,6 +663,7 @@ class FakeActivityApplication(ContinuousGuardedApplication):
                             "destination": "title",
                             "state": "allowed",
                             "consented": "fiction" in self.enabled_libraries,
+                            "prepared": 2,
                         }
                     ],
                 },
@@ -661,6 +676,7 @@ class FakeActivityApplication(ContinuousGuardedApplication):
                             "destination": "title",
                             "state": "allowed",
                             "consented": "history" in self.enabled_libraries,
+                            "prepared": 1,
                         }
                     ],
                 },
@@ -708,6 +724,13 @@ class FakeActivityApplication(ContinuousGuardedApplication):
             "prepared": {"automatic": 1, "human": 1, "total": 2},
             "schema_version": "continuous-field-activity-v2",
             "suspensions": [],
+            "waiting": {
+                "applying": 0,
+                "awaiting_permission": 0 if self.enabled_libraries else 3,
+                "held_for_recovery": 0,
+                "retrying": 0,
+                "scheduled": 3 if self.enabled_libraries else 0,
+            },
         }
 
     def enable(self, grants):

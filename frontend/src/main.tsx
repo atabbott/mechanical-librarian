@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client'
 
 import { PageCsrfTokenStore, ReviewApiClient } from './api/http'
 import { configureChunkRecovery } from './chunkRecovery'
+import { createLiveUpdateStream } from './liveUpdates'
 import { createApplicationRouter } from './router'
 import './styles.css'
 
@@ -24,7 +25,9 @@ const http = new ReviewApiClient({
   ...(buildIdentity ? { buildIdentity } : {}),
   onBuildMismatch: () => dispatchEvent(new Event('ml:build-mismatch')),
 })
-const router = createApplicationRouter(http, queryClient)
+// One stream for the tab, opened once and shared by every surface.
+const updates = createLiveUpdateStream()
+const router = createApplicationRouter(http, queryClient, undefined, updates)
 
 createRoot(mount).render(
   <StrictMode>

@@ -69,6 +69,7 @@ export const activity = (value: Partial<Omit<ActivityDisplayView, 'events'>> & {
     schema_version: 'continuous-field-activity-v2', backup_ready: true, paused: false,
     configured_libraries: [], consented_libraries: [], enabled_libraries: [], capabilities: [],
     counts: {}, example: null, last_failure: null, current_waiting: null,
+    waiting: { applying: 0, awaiting_permission: 0, held_for_recovery: 0, retrying: 0, scheduled: 0 },
     ledger: { event_type: 'all', page: 1, page_count: 1, page_size: 25, query: null, range_days: 30, total: events.length },
     prepared: { automatic: 0, human: 0, total: 0 }, suspensions: [], ...rest,
     events: events.map((event, index) => ({ event_id: `event-${String(index)}`, event_type: 'metadata', evidence: [], author_label: 'Author details are not recorded', destination: '', failure: null, library: '', occurred_at: null, origin: 'automatic_policy', state: 'verified', work_id: '', work_label: 'Recorded work', ...event })),

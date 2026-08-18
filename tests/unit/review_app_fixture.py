@@ -128,7 +128,12 @@ def create_transport_test_app(
         "mechanical_librarian.interfaces.web.app.ReactAssetLoader",
         return_value=react_asset_loader or _TestReactAssetLoader(),
     ):
-        return create_review_app(application, configuration)
+        app = create_review_app(application, configuration)
+    # The composed boundary, kept reachable for the cohorts that assert on what
+    # it announced rather than on what it answered. Nothing in the served
+    # composition reads this.
+    app.state.review_application = application
+    return app
 
 
 __all__ = ["TEST_REACT_BUILD_IDENTITY", "create_transport_test_app"]

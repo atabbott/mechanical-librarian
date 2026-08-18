@@ -8,7 +8,7 @@ import { ApiError } from '../src/api/http'
 import { sourceStatusLabel } from '../src/routes/LibraryPage'
 import type { AttentionSearch, CaseDetailView, LibrarySearch, LibraryView, ReviewHttp } from '../src/api/http'
 import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
-import { createHttp, detail, library, renderRoute } from './fixtures'
+import { activity, createHttp, detail, library, renderRoute } from './fixtures'
 
 describe('Library route', () => {
   it('bounds and normalizes URL-owned library search state', () => {
@@ -1062,5 +1062,47 @@ describe('Library route', () => {
     expect(await screen.findByRole('button', { name: /^Current result\./u })).toBeVisible()
     expect(screen.queryByRole('button', { name: /^Stale result\./u })).toBeNull()
     expect(signals[0]?.aborted).toBe(true)
+  })
+
+  it('offers the completion handoff inside Library with one action for every eligible destination', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => ({
+        schema_version: 'review-preparation-v1' as const,
+        active: true,
+        actionable: false,
+        paused: false,
+        libraries: [{
+          scan_id: 'scan-1', connection: 'primary', library: 'fiction', library_id: 'library-1',
+          state: 'running', checked: 9, total: 12, ready: 9, blocked: 0, rescan_requested: false,
+        }],
+      })),
+      getActivity: vi.fn(async () => activity({
+        configured_libraries: [{ connection: 'primary', library: 'fiction' }],
+        capabilities: [{
+          connection: 'primary', library: 'fiction', state: 'partially_allowed',
+          destinations: [
+            { consented: false, destination: 'title', prepared: 4, state: 'allowed' },
+            { consented: false, destination: 'cover', prepared: 6, state: 'insufficient_permission' },
+          ],
+        }],
+        waiting: { applying: 0, awaiting_permission: 4, held_for_recovery: 0, retrying: 0, scheduled: 0 },
+      })),
+    }
+    renderRoute('/library?lens=all', http)
+
+    // One compact notice inside the existing Library flow: what is ready, what
+    // the write state is, and the single action that changes it (#641, #639).
+    expect(await screen.findByRole('heading', { name: '9 works are ready to browse. Writes are off.' })).toBeVisible()
+    // Preparation still running does not withdraw the action.
+    expect(screen.getByText(/preparation is still running/u)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Enable writes' }))
+
+    // Every eligible destination, and only those: the Cover behind its own gate
+    // is left out rather than taking Title with it.
+    expect(http.activityCommand).toHaveBeenCalledWith('activity/consent', {
+      grants: [{ library: 'fiction', destinations: ['title'] }],
+    })
   })
 })

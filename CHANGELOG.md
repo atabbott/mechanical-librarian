@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Stop making the owner wait for a poll, and make write permission actionable
+  where they already are. Preparation and completed works reach the open tab as
+  they happen, over one authenticated stream that says what changed and never
+  what it changed to. Waiting is stated as the four next steps it actually is,
+  and Library and Activity carry one offer naming every destination `Enable
+  writes` covers and the reason for each it cannot. (#641, #639)
 - Show every cover whole, and stop making a decision wait for the Library. Each
   cover is contained at its own aspect ratio in a quiet 5:8 frame, and below
   900px the current one joins the same scrollable row as its alternatives. A

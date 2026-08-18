@@ -148,8 +148,68 @@ class ContinuousFieldEffectRepository(Protocol):
     ) -> tuple[str, str] | None: ...
 
 
+def _waiting_reasons(
+    *,
+    counts: dict[str, int],
+    prepared_by_destination: dict[tuple[str, str], int],
+    capabilities: list[dict[str, object]],
+    suspensions: list[dict[str, object]],
+    provider_recovery: list[dict[str, int | str | None]],
+) -> dict[str, int]:
+    """Split "waiting safely" into the reasons an owner can act on.
+
+    One number for everything that is not moving cannot be acted on: an owner
+    who reads `46 Waiting safely` cannot tell consent they can give from a retry
+    they must wait out from a recovery they must repair. Each of these four is a
+    different next step, and naming them is the whole of #639's second
+    acceptance.
+
+    Nothing here is a new source of truth. Every number is read off state the
+    projection already assembled, which is why a reason can never disagree with
+    the queue it describes.
+    """
+    consented_destinations = {
+        (str(capability["library"]), str(destination["destination"]))
+        for capability in capabilities
+        for destination in cast("list[dict[str, object]]", capability["destinations"])
+        if destination["consented"] is True
+    }
+    awaiting_permission = sum(
+        count
+        for key, count in prepared_by_destination.items()
+        if key not in consented_destinations
+    )
+    return {
+        # Prepared, and no consent covers the destination it would be written
+        # to. The owner resolves this, and only the owner can.
+        "awaiting_permission": awaiting_permission,
+        # Consented and planned: the queue owns these and needs nothing.
+        "scheduled": int(counts.get("planned", 0)),
+        # Refused once for a reason a retry can change; time resolves it.
+        "retrying": int(counts.get("retryable", 0)),
+        # Held behind a suspended capability or a dormant provider connection:
+        # a repair resolves it, not a decision and not time.
+        "held_for_recovery": len(suspensions)
+        + sum(
+            int(cast(int, item["affected_count"]))
+            for item in provider_recovery
+            if item["state"] in {"waiting", "checking", "dormant", "exhausted"}
+        ),
+        # Moving right now, which is the one bucket that is not waiting at all.
+        "applying": sum(
+            int(counts.get(state, 0))
+            for state in ("claimed", "applying", "reconciling")
+        ),
+    }
+
+
 class ContinuousGuardedApplication:
     """Compose persisted decisions into one instance-scoped mutation slot."""
+
+    # A class attribute rather than an instance one so a lane that was never
+    # attached to a channel -- a test double, a composition without a browser --
+    # still announces into the same shape instead of failing on a missing name.
+    _announce: Callable[[str, str | None], object] = staticmethod(lambda *_args: None)
 
     def __init__(
         self,
@@ -216,6 +276,17 @@ class ContinuousGuardedApplication:
         self, serialize: Callable[[Callable[[], object]], object]
     ) -> None:
         self._serialize = serialize
+
+    def attach_updates(self, announce: Callable[[str, str | None], object]) -> None:
+        """Bind the invalidation channel this lane announces write state on.
+
+        The lane advances a plan every couple of seconds on its own thread with
+        no request in flight, so without this the only way an owner learned that
+        a prepared change had started applying was the next poll. What is
+        announced is the topic and nothing else: the queue's own state stays
+        where it is durable, and the surface reads it back over HTTP (#639).
+        """
+        self._announce = announce
 
     def attach_timing(self, timing: StageTimer) -> None:
         for application in self._applications.values():
@@ -428,6 +499,7 @@ class ContinuousGuardedApplication:
 
     def set_paused(self, paused: bool) -> None:
         next(iter(self._applications.values())).set_paused(paused)
+        self._announce("activity", None)
         if not paused:
             self.wake()
 
@@ -439,6 +511,7 @@ class ContinuousGuardedApplication:
         self._repository.field_effect_manual_override(
             review_case_id, destination, self._clock()
         )
+        self._announce("activity", None)
         self.wake()
 
     def return_to_automatic(
@@ -488,13 +561,17 @@ class ContinuousGuardedApplication:
         operation = self._repository.get_field_effect(plan_id)
         application = self._application(operation)
         with self._slot:
-            return application.apply(plan_id)
+            applied = application.apply(plan_id)
+        self._announce("activity", None)
+        return applied
 
     def reconcile(self, plan_id: str) -> FieldEffectOperation:
         operation = self._repository.get_field_effect(plan_id)
         application = self._application(operation)
         with self._slot:
-            return application.reconcile(plan_id)
+            reconciled = application.reconcile(plan_id)
+        self._announce("activity", None)
+        return reconciled
 
     def schedule(self, limit: int = 100) -> int:
         self._release_completed_manual_returns()
@@ -607,6 +684,8 @@ class ContinuousGuardedApplication:
             )
             if operation is not None:
                 planned += 1
+        if planned:
+            self._announce("activity", None)
         return planned
 
     def run_cycle(self) -> bool:
@@ -761,15 +840,23 @@ class ContinuousGuardedApplication:
             library: {"automatic": 0, "human": 0, "total": 0}
             for _, library in self._libraries
         }
+        # Prepared work that no destination in the offer can carry is what an
+        # owner is actually looking at when a screen says a number and an
+        # `Enable writes` action beside it. Keeping the two apart is why this is
+        # counted per destination rather than per library (#639).
+        prepared_by_destination: dict[tuple[str, str], int] = {}
         for item in prepared_rows:
             library = str(item["library"])
             origin = str(item["origin"])
+            prepared_destination = str(item["destination"])
             count = int(cast(int, item["count"]))
             values = prepared_by_library.setdefault(
                 library, {"automatic": 0, "human": 0, "total": 0}
             )
             values[origin] += count
             values["total"] += count
+            key = (library, prepared_destination)
+            prepared_by_destination[key] = prepared_by_destination.get(key, 0) + count
         example: dict[str, object] | None = None
         for document in documents:
             decision = self._decision(document)
@@ -808,11 +895,11 @@ class ContinuousGuardedApplication:
             for destination in cast(
                 "list[dict[str, object]]", capability["destinations"]
             ):
-                destination["consented"] = (
-                    connection,
-                    library,
-                    str(destination["destination"]),
-                ) in consented
+                name = str(destination["destination"])
+                destination["consented"] = (connection, library, name) in consented
+                destination["prepared"] = prepared_by_destination.get(
+                    (library, name), 0
+                )
         prepared = {
             "automatic": sum(
                 value["automatic"] for value in prepared_by_library.values()
@@ -848,6 +935,15 @@ class ContinuousGuardedApplication:
         return {
             **data,
             "backup_ready": self._repository.field_effect_backup_ready(),
+            "waiting": _waiting_reasons(
+                counts=cast("dict[str, int]", data.get("counts", {})),
+                prepared_by_destination=prepared_by_destination,
+                capabilities=capabilities,
+                suspensions=cast(
+                    "list[dict[str, object]]", data.get("suspensions", [])
+                ),
+                provider_recovery=provider_recovery,
+            ),
             "configured_libraries": [
                 {
                     "connection": connection,

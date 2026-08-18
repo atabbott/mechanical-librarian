@@ -1004,13 +1004,24 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                 "library": "Household ebooks",
                 "state": "partially_allowed",
                 "destinations": [
-                    {"destination": "authors", "state": "allowed", "consented": True},
+                    {
+                        "destination": "authors",
+                        "state": "allowed",
+                        "consented": True,
+                        "prepared": 2,
+                    },
                     {
                         "destination": "subtitle",
                         "state": "field_unavailable",
                         "consented": False,
+                        "prepared": 0,
                     },
-                    {"destination": "title", "state": "allowed", "consented": True},
+                    {
+                        "destination": "title",
+                        "state": "allowed",
+                        "consented": True,
+                        "prepared": 4,
+                    },
                 ],
             },
             {
@@ -1018,8 +1029,18 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                 "library": "Spoken stories",
                 "state": "allowed",
                 "destinations": [
-                    {"destination": "authors", "state": "allowed", "consented": False},
-                    {"destination": "title", "state": "allowed", "consented": False},
+                    {
+                        "destination": "authors",
+                        "state": "allowed",
+                        "consented": False,
+                        "prepared": 1,
+                    },
+                    {
+                        "destination": "title",
+                        "state": "allowed",
+                        "consented": False,
+                        "prepared": 3,
+                    },
                 ],
             },
             {
@@ -1031,6 +1052,7 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                         "destination": "title",
                         "state": "recovery_required",
                         "consented": False,
+                        "prepared": 2,
                     },
                 ],
             },
@@ -1075,6 +1097,16 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
             "total": len(events),
         },
         "prepared": {"automatic": 3, "human": 6, "total": 9},
+        # Waiting, split into the four different next steps an owner has plus
+        # what is moving now, so this cohort renders #639's summary rather than
+        # the single number it replaced.
+        "waiting": {
+            "applying": 1,
+            "awaiting_permission": 4,
+            "held_for_recovery": 3,
+            "retrying": 2,
+            "scheduled": 5,
+        },
         "provider_recovery": [
             {
                 "state": "waiting",
