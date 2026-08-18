@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Tell the truth about a guarded write that was refused. A storage fault is no
+  longer reported as an unacceptable decision, a withdrawn consent or a revoked
+  authority, nor escapes the currentness seams untyped as a 500; startup
+  recovery attempts every pending plan and reports every failure rather than
+  stopping at the first; and a permanent refusal now answers 409 instead of
+  inviting a retry with 503. (#677, #678, #679)
 - Stop a package mirror from spending the protected browser job's whole budget
   before a test runs: `playwright install` no longer carries `--with-deps`,
   whose only contribution on a Chromium cache hit was `apt-get`, and the step

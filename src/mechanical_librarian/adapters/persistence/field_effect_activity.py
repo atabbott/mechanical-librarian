@@ -160,6 +160,23 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self, decision: HumanDecision | AutomaticDecision
     ) -> dict[str, object]:
         """Resolve one exact persisted decision against its current case lineage."""
+        try:
+            return self._authority_source(decision)
+        except sqlite3.Error as error:
+            # Only a storage fault is a storage fault. This is deliberately
+            # narrower than the consent resolver, which also reads a decode,
+            # key or value failure as `persistence`: here those shapes are how
+            # a binding refusal is expressed on purpose -- a document that does
+            # not match the decision is a mismatch, not an outage -- so
+            # sweeping them in would relabel real refusals as faults, the exact
+            # inverse of the untruth this classification exists to remove.
+            # Every `FieldEffectError` raised below passes through untouched
+            # because nothing but `sqlite3.Error` is caught here.
+            raise FieldEffectError("persistence") from error
+
+    def _authority_source(
+        self, decision: HumanDecision | AutomaticDecision
+    ) -> dict[str, object]:
         if not self._review_case_accepts_authority(decision.review_case_id):
             raise FieldEffectError("authority_binding")
         table = (
@@ -300,6 +317,19 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         }
 
     def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool:
+        try:
+            return self._authority_is_current(authority)
+        except sqlite3.Error as error:
+            # `False` here means the authority was revoked, which stales the
+            # plan under `authority`. A storage fault knows nothing about the
+            # authority, so answering it with `False` would report an outage as
+            # a revocation; raising instead reaches the boundary as a mapped
+            # refusal rather than escaping this seam untyped. The fail-closed
+            # `False` below stays what it always was: scoped to policy
+            # resolution, which is a decision, not an outage.
+            raise FieldEffectError("persistence") from error
+
+    def _authority_is_current(self, authority: EffectAuthority) -> bool:
         current = (
             self._connection.execute(
                 "SELECT current FROM field_effect_authorities WHERE decision_id=?",

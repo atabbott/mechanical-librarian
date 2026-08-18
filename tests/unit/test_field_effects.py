@@ -15,6 +15,9 @@ import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
+from mechanical_librarian.adapters.field_effect_authority import (
+    PersistedFieldEffectAuthority,
+)
 from mechanical_librarian.adapters.field_effect_fakes import (
     FakeAuthorityCurrentness,
     FakeBackupReadiness,
@@ -26,6 +29,7 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     FakeTargetService,
     PrivateCoverRecoveryStore,
 )
+from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     SQLiteMetadataReportRepository,
@@ -1194,6 +1198,284 @@ def _authorize(
     effects.consent.allow(
         connection="primary", library="books", destination=source.destination
     )
+
+
+class _PlanWriteWatch:
+    """Forward every repository call while watching the one write plan() owns."""
+
+    def __init__(self, repository: object) -> None:
+        self._repository = repository
+        self.recorded: list[object] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._repository, name)
+
+    def record_field_effect(self, operation: Any) -> Any:
+        self.recorded.append(operation)
+        return self._repository.record_field_effect(operation)
+
+
+class _RaisingAuthority:
+    """An authority resolver whose whole behaviour is one chosen failure."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def resolve(self, decision: Any) -> Any:
+        raise self.error
+
+    def current(self, authority: Any) -> bool:
+        return True
+
+
+class _RaisingConsent:
+    """A consent resolver whose whole behaviour is one chosen failure."""
+
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def resolve(self, *, connection: str, library: str, destination: str) -> Any:
+        raise self.error
+
+    def current(self, consent: Any) -> bool:
+        return True
+
+
+def _plan_title(effects: _EffectEnvironment, source: HumanDecision) -> object:
+    return effects.service.plan(
+        source,
+        connection="primary",
+        library="books",
+        work_id="book-1",
+        destination="title",
+        pre_value="old",
+        desired_value=envelope("title", "new"),
+        target_fingerprint="d" * 64,
+        target_version="version-1",
+        dependency_digests=(DEPENDENCY,),
+        capability_digest=CAPABILITY,
+    )
+
+
+def test_plan_reports_an_authority_storage_fault_and_keeps_a_real_refusal(
+    effects: _EffectEnvironment,
+) -> None:
+    source = decision("title", envelope("title", "new"), "a")
+    _authorize(effects, source)
+    watch = _PlanWriteWatch(effects.repository)
+    effects.service._repository = watch
+
+    fault = FieldEffectError("persistence")
+    effects.service._authority = _RaisingAuthority(fault)
+    with pytest.raises(GuardedApplicationError) as storage:
+        _plan_title(effects, source)
+
+    refusal = KeyError(source.decision_id)
+    effects.service._authority = _RaisingAuthority(refusal)
+    with pytest.raises(GuardedApplicationError) as unresolved:
+        _plan_title(effects, source)
+
+    # The repository named the fault, so the fault's own code reaches the
+    # caller; an undeclared failure is all the seam said, so it keeps the
+    # refusal code it has today. Neither records a plan row, and both chain.
+    assert storage.value.code == "persistence"
+    assert storage.value.__cause__ is fault
+    assert unresolved.value.code == "decision_value"
+    assert unresolved.value.__cause__ is refusal
+    assert watch.recorded == []
+
+
+def test_plan_reports_a_consent_storage_fault_and_keeps_both_real_refusals(
+    effects: _EffectEnvironment,
+) -> None:
+    source = decision("title", envelope("title", "new"), "a")
+    _authorize(effects, source)
+    watch = _PlanWriteWatch(effects.repository)
+    effects.service._repository = watch
+    resolver = effects.service._consent
+
+    fault = FieldEffectError("persistence")
+    effects.service._consent = _RaisingConsent(fault)
+    with pytest.raises(GuardedApplicationError) as storage:
+        _plan_title(effects, source)
+
+    withdrawn = FieldEffectError("consent")
+    effects.service._consent = _RaisingConsent(withdrawn)
+    with pytest.raises(GuardedApplicationError) as unresolvable:
+        _plan_title(effects, source)
+
+    unnamed = RuntimeError("the seam did not say")
+    effects.service._consent = _RaisingConsent(unnamed)
+    with pytest.raises(GuardedApplicationError) as undeclared:
+        _plan_title(effects, source)
+
+    effects.service._consent = resolver
+    granted = effects.consent.allowed[("primary", "books", "title", "apply_field")]
+    effects.consent.revoked.add(granted.consent_id)
+    with pytest.raises(GuardedApplicationError) as revoked:
+        _plan_title(effects, source)
+
+    assert storage.value.code == "persistence"
+    assert storage.value.__cause__ is fault
+    assert unresolvable.value.code == "consent"
+    assert unresolvable.value.__cause__ is withdrawn
+    # An exception nobody named cannot claim `consent`: that code is a 409
+    # asserting the recorded state refuses, and this is the one case where the
+    # recorded state was never read. It names the seam that could not answer.
+    assert undeclared.value.code == "consent_unavailable"
+    assert undeclared.value.__cause__ is unnamed
+    # A resolved-but-revoked consent is the refusal this method raises itself,
+    # which is why it carries no cause: only the relabelling handler chains.
+    assert revoked.value.code == "consent"
+    assert revoked.value.__cause__ is None
+    assert watch.recorded == []
+
+
+@pytest.mark.parametrize("seam", ("_authority", "_consent"))
+def test_plan_reports_a_closed_resolver_database_as_a_storage_fault(
+    effects: _EffectEnvironment, seam: str
+) -> None:
+    source = decision("title", envelope("title", "new"), "a")
+    _authorize(effects, source)
+    watch = _PlanWriteWatch(effects.repository)
+    effects.service._repository = watch
+    faulted = open_repository(Path(effects.temporary.name) / f"closed{seam}.sqlite")
+    faulted.close()
+    resolvers = {
+        "_authority": PersistedFieldEffectAuthority,
+        "_consent": PersistedEffectConsent,
+    }
+    setattr(effects.service, seam, resolvers[seam](faulted))
+
+    with pytest.raises(GuardedApplicationError) as raised:
+        _plan_title(effects, source)
+
+    # End to end over both shipped adapters: a closed database is an sqlite
+    # fault, the adapter calls it persistence, and plan() no longer overwrites
+    # that with a refusal the owner never made.
+    assert raised.value.code == "persistence"
+    cause = raised.value.__cause__
+    assert isinstance(cause, FieldEffectError) and cause.code == "persistence"
+    assert isinstance(cause.__cause__, sqlite3.Error)
+    assert watch.recorded == []
+
+
+@pytest.mark.parametrize("seam", ("_authority", "_consent"))
+def test_apply_maps_a_faulted_currentness_database_instead_of_escaping(
+    effects: _EffectEnvironment, seam: str
+) -> None:
+    operation = _plan(effects, suffix="9")
+    root = Path(effects.temporary.name)
+    password = root / f"currentness{seam}.hash"
+    password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+    os.chmod(password, 0o600)
+    app = create_transport_test_app(
+        effects.repository,
+        ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(password),
+            session_lifetime_seconds=600,
+        ),
+        clock=effects.clock,
+        field_application=effects.service,
+    )
+    faulted = open_repository(root / f"currentness{seam}.sqlite")
+    faulted.close()
+    resolvers = {
+        "_authority": PersistedFieldEffectAuthority,
+        "_consent": PersistedEffectConsent,
+    }
+    setattr(effects.service, seam, resolvers[seam](faulted))
+
+    with TestClient(app, base_url="https://review.test") as client:
+        login = client.post(
+            "/api/v1/session/login",
+            json={"password": "correct horse"},
+            headers={"Origin": "https://review.test"},
+        )
+        assert login.status_code == 200
+        response = client.post(
+            f"/api/v1/field-effects/{operation.plan.plan_id}/apply",
+            headers={
+                "Origin": "https://review.test",
+                "X-CSRF-Token": login.json()["csrf_token"],
+                "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
+            },
+        )
+
+    # `current()` answers a bool, so any sqlite fault behind it used to leave
+    # the seam as a bare error that no boundary handler names -- a 500 where a
+    # mapped refusal belongs. It now arrives as `persistence` and routes to
+    # 503, and the plan is untouched either way.
+    assert response.status_code == 503, response.text
+    assert response.json()["error"] == {"code": "persistence"}
+    assert effects.service.status(operation.plan.plan_id).state == "planned"
+    assert effects.target.read(operation.plan).value == operation.plan.pre_value
+
+
+def test_plan_reports_a_persisted_binding_mismatch_as_a_binding_refusal(
+    effects: _EffectEnvironment,
+) -> None:
+    source = decision("title", envelope("title", "new"), "a")
+    watch = _PlanWriteWatch(effects.repository)
+    effects.service._repository = watch
+    effects.service._authority = PersistedFieldEffectAuthority(effects.repository)
+
+    with pytest.raises(GuardedApplicationError) as raised:
+        _plan_title(effects, source)
+
+    # A decision the store cannot bind is a refusal the store already named, so
+    # `authority_binding` carries through rather than being retitled
+    # `decision_value`. It is the same code plan() raises itself for the same
+    # species of mismatch, and it is intended, not drift: an unresolved binding
+    # and a mismatched one now read alike, and neither reads as an outage.
+    assert raised.value.code == "authority_binding"
+    cause = raised.value.__cause__
+    assert isinstance(cause, FieldEffectError) and cause.code == "authority_binding"
+    assert watch.recorded == []
+
+
+def test_startup_recovery_attempts_every_plan_and_reports_every_failure(
+    effects: _EffectEnvironment,
+) -> None:
+    attempted: list[str] = []
+    failing = {"plan-b", "plan-c"}
+
+    class _PendingPlans:
+        def __getattr__(self, name: str) -> Any:
+            return getattr(effects.repository, name)
+
+        def pending_field_effect_plan_ids(self, limit: int) -> tuple[str, ...]:
+            return ("plan-a", "plan-b", "plan-c")
+
+    def apply(plan_id: str) -> None:
+        attempted.append(plan_id)
+        if plan_id in failing:
+            raise GuardedApplicationError(plan_id)
+
+    effects.service._repository = _PendingPlans()
+    with patch.object(effects.service, "apply", apply):
+        with pytest.raises(ExceptionGroup) as group:
+            effects.service.recover_startup()
+        # Two plans failed and a third sat behind them; before, only the first
+        # failure was reported and the plans after it were never attempted.
+        assert attempted == ["plan-a", "plan-b", "plan-c"]
+        assert [getattr(error, "code", None) for error in group.value.exceptions] == [
+            "plan-b",
+            "plan-c",
+        ]
+
+        attempted.clear()
+        failing.difference_update({"plan-c"})
+        with pytest.raises(GuardedApplicationError) as single:
+            effects.service.recover_startup()
+        # One failure is still raised alone, the shape `recover_pending` uses.
+        assert single.value.code == "plan-b"
+        assert attempted == ["plan-a", "plan-b", "plan-c"]
+
+        attempted.clear()
+        failing.clear()
+        assert effects.service.recover_startup() == (3, 0, 0)
 
 
 def test_every_supported_shape_plans_and_no_ops_do_not_mutate(
@@ -2537,6 +2819,74 @@ def test_authenticated_api_uses_the_same_service_and_blocks_anonymous_mutation(
         assert response.json()["state"] == "verified"
         status = client.get(f"/api/v1/field-effects/{operation.plan.plan_id}")
         assert status.json()["state"] == "verified"
+
+
+def test_web_maps_permanent_refusals_to_conflict_and_outages_to_unavailable(
+    effects: _EffectEnvironment,
+) -> None:
+    operation = _plan(effects, suffix="f")
+    root = Path(effects.temporary.name)
+    password = root / "conflict-owner.hash"
+    password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+    os.chmod(password, 0o600)
+    app = create_transport_test_app(
+        effects.repository,
+        ReviewWebConfiguration(
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(password),
+            session_lifetime_seconds=600,
+        ),
+        clock=effects.clock,
+        field_application=effects.service,
+    )
+    # 409 is every code meaning the recorded state refuses this effect, which a
+    # decision resolves and a retry never does; 503 is every code meaning the
+    # machinery could not answer. `capability`, `authority` and `consent` are
+    # permanent refusals and moved from the second to the first.
+    expected = {
+        "authority": 409,
+        "capability": 409,
+        "claim_conflict": 409,
+        "consent": 409,
+        "draining": 409,
+        "paused": 409,
+        "transition_conflict": 409,
+        "cover_recovery": 503,
+        "persistence": 503,
+        # Both undeclared-seam fallbacks must stay out of the conflict set:
+        # neither read the recorded state, so neither may assert it refused.
+        "consent_unavailable": 503,
+        "decision_value": 503,
+        "not_found": 404,
+    }
+    observed: dict[str, int] = {}
+    bodies: dict[str, object] = {}
+    route = f"/api/v1/field-effects/{operation.plan.plan_id}/apply"
+    with TestClient(app, base_url="https://review.test") as client:
+        login = client.post(
+            "/api/v1/session/login",
+            json={"password": "correct horse"},
+            headers={"Origin": "https://review.test"},
+        )
+        assert login.status_code == 200
+        headers = {
+            "Origin": "https://review.test",
+            "X-CSRF-Token": login.json()["csrf_token"],
+            "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
+        }
+        for code in expected:
+
+            def refuse(plan_id: str, code: str = code) -> None:
+                raise GuardedApplicationError(code)
+
+            with patch.object(effects.service, "apply", refuse):
+                response = client.post(route, headers=headers)
+            observed[code] = response.status_code
+            bodies[code] = response.json()["error"]
+
+    assert observed == expected
+    # The code itself is untouched: only the status it maps to moved.
+    assert bodies == {code: {"code": code} for code in expected}
 
 
 def test_web_pause_and_resume_bound_persistence_failures(
