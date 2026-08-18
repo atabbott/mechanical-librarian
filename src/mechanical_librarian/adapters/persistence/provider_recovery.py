@@ -123,7 +123,8 @@ class SQLiteProviderRecoveryStore:
                         connection.execute(statement)
                     connection.execute("COMMIT")
                 except Exception:
-                    connection.execute("ROLLBACK")
+                    if connection.in_transaction:
+                        connection.execute("ROLLBACK")
                     raise
             _validate(connection)
             return cls(connection)

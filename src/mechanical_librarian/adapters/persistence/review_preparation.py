@@ -58,6 +58,26 @@ from mechanical_librarian.domain.review_case import (
     ReviewTransition,
 )
 
+# The exact vocabulary `review_preparation_work.failure_code` accepts. It
+# duplicates the CHECK in `schema.py`, which cannot be generated from this set
+# because `sqlite_master` stores that DDL verbatim; the two are held equal by
+# `test_the_failure_code_allow_list_and_its_normalisation_stay_one_vocabulary`,
+# so a code added to one and not the other fails the gate instead of silently
+# collapsing to `failed` (#734).
+_FAILURE_CODES = frozenset(
+    (
+        "provider",
+        "configuration",
+        "authentication",
+        "stale",
+        "transient",
+        "projection",
+        "failed",
+        "currentness",
+        "persistence",
+    )
+)
+
 
 class SQLiteReviewPreparationRepository(ConnectionScoped):
     """Claim, advance, complete and fail the work of one review scan."""
@@ -1118,16 +1138,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 raise MetadataReportError(
                     "review preparation persistence failed"
                 ) from error
-        if code not in {
-            "provider",
-            "configuration",
-            "authentication",
-            "stale",
-            "transient",
-            "projection",
-            "failed",
-            "currentness",
-        }:
+        if code not in _FAILURE_CODES:
             code = "failed"
         if failure_root is not None and (
             code != "authentication"

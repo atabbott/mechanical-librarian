@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import tempfile
 import threading
@@ -19,6 +20,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import open_repo
 from mechanical_librarian.adapters.persistence.provider_recovery import (
     ProviderRecoveryStoreError,
 )
+from mechanical_librarian.adapters.persistence.review_preparation import (
+    _FAILURE_CODES,
+)
+from mechanical_librarian.adapters.persistence.schema import _REVIEW_WORK_SQL
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
     CatalogueReader,
@@ -818,6 +823,28 @@ def test_observed_provider_authentication_remains_in_complete_report(
         ("google-main", ProviderStatus.AUTHORIZATION),
         ("hardcover-main", ProviderStatus.AUTHENTICATION),
     )
+
+
+def test_the_failure_code_allow_list_and_its_normalisation_stay_one_vocabulary() -> (
+    None
+):
+    """The CHECK and the set that normalises against it are held equal.
+
+    `sqlite_master` stores the DDL verbatim, so the CHECK cannot be generated
+    from `_FAILURE_CODES` and the two lists are written twice. They drifted
+    three times, and each drift is silent: a code the application deliberately
+    chose collapses to the anonymous `failed`, and the owner is told the work
+    failed rather than which side failed. Reading the allow-list back out of
+    the DDL is what makes the next divergence fail here instead (#734).
+    """
+    allow_list = re.search(
+        r"failure_code IS NULL OR failure_code IN \(([^)]+)\)", _REVIEW_WORK_SQL
+    )
+    assert allow_list is not None
+    assert _FAILURE_CODES == frozenset(
+        value.strip().strip("'") for value in allow_list.group(1).split(",")
+    )
+    assert "persistence" in _FAILURE_CODES
 
 
 def test_thousand_work_three_library_backlog_is_bounded_and_fair(
