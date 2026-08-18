@@ -1241,6 +1241,27 @@ class _RaisingConsent:
         return True
 
 
+def _faulted_repository(
+    effects: _EffectEnvironment, name: str
+) -> SQLiteMetadataReportRepository:
+    """Open, then close, a repository in a directory of its very own.
+
+    The private binding takes a *blocking* exclusive `flock` on the database's
+    parent directory (`adapters/persistence/binding.py`), so opening a second
+    repository beside the fixture's own waits on the fixture's lock forever.
+    macOS has no `fcntl`, so the whole lock path is skipped there and a shared
+    directory looks harmless -- it deadlocks only on Linux, where the gate runs.
+    Give every extra handle its own owner-only directory and neither can wait
+    on the other.
+    """
+    root = Path(effects.temporary.name) / name
+    root.mkdir()
+    os.chmod(root, 0o700)
+    repository = open_repository(root / "faulted.sqlite")
+    repository.close()
+    return repository
+
+
 def _plan_title(effects: _EffectEnvironment, source: HumanDecision) -> object:
     return effects.service.plan(
         source,
@@ -1339,8 +1360,7 @@ def test_plan_reports_a_closed_resolver_database_as_a_storage_fault(
     _authorize(effects, source)
     watch = _PlanWriteWatch(effects.repository)
     effects.service._repository = watch
-    faulted = open_repository(Path(effects.temporary.name) / f"closed{seam}.sqlite")
-    faulted.close()
+    faulted = _faulted_repository(effects, f"closed{seam}")
     resolvers = {
         "_authority": PersistedFieldEffectAuthority,
         "_consent": PersistedEffectConsent,
@@ -1379,8 +1399,7 @@ def test_apply_maps_a_faulted_currentness_database_instead_of_escaping(
         clock=effects.clock,
         field_application=effects.service,
     )
-    faulted = open_repository(root / f"currentness{seam}.sqlite")
-    faulted.close()
+    faulted = _faulted_repository(effects, f"currentness{seam}")
     resolvers = {
         "_authority": PersistedFieldEffectAuthority,
         "_consent": PersistedEffectConsent,
