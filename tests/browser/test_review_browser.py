@@ -7,7 +7,7 @@ import sys
 import tempfile
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any, cast
@@ -125,6 +125,7 @@ def _server(
     automatic_fixture: bool = False,
     cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
     cohort: int = 0,
+    on_app: Callable[[Any], None] | None = None,
 ):
     repository = open_repository(database, create=True, cross_thread=True)
     cover_considerations = None
@@ -248,6 +249,10 @@ def _server(
         react_asset_loader=ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
         cover_considerations=cover_considerations,
     )
+    # The composed application, for a cohort that has to announce something the
+    # server would announce rather than assert on what it answered.
+    if on_app is not None:
+        on_app(app)
     server = uvicorn.Server(
         uvicorn.Config(
             app,
@@ -1378,11 +1383,18 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
     """#635: the next field arrives from exact-case state, not from a Library rebuild.
 
     Fifty works, because one work cannot tell a whole-Library projection apart
-    from a single exact-case read. The assertion is ordering rather than a
-    wall-clock threshold: the Library refetch is allowed to be issued, and is
-    expected to be, but no Library response may complete before the next field
-    is actionable. A settlement that awaits the projection fails this whatever
-    the machine's speed.
+    from a single exact-case read. The ordering assertion is a wall-clock
+    threshold's opposite: no Library response may complete before the next
+    field is actionable, so a settlement that awaits the projection fails it
+    whatever the machine's speed.
+
+    That ordering was the whole observable until #641 gave a decision a second
+    reason to rebuild the Library, on a coalescing delay long enough that the
+    refetch usually landed after the counter had already been read. So the
+    Library requests *issued* across the decision loop are counted too, and
+    that count is zero: a request is issued deterministically or not at all,
+    where a response landing inside a window is a race, and the race is what
+    four qualification runs of #641 saw as green.
     """
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -1392,6 +1404,8 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
         os.chmod(hash_path, 0o600)
         certificate, key = _certificate(root)
         errors: list[str] = []
+        announced: list[Any] = []
+        library_requests: list[str] = []
         library_responses: list[float] = []
         decision_responses: list[str] = []
         with sync_playwright() as playwright:
@@ -1419,6 +1433,14 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     else None
                 ),
             )
+            page.on(
+                "request",
+                lambda request: (
+                    library_requests.append(request.url)
+                    if "/api/v1/library" in request.url
+                    else None
+                ),
+            )
             with (
                 closing(ReservedPort()) as reserved_port,
                 _server(
@@ -1428,6 +1450,9 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     key=key,
                     port=reserved_port,
                     cohort=_COHORT_WORKS - 1,
+                    on_app=lambda app: announced.append(
+                        app.state.review_application.updates
+                    ),
                 ) as (origin, case_id),
                 _closing_context(context),
             ):
@@ -1459,6 +1484,7 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                         before,
                     )
 
+                issued = len(library_requests)
                 elapsed, projections, first_field = advance()
                 # The projection is invalidated, not awaited. Anything that
                 # completed inside this window was waited on.
@@ -1499,6 +1525,35 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 while len(decision_responses) < 2 and time.monotonic() < deadline:
                     page.wait_for_timeout(25)
                 assert len(decision_responses) == 2, decision_responses
+
+                # Both decisions have landed durably, and both announcements
+                # have had five times the client's 120 ms coalescing window to
+                # turn into a request. Neither did: an owner recording in a
+                # case holds the Library and the rail beside it, marking them
+                # stale to be read once on the way out, so the decision path
+                # carries no Library work at all rather than merely not
+                # awaiting it. Waiting here can only expose a request that was
+                # issued, never hide one.
+                page.wait_for_timeout(600)
+                assert library_requests[issued:] == [], library_requests[issued:]
+
+                # And the other half of the same rule: everything this tab did
+                # not cause still reaches it while the owner keeps recording.
+                # This is the announcement a work makes when it finishes
+                # preparing and becomes browseable, published through the
+                # server's own channel, naming a case that is not this one.
+                # Suppressing it would be a panel that silently stops updating
+                # while a large library is still preparing, which is the whole
+                # of what #641 exists to prevent.
+                channel = announced[0]
+                cutover = len(library_requests)
+                channel.publish("library", "review_case_" + "0" * 64)
+                deadline = time.monotonic() + 10
+                while len(library_requests) == cutover and time.monotonic() < deadline:
+                    page.wait_for_timeout(25)
+                assert len(library_requests) > cutover, (
+                    "a work finishing preparation never reached the Library"
+                )
 
                 # Reduced motion receives the same state change with no
                 # spatial animation.

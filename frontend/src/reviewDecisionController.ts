@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AmbiguousMutationError, ApiError } from './api/http'
 import type { CaseDetailView, DecisionCommand } from './api/http'
 import { labelWords } from './labels'
+import { beginDecisionEcho, endDecisionEcho, settleDecisionEcho } from './decisionEcho'
 import { detailQuery, useReviewContext } from './router'
 
 export const actionable = (field: CaseDetailView['fields'][number]) => field.needsAttention
@@ -126,9 +127,13 @@ export const useReviewDecisionController = ({
       return undefined
     }
   }
+  // The Library and the attention rail are not rebuilt from here. A decision
+  // announces its own row over the stream, and this tab recognises that
+  // announcement as its own and settles it when the owner leaves the case, so
+  // a client-side rebuild would be a second, subjectless copy of an
+  // invalidation that already arrived -- and the whole-Library read #635
+  // removed. This case's own history has no announcement and stays.
   const converge = () => {
-    void queryClient.invalidateQueries({ queryKey: ['library'] })
-    void queryClient.invalidateQueries({ queryKey: ['attention'] })
     void queryClient.invalidateQueries({
       queryKey: ['review-case', reviewCaseId, 'history'],
       exact: true,
@@ -177,7 +182,12 @@ export const useReviewDecisionController = ({
   const decision = useMutation({
     mutationFn: (command: DecisionCommand) => http.recordDecision(reviewCaseId, command),
     retry: false,
-    onSuccess: async (_, command) => {
+    onSuccess: async (acknowledgement, command) => {
+      // What this decision caused, straight from its own response, before
+      // anything waits. The echo is published before this response is written,
+      // so it may already have arrived and be waiting on exactly this token
+      // (#635, #641).
+      endDecisionEcho(queryClient, reviewCaseId, acknowledgement.invalidation_sequences)
       converge()
       const refreshed = await refreshCase()
       if (!refreshed) {
@@ -223,6 +233,9 @@ export const useReviewDecisionController = ({
       if (settled !== undefined && !actionable(settled)) await onAdvance(next.destination)
     },
     onError: async (error, command) => {
+      // No token is coming. Anything held on this decision's account belongs to
+      // someone else and is released by the same call.
+      endDecisionEcho(queryClient, reviewCaseId, [])
       halt()
       converge()
       const refreshed = await refreshCase()
@@ -284,6 +297,10 @@ export const useReviewDecisionController = ({
     },
     [],
   )
+  // Leaving the case -- for another case, for the Library, or for another route
+  // entirely -- is when the echoes recognised inside it are paid, which is what
+  // makes the row behind the owner correct when they return to it.
+  useEffect(() => () => settleDecisionEcho(queryClient), [queryClient, reviewCaseId])
   useEffect(() => {
     if (
       reconciliation.data &&
@@ -320,6 +337,10 @@ export const useReviewDecisionController = ({
       )
       return
     }
+    // From here a Library frame naming this case might be this decision's own
+    // echo, and the response that would say so is still in transit. Marked
+    // before the request leaves, so no ordering between the two can be raced.
+    beginDecisionEcho(queryClient, reviewCaseId)
     order.current = fields.map((field) => field.destination)
     decided.current = {
       caseId: reviewCaseId,

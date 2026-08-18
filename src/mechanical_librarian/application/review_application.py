@@ -613,10 +613,23 @@ class ReviewApplication:
         # A recorded decision changes this work's package and can queue a
         # guarded write. Both are announced so a second tab, and the Library row
         # behind this one, see it without waiting for a poll.
-        self._updates.publish("case", review_case_id)
-        self._updates.publish("library", review_case_id)
-        self._updates.publish("activity")
-        return result
+        #
+        # The positions those announcements were given are returned to the tab
+        # that recorded the decision, which is the only tab that can know it
+        # caused them. It uses them to recognise its own echo and settle it
+        # without a whole-Library read on the decision path (#635), while every
+        # frame it did not cause -- a work finishing preparation, a work that
+        # could not finish, another tab's decision -- reaches it unchanged.
+        # This is a correlation token on the command's own response, not state
+        # on the stream: the frame contract stays sequence, topic and subject.
+        return {
+            **result,
+            "invalidation_sequences": [
+                self._updates.publish("case", review_case_id),
+                self._updates.publish("library", review_case_id),
+                self._updates.publish("activity"),
+            ],
+        }
 
     def cover_image(
         self, review_case_id: str, consideration_id: str, reference: str

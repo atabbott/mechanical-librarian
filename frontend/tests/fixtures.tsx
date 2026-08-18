@@ -8,6 +8,7 @@ import type userEvent from '@testing-library/user-event'
 import { vi } from 'vitest'
 
 import type { ActivityDisplayView, ActivityView, CaseDetailView, LibraryView, PolicyStateView, PreparationView, ReviewHttp, ShadowPostureView, ShadowSampleView } from '../src/api/http'
+import type { LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { createApplicationRouter } from '../src/router'
 
 export const library: LibraryView = {
@@ -90,7 +91,7 @@ export const createHttp = (): ReviewHttp => ({
   retryCoverConsideration: vi.fn(async () => { throw new Error('not configured') }),
   getPreparation: vi.fn(async (): Promise<PreparationView> => ({ schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [] })),
   preparationAction: vi.fn(async (): Promise<PreparationView> => ({ schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [] })),
-  recordDecision: vi.fn(async () => ({ schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-1', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: 'proposal-1', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-1' })),
+  recordDecision: vi.fn(async () => ({ invalidation_sequences: [], schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-1', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: 'proposal-1', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-1' })),
   returnToAutomatic: vi.fn(async () => undefined),
   getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({ schema_version: 'metadata-policy-notebook-v1', policy_id: 'policy-1', profile: { schema_version: 'metadata-policy-profile-v2', name: 'Default', options: {}, destinations: {} }, rich_qualification: [] })),
   getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({ schema_version: 'shadow-posture-v1', posture: 'review', authority: 'none', can_leave_preview: false })),
@@ -103,9 +104,25 @@ export const createHttp = (): ReviewHttp => ({
   logout: vi.fn(async () => undefined),
 })
 
-export const renderRoute = (entry: string, http = createHttp()) => {
+/**
+ * A stream the test drives by hand, with the shape the shipped bridge sees.
+ * `announce` delivers one frame exactly as the server's would, so a test can say
+ * what changed, for whom, and at which position, without a server.
+ */
+export const createLiveStream = (): LiveUpdateStream & { announce: (update: LiveUpdate) => void } => {
+  const listeners = new Set<(update: LiveUpdate) => void>()
+  return {
+    state: 'live',
+    subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    observeState: () => () => undefined,
+    close: () => undefined,
+    announce: (update) => { for (const listener of [...listeners]) listener(update) },
+  }
+}
+
+export const renderRoute = (entry: string, http = createHttp(), updates?: LiveUpdateStream) => {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  const router = createApplicationRouter(http, queryClient, createMemoryHistory({ initialEntries: [entry] }))
+  const router = createApplicationRouter(http, queryClient, createMemoryHistory({ initialEntries: [entry] }), updates)
   render(
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
