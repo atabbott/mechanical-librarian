@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import socket
 import sqlite3
 import subprocess
 import tempfile
@@ -48,6 +47,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from tests.support.ports import ReservedPort
 from tests.support.tls import synthetic_tls_identity
 
 # How long the installed server may take to answer `/health/live`. The wait is
@@ -216,7 +216,17 @@ def qualify_installed_pipeline(
     with (
         closing(fixture),
         tempfile.TemporaryDirectory() as directory,
-        closing(_ReservedPort()) as review_port,
+        # The port is held from here rather than picked and dropped: the
+        # window between allocation and the installed server's own `bind()`
+        # spans writing `config.json`, the entire in-process pipeline over
+        # the whole cohort, `Popen`, and the child's interpreter start-up,
+        # which at the slow tier's thousand works is minutes wide. That is
+        # far wider than any other caller of `ReservedPort`, and it is why
+        # this one alone cannot stop at holding: the child binds a number it
+        # is handed on its command line, and there is no channel for giving
+        # it a descriptor instead, so its start-up stays a window that
+        # `_start_review_server` closes by detection rather than by hope.
+        closing(ReservedPort()) as review_port,
     ):
         root = Path(directory)
         secret = root / "target.secret"
@@ -707,86 +717,8 @@ def _database_sidecars(database: Path) -> tuple[Path, ...]:
     )
 
 
-def _bind_loopback(port: int) -> socket.socket | None:
-    """Hold `port` on loopback, or report that something else already does.
-
-    `SO_REUSEADDR` is deliberately not set. This is the only instrument that
-    answers "is anybody on this port", and reuse exists precisely to make that
-    answer come back yes when it should be no.
-    """
-
-    listener = socket.socket()
-    try:
-        listener.bind(("127.0.0.1", port))
-    except OSError:
-        listener.close()
-        return None
-    return listener
-
-
-class _ReservedPort:
-    """A loopback port held by an open socket until its server is spawned.
-
-    `bind(("127.0.0.1", 0))` followed by `close()` reserves nothing. The kernel
-    hands back a number and is immediately free to hand the same number to the
-    next automatic allocation anywhere on the host, so what the old
-    `_unused_port` returned was a hint with no holder. Everything between that
-    call and the installed server's own `bind()` was an open window: writing
-    `config.json`, running the entire in-process pipeline over the whole
-    cohort, `Popen`, and the child's interpreter start-up. At the slow tier's
-    thousand works that window is minutes wide, which is why three sightings
-    on 2026-08-17 all landed under host load (#770).
-
-    The socket is therefore held for every part of that window this seam can
-    hold, and released in the statement before `Popen`. It cannot be held
-    further, and no arrangement of this seam can hold it further: the child
-    performs its own `bind()` on a port number passed on its command line, and
-    there is no channel for handing it a descriptor instead. Two live binds to
-    one loopback port is what the operating system exists to refuse. The
-    child's start-up therefore stays a window, and `_start_review_server`
-    closes it by detection rather than by hope.
-    """
-
-    def __init__(self) -> None:
-        listener = _bind_loopback(0)
-        if listener is None:  # pragma: no cover - loopback has ephemeral ports
-            raise AssertionError("no loopback port was available to reserve")
-        self._listener: socket.socket | None = listener
-        self.number = int(listener.getsockname()[1])
-
-    def take(self, timeout: float = 0.0) -> bool:
-        """Hold the port again, waiting up to `timeout` for it to come free.
-
-        Returns whether it is now held. A `timeout` of zero asks the question
-        without waiting, which is how a stolen port is told from a server that
-        died of its own accord.
-        """
-
-        if self._listener is not None:
-            return True
-        deadline = time.monotonic() + timeout
-        while True:
-            listener = _bind_loopback(self.number)
-            if listener is not None:
-                self._listener = listener
-                return True
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(0.02)
-
-    def release(self) -> None:
-        """Give the port up. The spawn must be the next statement."""
-
-        if self._listener is not None:
-            self._listener.close()
-            self._listener = None
-
-    def close(self) -> None:
-        self.release()
-
-
 def _start_review_server(
-    reservation: _ReservedPort, arguments: list[str], origin: str
+    reservation: ReservedPort, arguments: list[str], origin: str
 ) -> subprocess.Popen[bytes]:
     """Start the installed server on the reserved port, re-taking a lost one.
 

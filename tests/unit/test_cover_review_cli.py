@@ -12,6 +12,7 @@ import pytest
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import ConfigurationError
 from mechanical_librarian.bootstrap.composition import (
+    run_cover_review,
     run_provider_recovery_once,
     run_review_activity,
 )
@@ -310,3 +311,155 @@ def test_invalid_choice_shape_fails_before_runner() -> None:
     )
     runner.assert_not_called()
     assert errors.getvalue() == "Review server failed safely.\n"
+
+
+# The `cover-review` runner every test above substitutes with a `Mock`. Nothing
+# else runs it: it is a CLI subcommand, so neither the container lifecycle
+# qualifier nor the scale qualification reaches it, and the mutation audit
+# recorded all 150 of its mutants as reached by no test (#773). These four
+# cases pin what the body decides rather than what the parser hands it.
+_CASE = "review_case_" + "c" * 64
+
+
+def _composed(detail: object) -> tuple[Mock, Mock]:
+    repository = Mock()
+    application = Mock()
+    application.case_detail.return_value = SimpleNamespace(to_data=lambda: detail)
+    return repository, application
+
+
+def _cover_detail() -> dict[str, object]:
+    return {
+        "fields": [
+            {"destination": "title", "cover_consideration": None},
+            {
+                "destination": "cover",
+                "proposal_id": "proposal_" + "d" * 64,
+                "target_fingerprint": "fingerprint_" + "e" * 64,
+                "cover_consideration": {"consideration_id": "consideration_1"},
+            },
+        ]
+    }
+
+
+def _run(repository: Mock, application: Mock, *arguments: object) -> object:
+    with (
+        patch(
+            "mechanical_librarian.bootstrap.composition.load_configuration_file",
+            return_value=SimpleNamespace(review=object()),
+        ),
+        patch(
+            "mechanical_librarian.bootstrap.composition.open_repository",
+            return_value=repository,
+        ),
+        patch(
+            "mechanical_librarian.bootstrap.composition._compose_cover_considerations",
+            return_value=object(),
+        ),
+        patch(
+            "mechanical_librarian.bootstrap.composition.compose_review_application",
+            return_value=application,
+        ),
+    ):
+        return run_cover_review(
+            Path("/config.json"),
+            Path("/database.sqlite3"),
+            Path("/artifacts"),
+            _CASE,
+            *arguments,
+        )
+
+
+@pytest.mark.parametrize(
+    ("action", "projection"),
+    (("history", "history"), ("show", "prepare_cover_consideration")),
+)
+def test_a_projecting_action_reads_without_deciding(
+    action: str, projection: str
+) -> None:
+    repository, application = _composed({})
+    getattr(application, projection).return_value = {"schema_version": "projection"}
+
+    assert {"schema_version": "projection"} == _run(
+        repository, application, action, None, None
+    )
+
+    getattr(application, projection).assert_called_once_with(_CASE)
+    application.record_decision.assert_not_called()
+    repository.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    ("action", "outcome", "selected"),
+    (
+        ("keep", "keep_current", None),
+        ("no-action", "reject", None),
+        ("select", "accept", {"kind": "cover", "value": "cover_" + "f" * 64}),
+    ),
+)
+def test_a_deciding_action_records_its_own_outcome_against_the_cover_field(
+    action: str, outcome: str, selected: dict[str, object] | None
+) -> None:
+    repository, application = _composed(_cover_detail())
+    application.record_decision.return_value = {"status": "recorded"}
+
+    result = _run(
+        repository,
+        application,
+        action,
+        None if selected is None else selected["value"],
+        "owner-command-0001",
+    )
+
+    assert {
+        "consideration_id": "consideration_1",
+        "decision": {"status": "recorded"},
+        "schema_version": "cover-review-cli-v1",
+    } == result
+    application.record_decision.assert_called_once_with(
+        _CASE,
+        proposal_id="proposal_" + "d" * 64,
+        target_fingerprint="fingerprint_" + "e" * 64,
+        destination="cover",
+        actor="owner",
+        outcome=outcome,
+        selected_value=selected,
+        idempotency_key="owner-command-0001",
+        consideration_id="consideration_1",
+    )
+    repository.close.assert_called_once_with()
+
+
+def test_a_decision_without_an_idempotency_key_records_nothing() -> None:
+    repository, application = _composed(_cover_detail())
+
+    with pytest.raises(ValueError, match="idempotency key is required"):
+        _run(repository, application, "keep", None, None)
+
+    application.record_decision.assert_not_called()
+    repository.close.assert_called_once_with()
+
+
+def test_cover_review_refuses_an_absent_review_configuration() -> None:
+    with (
+        patch(
+            "mechanical_librarian.bootstrap.composition.load_configuration_file",
+            return_value=SimpleNamespace(review=None),
+        ),
+        patch(
+            "mechanical_librarian.bootstrap.composition.open_repository",
+            side_effect=AssertionError("database opened"),
+        ) as repository,
+        pytest.raises(ConfigurationError, match="review configuration is unavailable"),
+    ):
+        run_cover_review(
+            Path("/config.json"),
+            Path("/database.sqlite3"),
+            Path("/artifacts"),
+            _CASE,
+            "show",
+            None,
+            None,
+        )
+
+    repository.assert_not_called()

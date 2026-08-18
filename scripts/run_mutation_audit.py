@@ -123,6 +123,19 @@ def main() -> int:
         return 2
     stats = json.loads((mutants_root / "mutmut-stats.json").read_text())
     tests_by_function = stats["tests_by_mangled_function_name"]
+    if not tests_by_function:
+        # An empty map is not a suite that reaches nothing; it is a snapshot
+        # taken while the tests imported the unmutated package, so the
+        # trampoline never recorded a hit. Measured rather than refused, it
+        # reports every mutant as reached by no test -- a total failure that
+        # reads as a clean result.
+        print(
+            "mutants/mutmut-stats.json records no reaching tests, so it was "
+            "taken against the unmutated package -- re-run "
+            "scripts/generate_mutants.py",
+            file=sys.stderr,
+        )
+        return 2
 
     wanted: set[str] | None = None
     if arguments.survivors_from:

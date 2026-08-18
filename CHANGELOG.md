@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Hold every reserved test port with an open socket until its server binds it.
+  One reservation under `tests/support/` now defines that for all five sites
+  instead of one, and any site that cannot hold the socket to the point of use
+  says why. This closes a latent window; no sighting was ever traced to it.
+  (#774)
+- Judge `bootstrap.composition`'s mutation result instead of its score. The 590
+  mutants no test reached are 14 functions, not a cloud: 303 are accepted in
+  `docs/development/testing-strategy.md` beside what does prove them, and 287
+  had no prover at all and are now tested. The generator also stopped recording
+  an empty reaching-test map, which reads exactly like a module nothing covers.
+  (#773)
 - Report the fault an operator can act on: a provider-recovery database that
   cannot be created names the disk failure rather than the transaction its own
   rollback could not find, and a cover stage that fails on its store durably

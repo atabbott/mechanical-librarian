@@ -173,6 +173,13 @@ def test_disabled_open_library_preserves_larger_foreground_batches() -> None:
         )
         assert '"entries":6' in result
         assert (Path(directory) / "batch.json").is_file()
+        # `inspect_batch` renders the same summary from the written document
+        # rather than from the selections in memory, so equality here is the
+        # only assertion that the manifest carries what the preview reported.
+        # Nothing else executed it: its only caller is the source-only
+        # workbench, and the mutation audit recorded every one of its mutants
+        # as reached by no test (#773).
+        assert result == composition.inspect_batch(Path(directory) / "batch.json")
 
 
 def test_run_rejects_oversized_manifest_before_state_or_credentials() -> None:
