@@ -38,6 +38,13 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+  # The one-off test-value audit's two instruments, pinned so its recorded
+  # commands reproduce. Neither is a gate and neither is imported by the suite:
+  # `scripts/run_test_tier.py` never loads them, and `--disable-plugin-autoload`
+  # keeps them out of a tier run even though `coverage` ships a `.pth`. That
+  # `.pth` is inert unless `COVERAGE_PROCESS_START` is set, which only the
+  # documented coverage command does.
+  "coverage==7.13.0",
   "hypothesis==6.165.2",
   # `starlette.testclient` prefers `httpx2` and warns on the
   # `StarletteDeprecationWarning` class when it has to fall back to `httpx`.
@@ -47,11 +54,58 @@ dev = [
   # runtime `httpx==0.28.1` the adapters call remains a separate distribution
   # with a separate import name and is unaffected by it.
   "httpx2==2.10.0",
+  "mutmut==3.3.1",
   "mypy==2.3.1",
   "playwright==1.62.0",
   "pytest==9.1.1",
   "ruff==0.16.3",
   "setuptools==83.0.0",
+]
+
+[tool.mutmut]
+paths_to_mutate = [
+  "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
+  "src/mechanical_librarian/application/review_web.py",
+  "src/mechanical_librarian/bootstrap/composition.py",
+  "src/mechanical_librarian/interfaces/cli/__init__.py",
+  "src/mechanical_librarian/interfaces/web/app.py",
+]
+also_copy = [
+  "docs",
+  "scripts",
+  "workbench",
+  "frontend",
+  ".github",
+  "AGENTS.md",
+  "CHANGELOG.md",
+  "CODE_OF_CONDUCT.md",
+  "CONTRIBUTING.md",
+  "DESIGN.md",
+  "Dockerfile",
+  "GOVERNANCE.md",
+  "LICENSE",
+  "MANIFEST.in",
+  "PRODUCT.md",
+  "README.md",
+  "SECURITY.md",
+  "SUPPORT.md",
+  "compose.yaml",
+  "osv-scanner.toml",
+  "setup.py",
+  "uv.lock",
+]
+tests_dir = [
+  "tests/unit",
+  "tests/integration",
+  # Three modules qualify the build, the installed console script, or the
+  # source-only workbench against the repository root they run from. Inside
+  # `mutants/` that root is a copy, so they fail for the copy rather than for
+  # any mutant. They cannot reach the audited modules, and mutmut's stats and
+  # clean-test phases both run under `-x`, so they are excluded rather than
+  # allowed to abort the run.
+  "--ignore=tests/unit/test_exact_artifact_qualification.py",
+  "--ignore=tests/unit/test_runtime_workbench.py",
+  "--ignore=tests/integration/test_continuous_review_scale.py",
 ]
 
 [project.scripts]
@@ -250,6 +304,15 @@ disable_error_code = ["arg-type", "no-untyped-call"]
 module = "mechanical_librarian.adapters.library_services.audiobookshelf_field_effect"
 # reason: byte-frozen by the F20 qualification manifest; see the note above.
 disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = ["mutmut.*"]
+# reason: mutmut ships no `py.typed`, so its mutation engine and stats
+# collector are untyped to mypy. Only the three `scripts/` entry points for
+# #737's one-off audit import it; nothing under `src/` does, and nothing the
+# gate runs loads it. Narrowed to the distribution rather than relaxing the
+# importing modules, so every other symbol in them stays checked.
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["tests.*", "scripts.*"]

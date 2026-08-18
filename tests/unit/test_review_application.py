@@ -13,9 +13,6 @@ from mechanical_librarian.application.metadata_policy import (
     PolicyImpactRepository,
 )
 from mechanical_librarian.application.review_application import (
-    AttentionView,
-    CaseDetailView,
-    LibraryView,
     ReviewApplication,
     ReviewApplicationError,
     compose_review_application,
@@ -94,7 +91,6 @@ def test_named_case_operation_returns_bounded_view(
 ) -> None:
     view = application.case_detail(repository.case.review_case_id)
 
-    assert isinstance(view, CaseDetailView)
     assert view.review_case_id == repository.case.review_case_id
     assert view.current
     assert view.to_data()["schema_version"] == "review-case-detail-v1"
@@ -106,10 +102,8 @@ def test_named_browse_operations_return_bounded_views(
     library = application.library(lens="all", search=None, limit=20, cursor=None)
     attention = application.attention(search=None, limit=20, cursor=None)
 
-    assert isinstance(library, LibraryView)
     assert library.schema_version == "review-library-v1"
     assert library.counts["all"] == 1
-    assert isinstance(attention, AttentionView)
     assert attention.schema_version == "review-attention-v1"
     assert attention.total == 1
 

@@ -28,6 +28,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.review_web import (
+    OwnerSessionService,
     ReviewWebError,
 )
 from mechanical_librarian.bootstrap.composition import run_review_server
@@ -662,11 +663,109 @@ def test_origin_host_proxy_expiry_and_throttle_fail_closed(
         json={"password": "correct horse"},
     )
     assert throttled.status_code == 429
+    # The five attempts above pin the count the throttle counts to. These two
+    # pin the window it counts over, from both sides: the recorded failures are
+    # still inside a 300-second window at exactly 300 seconds, and outside it
+    # one second later, where the next attempt is refused for the password
+    # rather than for the throttle. The clock is `web.now`, an integer the
+    # composition reads back through the context, so nothing here waits or
+    # measures elapsed time.
+    #
+    # What this cannot see: the window is applied by the store, and the store
+    # here is `FakeReviewRepository`, which mirrors
+    # `adapters/persistence/review_sessions.py::begin_login` rather than being
+    # it. The mutant this kills is in the constants `login` passes, so the two
+    # agreeing about what a window means is an assumption, not a check.
+    web.now += 300
+    inside = web.client.post(
+        "/api/v1/session/login",
+        headers=web.origin,
+        json={"password": "correct horse"},
+    )
+    assert inside.status_code == 429
+    web.now += 1
+    released = web.client.post(
+        "/api/v1/session/login",
+        headers=web.origin,
+        json={"password": "wrong"},
+    )
+    assert released.status_code == 401
     web.repository.failures.clear()
     web.login()
     web.now += 601
     expired = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}")
     assert expired.status_code == 401
+
+
+class _FailingSessionStore:
+    """One session-store port whose login writes fail.
+
+    `login` converts a store fault into `ReviewWebError("persistence")`, and
+    #698 makes that identity the thing the failure reports rather than a
+    generic runtime error. Forcing the fault through a separate implementation
+    of the port keeps it on the boundary `login` must cross, instead of
+    substituting a member on the shared fake -- which would stop reaching the
+    call the moment the store's internals moved.
+    """
+
+    def __init__(self, *, failing_begin: bool) -> None:
+        self._failing_begin = failing_begin
+
+    def begin_login(self, now, window_seconds, maximum_failures):
+        if self._failing_begin:
+            raise RuntimeError("session store unavailable")
+        return True
+
+    def create_review_session(
+        self, session_digest, csrf_digest, created_at, expires_at
+    ):
+        raise RuntimeError("session store unavailable")
+
+
+def _session_service(repository, token: str, requested: list[int]):
+    """One `OwnerSessionService` over a recording token factory and a fixed clock."""
+
+    def token_factory(length: int) -> str:
+        requested.append(length)
+        return token
+
+    return OwnerSessionService(
+        repository,
+        lambda _password: True,
+        lambda: 1_000,
+        600,
+        token_factory=token_factory,
+    )
+
+
+def test_login_pins_the_token_and_password_bounds_it_declares(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    requested: list[int] = []
+    issued = _session_service(web.repository, "a" * 32, requested).login(
+        "correct horse"
+    )
+    # Two tokens, each requested at exactly the declared length, and a token of
+    # exactly the lower bound admitted rather than refused.
+    assert [32, 32] == requested
+    assert 32 == len(issued.session_token) == len(issued.csrf_token)
+
+    for length in (31, 129):
+        with pytest.raises(ReviewWebError) as refused:
+            _session_service(web.repository, "a" * length, []).login("correct horse")
+        assert "runtime" == refused.value.code
+
+    # One byte is inside the declared password length, so it reaches the
+    # verifier rather than being refused for its size.
+    admitted = _session_service(web.repository, "a" * 32, []).login("x")
+    assert 32 == len(admitted.session_token)
+
+    for failing_begin in (True, False):
+        with pytest.raises(ReviewWebError) as unavailable:
+            _session_service(
+                _FailingSessionStore(failing_begin=failing_begin), "a" * 32, []
+            ).login("correct horse")
+        assert "persistence" == unavailable.value.code
 
 
 def test_openapi_is_deterministic_and_secret_free(

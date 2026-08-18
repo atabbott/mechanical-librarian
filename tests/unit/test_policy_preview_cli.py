@@ -186,7 +186,7 @@ def test_canonical_profile_is_delegated_read_only_and_canonical_output() -> None
         )
         before = path.read_bytes()
         output = io.StringIO()
-        calls: list[dict[str, object]] = []
+        calls: list[tuple[object, object, object]] = []
         code = main(
             [
                 "policy-preview",
@@ -197,14 +197,17 @@ def test_canonical_profile_is_delegated_read_only_and_canonical_output() -> None
                 "--profile",
                 str(path),
             ],
-            policy_preview_runner=lambda _config, _database, value: (
-                calls.append(value) or result  # type: ignore[func-returns-value,return-value]  # reason: the `append(...) or value` recorder idiom is deliberate; the recorded profile is a JSON document
+            policy_preview_runner=lambda config, database, value: (
+                calls.append((config, database, value)) or result  # type: ignore[func-returns-value,return-value]  # reason: the `append(...) or value` recorder idiom is deliberate; the recorded profile is a JSON document
             ),
             stdout=output,
             stderr=io.StringIO(),
         )
         assert 0 == code
-        assert [profile] == calls
+        # The two paths are recorded rather than discarded so equality carries
+        # their type: a declaration that stopped converting would deliver the
+        # `str` this invocation passed, and `path != str(path)`.
+        assert [(path, path, profile)] == calls
         assert before == path.read_bytes()
         assert result == json.loads(output.getvalue())
 

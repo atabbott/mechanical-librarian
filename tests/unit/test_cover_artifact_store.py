@@ -32,12 +32,32 @@ def test_require_artifact_needs_the_original_and_preview() -> None:
 
 
 def test_require_artifact_uses_the_cover_pipeline_bound() -> None:
+    """Both sides of the original bound, which is not the preview bound.
+
+    `require_artifact` reads the original under `_MAX_ORIGINAL_BYTES` and the
+    preview under the 1 MiB preview bound, so an original between the two is
+    accepted and one above the larger bound is refused. Only the acceptance was
+    here before, with no assertion at all: the test passed for an original of
+    any size the store happened to admit, and would have kept passing had the
+    original been read under the preview bound instead.
+
+    The evidence for strengthening it is that absence, not a surviving mutant.
+    #737 measured five modules and `cover_artifacts.py` was not among them, so
+    nothing here is backed by a mutation verdict.
+    """
     with tempfile.TemporaryDirectory() as directory:
         original = b"x" * (1_048_576 + 1)
         store = CoverArtifactStore(Path(directory))
         artifact = CoverArtifact.create(original, b"preview", "image/png", 1, 1)
         store.stage(artifact, original, b"preview")
         store.require_artifact(artifact)
+        assert b"preview" == store.preview(artifact)
+
+        oversized = b"y" * (8 * 1024 * 1024 + 1)
+        refused = CoverArtifact.create(oversized, b"preview", "image/png", 1, 1)
+        store.stage(refused, oversized, b"preview")
+        with pytest.raises(MetadataReportError):
+            store.require_artifact(refused)
 
 
 def test_digest_mismatch_fails_closed() -> None:

@@ -1,0 +1,271 @@
+"""Drive mutmut-generated mutants through subprocess pytest runs.
+
+mutmut 3 forks a child per mutant. On darwin that child dies with SIGSEGV
+(mutmut reports every mutant as `segfault`), so the tool's own execution loop
+cannot produce a verdict on this host. Everything else mutmut does still works:
+`mutmut run` writes the trampolined mutant sources under `mutants/` and the
+per-function test selection into `mutants/mutmut-stats.json`. This driver
+reuses both and executes each mutant in a fresh subprocess instead of a fork.
+
+Every verdict is appended to the output as one JSON line and flushed before the
+next mutant starts, so an interrupted run leaves the mutants it already
+executed rather than nothing. A run that finds the output already holding a
+verdict for a mutant skips it, so an interrupted run resumes.
+
+`--max-tests` truncates a mutant's reaching-test set. That is safe for a
+`killed` verdict -- one test failed, and truncation cannot un-fail it -- but it
+is not safe for `survived`, because the killer may be one of the tests the
+truncation dropped. `--survivors-from` re-runs exactly the survivors of an
+earlier pass with no cap, which is the only verdict this driver will call
+unkilled.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+MUTANT = re.compile(r"^[ \t]*def (x.+?__mutmut_\d+)\(", re.MULTILINE)
+
+
+def module_dotted(path: Path, root: Path) -> str:
+    relative = path.relative_to(root / "mutants" / "src")
+    parts = list(relative.parts)
+    if parts[-1] == "__init__.py":
+        parts.pop()
+    else:
+        parts[-1] = parts[-1].removesuffix(".py")
+    return ".".join(parts)
+
+
+def mangled(module: str, mutant: str) -> str:
+    return f"{module}.{mutant.rsplit('__mutmut_', 1)[0]}"
+
+
+def load_lines(path: Path) -> dict[str, dict[str, object]]:
+    if not path.exists():
+        return {}
+    loaded: dict[str, dict[str, object]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        loaded[record["mutant"]] = record
+    return loaded
+
+
+def stale_test_files(root: Path) -> list[Path]:
+    """Return the test files written after the snapshot the driver will use.
+
+    `mutants/tests` and `mutants/mutmut-stats.json` are snapshots taken by
+    `scripts/generate_mutants.py`. Editing a test afterwards and re-running only
+    this driver selects tests from the snapshot, so the new test never executes
+    and the mutants it was written to kill are reported as surviving. That reads
+    exactly like a test that earns nothing, which is the one conclusion this
+    audit exists to draw, so it is refused rather than reported.
+    """
+
+    snapshot = (root / "mutants" / "mutmut-stats.json").stat().st_mtime
+    return sorted(
+        path
+        for path in (root / "tests").rglob("*.py")
+        if path.stat().st_mtime > snapshot
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--root", default=str(ROOT))
+    parser.add_argument("--out", required=True, help="JSON-lines verdict stream")
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--max-tests", type=int, default=40, help="0 means no cap")
+    parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument("--only", default="")
+    parser.add_argument(
+        "--survivors-from",
+        default="",
+        help="re-run only the survivors recorded in this stream, uncapped",
+    )
+    arguments = parser.parse_args()
+
+    root = Path(arguments.root)
+    mutants_root = root / "mutants"
+    if not (mutants_root / "mutmut-stats.json").exists():
+        print(
+            "mutants/mutmut-stats.json is missing -- run scripts/generate_mutants.py",
+            file=sys.stderr,
+        )
+        return 2
+    stale = stale_test_files(root)
+    if stale:
+        print(
+            f"{len(stale)} test file(s) were written after "
+            f"mutants/mutmut-stats.json, so this run would measure the previous "
+            f"suite. Re-run scripts/generate_mutants.py.",
+            file=sys.stderr,
+        )
+        for path in stale[:5]:
+            print(f"  {path.relative_to(root)}", file=sys.stderr)
+        return 2
+    stats = json.loads((mutants_root / "mutmut-stats.json").read_text())
+    tests_by_function = stats["tests_by_mangled_function_name"]
+
+    wanted: set[str] | None = None
+    if arguments.survivors_from:
+        survivors = Path(arguments.survivors_from)
+        if not survivors.exists():
+            # `load_lines` treats a missing stream as empty, which would select
+            # no mutants and exit zero having measured nothing.
+            print(f"--survivors-from names no file: {survivors}", file=sys.stderr)
+            return 2
+        earlier = load_lines(survivors)
+        wanted = {
+            name
+            for name, record in earlier.items()
+            if record["status"] in ("survived", "timeout")
+        }
+
+    work: list[tuple[str, str, list[str]]] = []
+    for path in sorted((mutants_root / "src").rglob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "MUTANT_UNDER_TEST" not in source:
+            continue
+        module = module_dotted(path, root)
+        if arguments.only and arguments.only not in module:
+            continue
+        for name in MUTANT.findall(source):
+            full = f"{module}.{name}"
+            if wanted is not None and full not in wanted:
+                continue
+            key = mangled(module, name)
+            work.append((full, key, sorted(tests_by_function.get(key, ()))))
+
+    if arguments.limit:
+        work = work[: arguments.limit]
+
+    out_path = Path(arguments.out)
+    done = load_lines(out_path)
+    remaining = [item for item in work if item[0] not in done]
+    print(
+        f"{len(work)} mutants in scope; {len(done)} already recorded; "
+        f"{len(remaining)} to run",
+        file=sys.stderr,
+        flush=True,
+    )
+
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(mutants_root / "src")
+    environment.pop("PYTEST_ADDOPTS", None)
+
+    handle = out_path.open("a", encoding="utf-8")
+    write_lock = threading.Lock()
+    started = time.monotonic()
+
+    def record(payload: dict[str, object]) -> None:
+        with write_lock:
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    def run_one(item: tuple[str, str, list[str]]) -> None:
+        full, key, tests = item
+        if not tests:
+            record({"mutant": full, "function": key, "status": "no tests", "tests": 0})
+            return
+        selected = tests if arguments.max_tests == 0 else tests[: arguments.max_tests]
+        child = dict(environment)
+        child["MUTANT_UNDER_TEST"] = full
+        begin = time.monotonic()
+        stdout = ""
+        try:
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pytest",
+                    "-x",
+                    "-q",
+                    "--no-header",
+                    "-p",
+                    "no:cacheprovider",
+                    "--rootdir=.",
+                    *selected,
+                ],
+                cwd=mutants_root,
+                env=child,
+                capture_output=True,
+                text=True,
+                timeout=arguments.timeout,
+            )
+            code = completed.returncode
+            stdout = completed.stdout
+        except subprocess.TimeoutExpired:
+            code = -24
+        if code == 0:
+            status = "survived"
+        elif code in (1, 2, 3):
+            status = "killed"
+        elif code == -24:
+            status = "timeout"
+        elif code == 5:
+            status = "no tests"
+        else:
+            status = f"error:{code}"
+        first_failure = ""
+        if status == "killed":
+            for line in stdout.splitlines():
+                if line.startswith(("FAILED ", "ERROR ")):
+                    first_failure = line.split(" ", 1)[1].split(" ")[0]
+                    break
+        record(
+            {
+                "mutant": full,
+                "function": key,
+                "status": status,
+                "tests": len(selected),
+                "capped": arguments.max_tests != 0 and len(tests) > len(selected),
+                "seconds": round(time.monotonic() - begin, 2),
+                # Under `-x` this names the test that failed first, which is not
+                # the set of tests that would have killed the mutant. It is a
+                # breadcrumb for reading a verdict, never evidence that any
+                # other test kills nothing.
+                "first_failure": first_failure,
+            }
+        )
+
+    with ThreadPoolExecutor(max_workers=arguments.workers) as pool:
+        for index, _ in enumerate(pool.map(run_one, remaining), start=1):
+            if index % 50 == 0:
+                rate = index / (time.monotonic() - started)
+                print(
+                    f"{index}/{len(remaining)}  {rate:.2f}/s  "
+                    f"{(len(remaining) - index) / rate / 60:.0f} min left",
+                    file=sys.stderr,
+                    flush=True,
+                )
+    handle.close()
+
+    counts: dict[str, int] = {}
+    for value in load_lines(out_path).values():
+        counts[str(value["status"])] = counts.get(str(value["status"]), 0) + 1
+    print(json.dumps(counts, sort_keys=True))
+    print(f"elapsed {time.monotonic() - started:.1f}s over {len(remaining)} mutants")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

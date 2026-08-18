@@ -21,7 +21,7 @@
   "branchConcurrentLimit": 5,
   "prHourlyLimit": 2,
   "rangeStrategy": "pin",
-  "rebaseWhen": "behind-base-branch",
+  "rebaseWhen": "conflicted",
   "ignoreTests": false,
   "platformAutomerge": true,
   "automerge": false,
