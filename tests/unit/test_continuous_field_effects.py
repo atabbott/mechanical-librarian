@@ -142,6 +142,56 @@ class _RecoveryApplication:
         return completed
 
 
+class _StuckRecoveryRepository(_Repository):
+    """Pending plans spanning more than one page, none removed by the store."""
+
+    def __init__(self) -> None:
+        self.plans = ["plan-stuck", *(f"plan-{index}" for index in range(150))]
+        self.actions: list[str] = []
+        self.operations = {
+            plan_id: SimpleNamespace(
+                plan=SimpleNamespace(connection="primary", library="alpha")
+            )
+            for plan_id in self.plans
+        }
+
+    def pending_field_effect_plan_ids(self, limit):
+        return tuple(self.plans[:limit])
+
+    def pending_field_effect_action_plan_ids(self, limit):
+        return tuple(self.actions[:limit])
+
+    def next_field_effect_plan_id(self, last_library):
+        return None
+
+
+class _StuckRecoveryApplication(_RecoveryApplication):
+    """Recovery where named plans always fail and so stay pending forever."""
+
+    def __init__(self, repository, stuck: set[str]) -> None:
+        super().__init__(repository)
+        self.cleanups = 0
+        self.stuck = stuck
+        self.attempted: list[str] = []
+
+    def apply(self, plan_id):
+        self.attempted.append(plan_id)
+        if plan_id in self.stuck:
+            raise GuardedApplicationError("authority")
+        return super().apply(plan_id)
+
+
+class _StallingRecoveryApplication(_RecoveryApplication):
+    """Recovery that reports success while leaving every plan pending."""
+
+    def __init__(self, repository) -> None:
+        super().__init__(repository)
+        self.cleanups = 0
+
+    def apply(self, plan_id):
+        return self.repository.operations[plan_id]
+
+
 class _PagedRepository:
     def __init__(self, decisions) -> None:
         self.decisions = decisions
@@ -401,6 +451,31 @@ def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> N
     )
 
     assert 0 == service.schedule()
+    assert repository.retired == [(decision.decision_id, 102)]
+
+    class FaultedAuthority:
+        def resolve(self, _decision):
+            raise FieldEffectError("persistence")
+
+    faulted = ContinuousGuardedApplication(
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "beta"): _Planner()},
+        ),
+        {("primary", "beta"): _AllowedCapability()},
+        FaultedAuthority(),
+        (("primary", "beta"),),
+        lambda: 103,
+        lambda *_: None,
+    )
+
+    # Drift retires the selection; a storage fault must not. It says nothing
+    # about the binding, so it propagates rather than writing a stale cover
+    # event and swallowing itself.
+    with pytest.raises(FieldEffectError) as raised:
+        faulted.schedule()
+    assert raised.value.code == "persistence"
     assert repository.retired == [(decision.decision_id, 102)]
 
 
@@ -861,6 +936,62 @@ def test_enable_rejects_a_stale_visible_destination_subset() -> None:
         service.enable((("alpha", ("title",)),))
 
     assert repository.grants is None
+
+
+def _readiness_service(repository, authority) -> ContinuousGuardedApplication:
+    return ContinuousGuardedApplication(
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        authority,
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+    )
+
+
+def test_a_readiness_storage_fault_is_neither_absorbed_nor_cached() -> None:
+    decision = _decisions(1)[0]
+
+    class Repository(_PagedRepository):
+        def field_effect_activity_data(self, _):
+            return {
+                "consented_destinations": [],
+                "events": [],
+                "paused": False,
+                "suspensions": [],
+            }
+
+    truthful = _readiness_service(Repository([decision]), _Authority())
+    expected = truthful.activity()["capabilities"]
+
+    class FaultingOnceAuthority:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.healthy = _Authority()
+
+        def resolve(self, decision):
+            self.calls += 1
+            if self.calls == 1:
+                raise FieldEffectError("persistence")
+            return self.healthy.resolve(decision)
+
+    authority = FaultingOnceAuthority()
+    service = _readiness_service(Repository([decision]), authority)
+
+    with pytest.raises(FieldEffectError) as raised:
+        service.activity()
+    assert raised.value.code == "persistence"
+
+    # The clock never advances, so anything written to the 30-second capability
+    # cache under the fault would be served to every later caller. A library
+    # with no representative reports `not_ready` on every destination, so
+    # absorbing the fault would have cached a confident false negative.
+    assert service.activity()["capabilities"] == expected
+    assert expected[0]["state"] == "allowed"
 
 
 def test_activity_exposes_incremental_consent_for_a_partially_enabled_library() -> None:
@@ -1338,10 +1469,8 @@ def _decisions(count: int):
     return [make_decision(index) for index in range(1, count + 1)]
 
 
-def test_restart_recovery_drains_more_than_one_bounded_page() -> None:
-    repository = _RecoveryRepository()
-    application = _RecoveryApplication(repository)
-    service = ContinuousGuardedApplication(
+def _recovery_service(repository, application) -> ContinuousGuardedApplication:
+    return ContinuousGuardedApplication(
         repository,
         cast(
             "dict[tuple[str, str], GuardedFieldApplication]",
@@ -1356,10 +1485,53 @@ def test_restart_recovery_drains_more_than_one_bounded_page() -> None:
         lambda: 1,
         lambda *_: None,
     )
+
+
+def test_restart_recovery_drains_more_than_one_bounded_page() -> None:
+    repository = _RecoveryRepository()
+    application = _RecoveryApplication(repository)
+    service = _recovery_service(repository, application)
     recovered, actions, cleanups = service.start()
     service.begin_drain()
     assert (recovered, actions, cleanups) == (205, 205, 205)
     assert (repository.plans, repository.actions, application.cleanups) == ([], [], 0)
+
+
+def test_unrecoverable_plans_neither_stop_nor_falsely_stall_restart_recovery() -> None:
+    repository = _StuckRecoveryRepository()
+    application = _StuckRecoveryApplication(repository, {"plan-stuck", "plan-77"})
+    service = _recovery_service(repository, application)
+
+    with pytest.raises(ExceptionGroup) as raised:
+        service.start()
+
+    # Both failures reach the caller as themselves. Neither is the non-progress
+    # guard, which a plan left pending by its own failure would otherwise trip
+    # on the next page and turn back into a whole-batch abort.
+    assert [getattr(error, "code", None) for error in raised.value.exceptions] == [
+        "authority",
+        "authority",
+    ]
+    # Every other plan was recovered, across more than one page, behind them.
+    assert repository.plans == ["plan-stuck", "plan-77"]
+    assert len(application.attempted) == 151
+    assert application.attempted.count("plan-stuck") == 1
+    assert service._thread is None
+
+
+def test_restart_recovery_that_advances_no_plan_still_fails_the_guard() -> None:
+    repository = _StuckRecoveryRepository()
+    application = _StallingRecoveryApplication(repository)
+    service = _recovery_service(repository, application)
+
+    with pytest.raises(GuardedApplicationError) as raised:
+        service.start()
+
+    # Nothing failed and nothing advanced: the page repeats, and that is still
+    # refused rather than looped on forever.
+    assert raised.value.code == "recovery"
+    assert len(repository.plans) == 151
+    assert service._thread is None
 
 
 def test_fair_selection_and_instance_wide_mutation_slot() -> None:

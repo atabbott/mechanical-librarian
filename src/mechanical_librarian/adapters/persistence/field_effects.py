@@ -469,6 +469,15 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             raise FieldEffectError("persistence") from error
 
     def field_effect_consent_is_current(self, consent: EffectConsent) -> bool:
+        try:
+            return self._consent_is_current(consent)
+        except sqlite3.Error as error:
+            # Same shape as the authority currentness seam: `False` means the
+            # consent was withdrawn and stales the plan under `consent`, so a
+            # storage fault has to raise rather than answer for it.
+            raise FieldEffectError("persistence") from error
+
+    def _consent_is_current(self, consent: EffectConsent) -> bool:
         persisted = self._connection.execute(
             "SELECT current FROM field_effect_consents WHERE consent_id=?",
             (consent.consent_id,),

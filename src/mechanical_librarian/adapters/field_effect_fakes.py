@@ -20,6 +20,7 @@ from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
+    FieldEffectError,
     FieldEffectPlan,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
@@ -215,7 +216,14 @@ class FakeConsentCurrentness:
     def resolve(
         self, *, connection: str, library: str, destination: str
     ) -> EffectConsent:
-        return self.allowed[(connection, library, destination, "apply_field")]
+        consent = self.allowed.get((connection, library, destination, "apply_field"))
+        if consent is None:
+            # The persisted resolver names an ungranted consent `consent`, and
+            # a double that instead raised a bare `KeyError` would exercise the
+            # unnamed-failure fallback while reading like a refusal -- hiding
+            # which of the two a caller actually gets.
+            raise FieldEffectError("consent")
+        return consent
 
     def current(self, consent: EffectConsent) -> bool:
         return (

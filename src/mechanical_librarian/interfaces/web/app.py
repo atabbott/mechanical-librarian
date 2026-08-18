@@ -62,6 +62,47 @@ from mechanical_librarian.interfaces.web.react_assets import (
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _COOKIE_NAME = "ml_session"
 
+# The rule these seven were chosen by:
+#
+#   409 — the current recorded state refuses this effect; a decision changes it.
+#   503 — the machinery could not answer; time or repair changes it.
+#
+# A suspended capability, a revoked authority and a withdrawn consent are
+# permanent refusals an owner resolves and a retry never does, which is what
+# RFC 9110 gives 409 for, so they sit with the state gates that already meant
+# exactly that. `persistence` is the machinery failing to answer and stays 503.
+# 403 was rejected: it would read plan-level consent as session-level auth.
+#
+# The rule decides these seven; it has not been applied to the whole guarded
+# vocabulary, and saying otherwise would be the confident half-truth this set
+# exists to remove. What is settled, and what is not:
+#
+#   Not reachable here. `authority_binding` and `claimed` look state-shaped but
+#   no callable `field_effect_call` wraps can raise them -- the first is a
+#   planning code and planning runs on the scheduler, the second belongs to
+#   `abandon`, which no route calls. Their status is not a live question.
+#   The `_stale` reasons (`dependency`, `target_changed`, ...) are not errors at
+#   all: they are recorded on a 200 response, never raised.
+#
+#   Reachable and open. `manual_hold` is a refusal but reads as plausibly 404
+#   as 409; `not_ready` is changed by a scan as much as by a decision; and
+#   `enable`/`revoke` raise `consent` for malformed input, where 409 asserts a
+#   state conflict about an argument the caller simply got wrong. The `invalid_*`
+#   family answers 503 though it is client-shaped. None was reclassified here:
+#   each needs a decision this change did not take.
+# (#678)
+_FIELD_EFFECT_STATE_CONFLICT = frozenset(
+    {
+        "authority",
+        "capability",
+        "claim_conflict",
+        "consent",
+        "draining",
+        "paused",
+        "transition_conflict",
+    }
+)
+
 _Result = TypeVar("_Result")
 _SessionDependency: TypeAlias = Callable[[Request, str | None], str]
 
@@ -1918,8 +1959,7 @@ def _register_case_and_effect_routes(
                 404
                 if code == "not_found"
                 else 409
-                if code
-                in {"claim_conflict", "transition_conflict", "draining", "paused"}
+                if code in _FIELD_EFFECT_STATE_CONFLICT
                 else 503
             )
             raise HTTPException(status_code, detail={"code": code}) from None
