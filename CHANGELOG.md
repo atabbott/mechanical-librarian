@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Make Library browsing reversible and every work reachable: the row is one
+  whole target, the bounded window walks both ways from a stated page, search
+  narrows as it is typed, and a work with no review case opens to its values
+  and its sources. Policy stops reporting an activation the owner never made,
+  names a fresh container's seeded profile the active baseline, and returns
+  every surface to a clean draft on exact revert. (#642, #643)
 - Let the type gate catch a test that binds a double into a port the double
   does not satisfy. `arg-type` is enforced for `tests/` and `scripts/` rather
   than suppressed, re-arming the guards written against it — one passed

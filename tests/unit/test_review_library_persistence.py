@@ -23,7 +23,10 @@ from mechanical_librarian.application.review_application import (
     ReviewApplicationError,
 )
 from mechanical_librarian.application.review_web import (
+    BrowseReviewLibrary,
     InspectCurrentReviewCase,
+    _library_item,
+    _provider_comparison_notices,
     _provider_outcomes,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -79,9 +82,9 @@ def test_terminal_provider_taxonomy_projects_closed_safe_outcomes() -> None:
         ),
     )
     outcomes = _provider_outcomes(report)
-    assert {outcome["status"] for outcome in outcomes} == (
-        {status.value for status in statuses} - {"disabled", "insufficient_input"}
-    )
+    assert {outcome["status"] for outcome in outcomes} == {
+        status.value for status in statuses
+    }
     assert all(
         set(outcome)
         == {"lane_kind", "provider", "provider_requests", "reason", "status"}
@@ -100,6 +103,103 @@ def test_terminal_provider_taxonomy_projects_closed_safe_outcomes() -> None:
         ),
     )
     assert len(_provider_outcomes(many)) == 33
+
+
+def test_every_lane_is_reported_but_only_limiting_ones_become_notices() -> None:
+    """The source ledger and the comparison notices read the same lanes.
+
+    Both surfaces call `_provider_outcomes`. Reporting every lane so an owner
+    can tell a match from a source that was never asked is only safe while the
+    notices keep filtering: without that filter a match and a disabled source
+    were both announced as limitations of the comparison.
+    """
+
+    source = _report()
+    report = MetadataReport.create(
+        target=source.target,
+        file=source.file,
+        local_claims=source.local_claims,
+        local_reasons=source.local_reasons,
+        providers=(
+            _proposal_provider(
+                "google-books-main", "gb-1", (), authority="google_books"
+            ),
+            ProviderObservation(
+                "hardcover-main", ProviderStatus.DISABLED, authority="hardcover"
+            ),
+            ProviderObservation(
+                "open-library-main",
+                ProviderStatus.INSUFFICIENT_INPUT,
+                authority="open_library",
+            ),
+            ProviderObservation(
+                "private-connection", ProviderStatus.NO_MATCH, authority="hardcover"
+            ),
+        ),
+    )
+    assert [outcome["status"] for outcome in _provider_outcomes(report)] == [
+        "candidates",
+        "disabled",
+        "insufficient_input",
+        "no_match",
+    ]
+    assert _provider_comparison_notices(report) == [
+        "Provider limitation: Hardcover — Returned no matching metadata, so nothing was retained.",
+    ]
+
+
+def test_a_work_with_no_review_case_projects_its_current_values_and_reason() -> None:
+    report = _report()
+    item = _library_item(None, report.to_json(), ())
+    summary = item["summary"]
+    assert type(summary) is dict
+    assert summary["state"] == "no_decision_recorded"
+    assert "No review decision is recorded" in str(summary["reason"])
+    assert summary["fields"] == report.target.to_data()["fields"]
+    # A work that does have a case is opened through its decision surface, so
+    # the row carries no second projection of the same values.
+    case = ReviewCase.create(evaluate_report(report), report)
+    assert _library_item(case.to_json(), report.to_json(), ())["summary"] is None
+
+
+def test_bounded_browse_names_the_page_and_walks_it_in_both_directions() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "review.sqlite")
+        for index in range(5):
+            source = _report(title=f"Work {index:02d}")
+            repository.publish(
+                MetadataReport.create(
+                    target=TargetFacts(
+                        "primary", "ebooks", f"work-{index:02d}", source.target.fields
+                    ),
+                    file=source.file,
+                    local_claims=source.local_claims,
+                    local_reasons=source.local_reasons,
+                    providers=source.providers,
+                ),
+                lambda: True,
+            )
+        browse = BrowseReviewLibrary(repository)
+        first = browse.library(lens="all", search=None, limit=2, cursor=None)
+        assert (first["page"], first["previous_cursor"]) == (1, None)
+        assert first["next_cursor"] is not None
+        second = browse.library(
+            lens="all", search=None, limit=2, cursor=str(first["next_cursor"])
+        )
+        assert second["page"] == 2
+        assert second["previous_cursor"] is not None
+        third = browse.library(
+            lens="all", search=None, limit=2, cursor=str(second["next_cursor"])
+        )
+        assert (third["page"], third["next_cursor"]) == (3, None)
+        # The backward step is the same bounded window, and the first page has
+        # nothing before it to name.
+        back = browse.library(
+            lens="all", search=None, limit=2, cursor=str(second["previous_cursor"])
+        )
+        assert (back["page"], back["previous_cursor"]) == (1, None)
+        assert back["items"] == first["items"]
+        repository.close()
 
 
 def test_fifty_mixed_packages_and_failures_share_one_bounded_browse_window() -> None:
@@ -254,6 +354,13 @@ def test_terminal_failed_work_is_library_only_and_safe() -> None:
         "status": "authentication",
     }
     assert item["preparation_outcomes"] == []
+    # A work whose preparation failed has no values to show, so its summary
+    # names the condition instead of presenting an empty record.
+    assert item["summary"] == {
+        "fields": [],
+        "reason": "Provider credentials need owner attention.",
+        "state": "preparation_failed",
+    }
     assert "credential unavailable" not in json.dumps(item)
 
 

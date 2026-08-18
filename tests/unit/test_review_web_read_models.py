@@ -1240,9 +1240,11 @@ def test_provider_comparison_notices_keep_only_safe_material_failures(
             ProviderObservation("private-connection", ProviderStatus.UNAVAILABLE),
         ),
     )
+    # A disabled source limited nothing, and each remaining status now names the
+    # consequence the owner can act on rather than one anonymous sentence.
     assert _provider_comparison_notices(report) == [
-        "Provider limitation: Open Library — Provider returned no matching metadata.",
-        "Provider limitation: Provider (name unavailable) — Provider returned a bounded terminal status.",
+        "Provider limitation: Open Library — Returned no matching metadata, so nothing was retained.",
+        "Provider limitation: Provider (name unavailable) — Could not be reached; a bounded retry is scheduled.",
     ]
     affected_case = ReviewCase.create(evaluate_report(report), report)
     projected = InspectCurrentReviewCase(
@@ -1270,7 +1272,7 @@ def test_provider_comparison_notices_keep_only_safe_material_failures(
             ),
         )
         assert [
-            "Provider limitation: Provider (name unavailable) — Provider returned a bounded terminal status.",
+            "Provider limitation: Provider (name unavailable) — Could not be reached; a bounded retry is scheduled.",
         ] == _provider_comparison_notices(spoofed)
 
 

@@ -12,10 +12,13 @@ import { createApplicationRouter } from '../src/router'
 
 export const library: LibraryView = {
   lens: 'all',
+  page: 1,
   counts: { attention: 1, all: 1, clear: 0 },
   works: [{
     id: 'case-1',
     reviewCaseId: 'case-1',
+    workId: 'library_work_1',
+    summary: null,
     title: 'A Book',
     authors: [],
     library: 'Books',

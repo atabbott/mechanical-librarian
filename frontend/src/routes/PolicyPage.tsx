@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 import {
   AmbiguousMutationError,
@@ -11,6 +11,7 @@ import {
 import type {
   PolicyActivationView,
   PolicyDraft,
+  PolicyFieldDefault,
   PolicyPreviewView,
   PolicySection,
   PolicyTransitionView,
@@ -382,6 +383,16 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
   },
 }
 
+// The one resolution of "what this field says when the document is silent".
+// The dirty comparison and the chapter badges both read it, so they cannot
+// disagree about whether a draft matches the active policy.
+const fieldDefaults: Readonly<Record<string, PolicyFieldDefault>> = Object.fromEntries(
+  fields.map((field) => [
+    field.key,
+    { destination: field.unsupported ? 'unsupported' : 'ask', option: field.options[0] ?? '' },
+  ]),
+)
+
 const chapters: readonly { key: PolicySection; label: string; description: string }[] = [
   {
     key: 'identity',
@@ -580,30 +591,14 @@ const automaticQualified = (
     ? rich.automatic_available
     : field.automatic && !(field.key === 'publisher_preference' && option === 'imprint')
 }
-const qualificationExplanation = (
-  field: FieldDefinition,
-  option: string,
-  qualification: readonly {
-    readonly automatic_available: boolean
-    readonly disposition: string
-    readonly field: string
-    readonly option: string
-  }[],
-) => {
-  const rich = qualification.find((entry) => entry.field === field.key && entry.option === option)
-  if (!rich)
-    return field.automatic
-      ? undefined
-      : 'Manual review only: Automatic is not qualified for this representation.'
-  if (rich.automatic_available) return undefined
-  if (rich.disposition === 'policy_only')
-    return 'Manual review only: this policy option is intentionally off.'
-  if (rich.disposition === 'passing_human_only')
-    return 'Manual review only: this field remains unsupported.'
-  if (rich.disposition === 'not_qualified')
-    return 'Manual review only: this representation did not meet Automatic qualification.'
-  return 'Manual review only: this representation has insufficient Automatic qualification coverage.'
-}
+// The disclosure lists one consequence per representation. The catalogue's
+// admitted/transformation halves are qualification mechanics; the owner is
+// choosing between outcomes, so the effect and what happens when it cannot
+// apply are the two sentences that belong on the line.
+const representationConsequence = (guidance: RepresentationGuidance | undefined) =>
+  guidance === undefined
+    ? 'No owner-readable consequence is recorded for this representation.'
+    : `${guidance.effect.slice(0, 1).toUpperCase()}${guidance.effect.slice(1)}; ${guidance.fallback}.`
 
 const Check = () => (
   <svg aria-hidden="true" viewBox="0 0 24 24">
@@ -628,7 +623,11 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const [status, setStatus] = useState<{
     tone: 'neutral' | 'success' | 'error' | 'warning'
     message: string
-  }>({ tone: 'neutral', message: 'Draft is separate from the active policy.' })
+  }>({ tone: 'neutral', message: 'Draft matches active policy.' })
+  // The completion acknowledgement belongs to the activation this page
+  // performed. Anything the owner still has to act on -- work in flight, or a
+  // failure to retry -- is shown whoever is looking.
+  const [activatedTransitionId, setActivatedTransitionId] = useState<string>()
   const shadow = data.shadow
   const safety = data.safety
   const sample = useQuery({
@@ -669,7 +668,12 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     setPreviewActivePolicyId(undefined)
     setPreview(undefined)
     setStage('editing')
-    setStatus({ tone: 'neutral', message: 'Draft has unreviewed changes.' })
+    setStatus({
+      tone: 'neutral',
+      message: derivePolicyDraftDisplay(data.state, next, fieldDefaults).changed
+        ? 'Draft has unreviewed changes.'
+        : 'Draft matches active policy.',
+    })
   }
   const runAuxiliary = async (action: string, body?: unknown) => {
     setStatus({ tone: 'neutral', message: 'Updating policy state…' })
@@ -761,6 +765,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       })
       if (!isPolicyActivation(result, snapshotId))
         throw new ApiError(502, 'invalid_policy_activation_response')
+      setActivatedTransitionId(result.transition?.transition_id)
       setStage('activated')
       setStatus({
         tone: 'success',
@@ -818,13 +823,14 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     )
   }
   const automaticAllowed = shadow.posture === 'preview' || shadow.posture === 'automatic'
-  const draftDisplay = derivePolicyDraftDisplay(data.state, draft)
+  const draftDisplay = derivePolicyDraftDisplay(data.state, draft, fieldDefaults)
   const fieldChanged = (field: FieldDefinition) => {
-    const activeOption = data.state.profile.options[field.key] ?? field.options[0] ?? ''
+    const fallback = fieldDefaults[field.key]
+    const activeOption = data.state.profile.options[field.key] ?? fallback?.option ?? ''
     const activeDestination =
-      data.state.profile.destinations[field.key] ?? (field.unsupported ? 'unsupported' : 'ask')
-    const option = draft.options[field.key] ?? field.options[0] ?? ''
-    const destination = draft.destinations[field.key] ?? (field.unsupported ? 'unsupported' : 'ask')
+      data.state.profile.destinations[field.key] ?? fallback?.destination ?? 'ask'
+    const option = draft.options[field.key] ?? fallback?.option ?? ''
+    const destination = draft.destinations[field.key] ?? fallback?.destination ?? 'ask'
     return activeOption !== option || activeDestination !== destination
   }
   const changedFields = fields.filter(fieldChanged)
@@ -873,12 +879,31 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         : undefined,
     [preview, previewRows],
   )
-  const transitionCopy =
-    transition.data && !transition.data.acknowledged
-      ? transition.data.state === 'processing'
-        ? `Applying updated policy · ${String(transition.data.completed)} of ${String(transition.data.total)}`
-        : `${transition.data.failed ? 'Completed with failures' : 'Policy update complete'} · ${String(transition.data.completed)} of ${String(transition.data.total)}`
+  // A fresh container carries a seeded generation-1 row so the baseline has a
+  // durable identity. It is not an activation, and reporting it as one told the
+  // owner they had completed a policy update of zero items they never started.
+  const baselinePolicy = transition.data?.origin === 'baseline'
+  const ownerActivation =
+    transition.data && !baselinePolicy && !transition.data.acknowledged
+      ? transition.data
       : undefined
+  // Work still running and a failure still to retry are the owner's whoever is
+  // looking. A clean completion acknowledges one activation, so it is shown to
+  // the session that performed it and expires with that session.
+  const activationNotice =
+    ownerActivation &&
+    (ownerActivation.state === 'processing' ||
+      ownerActivation.failed > 0 ||
+      ownerActivation.transition_id === activatedTransitionId)
+      ? ownerActivation
+      : undefined
+  const editorRef = useRef<HTMLDivElement>(null)
+  const trayRef = useRef<HTMLElement>(null)
+  const transitionCopy = activationNotice
+    ? activationNotice.state === 'processing'
+      ? `Applying updated policy · ${String(activationNotice.completed)} of ${String(activationNotice.total)}`
+      : `${activationNotice.failed ? 'Completed with failures' : 'Policy update complete'} · ${String(activationNotice.completed)} of ${String(activationNotice.total)}`
+    : undefined
 
   useEffect(() => {
     const frame = requestAnimationFrame(() =>
@@ -886,6 +911,30 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     )
     return () => cancelAnimationFrame(frame)
   }, [activeChapter])
+
+  // The sticky tray spans both columns, so the sidebar must stop above it or
+  // the tray covers the safety controls at the bottom of the left column. The
+  // tray's height is content-dependent (stage copy, reflow, zoom) and the page
+  // keeps a tail below the editor, so the reserve is measured rather than
+  // guessed; the stylesheet subtracts it from the sidebar's bounded height.
+  useLayoutEffect(() => {
+    const editor = editorRef.current
+    const tray = trayRef.current
+    if (!editor || !tray) return undefined
+    const measure = () => {
+      const bottom = editor.getBoundingClientRect().bottom + window.scrollY
+      const tail = Math.max(document.documentElement.scrollHeight - bottom, 0)
+      editor.style.setProperty(
+        '--policy-tray-reserve',
+        `${String(Math.ceil(tray.offsetHeight + tail + 24))}px`,
+      )
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => {
+      window.removeEventListener('resize', measure)
+    }
+  })
 
   const completedValidate = stage === 'preview' || stage === 'activation' || stage === 'activated'
   const completedPreview = stage === 'activation' || stage === 'activated'
@@ -914,7 +963,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             ? 'Checking every chapter, Automatic qualification, and exact library scope.'
             : draftDisplay.changed
               ? `Changes in ${changedChapterLabels.join(', ')} · validation always checks and saves the complete draft.`
-              : 'Every chapter is included. Change a field mode or representation to create a new draft.'
+              : 'Change any field to create a new draft — validation always covers the whole policy.'
 
   return (
     <div className="cm-policy-route" data-route-focus tabIndex={-1}>
@@ -931,13 +980,14 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               : 'Draft matches active policy'}
         </span>
       </header>
-      <div className="cm-policy-editor">
+      <div className="cm-policy-editor" ref={editorRef}>
         <aside className="cm-policy-sidebar">
           <header>
-            <span>Active policy</span>
             <strong>{data.state.profile.name}</strong>
             <small>
-              {draftDisplay.changed ? 'Draft has unreviewed changes' : 'Draft matches active'}
+              {`${baselinePolicy ? 'Active baseline' : 'Active policy'} · ${
+                draftDisplay.changed ? 'draft has unreviewed changes' : 'draft matches active'
+              }`}
             </small>
           </header>
           {transitionCopy ? (
@@ -1058,22 +1108,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               const destination =
                 draft.destinations[field.key] ?? (field.unsupported ? 'unsupported' : 'ask')
               const qualified = automaticQualified(field, option, data.state.rich_qualification)
-              const explanation = qualificationExplanation(
-                field,
-                option,
-                data.state.rich_qualification,
-              )
-              const guidance = policyRepresentationGuidance[`${field.key}:${option}`]
               const automaticAvailable = qualified && automaticAllowed
-              const qualificationLabel =
-                explanation ??
-                (field.key === 'cover_order'
-                  ? 'Review context'
-                  : automaticAvailable
-                    ? 'Qualified Automatic context'
-                    : qualified
-                      ? 'Enter Preview for Automatic'
-                      : 'Policy preview context')
               const changed = fieldChanged(field)
               return (
                 <section
@@ -1087,14 +1122,28 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       {changed ? <small>Draft changed</small> : null}
                     </span>
                     <p>{field.meaning}</p>
+                    <details className="cm-policy-field-guidance">
+                      <summary>What this changes</summary>
+                      <ul>
+                        {field.options.map((value) => (
+                          <li key={value}>
+                            <strong>{field.optionLabels[value] ?? value}:</strong>{' '}
+                            <span>
+                              {representationConsequence(
+                                policyRepresentationGuidance[`${field.key}:${value}`],
+                              )}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
                   </header>
                   {field.unsupported ? (
                     <div className="cm-policy-unavailable">
                       <strong>Unsupported destination</strong>
                       <span>
                         This field is shown for context only. It has no review mode or
-                        representation choice, so it cannot be changed in this draft.{' '}
-                        {qualificationLabel}
+                        representation choice, so it cannot be changed in this draft.
                       </span>
                     </div>
                   ) : (
@@ -1102,9 +1151,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       <div className="cm-policy-mode-control">
                         <span className="cm-policy-control-heading">
                           <strong>Review mode</strong>
-                          <small className={automaticAvailable ? 'is-qualified' : ''}>
-                            {qualificationLabel}
-                          </small>
+                          {automaticAvailable ? null : <small>Automatic mode not supported</small>}
                         </span>
                         <div
                           className="cm-policy-posture"
@@ -1115,7 +1162,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                             type="button"
                             aria-pressed={destination === 'automatic'}
                             disabled={command.isPending || !automaticAvailable}
-                            title={qualificationLabel}
                             onClick={() =>
                               editDraft({
                                 ...draft,
@@ -1182,22 +1228,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                               })
                           }}
                         />
-                        {guidance ? (
-                          <small className="cm-policy-representation-guidance">
-                            <strong>
-                              {automaticAvailable
-                                ? 'Qualified Automatic context'
-                                : field.key === 'cover_order'
-                                  ? 'Review context'
-                                  : 'Policy preview context'}
-                              :
-                            </strong>{' '}
-                            {guidance.admitted}; {guidance.transformation}; {guidance.effect};{' '}
-                            {guidance.fallback}. <strong>Ask me:</strong> applies the exact
-                            displayed proposal; the representation does not transform that
-                            owner-selected proposal.
-                          </small>
-                        ) : null}
                         {destination === 'automatic' && !qualified ? (
                           <small className="cm-policy-representation-consequence">
                             This representation is Manual review only. Selecting it changes review
@@ -1215,9 +1245,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         <section
           className={`cm-policy-finish stage-${stage}`}
           aria-label="Whole policy draft impact and activation"
+          ref={trayRef}
         >
           <div className="cm-policy-impact-summary" aria-live="polite">
-            <small>Whole policy draft · 4 chapters · 14 fields</small>
             <strong>{finishTitle}</strong>
             <span>{finishDetail}</span>
           </div>
@@ -1460,37 +1490,35 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       >
         {status.message}
       </p>
-      {transition.data && !transition.data.acknowledged ? (
+      {activationNotice ? (
         <section className="policy-cutover" aria-label="Policy activation progress">
           <h2>
-            {transition.data.state === 'processing'
+            {activationNotice.state === 'processing'
               ? 'Applying updated policy'
-              : transition.data.failed
+              : activationNotice.failed
                 ? 'Activation completed with failures'
                 : 'Activation complete'}
           </h2>
           <p>
-            {String(transition.data.completed)} of {String(transition.data.total)} current unapplied
-            items reconciled. Applied history is untouched.
+            {String(activationNotice.completed)} of {String(activationNotice.total)} current
+            unapplied items reconciled. Applied history is untouched.
           </p>
           <div className="policy-workflow-actions">
-            {transition.data.failed ? (
+            {activationNotice.failed ? (
               <button
                 disabled={command.isPending}
                 onClick={() =>
-                  void runAuxiliary(`transitions/${transition.data?.transition_id ?? ''}/retry`)
+                  void runAuxiliary(`transitions/${activationNotice.transition_id}/retry`)
                 }
               >
                 Retry failed reconciliation
               </button>
             ) : null}
-            {transition.data.state !== 'processing' ? (
+            {activationNotice.state !== 'processing' ? (
               <button
                 disabled={command.isPending}
                 onClick={() =>
-                  void runAuxiliary(
-                    `transitions/${transition.data?.transition_id ?? ''}/acknowledge`,
-                  )
+                  void runAuxiliary(`transitions/${activationNotice.transition_id}/acknowledge`)
                 }
               >
                 Dismiss update

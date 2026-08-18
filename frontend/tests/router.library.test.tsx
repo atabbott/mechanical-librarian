@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '../src/api/http'
+import { sourceStatusLabel } from '../src/routes/LibraryPage'
 import type { AttentionSearch, CaseDetailView, LibrarySearch, LibraryView, ReviewHttp } from '../src/api/http'
 import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
 import { createHttp, detail, library, renderRoute } from './fixtures'
@@ -28,7 +29,7 @@ describe('Library route', () => {
 
   it('keeps the selected-work header as the only Library route-focus target', async () => {
     renderRoute('/library?lens=all&preview=case-1&field=title')
-    expect(await screen.findByText('Progressive detail')).toBeVisible()
+    expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
     const targets = document.querySelectorAll('[data-route-focus]')
     expect(targets).toHaveLength(1)
     expect(targets[0]).toHaveClass('selected-work-header')
@@ -41,15 +42,14 @@ describe('Library route', () => {
 
     expect(await screen.findByRole('heading', { name: 'Every work, with exceptions first' })).toBeVisible()
     expect(http.getLibrary).toHaveBeenCalledWith({ lens: 'all', q: 'title' }, expect.any(AbortSignal))
-    await user.click(screen.getByRole('button', { name: 'A Book' }))
-    expect(await screen.findByText('Progressive detail')).toBeVisible()
-    expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /^A Book\./u }))
+    expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
     expect(screen.queryByText('item-1')).toBeNull()
     expect(screen.getByText('Author details unavailable · Books · ebook')).toBeVisible()
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
   })
 
-  it('keeps bounded provider outcomes and failed preparation inspectable in Library', async () => {
+  it('opens a current summary and its source ledger for a work with no review case', async () => {
     const firstWork = library.works[0]
     if (!firstWork) throw new Error('library fixture requires one work')
     const baseWork = { ...firstWork }
@@ -61,17 +61,117 @@ describe('Library route', () => {
       attentionCount: 0,
       attention: 'no_attention_needed',
       preparation: { attempt: 1, provider: 'hardcover-main', reason: 'Provider credentials need owner attention.', recovery: 'Retry review preparation after correcting the reported condition.', recoveryAttempt: 0, stage: 'provider', status: 'authentication' },
-      preparationOutcomes: [{ providerRequests: 1, laneKind: 'work', provider: 'hardcover-main', reason: 'Provider credentials need owner attention.', status: 'authentication' }],
+      preparationOutcomes: [{ providerRequests: 1, laneKind: 'work', provider: 'hardcover-main', reason: 'Refused the credentials it was given; nothing was retained.', status: 'authentication' }],
+      summary: { state: 'preparation_failed', reason: 'Provider credentials need owner attention.', fields: [] },
     }
-    const http: ReviewHttp = { ...createHttp(), getLibrary: vi.fn(async () => ({ lens: 'all' as const, counts: { attention: 0, all: 1, clear: 1 }, works: [failed] })) }
+    const http: ReviewHttp = { ...createHttp(), getLibrary: vi.fn(async () => ({ lens: 'all' as const, page: 1, counts: { attention: 0, all: 1, clear: 1 }, works: [failed] })) }
     renderRoute('/library?lens=all', http)
 
     expect(await screen.findByText('Preparation failed safely')).toBeVisible()
-    await userEvent.click(screen.getByText('Preparation needs owner recovery'))
-    const outcomes = screen.getByText('Preparation needs owner recovery').closest('details')
-    expect(outcomes).toHaveTextContent('Authentication at Provider')
-    expect(outcomes).toHaveTextContent('hardcover-main · Work · Authentication · 1 bounded provider request')
-    expect(screen.queryByRole('button', { name: 'Preparation unavailable' })).toBeNull()
+    // The card carries no provider disclosure of its own any more.
+    expect(document.querySelector('.library-work-list details')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: /^Preparation unavailable\./u }))
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'Preparation unavailable' })).toBeVisible()
+    expect(screen.getByText('Provider credentials need owner attention.')).toBeVisible()
+    expect(screen.getByText('Authentication at Provider')).toBeVisible()
+    const sources = screen.getByText('Sources').closest('details')
+    expect(sources).not.toHaveAttribute('open')
+    expect(sources).toHaveTextContent('Provider failure')
+    expect(sources).toHaveTextContent('Refused the credentials it was given; nothing was retained.')
+    expect(sources).toHaveTextContent('Work lookup · 1 bounded request')
+  })
+
+  it('keeps an open case-less work open when a search hides its card', async () => {
+    const user = userEvent.setup()
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const orphan = { ...firstWork }
+    delete orphan.reviewCaseId
+    const listed = {
+      ...orphan, id: 'orphan-work', workId: 'work-orphan', title: 'Unfiled observation', attentionCount: 0,
+      summary: { state: 'no_decision_recorded', reason: 'No review decision is recorded for this work.', fields: [{ destination: 'title', state: 'value', value: 'Unfiled observation' }] },
+    }
+    const getLibrary = vi.fn(async (search: { q?: string }) => ({
+      lens: 'all' as const, page: 1, counts: { attention: 0, all: 1, clear: 1 }, works: search.q ? [] : [listed],
+    }))
+    renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
+
+    await user.click(await screen.findByRole('button', { name: /^Unfiled observation\./u }))
+    expect(await screen.findByRole('heading', { level: 2, name: 'Unfiled observation' })).toBeVisible()
+    await user.type(screen.getByLabelText('Search title, author, identifier, library, or format'), 'nothing matches')
+
+    // The card is gone from the narrowed result, but the open work stays open.
+    await screen.findByText('No exact-current works match this search and lens.')
+    expect(screen.getByRole('heading', { level: 2, name: 'Unfiled observation' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Back to works' }))
+    expect(screen.queryByRole('heading', { level: 2, name: 'Unfiled observation' })).toBeNull()
+  })
+
+  it('normalises an unresolvable work selection out of the URL', async () => {
+    const http: ReviewHttp = { ...createHttp(), getLibrary: vi.fn(async () => library) }
+    const { router } = renderRoute('/library?lens=all&work=work-that-is-not-on-this-page', http)
+
+    // The URL asserted a selection nothing can render, so it stops asserting it
+    // rather than leaving the view and the address bar disagreeing.
+    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all' }))
+    expect(screen.getByRole('heading', { name: 'Choose a work' })).toBeVisible()
+  })
+
+  it.each([
+    ['candidates', 'Match'],
+    ['no_match', 'No match'],
+    ['rate_limited', 'Retry scheduled'],
+    ['unavailable', 'Retry scheduled'],
+    ['candidate_limit_exceeded', 'Too many candidates'],
+    ['authentication', 'Provider failure'],
+    ['malformed', 'Provider failure'],
+    ['a_status_this_build_has_never_seen', 'Provider failure'],
+  ])('names the %s source status for an owner as %s', (status, label) => {
+    expect(sourceStatusLabel(status)).toBe(label)
+  })
+
+  it('keeps the whole work card as the single selection target', async () => {
+    const user = userEvent.setup()
+    const { router } = renderRoute('/library?lens=all')
+
+    const card = await screen.findByRole('button', { name: /^A Book\./u })
+    expect(card).toHaveClass('library-work-row')
+    // No nested title-only target competes with the card.
+    expect(within(card).queryByRole('button')).toBeNull()
+    expect(within(card).queryByRole('link')).toBeNull()
+    expect(card).toHaveTextContent('A Book')
+    expect(card).toHaveTextContent('Author details unavailable')
+    expect(card).toHaveTextContent('1 field needs attention')
+
+    await user.click(card)
+    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1' }))
+    expect(screen.getByRole('button', { name: /^A Book\./u })).toHaveAttribute('aria-current', 'true')
+  })
+
+  it('offers both pagination directions with readable page context', async () => {
+    const user = userEvent.setup()
+    const paged = { ...library, page: 2, nextCursor: 'page-3', previousCursor: 'page-1' }
+    const http: ReviewHttp = { ...createHttp(), getLibrary: vi.fn(async () => paged) }
+    const { router } = renderRoute('/library?lens=all&q=book&cursor=page-2', http)
+
+    expect(await screen.findByText('Page 2')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '← Previous' }))
+    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all', q: 'book', cursor: 'page-1' }))
+    await user.click(screen.getByRole('button', { name: 'Next →' }))
+    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all', q: 'book', cursor: 'page-3' }))
+  })
+
+  it('filters progressively while typing, resets on clear, and keeps the lens and selection', async () => {
+    const user = userEvent.setup()
+    const { router } = renderRoute('/library?lens=needs_attention&preview=case-1&cursor=page-2')
+
+    const box = await screen.findByLabelText('Search title, author, identifier, library, or format')
+    await user.type(box, 'clock')
+    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'needs_attention', preview: 'case-1', q: 'clock' }))
+    await user.click(screen.getByRole('button', { name: 'Clear' }))
+    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'needs_attention', preview: 'case-1' }))
+    expect(box).toHaveValue('')
   })
 
   it.each([
@@ -264,10 +364,10 @@ describe('Library route', () => {
     const evidence = await screen.findByRole('button', { name: 'Evidence for Current cover' })
     await user.click(evidence)
     expect(screen.getByLabelText('Current cover evidence')).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Work B' }))
+    await user.click(screen.getByRole('button', { name: /^Work B\./u }))
     await screen.findByRole('button', { name: 'Evidence for Current cover' })
     expect(screen.queryByLabelText('Current cover evidence')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Work A' }))
+    await user.click(screen.getByRole('button', { name: /^Work A\./u }))
     await screen.findByRole('button', { name: 'Evidence for Current cover' })
     expect(screen.queryByLabelText('Current cover evidence')).not.toBeInTheDocument()
     expect(http.recordDecision).not.toHaveBeenCalled()
@@ -547,7 +647,7 @@ describe('Library route', () => {
     const pendingDetail = new Promise<CaseDetailView>((resolve) => { release = resolve })
     renderRoute('/library?lens=all', { ...createHttp(), getCaseDetail: vi.fn(async () => pendingDetail) })
 
-    await user.click(await screen.findByRole('button', { name: 'A Book' }))
+    await user.click(await screen.findByRole('button', { name: /^A Book\./u }))
     expect(await screen.findByText('Loading selected work…')).toBeVisible()
     const loadingRegion = screen.getByText('Loading selected work…').closest('section')
     expect(loadingRegion).toHaveClass('workspace-detail')
@@ -581,7 +681,7 @@ describe('Library route', () => {
     const { router } = renderRoute('/library?lens=all&preview=case-1&field=authors', http)
 
     expect(await screen.findByRole('link', { name: 'Open full review' })).toHaveAttribute('href', '/review/case-1?subview=review&field=authors')
-    await user.click(screen.getByRole('button', { name: 'Second work' }))
+    await user.click(screen.getByRole('button', { name: /^Second work\./u }))
     await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-2' }))
   })
 
@@ -633,7 +733,7 @@ describe('Library route', () => {
     const { router } = renderRoute('/library?lens=all', http)
 
     expect(screen.queryByRole('link', { name: 'Attention' })).toBeNull()
-    await user.click(await screen.findByRole('button', { name: 'A Book' }))
+    await user.click(await screen.findByRole('button', { name: /^A Book\./u }))
     const currentValue = (await screen.findByText('Old title')).closest('button')
     if (!currentValue) throw new Error('workspace fixture requires a current-value decision control')
     await user.click(currentValue)
@@ -710,21 +810,22 @@ describe('Library route', () => {
     expect(getAttention).toHaveBeenCalledWith({ cursor: 'later' }, expect.any(AbortSignal))
   })
 
-  it('clears preview and cursor when the Library search query changes', async () => {
+  it('clears the cursor but keeps the open work when the Library search query changes', async () => {
     const user = userEvent.setup()
     const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1')
 
-    expect(await screen.findByText('Progressive detail')).toBeVisible()
-    await user.clear(screen.getByLabelText('Search title, author, library, or media'))
-    await user.type(screen.getByLabelText('Search title, author, library, or media'), 'second')
-    await user.click(screen.getByRole('button', { name: 'Search' }))
+    expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    await user.clear(screen.getByLabelText('Search title, author, identifier, library, or format'))
+    await user.type(screen.getByLabelText('Search title, author, identifier, library, or format'), 'second')
 
-    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all', q: 'second' }))
-    expect(screen.queryByText('Progressive detail')).toBeNull()
+    // A new page of results starts at the first page, but the work under review
+    // stays open even when the search no longer lists its card.
+    await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', q: 'second' }))
+    expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
   })
 
   it('preserves an off-page preview deep link without exposing detail target identity', async () => {
-    const emptyLibrary: LibraryView = { lens: 'all', counts: { attention: 0, all: 0, clear: 0 }, works: [] }
+    const emptyLibrary: LibraryView = { lens: 'all', page: 1, counts: { attention: 0, all: 0, clear: 0 }, works: [] }
     const http: ReviewHttp = {
       ...createHttp(),
       getLibrary: vi.fn(async () => emptyLibrary),
@@ -770,8 +871,8 @@ describe('Library route', () => {
     await router.navigate({ to: '/library', search: { lens: 'no_attention_needed' } })
     resolveFirst?.(withTitle('Stale result'))
 
-    expect(await screen.findByRole('heading', { name: 'Current result' })).toBeVisible()
-    expect(screen.queryByRole('heading', { name: 'Stale result' })).toBeNull()
+    expect(await screen.findByRole('button', { name: /^Current result\./u })).toBeVisible()
+    expect(screen.queryByRole('button', { name: /^Stale result\./u })).toBeNull()
     expect(signals[0]?.aborted).toBe(true)
   })
 })

@@ -46,12 +46,16 @@ export const normalizeLibrarySearch = (search: Record<string, unknown>): Library
   const q = bounded(search.q)
   const cursor = bounded(search.cursor)
   const preview = bounded(search.preview)
+  // A work with no current review case has no case identity to preview, so its
+  // selection is owned by its own key rather than by borrowing ``preview``.
+  const work = bounded(search.work)
   const field = bounded(search.field)
   return {
     lens,
     ...(q ? { q } : {}),
     ...(cursor ? { cursor } : {}),
     ...(preview ? { preview } : {}),
+    ...(preview ? {} : work ? { work } : {}),
     ...(field ? { field } : {}),
     ...(search.attention === 'open' ? { attention: 'open' } : {}),
   }

@@ -788,6 +788,18 @@ class BrowseReviewLibrary:
                 if len(snapshot.rows) > bounded_limit
                 else None
             ),
+            # Browsing is only reversible if the page before this one can be
+            # named. The cursor already carries the offset and its lens/query
+            # binding, so the backward step is the same encoding, clamped at the
+            # first page.
+            "previous_cursor": (
+                _encode_cursor(
+                    max(offset - bounded_limit, 0), "library", lens, normalized
+                )
+                if offset > 0
+                else None
+            ),
+            "page": offset // bounded_limit + 1,
             "query": normalized,
             "schema_version": "review-library-v1",
         }
@@ -1380,16 +1392,43 @@ def _report_authors(report: MetadataReport) -> list[str]:
     )
 
 
+# One owner-readable consequence for every closed ``ProviderStatus``. The lane
+# state alone told the owner nothing they could act on: "candidate limit
+# exceeded" and "malformed" both arrived as "a bounded terminal status". The
+# text says what the source did and what followed from it, and never a query,
+# header, credential, payload or path.
+_NON_LIMITING_PROVIDER_STATUSES = frozenset(
+    {"candidates", "disabled", "insufficient_input"}
+)
+_PROVIDER_OUTCOME_REASONS: dict[str, str] = {
+    "candidates": "Returned matching metadata for this work.",
+    "no_match": "Returned no matching metadata, so nothing was retained.",
+    "disabled": "Not enabled, so this source was never asked.",
+    "insufficient_input": "This work lacks the identifiers this source needs.",
+    "authentication": "Refused the credentials it was given; nothing was retained.",
+    "authorization": "Refused this request; nothing was retained.",
+    "rate_limited": "Limited the request rate; a bounded retry is scheduled.",
+    "unavailable": "Could not be reached; a bounded retry is scheduled.",
+    "incomplete": "Answered only partially, so nothing was retained.",
+    "malformed": "Returned an unreadable answer, so nothing was retained.",
+    "oversized": "Returned more than the accepted bound, so nothing was retained.",
+    "candidate_limit_exceeded": "Returned too many candidates to compare safely.",
+    "query_limit_exceeded": "Reached the bounded query allowance for this work.",
+}
+
+
 def _provider_outcomes(report: MetadataReport) -> list[dict[str, object]]:
-    """Expose only bounded terminal lane state, never diagnostics or queries."""
-    successful = {"candidates", "disabled", "insufficient_input"}
+    """Expose only bounded lane state, never diagnostics or queries.
+
+    Every lane is reported, matches included, so the selected work can show one
+    complete source ledger. Suppressing the successful ones left the owner
+    unable to tell a source that matched from a source that was never asked.
+    """
     outcomes: list[dict[str, object]] = []
     for provider in report.providers:
         lanes = provider.lanes or (provider,)
         for lane in lanes:
             status = lane.status.value
-            if status in successful:
-                continue
             kind = (
                 cast(ProviderLaneObservation, lane).kind
                 if provider.lanes
@@ -1400,9 +1439,9 @@ def _provider_outcomes(report: MetadataReport) -> list[dict[str, object]]:
                     "provider_requests": provider.request_accounting.logical_requests,
                     "lane_kind": kind,
                     "provider": _provider_label(provider.authority),
-                    "reason": "Provider returned no matching metadata."
-                    if status == "no_match"
-                    else "Provider returned a bounded terminal status.",
+                    "reason": _PROVIDER_OUTCOME_REASONS.get(
+                        status, "Ended in a bounded state this build cannot name."
+                    ),
                     "status": status,
                 }
             )
@@ -1421,9 +1460,16 @@ def _provider_label(authority: str | None) -> str:
 
 
 def _provider_comparison_notices(report: MetadataReport) -> list[str]:
+    """Name only the lanes that limited this comparison.
+
+    The source ledger reports every lane, a match and a source that was never
+    asked included. A limitation notice is the narrower claim, so it keeps the
+    same three non-limiting statuses it always excluded.
+    """
     notices = {
         f"Provider limitation: {outcome['provider']} — {outcome['reason']}"
         for outcome in _provider_outcomes(report)
+        if outcome["status"] not in _NON_LIMITING_PROVIDER_STATUSES
     }
     return sorted(notices)[:3]
 
@@ -1496,6 +1542,14 @@ def _library_item(
                         "status": status,
                     },
                     "preparation_outcomes": [],
+                    "summary": {
+                        "fields": [],
+                        "reason": reasons.get(
+                            status,
+                            "Preparation ended without a usable review package.",
+                        ),
+                        "state": "preparation_failed",
+                    },
                 }
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise ReviewWebError("unavailable") from error
@@ -1587,6 +1641,22 @@ def _library_item(
         if terminal_document is None
         else _library_item(None, terminal_document, ())["preparation"],
         "preparation_outcomes": _provider_outcomes(report),
+        # A work with no current review case has no case identity to open, so
+        # its current values were unreachable from Library. The bounded target
+        # projection travels with the row the owner already has, which keeps
+        # every published work inspectable without a second authority.
+        "summary": None
+        if case is not None
+        else {
+            "fields": cast(
+                "list[dict[str, object]]", report.target.to_data()["fields"]
+            ),
+            "reason": (
+                "No review decision is recorded for this work. Its current values "
+                "are shown exactly as Mechanical Librarian last read them."
+            ),
+            "state": "no_decision_recorded",
+        },
     }
     return value
 
