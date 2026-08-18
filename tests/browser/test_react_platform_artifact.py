@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from contextlib import ExitStack
 from pathlib import Path
+from typing import cast
 from urllib.parse import urlsplit
 
 from playwright.sync_api import Route, expect, sync_playwright
@@ -214,6 +215,38 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     page.get_by_role("button", name="Use light mode").click()
                 if viewport is not None:
                     page.set_viewport_size(viewport)
+
+        # A control that runs past the Works rail is invisible without moving
+        # the whole document, so `document.scrollWidth` never reports it. Every
+        # control is measured against its own container's content box instead.
+        def overrunning_rail_controls() -> list[list[object]]:
+            return cast(
+                "list[list[object]]",
+                page.evaluate(
+                    """() => {
+                    const rail = document.querySelector('.library-works')
+                    // A silent [] for a missing rail would make this assertion
+                    // pass without measuring anything.
+                    if (!rail) return [['.library-works', 'is missing', 0, 0, 0, 0]]
+                    const box = rail.getBoundingClientRect()
+                    const style = getComputedStyle(rail)
+                    const left = box.left + parseFloat(style.paddingLeft)
+                    const right = box.right - parseFloat(style.paddingRight)
+                    return [...rail.querySelectorAll(
+                        `.lenses a, .library-search input, .library-search button,
+                         .library-pager button, .library-work-title,
+                         .library-work-author, .library-work-origin,
+                         .library-works-heading > *`)]
+                        .map(node => [node, node.getBoundingClientRect()])
+                        .filter(([, r]) => r.width > 0 &&
+                            (r.left < left - 0.5 || r.right > right + 0.5))
+                        .map(([node, r]) => [node.className || node.tagName,
+                            (node.textContent || '').trim().slice(0, 28),
+                            Math.round(r.left), Math.round(r.right),
+                            Math.round(left), Math.round(right)])
+                    }"""
+                ),
+            )
 
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.on(
@@ -992,6 +1025,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             assert control.bounding_box()["height"] >= 44
         for lens in page.locator(".lenses a").all():
             assert lens.bounding_box()["width"] >= 44
+        page.locator(".library-work-row").first.wait_for()
+        assert overrunning_rail_controls() == []
         long_title = (
             page.locator(".library-work-row")
             .filter(has_text=LONG_TITLE)
@@ -1060,6 +1095,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         expect(page.locator(".library-works")).to_be_visible()
         expect(page.locator(".workspace-detail")).to_be_visible()
+        assert overrunning_rail_controls() == []
         assert (
             page.locator(".library-workspace").evaluate(
                 "node => getComputedStyle(node).display"
@@ -1110,6 +1146,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page).to_have_url("https://react-platform.invalid/library?lens=all")
         expect(page.locator(".library-works")).to_be_visible()
         expect(page.locator(".workspace-detail")).to_be_hidden()
+        assert overrunning_rail_controls() == []
         page.locator(".library-work-row").first.click()
         expect(page).to_have_url(
             "https://react-platform.invalid/library?lens=all&preview=case-1"
@@ -1137,6 +1174,21 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.goto("https://react-platform.invalid/library?lens=all")
         expect(page.locator(".library-works")).to_be_visible()
         expect(page.locator(".workspace-detail")).to_be_hidden()
+        page.locator(".library-work-row").first.wait_for()
+        assert overrunning_rail_controls() == []
+        # Text zoom narrows the rail without narrowing its labels, which is
+        # where a fixed single-row lens strip fails first.
+        for zoom_width, zoom_height in ((1440, 900), (900, 900), (390, 844)):
+            page.set_viewport_size({"width": zoom_width, "height": zoom_height})
+            page.goto("https://react-platform.invalid/library?lens=all")
+            page.locator(".library-work-row").first.wait_for()
+            page.locator("html").evaluate("node => { node.style.fontSize = '200%' }")
+            page.locator(".library-work-row").first.wait_for()
+            assert overrunning_rail_controls() == [], zoom_width
+            page.locator("html").evaluate("node => { node.style.fontSize = '' }")
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.goto("https://react-platform.invalid/library?lens=all")
+        page.locator(".library-work-row").first.wait_for()
         page.locator(".attention-toggle").click()
         expect(page.locator(".attention-rail")).to_be_visible()
         expect(page.locator(".attention-rail")).to_be_focused()

@@ -67,8 +67,8 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .library-works-heading { display:flex; align-items:end; justify-content:space-between; gap:1rem; }
 .library-works-heading h2 { margin:0; font-family:Georgia,serif; font-size:1.45rem; }
 .library-works-heading > span { color:var(--soft); font-size:.64rem; }
-.lenses { display:flex; gap:.35rem; margin:1rem 0 .65rem; overflow-x:auto; padding:.25rem; }
-.lenses a { display:inline-flex; min-width:44px; min-height:44px; flex:0 0 auto; align-items:center; justify-content:center; padding:.55rem .7rem; border:1px solid var(--line); border-radius:999px; color:var(--soft); font-size:.64rem; font-weight:650; text-decoration:none; }
+.lenses { display:flex; flex-wrap:wrap; gap:.35rem; margin:1rem 0 .65rem; overflow-x:auto; padding:.25rem; }
+.lenses a { display:inline-flex; max-width:100%; min-width:44px; min-height:44px; flex:0 0 auto; align-items:center; justify-content:center; padding:.55rem .7rem; border:1px solid var(--line); border-radius:999px; color:var(--soft); font-size:.64rem; font-weight:650; line-height:1.25; text-align:center; text-decoration:none; }
 .lenses a[aria-current='page'] { border-color:var(--accent); color:var(--accent-strong); background:var(--accent-soft); }
 .search { margin-block:1rem; }
 .search label { display:block; margin-bottom:.3rem; font-size:.76rem; font-weight:700; }
@@ -98,9 +98,9 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .library-work-status .handled { color:var(--accent-strong); background:var(--accent-soft); }
 .preview-button { min-height:44px; padding:.4rem .65rem; background:transparent; font-size:.62rem; }
 .library-pager, .attention-pager { display:flex; align-items:center; justify-content:flex-end; gap:1rem; margin-top:.85rem; padding-top:.85rem; border-top:1px solid var(--line); color:var(--soft); font-size:.62rem; }
-.library-pager { display:grid; grid-template-columns:auto minmax(0,1fr) auto; justify-content:stretch; gap:.5rem; }
+.library-pager { display:grid; grid-template-columns:minmax(0,auto) minmax(0,1fr) minmax(0,auto); justify-content:stretch; gap:.5rem; }
 .library-pager > span { overflow-wrap:anywhere; text-align:center; }
-.library-pager button { min-height:44px; padding:0 .7rem; border:1px solid var(--line-strong); border-radius:.5rem; color:var(--accent-strong); background:var(--surface); font-size:.68rem; white-space:nowrap; }
+.library-pager button { min-height:44px; padding:.4rem .7rem; border:1px solid var(--line-strong); border-radius:.5rem; color:var(--accent-strong); background:var(--surface); font-size:.68rem; line-height:1.25; overflow-wrap:anywhere; }
 .library-pager button:disabled { color:var(--soft); opacity:.5; }
 .library-pager a { display:inline-flex; min-height:44px; align-items:center; padding-inline:.25rem; }
 /* Programmatic route focus stays useful to a screen reader, but these

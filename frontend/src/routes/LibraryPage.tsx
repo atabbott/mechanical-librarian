@@ -1137,7 +1137,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 type="search"
                 maxLength={128}
                 value={queryText}
-                placeholder="Search title, author, library…"
+                placeholder="Search works…"
                 onChange={(event) => runSearch(event.target.value)}
               />
               <button type="button" disabled={!queryText} onClick={() => runSearch('')}>
