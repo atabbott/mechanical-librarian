@@ -225,41 +225,82 @@ class ContinuousGuardedApplication:
         self._stop.clear()
         for application in self._applications.values():
             application.resume_admission()
-        recovered = actions = cleanups = 0
-        seen_plans: set[str] = set()
-        while True:
-            plan_ids = self._repository.pending_field_effect_plan_ids(100)
-            if not plan_ids:
-                break
-            if any(plan_id in seen_plans for plan_id in plan_ids):
-                raise GuardedApplicationError("recovery")
-            for plan_id in plan_ids:
-                seen_plans.add(plan_id)
-                self.apply(plan_id)
-                recovered += 1
-        seen_actions: set[str] = set()
-        while True:
-            plan_ids = self._repository.pending_field_effect_action_plan_ids(100)
-            if not plan_ids:
-                break
-            if any(plan_id in seen_actions for plan_id in plan_ids):
-                raise GuardedApplicationError("recovery")
-            for plan_id in plan_ids:
-                seen_actions.add(plan_id)
-                self.reconcile(plan_id)
-                actions += 1
+        cleanups = 0
+        failures: list[Exception] = []
+        recovered = self._drain_recovery(
+            self._repository.pending_field_effect_plan_ids, self.apply, failures
+        )
+        actions = self._drain_recovery(
+            self._repository.pending_field_effect_action_plan_ids,
+            self.reconcile,
+            failures,
+        )
         first = next(iter(self._applications.values()))
         while True:
-            completed = first.run_pending_cleanups(limit=100)
+            try:
+                completed = first.run_pending_cleanups(limit=100)
+            except Exception as error:
+                failures.append(error)
+                break
             cleanups += completed
             if completed < 100:
                 break
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise ExceptionGroup("startup recovery failures", failures)
         self._thread = threading.Thread(
             target=self._run, name="guarded-field-application", daemon=True
         )
         self._thread.start()
         self._wake.set()
         return recovered, actions, cleanups
+
+    def _drain_recovery(
+        self,
+        pending: Callable[[int], tuple[str, ...]],
+        recover: Callable[[str], object],
+        failures: list[Exception],
+    ) -> int:
+        """Drain one paged restart obligation without one plan stopping it.
+
+        Every plan on a page is attempted; a plan that fails is collected and
+        withheld from later pages, because it stays pending and would otherwise
+        return forever. That is why the non-progress guard reads the withheld
+        set rather than the pending page: it has to mean "nothing advanced",
+        not "a plan was seen twice", or a plan the batch has already given up
+        on would abort recovery for the plans still moving. The returned count
+        is exactly what advanced; nothing that failed becomes invisible.
+
+        The paging seam takes no cursor, so a whole page of withheld plans
+        still hides the plans behind it until one of them is repaired. Each of
+        those plans has already reported its own failure by then, which is the
+        bound this restart owes: loud for what failed, never silent about it.
+        """
+        recovered = 0
+        attempted: set[str] = set()
+        withheld: set[str] = set()
+        while True:
+            try:
+                page = pending(100)
+            except Exception as error:
+                failures.append(error)
+                return recovered
+            remaining = tuple(plan_id for plan_id in page if plan_id not in withheld)
+            if not remaining:
+                return recovered
+            if any(plan_id in attempted for plan_id in remaining):
+                failures.append(GuardedApplicationError("recovery"))
+                return recovered
+            for plan_id in remaining:
+                attempted.add(plan_id)
+                try:
+                    recover(plan_id)
+                except Exception as error:
+                    failures.append(error)
+                    withheld.add(plan_id)
+                    continue
+                recovered += 1
 
     def close_admission(self) -> None:
         """Stop new claims without waiting for the active worker."""
@@ -456,9 +497,15 @@ class ContinuousGuardedApplication:
                 continue
             try:
                 snapshot = self._authority.resolve(decision)
-            except (FieldEffectError, GuardedApplicationError, ValueError):
+            except (FieldEffectError, GuardedApplicationError, ValueError) as error:
+                # Retirement answers a binding that no longer holds. A storage
+                # fault says nothing about the selection, and retiring on one
+                # would write a `stale` cover event and swallow the fault, so
+                # it propagates instead. The resolver only began naming this
+                # code when its storage faults stopped escaping untyped.
                 if (
-                    decision.destination == "cover"
+                    getattr(error, "code", None) != "persistence"
+                    and decision.destination == "cover"
                     and self._repository.retire_stale_cover_decision(
                         decision.decision_id, self._clock()
                     )
@@ -714,8 +761,13 @@ class ContinuousGuardedApplication:
                         "library": snapshot.library,
                         "work_id": snapshot.work_id,
                     }
-                except (FieldEffectError, GuardedApplicationError, ValueError):
-                    pass
+                except (FieldEffectError, GuardedApplicationError, ValueError) as error:
+                    # A decision whose authority will not resolve is left out of
+                    # the illustration, which is a gap. A storage fault is not a
+                    # fact about the decision, and absorbing it would build a
+                    # confident projection on what could not be read.
+                    if getattr(error, "code", None) == "persistence":
+                        raise
         enabled = []
         for connection, library in self._libraries:
             if any(
@@ -855,7 +907,16 @@ class ContinuousGuardedApplication:
                 cursor = (decision.occurred_at, decision.decision_id)
                 try:
                     snapshot = self._authority.resolve(decision)
-                except (FieldEffectError, GuardedApplicationError, ValueError):
+                except (FieldEffectError, GuardedApplicationError, ValueError) as error:
+                    # Same rule, higher stakes. A library left without a
+                    # representative is reported `not_ready` across every
+                    # destination, and that verdict is written to the 30-second
+                    # capability cache below, so a fault absorbed here would be
+                    # served as a false negative to callers that never met it.
+                    # Raising from this loop keeps it out of the cache as well
+                    # as out of the response: nothing is written until after.
+                    if getattr(error, "code", None) == "persistence":
+                        raise
                     continue
                 if snapshot.library in libraries:
                     representatives.setdefault(snapshot.library, snapshot.work_id)

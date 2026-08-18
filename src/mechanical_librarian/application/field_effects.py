@@ -332,10 +332,15 @@ class GuardedFieldApplication:
         try:
             snapshot = self._authority.resolve(decision)
         except Exception as error:
-            # The seam declares no error type and any failure leaves the
-            # decision's authority unresolved, so no plan row is recorded and
-            # the cause is chained rather than discarded.
-            raise GuardedApplicationError("decision_value") from error
+            # The seam declares no error type, so the breadth stays; only the
+            # code changes. A resolver that names its own failure keeps that
+            # name, and just an unnamed one falls back to the refusal code, so a
+            # storage fault is never reported as an unacceptable decision.
+            # Either way the decision's authority is unresolved, so no plan row
+            # is recorded and the cause is chained rather than discarded.
+            raise GuardedApplicationError(
+                error.code if isinstance(error, FieldEffectError) else "decision_value"
+            ) from error
         expected = (
             connection,
             library,
@@ -377,9 +382,22 @@ class GuardedFieldApplication:
                 connection=connection, library=library, destination=destination
             )
         except Exception as error:
-            # Same undeclared seam: an unresolvable consent and a withdrawn one
-            # are both refusals to plan, and neither records a plan row.
-            raise GuardedApplicationError("consent") from error
+            # Same undeclared seam, same rule. A repository that has already
+            # decided this is a withdrawn consent says so with that code and
+            # keeps it; a storage fault carries its own code out instead of
+            # being dressed as a refusal. Neither records a plan row.
+            #
+            # The fallback cannot be `consent`: since #678 that code asserts a
+            # state conflict, and an exception nobody named is precisely the
+            # case where the recorded state is unknown. It names the seam that
+            # could not answer instead, and stays 503.
+            raise GuardedApplicationError(
+                error.code
+                if isinstance(error, FieldEffectError)
+                else "consent_unavailable"
+            ) from error
+        # A resolved but no-longer-current consent is the genuine refusal this
+        # method owns, and it keeps `consent` whatever the resolver reported.
         if not self._consent.current(consent):
             raise GuardedApplicationError("consent")
         effect_value = project_decision_value(destination, desired_value)
@@ -787,8 +805,26 @@ class GuardedFieldApplication:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise GuardedApplicationError("invalid_limit")
         recovered = 0
+        actions = cleanups = 0
+        failures: list[Exception] = []
+        # Every plan in the batch is attempted even after one fails, and the
+        # two pending obligations are attempted after that, on the collecting
+        # discipline `recover_pending` already sets: one wedged plan can neither
+        # leave the rest of the batch unrecovered nor hide their faults. The
+        # count stays exactly what reached a recovered state.
         for plan_id in self._repository.pending_field_effect_plan_ids(limit):
-            self.apply(plan_id)
+            try:
+                self.apply(plan_id)
+            except Exception as error:
+                failures.append(error)
+                continue
             recovered += 1
-        actions, cleanups = self.recover_pending(limit=limit)
+        try:
+            actions, cleanups = self.recover_pending(limit=limit)
+        except Exception as error:
+            failures.append(error)
+        if len(failures) == 1:
+            raise failures[0]
+        if failures:
+            raise ExceptionGroup("startup recovery failures", failures)
         return recovered, actions, cleanups
