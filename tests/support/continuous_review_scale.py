@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import socket
 import sqlite3
 import subprocess
 import tempfile
@@ -59,6 +60,15 @@ from tests.support.tls import synthetic_tls_identity
 # fast case. It does not delay a crash: the death branch returns as soon as
 # the child exits, whatever this value is.
 _REVIEW_SERVER_START_SECONDS = 60
+
+# How many times the installed server is started on a port another process took
+# from it, and how long the reservation waits for that process to give it back.
+# Both are declared here rather than buried, because a retry that is neither
+# bounded nor visible is how a genuine start-up regression gets absorbed
+# (#760). Only a demonstrably stolen port retries -- see `_start_review_server`
+# for the discrimination -- so these bound a race, never a defect.
+_REVIEW_SERVER_PORT_ATTEMPTS = 3
+_REVIEW_SERVER_PORT_WAIT_SECONDS = 10
 
 
 class _SharedRepository:
@@ -203,7 +213,11 @@ def qualify_installed_pipeline(
     # working directory is removed and only then is the fixture closed.
     fixture = _AudiobookshelfFixture(counts)
     fixture.start()
-    with closing(fixture), tempfile.TemporaryDirectory() as directory:
+    with (
+        closing(fixture),
+        tempfile.TemporaryDirectory() as directory,
+        closing(_ReservedPort()) as review_port,
+    ):
         root = Path(directory)
         secret = root / "target.secret"
         secret.write_text("synthetic-token", encoding="utf-8")
@@ -218,8 +232,7 @@ def qualify_installed_pipeline(
         )
         owner_hash.chmod(0o600)
         certificate, private_key = synthetic_tls_identity(root)
-        review_port = _unused_port()
-        origin = f"https://127.0.0.1:{review_port}"
+        origin = f"https://127.0.0.1:{review_port.number}"
         config_path = root / "config.json"
         config_path.write_text(
             json.dumps(
@@ -504,14 +517,11 @@ def qualify_installed_pipeline(
             "--host",
             "127.0.0.1",
             "--port",
-            str(review_port),
+            str(review_port.number),
         ]
         fixture.hold_discovery()
-        first_process = subprocess.Popen(
-            arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
+        first_process = _start_review_server(review_port, arguments, origin)
         try:
-            _wait_for_https(first_process, origin)
             assert fixture.discovery_started.wait(timeout=15), (
                 "first-start reconciliation was not observed"
             )
@@ -524,17 +534,39 @@ def qualify_installed_pipeline(
                 }
             assert "discovering" in states
         finally:
+            # Stopped, not killed. `SIGKILL` leaves SQLite's `-wal` and `-shm`
+            # behind, and a database basename carrying a recovery sidecar is
+            # outside the supported operating contract
+            # (`docs/operations/metadata-report.md`), so the restart below
+            # fails closed inside `open_repository` and exits 1 before serving
+            # -- the exact intermittent failure #770 was opened for. It is
+            # load-correlated because a busy host is where the write-ahead log
+            # has not been checkpointed away by the time the signal lands, and
+            # it disappears in isolation for the same reason.
             if first_process.poll() is None:
-                first_process.kill()
-            first_process.wait(timeout=10)
+                first_process.terminate()
+            # The held discovery request has to return before the server can
+            # finish shutting down, so the hold is released before the wait
+            # rather than after it.
             fixture.release_discovery()
+            try:
+                first_process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                first_process.kill()
+                first_process.wait(timeout=10)
 
-        second_process = subprocess.Popen(
-            arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        # An unclean stop is reported as itself rather than as whatever the
+        # next start makes of it. Without this the restart reports `exited
+        # before serving, exit code 1`, which names neither the sidecar nor the
+        # stop that left it -- the #730 standard applied one seam earlier.
+        assert not _database_sidecars(database), (
+            "the first server left recovery sidecars, so the restart is not the"
+            " supported restart this qualification proves: "
+            + ", ".join(path.name for path in _database_sidecars(database))
         )
+        second_process = _start_review_server(review_port, arguments, origin)
         peak_rss_kib = 0
         try:
-            _wait_for_https(second_process, origin)
             with httpx.Client(verify=False, trust_env=False) as client:
                 login = client.post(
                     origin + "/api/v1/session/login",
@@ -604,6 +636,16 @@ def qualify_installed_pipeline(
         assert tuple(artifacts.iterdir()) == ()
 
 
+class _ServerExited(AssertionError):
+    """The installed server exited before it served, carrying its exit code.
+
+    An `AssertionError` so the message and the failure kind #730 established
+    are unchanged for a reader; a named subclass so `_start_review_server` can
+    catch the one exit it is allowed to reason about without catching the
+    unrelated timeout beside it.
+    """
+
+
 def _wait_for_https(process: subprocess.Popen[bytes], origin: str) -> None:
     """Poll the installed server until it is live, or say which way it failed.
 
@@ -621,7 +663,7 @@ def _wait_for_https(process: subprocess.Popen[bytes], origin: str) -> None:
         while True:
             code = process.poll()
             if code is not None:
-                raise AssertionError(
+                raise _ServerExited(
                     f"installed review server exited before serving, exit code {code}"
                 )
             try:
@@ -649,9 +691,134 @@ def _rss_kib(process_id: int) -> int:
     return int(value)
 
 
-def _unused_port() -> int:
-    import socket
+def _database_sidecars(database: Path) -> tuple[Path, ...]:
+    """The recovery files a supported database basename must not carry.
 
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        return listener.getsockname()[1]
+    `open_repository` rejects all three before it connects, so their presence
+    is the difference between a restart the product supports and one it fails
+    closed on.
+    """
+
+    return tuple(
+        sidecar
+        for suffix in ("-journal", "-wal", "-shm")
+        for sidecar in [database.with_name(database.name + suffix)]
+        if sidecar.exists()
+    )
+
+
+def _bind_loopback(port: int) -> socket.socket | None:
+    """Hold `port` on loopback, or report that something else already does.
+
+    `SO_REUSEADDR` is deliberately not set. This is the only instrument that
+    answers "is anybody on this port", and reuse exists precisely to make that
+    answer come back yes when it should be no.
+    """
+
+    listener = socket.socket()
+    try:
+        listener.bind(("127.0.0.1", port))
+    except OSError:
+        listener.close()
+        return None
+    return listener
+
+
+class _ReservedPort:
+    """A loopback port held by an open socket until its server is spawned.
+
+    `bind(("127.0.0.1", 0))` followed by `close()` reserves nothing. The kernel
+    hands back a number and is immediately free to hand the same number to the
+    next automatic allocation anywhere on the host, so what the old
+    `_unused_port` returned was a hint with no holder. Everything between that
+    call and the installed server's own `bind()` was an open window: writing
+    `config.json`, running the entire in-process pipeline over the whole
+    cohort, `Popen`, and the child's interpreter start-up. At the slow tier's
+    thousand works that window is minutes wide, which is why three sightings
+    on 2026-08-17 all landed under host load (#770).
+
+    The socket is therefore held for every part of that window this seam can
+    hold, and released in the statement before `Popen`. It cannot be held
+    further, and no arrangement of this seam can hold it further: the child
+    performs its own `bind()` on a port number passed on its command line, and
+    there is no channel for handing it a descriptor instead. Two live binds to
+    one loopback port is what the operating system exists to refuse. The
+    child's start-up therefore stays a window, and `_start_review_server`
+    closes it by detection rather than by hope.
+    """
+
+    def __init__(self) -> None:
+        listener = _bind_loopback(0)
+        if listener is None:  # pragma: no cover - loopback has ephemeral ports
+            raise AssertionError("no loopback port was available to reserve")
+        self._listener: socket.socket | None = listener
+        self.number = int(listener.getsockname()[1])
+
+    def take(self, timeout: float = 0.0) -> bool:
+        """Hold the port again, waiting up to `timeout` for it to come free.
+
+        Returns whether it is now held. A `timeout` of zero asks the question
+        without waiting, which is how a stolen port is told from a server that
+        died of its own accord.
+        """
+
+        if self._listener is not None:
+            return True
+        deadline = time.monotonic() + timeout
+        while True:
+            listener = _bind_loopback(self.number)
+            if listener is not None:
+                self._listener = listener
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.02)
+
+    def release(self) -> None:
+        """Give the port up. The spawn must be the next statement."""
+
+        if self._listener is not None:
+            self._listener.close()
+            self._listener = None
+
+    def close(self) -> None:
+        self.release()
+
+
+def _start_review_server(
+    reservation: _ReservedPort, arguments: list[str], origin: str
+) -> subprocess.Popen[bytes]:
+    """Start the installed server on the reserved port, re-taking a lost one.
+
+    Called at both start sites, so the restart gets the same protection as the
+    first start: the port is free for as long as the first child takes to die,
+    and that gap was never covered either.
+
+    A stolen port and a genuine start-up regression both exit the child, so
+    they are told apart by who holds the port the moment it has. A dead child
+    holds nothing, so a port still occupied then is occupied by whoever took
+    it, and only that case retries. A port that is free was free when the
+    child died and did not kill it, so that exit is reported immediately with
+    the child's own exit code -- the discriminating fact #730 added -- and no
+    regression is ever absorbed by a retry (#760).
+    """
+
+    for attempt in range(_REVIEW_SERVER_PORT_ATTEMPTS):
+        # Holding the port is a protection, not a precondition, so failing to
+        # take it is not itself a failure. The server sets `SO_REUSEADDR` and
+        # binds straight over a `TIME_WAIT` its own predecessor left, which
+        # this deliberately reuse-free probe cannot; refusing to start there
+        # would trade one intermittent failure for another.
+        reservation.take(_REVIEW_SERVER_PORT_WAIT_SECONDS)
+        reservation.release()
+        process = subprocess.Popen(
+            arguments, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+        try:
+            _wait_for_https(process, origin)
+        except _ServerExited:
+            if reservation.take() or attempt == _REVIEW_SERVER_PORT_ATTEMPTS - 1:
+                raise
+            continue
+        return process
+    raise AssertionError("unreachable: every attempt returns or raises")

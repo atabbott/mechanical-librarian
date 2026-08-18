@@ -29,7 +29,7 @@ SETUP_COMMANDS = frozenset(
         "uv run python -c 'from importlib.metadata import version; "
         'print("version=" + version("playwright"))\' >> "$GITHUB_OUTPUT"',
         # Fetches the payload that the next command is what actually verifies.
-        "uv run playwright install --with-deps chromium",
+        "uv run playwright install chromium",
         # Installs the frontend closure, in both jobs that build the frontend.
         "npm ci --ignore-scripts --no-audit --no-fund",
         # The two documents `cmp` then compares, and the regeneration in place
@@ -255,12 +255,41 @@ def test_caches_the_pinned_chromium_payload_but_still_verifies_it() -> None:
         "${{ steps.playwright.outputs.version }}\n"
     ) in workflow
     assert workflow.count("path: ~/.cache/ms-playwright") == 2
-    assert "uv run playwright install --with-deps chromium" in workflow
+    assert "uv run playwright install chromium" in workflow
     assert "run: uv run python scripts/verify_playwright_browser.py" in workflow
     # The payload is saved only after verification succeeds.
     save = workflow.index("actions/cache/save@")
     verify = workflow.index("scripts/verify_playwright_browser.py")
     assert verify < save
+
+
+def test_the_browser_install_neither_stalls_silently_nor_skips_the_launch() -> None:
+    """Hold the two halves of #772 that a later edit could quietly undo.
+
+    `--with-deps` cost this job its entire ten-minute budget twice inside
+    `apt-get` on a Chromium cache hit, because system libraries live on the
+    runner rather than under the cached `~/.cache/ms-playwright`. Removing it
+    is only safe while both replacements stay: a bound, so the next stall of
+    any kind fails fast rather than eating the tier, and a launch, so a runner
+    image that stops supplying one of Chromium's shared libraries fails in a
+    step of its own instead of reading as a browser-tier regression.
+    """
+
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "playwright install --with-deps" not in workflow
+    install = [
+        body
+        for name, body in workflow_steps(workflow)
+        if name == "Install the Chromium qualification browser"
+    ]
+    assert len(install) == 1
+    assert "timeout-minutes:" in install[0]
+    assert step_commands(install[0]) == ("uv run playwright install chromium",)
+    assert "uv run python scripts/verify_playwright_browser.py --launch" in workflow
+    # The launch runs before the tier it is there to keep blame off.
+    assert workflow.index("verify_playwright_browser.py --launch") < workflow.index(
+        "run_test_tier.py browser"
+    )
 
 
 def test_every_action_is_sha_pinned_without_persisted_credentials() -> None:

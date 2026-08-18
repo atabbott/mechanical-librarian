@@ -66,6 +66,9 @@ describes, and nowhere else. What merging proves today:
   index, every index row names a file that is there, and every row's declared
   number is the number of the file it links to;
 - no two ADRs share a number;
+- every direct dependency `pyproject.toml` declares carries an authority grant
+  in `docs/development/dependencies.md`, no grant outlives the dependency it
+  covers, and a grant's own spelled count still matches its subjects;
 - the generated `docs/reference/review-openapi-v1.json` matches the routes, and
   `docs/reference/config-v6.schema.json` matches the configuration model;
 - `docs/examples/synthetic-config.json` is executable — the CLI tests load it;
@@ -93,6 +96,20 @@ repository, so the fast tier fails on a corpus defect too. The ADR
 reconciliation is by filename in both directions and never by arithmetic over
 the numbers: a gap in the sequence is a decision that was never written, not a
 missing file.
+
+The fifth is `scripts/verify_dependency_authority.py`, a sibling in the same
+job and the same shape:
+
+```text
+uv run python scripts/verify_dependency_authority.py
+```
+
+It reads `pyproject.toml` and `docs/development/dependencies.md` and nothing
+else. It judges no grant's quality — that a grant exists is machine-checkable,
+that it is true is not — and it reads no lockfile, licence, or transitive
+package, because the document is explicitly about direct dependencies. Its own
+behaviour is proven in `tests/unit/test_dependency_authority.py`, which also
+runs it against this repository.
 
 Write every link target inline, as `[text](path.md)`, optionally with a title.
 Reference-style links — `[text][label]` with a `[label]: path.md` definition

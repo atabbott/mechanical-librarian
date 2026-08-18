@@ -42,8 +42,9 @@ python3 scripts/qualify_exact_artifact.py \    # wheel identity, RECORD
   --source-sha "$(git rev-parse HEAD)" \       # integrity, installed console,
   --test-tier required                         # representative lifecycle
 
-uv run playwright install --with-deps chromium # protected browser tier
+uv run playwright install chromium             # protected browser tier
 uv run python scripts/verify_playwright_browser.py
+uv run python scripts/verify_playwright_browser.py --launch
 export ML_REACT_ASSET_DIR="$(mktemp -d)"
 (cd frontend && npm ci --ignore-scripts --no-audit --no-fund && npm run generate \
   && ML_FRONTEND_OUT_DIR="$ML_REACT_ASSET_DIR" npm run build)
