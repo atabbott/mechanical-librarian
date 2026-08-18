@@ -749,11 +749,15 @@ class BrowseReviewLibrary:
             )
             items = []
             for row in snapshot.rows[:bounded_limit]:
-                case_document, report_document, decision_documents = row[:3]
-                automatic_attention_destinations = row[3] if len(row) >= 4 else ()
-                suspended_destinations = row[4] if len(row) >= 5 else ()
-                shadow_abstention_destinations = row[5] if len(row) >= 6 else ()
-                terminal_document = row[6] if len(row) >= 7 else None
+                (
+                    case_document,
+                    report_document,
+                    decision_documents,
+                    automatic_attention_destinations,
+                    suspended_destinations,
+                    shadow_abstention_destinations,
+                    terminal_document,
+                ) = row
                 items.append(
                     _library_item(
                         case_document,
@@ -767,9 +771,9 @@ class BrowseReviewLibrary:
                 )
         except Exception as error:
             # The undeclared page read and the row projection are one outcome:
-            # a page this surface cannot render. Row width is read defensively
-            # above, so a shape the adapter no longer supplies fails the page
-            # rather than silently dropping a work from the library.
+            # a page this surface cannot render. The row is consumed at its
+            # declared width, so a shape the adapter no longer supplies fails
+            # the page rather than silently dropping a work from the library.
             raise ReviewWebError("unavailable") from error
         return {
             "counts": {

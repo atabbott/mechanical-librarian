@@ -2027,6 +2027,7 @@ def test_composed_projection_stale_after_observation_does_not_publish() -> None:
 
 
 def test_composed_projection_cover_persistence_failure_does_not_publish() -> None:
+    """A store fault in the cover stage is durably readable as one (#734)."""
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         database = root / "reports.sqlite"
@@ -2053,7 +2054,7 @@ def test_composed_projection_cover_persistence_failure_does_not_publish() -> Non
             side_effect=MetadataReportError("persistence"),
         ):
             assert pipeline.run_next(1)
-        assert ("failed", "failed", None) == repository._connection.execute(
+        assert ("failed", "persistence", None) == repository._connection.execute(
             "SELECT state,failure_code,failure_root FROM review_preparation_work "
             "WHERE stage='projection'"
         ).fetchone()
@@ -2079,12 +2080,13 @@ def test_composed_projection_records_a_broken_factory_without_cover_effects() ->
     twice while it builds the service -- `bind_current_cover_policy` before
     construction and `bind_current_cover_replay` after it. A fault it raises
     is therefore not separable from the rest of the cover stage, and the
-    stage answers `persistence` for it like the rest of its body.
-    `review_preparation_work.failure_code` has no `persistence` in its
-    allow-list, so the durable record carries the anonymous `failed`: the
-    owner is told the action failed, not which side failed. Whichever code
-    it lands under, no consideration, package, or outbox row survives the
-    failure (#698).
+    stage answers `persistence` for it like the rest of its body. That code
+    is now in `review_preparation_work.failure_code`'s allow-list, so the
+    durable record names the side that failed instead of the anonymous
+    `failed` every unlisted code normalised into, and this read is what
+    proves it survives the shipped adapter's normalisation and its CHECK
+    (#698, #734). No consideration, package, or outbox row survives the
+    failure either way.
     """
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
@@ -2112,7 +2114,7 @@ def test_composed_projection_records_a_broken_factory_without_cover_effects() ->
             side_effect=TypeError("consideration service is broken"),
         ):
             assert pipeline.run_next(1)
-        assert ("failed", "failed", None) == repository._connection.execute(
+        assert ("failed", "persistence", None) == repository._connection.execute(
             "SELECT state,failure_code,failure_root FROM review_preparation_work "
             "WHERE stage='projection'"
         ).fetchone()

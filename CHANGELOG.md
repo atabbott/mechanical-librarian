@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Report the fault an operator can act on: a provider-recovery database that
+  cannot be created names the disk failure rather than the transaction its own
+  rollback could not find, and a cover stage that fails on its store durably
+  records `persistence` instead of the anonymous `failed` every unlisted code
+  collapsed into. That widens the review-work schema, so an existing database
+  is rejected and has to be recreated. (#715, #734)
+- Read a Library row at the width its seam declares, so the three trailing
+  columns the test double never supplied are exercised through the reader
+  rather than padded by it. (#711)
 - Tell the truth about a guarded write that was refused. A storage fault is no
   longer reported as an unacceptable decision, a withdrawn consent or a revoked
   authority, nor escapes the currentness seams untyped as a 500; startup
