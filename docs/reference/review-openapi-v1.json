@@ -89,6 +89,12 @@
             "title": "Destination",
             "type": "string"
           },
+          "prepared": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Prepared",
+            "type": "integer"
+          },
           "state": {
             "title": "State",
             "type": "string"
@@ -485,6 +491,9 @@
             },
             "title": "Suspensions",
             "type": "array"
+          },
+          "waiting": {
+            "$ref": "#/components/schemas/_ActivityWaitingReasons"
           }
         },
         "required": [
@@ -502,7 +511,8 @@
           "paused",
           "prepared",
           "schema_version",
-          "suspensions"
+          "suspensions",
+          "waiting"
         ],
         "title": "_ActivityResponse",
         "type": "object"
@@ -585,6 +595,45 @@
           "work_label"
         ],
         "title": "_ActivityWaiting",
+        "type": "object"
+      },
+      "_ActivityWaitingReasons": {
+        "additionalProperties": false,
+        "properties": {
+          "applying": {
+            "minimum": 0.0,
+            "title": "Applying",
+            "type": "integer"
+          },
+          "awaiting_permission": {
+            "minimum": 0.0,
+            "title": "Awaiting Permission",
+            "type": "integer"
+          },
+          "held_for_recovery": {
+            "minimum": 0.0,
+            "title": "Held For Recovery",
+            "type": "integer"
+          },
+          "retrying": {
+            "minimum": 0.0,
+            "title": "Retrying",
+            "type": "integer"
+          },
+          "scheduled": {
+            "minimum": 0.0,
+            "title": "Scheduled",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "applying",
+          "awaiting_permission",
+          "held_for_recovery",
+          "retrying",
+          "scheduled"
+        ],
+        "title": "_ActivityWaitingReasons",
         "type": "object"
       },
       "_AsinQualification": {
@@ -3166,6 +3215,14 @@
             ],
             "title": "Scan Id"
           },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/_PreparationStage"
+            },
+            "maxItems": 8,
+            "title": "Stages",
+            "type": "array"
+          },
           "state": {
             "title": "State",
             "type": "string"
@@ -3233,6 +3290,36 @@
           "libraries"
         ],
         "title": "_PreparationResponse",
+        "type": "object"
+      },
+      "_PreparationStage": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "stage": {
+            "enum": [
+              "queued",
+              "extracting",
+              "providers",
+              "proposals",
+              "admission",
+              "projection",
+              "ready",
+              "failed"
+            ],
+            "title": "Stage",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "count"
+        ],
+        "title": "_PreparationStage",
         "type": "object"
       },
       "_ProposedValue": {
@@ -8712,6 +8799,37 @@
           }
         ],
         "summary": "Logout"
+      }
+    },
+    "/api/v1/updates": {
+      "get": {
+        "operationId": "live_updates_api_v1_updates_get",
+        "parameters": [
+          {
+            "description": "The last frame identity this reader saw, presented by the browser's own reconnect. An identity from another process, or one past the retained order, is answered with a `resync` event.",
+            "in": "header",
+            "name": "last-event-id",
+            "required": false,
+            "schema": {
+              "maxLength": 64,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "An ordered stream of invalidation events. Each frame carries an `id` of `<epoch>-<sequence>`, an `event` naming the topic, and a `data` object of exactly `sequence`, `subject` and `topic`. An event says what changed, never what it changed to: the reader refetches the authoritative answer over this same API. Reconnection is the browser's own, presenting the last identity as `Last-Event-ID`; an identity from a previous process is answered with a `resync` event rather than a position in this order."
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Subscribe to ordered invalidation for this session"
       }
     }
   }

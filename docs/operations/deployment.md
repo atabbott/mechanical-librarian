@@ -71,6 +71,21 @@ failure before the shared repository closes, and resumes from its durable
 checkpoint on restart. No fake target, direct database write or writable media
 path is composed.
 
+Each open browser tab holds one long-lived `text/event-stream` response on that
+same listener, which is worth knowing when sizing the direct edge's 100-
+connection admission or placing a reverse proxy in front of it: the response
+sets `X-Accel-Buffering: no`, and a proxy that buffers or times out idle
+responses will turn a live surface into a polling one rather than break it. The
+stream carries a comment heartbeat so an idle connection stays observably alive,
+bounds its own lifetime so no connection outlives a working day, and refuses a
+subscriber beyond its bound with a plain `503` rather than growing without
+limit. Shutdown closes the update channel before the workers wait, so every
+open stream ends as an ordinary completed response inside the same configured
+graceful-shutdown deadline; the server's own graceful-shutdown timeout is set
+from that deadline so a client that stops reading cannot hold the process open.
+While a stream is down the surfaces fall back to polling and say so, so a
+buffering proxy degrades freshness and never correctness.
+
 The installed command surface contains `review-serve`, read-only
 `policy-preview`, owner-explicit `cover-review`, and read-only
 `review-activity`. The latter two reuse the same cover decision/history and

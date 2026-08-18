@@ -63,6 +63,16 @@ class PipelineProgress:
     blocked: int
     rescan_requested: bool
     updated_at: int = 0
+    stages: tuple[tuple[str, int], ...] = ()
+    """How many works stand at each preparation stage, in owner order.
+
+    `checked`, `ready` and `blocked` answer "how far through", which is what a
+    progress bar needs and all an owner had. They cannot answer "what is it
+    doing", which is what an owner watching a library prepare for days actually
+    asks, and answering it is #641's first acceptance. The stage names are the
+    persisted pipeline's own; the owner-facing wording is chosen at the surface,
+    because the two vocabularies change for different reasons.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,6 +298,7 @@ class ReviewPreparationPipeline:
         check_connection: Callable[[str], None] = _unconfigured_connection_check,
         clock: Callable[[], int] = lambda: int(time.time()),
         timing: StageTimer | None = None,
+        announce: Callable[[str, str | None], object] = lambda *_args: None,
     ) -> None:
         if not libraries or len(libraries) != len(set(libraries)):
             raise ReviewPipelineError("configuration")
@@ -306,6 +317,7 @@ class ReviewPreparationPipeline:
         self._after_advance = after_advance
         self._check_connection = check_connection
         self._clock = clock
+        self._announce = announce
         self._timing = timing or StageTimer(None)
         self._draining = threading.Event()
         self._claim_lock = threading.Lock()
@@ -316,6 +328,10 @@ class ReviewPreparationPipeline:
             (connection, library, values[0])
             for (connection, library), values in sorted(self._libraries.items())
         )
+
+    def attach_updates(self, announce: Callable[[str, str | None], object]) -> None:
+        """Bind the invalidation channel this pipeline announces stages on."""
+        self._announce = announce
 
     def _open_repository(self) -> ReviewPipelineRepository:
         try:
@@ -333,7 +349,7 @@ class ReviewPreparationPipeline:
         repository = self._open_repository()
         try:
             try:
-                return repository.request_review_scan(
+                progress = repository.request_review_scan(
                     connection,
                     library,
                     library_id,
@@ -346,6 +362,8 @@ class ReviewPreparationPipeline:
                 raise ReviewPipelineError("persistence") from error
         finally:
             repository.close()
+        self._announce("preparation", None)
+        return progress
 
     def progress(self, connection: str, library: str) -> PipelineProgress | None:
         if (connection, library) not in self._libraries:
@@ -416,6 +434,7 @@ class ReviewPreparationPipeline:
                 raise ReviewPipelineError("persistence") from error
         finally:
             repository.close()
+        self._announce("preparation", None)
 
     def connection_conditions(self) -> tuple[TargetConnectionCondition, ...]:
         repository = self._open_repository()
@@ -477,6 +496,7 @@ class ReviewPreparationPipeline:
             raise ReviewPipelineError("persistence") from error
         finally:
             repository.close()
+        self._announce("preparation", None)
         return True
 
     def hold_connection(self, connection: str, code: str) -> None:
@@ -490,6 +510,7 @@ class ReviewPreparationPipeline:
             raise ReviewPipelineError("persistence") from error
         finally:
             repository.close()
+        self._announce("preparation", None)
 
     def begin_drain(self) -> None:
         """Finish the current claim without admitting another one."""
@@ -732,6 +753,7 @@ class ReviewPreparationPipeline:
             raise
         except Exception as error:
             raise ReviewPipelineError("persistence") from error
+        self._announce("preparation", None)
 
     def _advance(
         self,
@@ -764,11 +786,39 @@ class ReviewPreparationPipeline:
                     action, output_id, self._clock(), False
                 )
             self._after_advance(repository, action, output_id)
-            return advanced
         except ReviewPipelineError:
             raise
         except Exception as error:
             raise ReviewPipelineError("persistence") from error
+        self._announce_stage(action, output_id)
+        return advanced
+
+    def _announce_stage(self, action: PipelineAction, output_id: str | None) -> None:
+        """Name what a committed stage change invalidated, and nothing more.
+
+        This runs after the durable transition, never inside it: a browser
+        convenience must not be able to fail a stage. The announcement carries a
+        topic and, for a published work, its review case identity -- never a
+        count, a stage name, or any part of the package that just committed.
+
+        `projection` reaching `complete`, and a non-actionable `admission`, are
+        the two shapes of #597's atomic current-package cutover, which is the
+        moment a work becomes browseable.
+        """
+        published = action.stage == "projection" or (
+            action.stage == "admission" and output_id is None
+        )
+        self._announce("preparation", None)
+        if not published:
+            return
+        review_case_id = (
+            action.review_case_id
+            if action.stage == "projection"
+            else (output_id if output_id is not None else None)
+        )
+        self._announce("library", review_case_id)
+        if review_case_id is not None:
+            self._announce("case", review_case_id)
 
     def _fail(
         self,
@@ -786,6 +836,10 @@ class ReviewPreparationPipeline:
             raise
         except Exception as error:
             raise ReviewPipelineError("persistence") from error
+        # A terminal failure is preparation state an owner acts on, and a work
+        # that becomes visible as "could not finish", so both are announced.
+        self._announce("preparation", None)
+        self._announce("library", None)
 
 
 class ReviewPreparationSupervisor:
@@ -832,6 +886,10 @@ class ReviewPreparationSupervisor:
     @property
     def libraries(self) -> tuple[tuple[str, str, str], ...]:
         return self._pipeline.libraries
+
+    def attach_updates(self, announce: Callable[[str, str | None], object]) -> None:
+        """Bind the invalidation channel the pipeline announces stages on."""
+        self._pipeline.attach_updates(announce)
 
     def start(self) -> None:
         if self._threads:

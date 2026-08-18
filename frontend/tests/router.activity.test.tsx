@@ -24,10 +24,17 @@ describe('Activity route', () => {
       // rather than assuming the navigation await was enough: on a cold module
       // it is not, and the count then measures a route that is still polling.
       await vi.waitFor(() => {
-        const observers = queryClient.getQueryCache().getAll()
+        const entries = queryClient.getQueryCache().getAll()
           .filter((entry) => entry.queryKey[0] === 'activity')
-          .map((entry) => entry.getObserversCount())
-        expect(observers.every((count) => count === 0)).toBe(true)
+        // The Activity route's own ledger query -- the one carrying its search
+        // in the key -- must have no observers left. Library keeps a second,
+        // compact activity read for its write handoff, which is a different
+        // query on a slower cadence and is not what this measures.
+        expect(entries.filter((entry) => entry.queryKey.length > 2)
+          .every((entry) => entry.getObserversCount() === 0)).toBe(true)
+        // That compact read has also settled, so the count captured next
+        // measures a cadence rather than someone's first fetch.
+        expect(entries.every((entry) => entry.state.fetchStatus === 'idle')).toBe(true)
       })
       const callsAfterNavigation = vi.mocked(http.getActivity).mock.calls.length
 
@@ -50,9 +57,9 @@ describe('Activity route', () => {
         capabilities: [{
           connection: 'primary', library: 'fiction', state: 'partially_allowed',
           destinations: [
-            { destination: 'authors', state: 'allowed', consented: false },
-            { destination: 'subtitle', state: 'field_unavailable', consented: false },
-            { destination: 'title', state: 'allowed', consented: true },
+            { destination: 'authors', state: 'allowed', consented: false, prepared: 0 },
+            { destination: 'subtitle', state: 'field_unavailable', consented: false, prepared: 0 },
+            { destination: 'title', state: 'allowed', consented: true, prepared: 0 },
           ],
         }],
         events: [], paused: false,
@@ -123,7 +130,7 @@ describe('Activity route', () => {
 
   it('keeps ambiguous consent unconfirmed without resending', async () => {
     const user = userEvent.setup()
-    const initial: ActivityView = activity({ configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 0, human: 0, total: 1 } }], capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false }] }] })
+    const initial: ActivityView = activity({ configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 0, human: 0, total: 1 } }], capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false, prepared: 0 }] }] })
     let current = initial
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current), activityCommand: vi.fn(async () => { throw new AmbiguousMutationError() }) }
     renderRoute('/activity', http)
@@ -142,7 +149,7 @@ describe('Activity route', () => {
     const partial: ActivityView = activity({
       configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 1, human: 0, total: 1 } }],
       enabled_libraries: [],
-      capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false }] }],
+      capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false, prepared: 0 }] }],
     })
     let current = partial
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => current) }
@@ -153,7 +160,7 @@ describe('Activity route', () => {
     await user.click(choice)
     expect(choice).toBeChecked()
 
-    current = { ...partial, enabled_libraries: [{ connection: 'primary', library: 'fiction' }], capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: true }] }] }
+    current = { ...partial, enabled_libraries: [{ connection: 'primary', library: 'fiction' }], capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: true, prepared: 0 }] }] }
     await queryClient.invalidateQueries({ queryKey: ['activity'] })
     await waitFor(() => expect(screen.getByRole('checkbox')).toBeDisabled())
     expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
@@ -175,8 +182,8 @@ describe('Activity route', () => {
         capabilities: [{
           connection: 'primary', library: 'blocked', state: 'connection_unavailable',
           destinations: [
-            { destination: 'authors', state: 'connection_unavailable', consented: false },
-            { destination: 'title', state: 'connection_unavailable', consented: false },
+            { destination: 'authors', state: 'connection_unavailable', consented: false, prepared: 0 },
+            { destination: 'title', state: 'connection_unavailable', consented: false, prepared: 0 },
           ],
         }],
         events: [], paused: false,
@@ -321,7 +328,7 @@ describe('Activity route', () => {
       backup_ready: false,
       prepared: { automatic: 1, human: 0, total: 1 },
       configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 1, human: 0, total: 1 } }],
-      capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false }] }],
+      capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false, prepared: 0 }] }],
       events: [{ work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', origin: 'human', occurred_at: null, failure: null, work_label: 'Recorded work' }],
     })) }
     renderRoute('/activity', http)
@@ -337,7 +344,7 @@ describe('Activity route', () => {
     const user = userEvent.setup()
     const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity({
       configured_libraries: [{ connection: 'primary', library: 'fiction', prepared: { automatic: 0, human: 0, total: 0 } }],
-      capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false }] }],
+      capabilities: [{ connection: 'primary', library: 'fiction', state: 'allowed', destinations: [{ destination: 'title', state: 'allowed', consented: false, prepared: 0 }] }],
       events: [{ work_id: 'book-1', library: 'fiction', destination: 'title', state: 'verified', origin: 'human', occurred_at: null, failure: null, work_label: 'Recorded work' }],
     })) }
     renderRoute('/activity', http)
@@ -380,7 +387,11 @@ describe('Activity route', () => {
     expect(screen.getByRole('heading', { name: 'No intervention needed' })).toBeVisible()
     await openActivityAuthority(user)
     expect(screen.getByRole('button', { name: 'Pause new work' })).toBeVisible()
-    expect(screen.getAllByText('Waiting safely')).toHaveLength(1)
+    // The single ambiguous number is gone: waiting is now stated as the four
+    // different next steps an owner has (#639).
+    expect(screen.queryByText('Waiting safely')).toBeNull()
+    for (const reason of ['Awaiting permission', 'Scheduled', 'Retrying', 'Held for recovery'])
+      expect(screen.getByText(reason)).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Inspect' }))
     expect(screen.getByText('Durable evidence')).toBeVisible()
     expect(screen.getByText('Recorded cover safeguard')).toBeVisible()

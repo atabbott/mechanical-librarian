@@ -30,6 +30,7 @@ from fastapi.responses import (
     JSONResponse,
     PlainTextResponse,
     RedirectResponse,
+    StreamingResponse,
 )
 from fastapi.security import APIKeyCookie
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, TypeAdapter
@@ -37,6 +38,7 @@ from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.field_effects import GuardedApplicationError
+from mechanical_librarian.application.live_updates import LiveUpdateCapacityError
 from mechanical_librarian.application.metadata_policy import (
     MetadataPolicyApplicationError,
     PolicyTransition,
@@ -52,7 +54,7 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
 )
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyError
-from mechanical_librarian.interfaces.web import review_frontend
+from mechanical_librarian.interfaces.web import live_stream, review_frontend
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetError,
     ReactAssetLoader,
@@ -530,6 +532,7 @@ class _ActivityLibrary(_ClosedModel):
 class _ActivityDestination(_ClosedModel):
     consented: bool
     destination: str
+    prepared: int = Field(default=0, ge=0)
     state: str
 
 
@@ -586,6 +589,14 @@ class _ActivityLedger(_ClosedModel):
     total: int = Field(ge=0)
 
 
+class _ActivityWaitingReasons(_ClosedModel):
+    applying: int = Field(ge=0)
+    awaiting_permission: int = Field(ge=0)
+    held_for_recovery: int = Field(ge=0)
+    retrying: int = Field(ge=0)
+    scheduled: int = Field(ge=0)
+
+
 class _ActivityWaiting(_ClosedModel):
     destination: str = Field(max_length=512)
     library: str = Field(max_length=512)
@@ -619,6 +630,21 @@ class _ActivityResponse(_ClosedModel):
     )
     schema_version: Literal["continuous-field-activity-v2"]
     suspensions: list[_ActivitySuspension]
+    waiting: _ActivityWaitingReasons
+
+
+class _PreparationStage(_ClosedModel):
+    stage: Literal[
+        "queued",
+        "extracting",
+        "providers",
+        "proposals",
+        "admission",
+        "projection",
+        "ready",
+        "failed",
+    ]
+    count: int = Field(ge=0)
 
 
 class _PreparationProgress(_ClosedModel):
@@ -632,6 +658,7 @@ class _PreparationProgress(_ClosedModel):
     ready: int
     blocked: int
     rescan_requested: bool
+    stages: list[_PreparationStage] = Field(default_factory=list, max_length=8)
 
 
 class _PreparationConnection(_ClosedModel):
@@ -1202,6 +1229,7 @@ def create_review_app(
     _register_browse_and_preparation_routes(
         app, application, session_cookie, authenticated_session_cookie
     )
+    _register_live_update_route(app, application, configuration, session_cookie)
     _register_html_routes(app, application, session_cookie, browser_csrf, assets)
 
     @app.exception_handler(HTTPException)
@@ -2402,6 +2430,108 @@ def _register_browse_and_preparation_routes(
         _require_case_id(review_case_id)
         return _HistoryResponse.model_validate(
             _case_call(lambda: application.history(review_case_id))
+        )
+
+
+def _register_live_update_route(
+    app: FastAPI,
+    application: ReviewApplication,
+    configuration: ReviewWebConfiguration,
+    session_cookie: APIKeyCookie,
+) -> None:
+    """One authenticated multiplexed invalidation stream per tab.
+
+    It is deliberately a single endpoint rather than one per surface: a browser
+    holds few connections, and every surface here invalidates on the same total
+    order, so a second stream would buy nothing and cost a second thing to
+    authenticate, bound and shut down.
+
+    Authentication is the session cookie every other read already uses --
+    `EventSource` cannot set headers, and no new mechanism was needed for a GET.
+    A cross-origin subscribe is refused here as well as by the shared trust
+    boundary, because a stream is the one read whose response keeps arriving
+    after the check that admitted it (#641).
+    """
+    sessions = application
+
+    @app.get(
+        "/api/v1/updates",
+        # Published like every other `/api/v1` read. OpenAPI cannot describe the
+        # event grammar of a `text/event-stream` body, so the contract states
+        # the media type and the frame shape in prose; leaving the endpoint out
+        # entirely would have hidden a route a client has to know exists.
+        response_class=Response,
+        responses={
+            200: {
+                "content": {"text/event-stream": {}},
+                "description": (
+                    "An ordered stream of invalidation events. Each frame "
+                    "carries an `id` of `<epoch>-<sequence>`, an `event` naming "
+                    "the topic, and a `data` object of exactly `sequence`, "
+                    "`subject` and `topic`. An event says what changed, never "
+                    "what it changed to: the reader refetches the authoritative "
+                    "answer over this same API. Reconnection is the browser's "
+                    "own, presenting the last identity as `Last-Event-ID`; an "
+                    "identity from a previous process is answered with a "
+                    "`resync` event rather than a position in this order."
+                ),
+            }
+        },
+        summary="Subscribe to ordered invalidation for this session",
+        # Described rather than declared as a dependency: a `Header` parameter
+        # would make this the only read whose contract carries a validation
+        # error envelope, and the browser sets this header itself on its own
+        # reconnect. An unreadable value is answered with a resync, not a 422.
+        openapi_extra={
+            "parameters": [
+                {
+                    "description": (
+                        "The last frame identity this reader saw, presented by "
+                        "the browser's own reconnect. An identity from another "
+                        "process, or one past the retained order, is answered "
+                        "with a `resync` event."
+                    ),
+                    "in": "header",
+                    "name": "last-event-id",
+                    "required": False,
+                    "schema": {"maxLength": 64, "type": "string"},
+                }
+            ]
+        },
+    )
+    async def live_updates(
+        request: Request,
+        ml_session: str | None = Security(session_cookie),
+    ) -> Response:
+        last_event_id = request.headers.get("last-event-id")
+        _require_session(sessions, ml_session)
+        assert ml_session is not None
+        origin = request.headers.get("origin")
+        if origin is not None and origin != configuration.canonical_origin:
+            raise HTTPException(403, detail={"code": "origin"})
+        channel = application.updates
+        try:
+            subscription = channel.subscribe(
+                live_stream.last_event_position(last_event_id, channel.epoch)
+            )
+        except LiveUpdateCapacityError:
+            raise HTTPException(503, detail={"code": "capacity"}) from None
+
+        def still_authenticated() -> bool:
+            try:
+                sessions.authenticate(ml_session)
+            except ReviewWebError:
+                return False
+            return True
+
+        return StreamingResponse(
+            live_stream.stream_frames(
+                subscription,
+                channel.epoch,
+                still_authenticated=still_authenticated,
+            ),
+            media_type="text/event-stream",
+            headers={"X-Accel-Buffering": "no"},
         )
 
 

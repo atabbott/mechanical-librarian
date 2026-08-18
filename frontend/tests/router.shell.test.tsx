@@ -1,8 +1,12 @@
-import { act, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { PreparationView, ReviewHttp } from '../src/api/http'
+import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
+import { createApplicationRouter } from '../src/router'
 import { createHttp, renderRoute } from './fixtures'
 
 describe('Application shell', () => {
@@ -209,5 +213,108 @@ describe('Application shell', () => {
 
     expect(await screen.findByRole('heading', { name: 'This review route does not exist.' })).toBeVisible()
     expect(screen.getByRole('link', { name: 'Open review library' })).toHaveAttribute('href', '/library?lens=all')
+  })
+
+  it('looks again where an event points, without rebuilding the page or reloading it', async () => {
+    const listeners = new Set<(update: LiveUpdate) => void>()
+    const stateListeners = new Set<(state: LiveStreamState) => void>()
+    const updates: LiveUpdateStream = {
+      state: 'live',
+      subscribe(listener) {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      observeState(listener) {
+        stateListeners.add(listener)
+        return () => stateListeners.delete(listener)
+      },
+      close: () => undefined,
+    }
+    const announce = (update: LiveUpdate) => {
+      for (const listener of [...listeners]) listener(update)
+    }
+    const http = createHttp()
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const router = createApplicationRouter(
+      http,
+      queryClient,
+      createMemoryHistory({ initialEntries: ['/library?lens=all'] }),
+      updates,
+    )
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    )
+    await screen.findByRole('heading', { name: 'Every work, with exceptions first' })
+    const before = vi.mocked(http.getLibrary).mock.calls.length
+    const href = router.state.location.href
+
+    // A case changing is not a reason to rebuild the Library page: the event
+    // names one identity, and only the query holding that identity is asked
+    // again. Nothing here is a whole-Library projection.
+    await act(async () => {
+      announce({ sequence: 1, subject: `review_case_${'a'.repeat(64)}`, topic: 'case' })
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    })
+    expect(http.getLibrary).toHaveBeenCalledTimes(before)
+
+    // The bounded page the owner is looking at is refetched exactly once for a
+    // burst of Library announcements, at the same cursor and lens.
+    await act(async () => {
+      for (let index = 0; index < 20; index += 1)
+        announce({ sequence: index + 2, subject: null, topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    })
+    expect(http.getLibrary).toHaveBeenCalledTimes(before + 1)
+    expect(vi.mocked(http.getLibrary).mock.calls.at(-1)?.[0]).toEqual({ lens: 'all' })
+    // And no navigation happened: a live update is a refetch, never a reload.
+    expect(router.state.location.href).toBe(href)
+  })
+
+  it('says the stream is down only once it has stayed down', async () => {
+    vi.useFakeTimers()
+    try {
+      const stateListeners = new Set<(state: LiveStreamState) => void>()
+      const stream: { state: LiveStreamState } = { state: 'degraded' }
+      const updates: LiveUpdateStream = {
+        get state() {
+          return stream.state
+        },
+        subscribe: () => () => undefined,
+        observeState(listener) {
+          stateListeners.add(listener)
+          return () => stateListeners.delete(listener)
+        },
+        close: () => undefined,
+      }
+      const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      const router = createApplicationRouter(
+        createHttp(),
+        queryClient,
+        createMemoryHistory({ initialEntries: ['/library?lens=all'] }),
+        updates,
+      )
+      render(
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>,
+      )
+      await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+
+      // A momentary reconnect is not news, so the first second is silent.
+      expect(screen.queryByText('Reconnecting · checking for updates')).toBeNull()
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_200) })
+      expect(screen.getByText('Reconnecting · checking for updates')).toBeVisible()
+
+      await act(async () => {
+        stream.state = 'live'
+        for (const listener of [...stateListeners]) listener(stream.state)
+        await vi.advanceTimersByTimeAsync(200)
+      })
+      expect(screen.queryByText('Reconnecting · checking for updates')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

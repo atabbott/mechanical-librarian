@@ -2110,6 +2110,14 @@ def run_review_server(
                 date_header=False,
                 access_log=False,
                 http=BoundedReviewH11Protocol,
+                # The owner's configured shutdown budget, applied to draining
+                # connections as well as to the background lanes it already
+                # governed. A live-update stream is a long HTTP response, and
+                # the server waits for in-flight responses before it runs the
+                # lifespan shutdown that stops those lanes -- so without a bound
+                # here one open browser tab would hold the process open past the
+                # point the owner asked it to stop (#641).
+                timeout_graceful_shutdown=review.graceful_shutdown_seconds,
                 limit_concurrency=MAX_REVIEW_CONNECTIONS,
                 backlog=MAX_REVIEW_CONNECTIONS,
                 h11_max_incomplete_event_size=16_384,

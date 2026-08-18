@@ -164,6 +164,9 @@ def test_a_later_shutdown_failure_is_kept_on_the_one_that_propagates(
     """
 
     class _FailingPreparation:
+        def attach_updates(self, announce: object) -> None:
+            return None
+
         def begin_drain(self) -> None:
             raise RuntimeError("drain lane did not stop")
 
@@ -266,6 +269,9 @@ def test_connection_probe_does_not_hold_the_global_application_gate(
 
     class BlockingPreparation:
         libraries: tuple[tuple[str, str, str], ...] = ()
+
+        def attach_updates(self, announce: object) -> None:
+            return None
 
         def check_connection(self, _connection: str) -> bool:
             started.set()

@@ -466,11 +466,18 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             raise FieldEffectError("persistence") from error
 
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]:
-        """Return exact current prepared counts grouped by library and origin."""
+        """Return exact prepared counts grouped by library, origin and destination.
+
+        Destination is in the grouping because permission is granted per
+        destination: an owner asked to enable writes is owed the count each
+        destination in the offer accounts for, and a cover destination held back
+        by its own gate must not be represented by a number that includes it
+        (#639).
+        """
         try:
             rows = self._connection.execute(
                 "WITH pending AS ("
-                "SELECT human.decision_id,human.review_case_id,'human' origin "
+                "SELECT human.decision_id,human.review_case_id,human.destination,'human' origin "
                 "FROM human_decisions human WHERE human.outcome='accept' AND "
                 "EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
                 "WHERE lineage.review_case_id=human.review_case_id) AND "
@@ -480,7 +487,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "SELECT 1 FROM field_effect_manual_holds returned WHERE "
                 "returned.review_case_id=human.review_case_id AND "
                 "returned.destination=human.destination AND returned.active=0) UNION ALL "
-                "SELECT automatic.decision_id,automatic.review_case_id,'automatic' origin "
+                "SELECT automatic.decision_id,automatic.review_case_id,automatic.destination,'automatic' origin "
                 "FROM automatic_decisions automatic WHERE "
                 "EXISTS (SELECT 1 FROM current_review_case_lineages lineage JOIN "
                 "current_review_packages package ON package.connection_name=lineage.connection_name "
@@ -498,7 +505,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "SELECT 1 FROM field_effect_manual_holds hold WHERE "
                 "hold.review_case_id=automatic.review_case_id AND "
                 "hold.destination=automatic.destination AND hold.active=1)) "
-                "SELECT lineage.connection_name,lineage.library_name,pending.origin,count(*) "
+                "SELECT lineage.connection_name,lineage.library_name,pending.origin,"
+                "pending.destination,count(*) "
                 "FROM pending JOIN current_review_case_lineages lineage "
                 "ON lineage.review_case_id=pending.review_case_id JOIN current_review_packages package "
                 "ON package.connection_name=lineage.connection_name AND package.library_name=lineage.library_name "
@@ -508,17 +516,19 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
                 "WHERE effect.decision_id=pending.decision_id AND "
                 "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
-                "GROUP BY lineage.connection_name,lineage.library_name,pending.origin "
-                "ORDER BY lineage.connection_name,lineage.library_name,pending.origin"
+                "GROUP BY lineage.connection_name,lineage.library_name,pending.origin,"
+                "pending.destination ORDER BY lineage.connection_name,"
+                "lineage.library_name,pending.origin,pending.destination"
             ).fetchall()
             return tuple(
                 {
                     "connection": connection,
                     "library": library,
                     "origin": origin,
+                    "destination": destination,
                     "count": count,
                 }
-                for connection, library, origin, count in rows
+                for connection, library, origin, destination, count in rows
             )
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error

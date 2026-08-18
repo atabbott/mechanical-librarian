@@ -207,7 +207,21 @@ export interface ActivityLibraryView {
 export interface ActivityDestinationView {
   consented: boolean
   destination: string
+  /** Prepared changes this destination's permission would carry, and no other. */
+  prepared: number
   state: string
+}
+/**
+ * Why prepared work is not moving, split into the four different next steps an
+ * owner has, plus what is moving now. One "waiting safely" number could not
+ * distinguish consent they can give from a retry they must wait out (#639).
+ */
+export interface ActivityWaitingReasonsView {
+  applying: number
+  awaiting_permission: number
+  held_for_recovery: number
+  retrying: number
+  scheduled: number
 }
 export interface ActivityCapabilityView {
   connection: string
@@ -294,6 +308,7 @@ export interface ActivityDisplayView {
   provider_recovery?: readonly ProviderRecoveryActivityView[]
   schema_version: 'continuous-field-activity-v2'
   suspensions: readonly ActivitySuspensionView[]
+  waiting: ActivityWaitingReasonsView
 }
 
 export type ActivityView = ActivityDisplayView
@@ -885,6 +900,21 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
   const counts: Record<string, number> = {}
   for (const [key, count] of Object.entries(value.counts))
     counts[stringValue(key, 'activity_count_name')] = integerValue(count, 'activity_count')
+  const waitingReasons = value.waiting
+  if (!record(waitingReasons)) throw new ApiError(502, 'invalid_activity_waiting')
+  const waiting: ActivityWaitingReasonsView = {
+    applying: integerValue(waitingReasons.applying, 'activity_waiting_applying'),
+    awaiting_permission: integerValue(
+      waitingReasons.awaiting_permission,
+      'activity_waiting_awaiting_permission',
+    ),
+    held_for_recovery: integerValue(
+      waitingReasons.held_for_recovery,
+      'activity_waiting_held_for_recovery',
+    ),
+    retrying: integerValue(waitingReasons.retrying, 'activity_waiting_retrying'),
+    scheduled: integerValue(waitingReasons.scheduled, 'activity_waiting_scheduled'),
+  }
   const providerRecovery = value.provider_recovery === undefined ? [] : value.provider_recovery
   if (!Array.isArray(providerRecovery)) throw new ApiError(502, 'invalid_provider_recovery')
   const recovery = providerRecovery.map((item, index) => {
@@ -928,10 +958,12 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
             destination: stringValue(destination.destination, 'activity_destination'),
             state: stringValue(destination.state, 'activity_destination_state'),
             consented: destination.consented,
+            prepared: integerValue(destination.prepared, 'activity_destination_prepared'),
           }
         }),
       }
     }),
+    waiting,
     configured_libraries: libraries(value.configured_libraries, 'activity_configured_libraries'),
     consented_libraries: libraries(value.consented_libraries, 'activity_consented_libraries'),
     counts,
