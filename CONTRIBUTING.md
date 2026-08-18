@@ -154,6 +154,7 @@ of this table can be checked against the workflow rather than trusted.
 | Python lint | gate | `uv run ruff check src tests scripts` in `fast-source` |
 | Python typing | gate | `uv run mypy src tests scripts` in `fast-source` |
 | Documentation reachability, relative links and the ADR index | gate | `scripts/verify_documentation_integrity.py` in `fast-source` |
+| Every direct dependency carries an authority grant, and no grant outlives its dependency | gate | `scripts/verify_dependency_authority.py` in `fast-source` |
 | Frontend typing, lint, formatting and Vitest suite | gate | `npm run typecheck`, `npm run lint`, `npm test`; `npm run lint` is what fails on unformatted source |
 | Frontend licence inventory and dependency advisories | gate | `npm run licenses`, `npm audit --audit-level=low` |
 | The exact Node and npm toolchain, in every job that builds the frontend | gate | `test "$(node --version)"` and `test "$(npm --version)"` |
@@ -165,7 +166,7 @@ of this table can be checked against the workflow rather than trusted.
 | Workflow permissions and the advisory acceptance register | gate | the fast tier |
 | Wheel identity, archive and installed record integrity, payload equality, installed console | gate | `scripts/qualify_exact_artifact.py` in `exact-installed` |
 | Required installed test tier, run by the isolated wheel's interpreter | gate | `--test-tier required` in `exact-installed` |
-| The Chromium payload is well formed, and its digest is recorded | gate | `scripts/verify_playwright_browser.py` in `protected-browser` |
+| The Chromium payload is well formed, its digest is recorded, and it starts on the runner's own libraries | gate | `scripts/verify_playwright_browser.py` in `protected-browser` |
 | Browser tier against that recorded payload | gate | `scripts/run_test_tier.py browser` in `protected-browser` |
 | The shipped container image builds from the exact revision | gate | `docker build --pull --tag mechanical-librarian:gate .` in `container-image` |
 | Advisories against the locked dependency closure | gate | `--lockfile=uv.lock` in `dependency-audit` |

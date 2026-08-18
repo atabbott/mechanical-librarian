@@ -125,16 +125,56 @@ def verify_playwright_browser() -> dict[str, object]:
     return browser_payload_evidence(payload, key, revision)
 
 
+def launch_evidence(key: str) -> dict[str, object]:
+    """Start and stop the payload, which is what needs the host's libraries.
+
+    Every other check here reads the payload; none of them runs it. Resolving
+    `executable_path` starts no process, so a runner image that stopped
+    shipping one of Chromium's shared libraries passes all of them and first
+    fails inside the browser tier -- reading as a browser-tier regression
+    rather than as the image change it is. The public gate stopped installing
+    those libraries itself when `playwright install --with-deps` was dropped
+    for spending the protected job's whole budget in `apt-get` (#772), so the
+    assumption that the image supplies them is checked here instead of hoped
+    for.
+
+    Playwright's own message names the missing libraries and is the only
+    actionable fact in the failure, so it is printed before the reason code
+    replaces it. The reason stays a code because that is this script's
+    contract; the message is diagnostics beside it, not part of the record.
+    """
+
+    try:
+        with sync_playwright() as playwright:
+            playwright.chromium.launch(headless=True).close()
+    except Exception as error:
+        print(f"chromium launch failed: {error}", file=sys.stderr)
+        raise BrowserVerificationError("browser_launch_failed") from error
+    return {
+        "platform": key,
+        "playwright_version": _playwright_version(),
+        "schema": "browser-payload-evidence-v1",
+        "status": "launched",
+    }
+
+
 def main(arguments: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--path", type=Path)
     parser.add_argument("--platform")
     parser.add_argument("--revision", default="unknown")
+    parser.add_argument(
+        "--launch",
+        action="store_true",
+        help="start and stop the installed browser instead of digesting it",
+    )
     values = parser.parse_args(arguments)
     key = values.platform or _platform_key()
     if key not in _SUPPORTED_PLATFORMS:
         raise BrowserVerificationError("browser_platform_unsupported")
-    if values.path:
+    if values.launch:
+        record = launch_evidence(key)
+    elif values.path:
         record = browser_payload_evidence(values.path.resolve(), key, values.revision)
     else:
         record = verify_playwright_browser()

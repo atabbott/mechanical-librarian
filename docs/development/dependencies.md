@@ -12,6 +12,12 @@ proposes updates. It records no version number: a version repeated in prose is
 a copy of the lockfile that goes stale, and every earlier copy in this corpus
 did.
 
+Its completeness over direct dependencies is enforced rather than reviewed.
+`scripts/verify_dependency_authority.py` runs in `fast-source` and fails on a
+dependency `pyproject.toml` declares with no grant below, on a grant naming a
+dependency the manifest no longer declares, and on a grant whose own spelled
+count no longer matches the dependencies it covers.
+
 ## Reproducibility boundary
 
 The manifests pin direct dependencies exactly. The lockfiles retain the exact
@@ -149,14 +155,13 @@ use synthetic credentials, hostile strings, disposable owner-only databases,
 loopback HTTPS, and no production service; property cases use
 repository-authored synthetic structures.
 
-`ruff`, `mypy`, `pytest` and `setuptools` read and analyse this repository's own
-source and build its wheel from it. They are granted the checkout and nothing
-else: no credential, no network use in any gate command, no target or provider,
-and no runtime import. `setuptools` is the build backend and is the only one of
-the four that produces a shipped artifact; a `setuptools` update is reviewed as
-a build change, which is why `.github/renovate.json` keeps it out of the
-auto-merge classes.
-
+- `ruff`, `mypy`, `pytest` and `setuptools` read and analyse this repository's
+  own source and build its wheel from it. They are granted the checkout and
+  nothing else: no credential, no network use in any gate command, no target or
+  provider, and no runtime import. `setuptools` is the build backend and is the
+  only one of the four that produces a shipped artifact; a `setuptools` update
+  is reviewed as a build change, which is why `.github/renovate.json` keeps it
+  out of the auto-merge classes.
 - **Playwright** drives disposable same-origin browser qualification only, and
   it holds **process-creation authority**: `tests/browser/` calls
   `playwright.chromium.launch(headless=True)`, so a Playwright update changes

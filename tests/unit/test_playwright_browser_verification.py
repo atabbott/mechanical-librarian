@@ -141,3 +141,94 @@ def test_an_unexpected_failure_still_reports_the_catch_all(
     emitted = json.loads(diagnostics.getvalue())
     assert emitted["reason"] == "browser_verification_failed"
     assert emitted["status"] == "failed"
+
+
+class _FakeChromium:
+    def __init__(self, failure: Exception | None) -> None:
+        self._failure = failure
+        self.closed = False
+
+    def launch(self, headless: bool) -> _FakeChromium:
+        assert headless is True
+        if self._failure is not None:
+            raise self._failure
+        return self
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakePlaywright:
+    def __init__(self, failure: Exception | None) -> None:
+        self.chromium = _FakeChromium(failure)
+
+    def __enter__(self) -> _FakePlaywright:
+        return self
+
+    def __exit__(self, *_: object) -> None:
+        return None
+
+
+def _fake_playwright(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception | None
+) -> _FakePlaywright:
+    fake = _FakePlaywright(failure)
+    monkeypatch.setattr(
+        verify_playwright_browser, "sync_playwright", lambda: fake, raising=True
+    )
+    return fake
+
+
+def test_the_launch_probe_starts_and_stops_the_installed_browser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Recording the payload never starts it, so this is a separate claim.
+
+    `_installed_payload` resolves an executable path and digests a tree; a
+    runner image missing one of Chromium's shared libraries passes both. The
+    public gate stopped installing those libraries when it dropped
+    `playwright install --with-deps` (#772), so the launch is what now proves
+    the assumption that the image supplies them.
+    """
+
+    fake = _fake_playwright(monkeypatch, None)
+    emitted = StringIO()
+    with redirect_stdout(emitted):
+        result = cli(("--launch", "--platform", "linux-x86_64"))
+    assert result == 0
+    assert fake.chromium.closed is True
+    record = json.loads(emitted.getvalue())
+    assert record["status"] == "launched"
+    assert record["platform"] == "linux-x86_64"
+    # The probe answers one question and pays for nothing else: no digest, no
+    # file count, no byte total over a two-hundred-megabyte tree.
+    assert "tree_sha256" not in record
+
+
+def test_a_failed_launch_reports_its_own_reason_and_keeps_the_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The missing library names itself, and the code says where to look.
+
+    A launch that fails on the image's libraries is not a browser-tier defect,
+    and the whole point of the separate step is that a reader can tell the two
+    apart without reading the tier. The reason code carries that, and
+    Playwright's own message -- the only actionable half -- survives beside it
+    rather than being swallowed by the catch-all.
+    """
+
+    _fake_playwright(
+        monkeypatch,
+        RuntimeError("Host system is missing dependencies: libnss3.so"),
+    )
+    diagnostics = StringIO()
+    with redirect_stderr(diagnostics):
+        result = cli(("--launch", "--platform", "linux-x86_64"))
+    assert result == 1
+    reported = diagnostics.getvalue().splitlines()
+    assert reported[0] == (
+        "chromium launch failed: Host system is missing dependencies: libnss3.so"
+    )
+    emitted = json.loads(reported[1])
+    assert emitted["reason"] == "browser_launch_failed"
+    assert emitted["status"] == "failed"
