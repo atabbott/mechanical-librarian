@@ -565,9 +565,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 assert page.locator(".cm-activity-ledger").evaluate(
                     "node => node.previousElementSibling?.classList.contains('cm-activity-status')"
                 )
-                long_activity_title = page.locator(
-                    ".cm-activity-outcome > strong"
-                ).filter(has_text=LONG_TITLE)
+                long_activity_title = page.locator(".cm-activity-work > strong").filter(
+                    has_text=LONG_TITLE
+                )
                 assert long_activity_title.get_attribute("title") == LONG_TITLE
                 assert (
                     long_activity_title.evaluate(
@@ -585,6 +585,48 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     "title_height": title_box["height"],
                     "row_height": row_box["height"],
                 }
+                # The Policy record is the only one carrying an exact From/To,
+                # and its three-column table is the widest thing the compact
+                # card ever opens. It fits the card rather than sliding out of
+                # it, and every other category keeps the compact fact density
+                # beside it rather than inheriting this bulk (#636).
+                policy_row = (
+                    activity_ledger.locator("article")
+                    .filter(has_text="3 changes activated")
+                    .first
+                )
+                policy_row.get_by_role("button", name="Details").click()
+                policy_changes = policy_row.locator(".cm-activity-policy-changes")
+                expect(policy_changes).to_have_count(1)
+                expect(policy_changes.locator("li")).to_have_count(3)
+                expect(policy_changes.get_by_text("Ask me").first).to_be_visible()
+                expect(policy_changes.get_by_text("Automatic").first).to_be_visible()
+                assert (
+                    policy_changes.evaluate(
+                        "node => node.scrollWidth - node.clientWidth"
+                    )
+                    <= 0
+                )
+                assert (
+                    page.evaluate("() => document.documentElement.scrollWidth") <= 390
+                )
+                other_row = (
+                    activity_ledger.get_by_text("The Glass Orchard", exact=True)
+                    .locator("xpath=ancestor::article")
+                    .first
+                )
+                other_row.get_by_role("button", name="Details").click()
+                expect(other_row.locator(".cm-activity-policy-changes")).to_have_count(
+                    0
+                )
+                expect(other_row.locator(".cm-activity-evidence dl div")).to_have_count(
+                    3
+                )
+                # One record is open at a time, so opening the second closed
+                # the first: only the open one is closed here.
+                expect(policy_row.locator(".cm-activity-evidence")).to_have_count(0)
+                other_row.get_by_role("button", name="Hide details").click()
+
                 compact_row = long_activity_title.locator("xpath=ancestor::article")
                 assert (
                     compact_row.evaluate(
@@ -598,21 +640,31 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     )
                     == "3"
                 )
+                # The accepted compact card is three rows -- time/type/action,
+                # work/field, then change/result -- so the disclosure sits
+                # beside the type on the first row rather than under the card,
+                # and the change has the row the action used to occupy (#636).
                 assert (
-                    compact_row.get_by_role("button", name="Inspect").evaluate(
+                    compact_row.get_by_role(
+                        "button", name="Details", exact=True
+                    ).evaluate("node => getComputedStyle(node).gridRow")
+                    == "1"
+                )
+                assert (
+                    compact_row.locator(".cm-activity-change").evaluate(
                         "node => getComputedStyle(node).gridRow"
                     )
-                    == "4"
+                    == "3"
                 )
                 assert title_box["height"] <= 36, compact_geometry
                 assert row_box["height"] <= 182, compact_geometry
                 page.set_viewport_size({"width": 1440, "height": 900})
-                inspect = page.get_by_role("button", name="Inspect").first
+                inspect = page.get_by_role("button", name="Details", exact=True).first
                 stage[0] = "activity:desktop-media-state"
                 page.wait_for_function(
                     """() => {
                             const inspect = document.querySelector('.cm-activity-events article > button');
-                            const title = document.querySelector('.cm-activity-outcome > strong');
+                            const title = document.querySelector('.cm-activity-work > strong');
                             return window.matchMedia('(min-width: 761px)').matches
                                 && inspect instanceof HTMLElement
                                 && title instanceof HTMLElement
@@ -639,7 +691,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 stage[0] = "activity:compact-media-state"
                 page.wait_for_function(
                     """() => {
-                            const title = document.querySelector('.cm-activity-outcome > strong');
+                            const title = document.querySelector('.cm-activity-work > strong');
                             return window.matchMedia('(max-width: 760px)').matches
                                 && title instanceof HTMLElement
                                 && getComputedStyle(title).webkitLineClamp === '2';
@@ -722,23 +774,24 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     page_size.click()
                     page.get_by_role("option", name="50 per page").click()
                     expect(page_size).to_be_focused()
-                page.get_by_role("button", name="Reviews").click()
+                page.get_by_role("button", name="Owner choices").click()
                 page.get_by_role("button", name="All").click()
-                inspect_control = page.get_by_role("button", name="Inspect").first
+                inspect_control = page.get_by_role(
+                    "button", name="Details", exact=True
+                ).first
                 inspect_control.wait_for()
                 expect(inspect_control).to_be_visible()
                 inspect_control.focus()
                 page.keyboard.press("Enter")
-                page.get_by_text("Durable evidence").wait_for()
+                page.get_by_text("Previous value").first.wait_for()
                 assert (
                     page.locator(".cm-activity-evidence").evaluate(
                         "node => getComputedStyle(node).gridRow"
                     )
-                    == "5"
+                    == "4"
                 )
-                page.get_by_text("Recorded origin").wait_for()
                 page.locator(".cm-activity-evidence").get_by_text(
-                    "Outcome", exact=True
+                    "Chosen by", exact=True
                 ).wait_for()
                 assert (
                     "future_provider_origin"

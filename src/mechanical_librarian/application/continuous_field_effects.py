@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Protocol, cast
 
+from mechanical_librarian.application.activity_records import readable_activity_event
 from mechanical_librarian.application.field_effects import (
     AuthorityCurrentness,
     CapabilityObserver,
@@ -774,6 +775,7 @@ class ContinuousGuardedApplication:
             event["work_label"] = event.get("work_label", "Recorded work")
             event["author_label"] = "Author details are not recorded"
             if connection is None and report_id is None:
+                readable_activity_event(event, None)
                 continue
             if type(connection) is not str or type(report_id) is not str:
                 raise GuardedApplicationError("activity")
@@ -816,6 +818,10 @@ class ContinuousGuardedApplication:
                 event["author_label"] = (
                     joined if len(joined) <= 512 else joined[:511].rstrip() + "…"
                 ) or "Author details are not recorded"
+            # The report is passed rather than looked up again: an event only
+            # accepts it as the source of a previous value when its own
+            # recorded fingerprint names it (#636).
+            readable_activity_event(event, report)
         cleanup = data.pop("cleanup", None)
         if cleanup is not None and (
             type(cleanup) is not dict
