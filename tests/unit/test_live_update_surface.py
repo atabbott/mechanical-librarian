@@ -229,11 +229,27 @@ def test_recording_a_decision_announces_the_case_its_row_and_the_write_queue(
     )
 
     assert recorded.status_code == 200, recorded.text
-    assert {(update.topic, update.subject) for update in subscription.drain(0)} == {
+    announced = subscription.drain(0)
+    assert {(update.topic, update.subject) for update in announced} == {
         ("case", web.case.review_case_id),
         ("library", web.case.review_case_id),
         ("activity", None),
     }
+    # The response tells the tab that recorded it exactly which positions its
+    # own decision caused, so that tab can recognise its own echo instead of
+    # rebuilding the Library from it (#635, #641). Correlation by identity is
+    # only worth anything if these are the same numbers the channel assigned:
+    # a token that names positions nothing was published at would leave the
+    # mechanism silently inert, refetching on every decision again.
+    assert sorted(recorded.json()["invalidation_sequences"]) == sorted(
+        update.sequence for update in announced
+    )
+    # The Library row's position is the one the client acts on, and it must
+    # name the case, because a subjectless `library` frame is what the channel
+    # emits when a subscription collapses and may stand for many other works.
+    row = next(update for update in announced if update.topic == "library")
+    assert row.subject == web.case.review_case_id
+    assert row.sequence in recorded.json()["invalidation_sequences"]
 
 
 def test_enabling_and_revoking_write_consent_announce_the_write_queue(

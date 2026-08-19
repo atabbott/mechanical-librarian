@@ -710,6 +710,11 @@ class _DecisionRequest(_ClosedModel):
 
 
 class _DecisionAcknowledgement(_DecisionProjection):
+    # The stream positions this decision's own announcements were given, so the
+    # tab that recorded it can recognise its echo. Three: the case, its Library
+    # row, and the write queue. Bounded because it is a fixed set of
+    # announcements, not a log.
+    invalidation_sequences: list[int] = Field(max_length=8)
     schema_version: str
 
 

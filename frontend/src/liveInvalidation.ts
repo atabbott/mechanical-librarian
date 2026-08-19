@@ -1,6 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react'
 
 import type { QueryClient } from '@tanstack/react-query'
+import { classifyDecisionEcho, forgetSettledKeys } from './decisionEcho'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from './liveUpdates'
 
 /**
@@ -63,10 +64,19 @@ export const startLiveInvalidation = (
     handle = null
     const keys = [...pending.values()]
     pending.clear()
+    // A read taken now is a read this tab no longer owes itself for an echo it
+    // recognised earlier, so the debt is discharged rather than repeated.
+    forgetSettledKeys(queryClient, keys)
     for (const queryKey of keys) void queryClient.invalidateQueries({ queryKey })
   }
 
   const unsubscribe = stream.subscribe((update) => {
+    // The one frame this tab does not act on: the echo of its own decision,
+    // recognised by the position the server told it that decision caused. It is
+    // settled when the owner leaves the case rather than discarded, so the row
+    // behind them is still correct when they come back to it. Everything else,
+    // enumerated or not, invalidates exactly as it did.
+    if (classifyDecisionEcho(queryClient, update) !== 'act') return
     for (const key of invalidationKeys(update)) pending.set(JSON.stringify(key), key)
     handle ??= schedule(flush, coalesceMilliseconds)
   })

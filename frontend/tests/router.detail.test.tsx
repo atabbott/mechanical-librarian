@@ -40,7 +40,7 @@ describe('Detail route', () => {
     } as const
     const coverField = { ...base, destination: 'cover', currentValue: `cover_${'a'.repeat(64)}`, currentRaw: `cover_${'a'.repeat(64)}`, proposalId: 'proposal-cover', targetFingerprint: 'fingerprint-cover', proposedValues: [{ kind: 'cover', value: `cover_${'b'.repeat(64)}` }], coverConsideration: consideration }
     const retryCoverConsideration = vi.fn(async () => { throw new Error('retry failed') })
-    const recordDecision = vi.fn(async () => ({ schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-cover', destination: 'cover', occurred_at: 1, outcome: 'accept' as const, proposal_id: 'proposal-cover', review_case_id: 'case-1', selected_value: { kind: 'cover', value: `cover_${'b'.repeat(64)}` }, target_fingerprint: 'fingerprint-cover' }))
+    const recordDecision = vi.fn(async () => ({ invalidation_sequences: [], schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-cover', destination: 'cover', occurred_at: 1, outcome: 'accept' as const, proposal_id: 'proposal-cover', review_case_id: 'case-1', selected_value: { kind: 'cover', value: `cover_${'b'.repeat(64)}` }, target_fingerprint: 'fingerprint-cover' }))
     const getHistory = vi.fn(async () => ({ schema_version: 'review-case-history-v1' as const, review_case_id: 'case-1', items: [], next_cursor: null }))
     const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })), getHistory, retryCoverConsideration, recordDecision }
     renderRoute('/review/case-1?field=cover&subview=review', http)
@@ -92,7 +92,7 @@ describe('Detail route', () => {
     const deferred = new Promise<void>((resolve) => { resolveDecision = resolve })
     const settled: CaseDetailView = { ...detail, fields: [{ ...field, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'settled', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: field.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: field.targetFingerprint } }] }
     let current = detail
-    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { await deferred; current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'settled', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: field.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: field.targetFingerprint } }) }
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { await deferred; current = settled; return { invalidation_sequences: [], schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'settled', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: field.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: field.targetFingerprint } }) }
     const { router } = renderRoute('/review/case-1?field=title&subview=review', http)
 
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
@@ -117,7 +117,7 @@ describe('Detail route', () => {
     const deferred = new Promise<void>((resolve) => { resolveDecision = resolve })
     const settled = { ...detail, fields: [{ ...field, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'settled-after-leave', destination: 'title', occurred_at: 1, outcome: 'keep_current' as const, proposal_id: field.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: field.targetFingerprint } }] }
     let current = detail
-    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { await deferred; current = settled; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'settled-after-leave', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: field.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: field.targetFingerprint } }) }
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { await deferred; current = settled; return { invalidation_sequences: [], schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'settled-after-leave', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: field.proposalId, review_case_id: 'case-1', selected_value: null, target_fingerprint: field.targetFingerprint } }) }
     renderRoute('/review/case-1?field=title&subview=review', http)
 
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
@@ -199,7 +199,7 @@ describe('Detail route', () => {
       getCaseDetail: vi.fn(async () => current),
       recordDecision: vi.fn(async () => {
         current = decided
-        return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-1', destination: 'title', occurred_at: 1, outcome: 'accept', proposal_id: 'proposal-1', review_case_id: 'case-1', selected_value: second, target_fingerprint: 'fingerprint-1' }
+        return { invalidation_sequences: [], schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-1', destination: 'title', occurred_at: 1, outcome: 'accept', proposal_id: 'proposal-1', review_case_id: 'case-1', selected_value: second, target_fingerprint: 'fingerprint-1' }
       }),
     }
     const { router } = renderRoute('/review/case-1?field=title&subview=review', http)
@@ -267,7 +267,7 @@ describe('Detail route', () => {
     const initial = { ...detail, fields: [titleField, authors, series] }
     const refreshed = { ...initial, fields: [titleField, series, { ...authors, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'decision-2', destination: 'authors', occurred_at: 1, outcome: 'keep_current' as const, proposal_id: 'proposal-2', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-2' } }] }
     let current = initial
-    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { current = refreshed; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-2', destination: 'authors', occurred_at: 1, outcome: 'keep_current', proposal_id: 'proposal-2', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-2' } }) }
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { current = refreshed; return { invalidation_sequences: [], schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-2', destination: 'authors', occurred_at: 1, outcome: 'keep_current', proposal_id: 'proposal-2', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-2' } }) }
     const { router } = renderRoute('/review/case-1?field=authors&subview=review', http)
 
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
@@ -283,7 +283,7 @@ describe('Detail route', () => {
     if (!titleField) throw new Error('detail fixture requires a title field')
     const resolved = { ...detail, fields: [{ ...titleField, needsAttention: false, humanDecision: { actor: 'owner', decision_id: 'decision-3', destination: 'title', occurred_at: 1, outcome: 'keep_current' as const, proposal_id: 'proposal-1', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-1' } }] }
     let current = detail
-    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { await completion; current = resolved; return { schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-3', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: 'proposal-1', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-1' } }) }
+    const http: ReviewHttp = { ...createHttp(), getCaseDetail: vi.fn(async () => current), recordDecision: vi.fn(async () => { await completion; current = resolved; return { invalidation_sequences: [], schema_version: 'review-decision-v1', actor: 'owner', decision_id: 'decision-3', destination: 'title', occurred_at: 1, outcome: 'keep_current', proposal_id: 'proposal-1', review_case_id: 'case-1', selected_value: null, target_fingerprint: 'fingerprint-1' } }) }
     const { router } = renderRoute('/review/case-1?field=title&subview=review', http)
 
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
