@@ -1660,6 +1660,14 @@
             "title": "Destination",
             "type": "string"
           },
+          "invalidation_sequences": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 8,
+            "title": "Invalidation Sequences",
+            "type": "array"
+          },
           "occurred_at": {
             "title": "Occurred At",
             "type": "integer"
@@ -1705,6 +1713,7 @@
           "review_case_id",
           "selected_value",
           "target_fingerprint",
+          "invalidation_sequences",
           "schema_version"
         ],
         "title": "_DecisionAcknowledgement",
