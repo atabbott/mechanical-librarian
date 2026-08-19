@@ -35,6 +35,7 @@ depends on it.
 - [Review-case admission](operations/review-case.md)
 - [Provider recovery](operations/provider-recovery.md)
 - [Observability](operations/observability.md)
+- [Cold-start report](operations/cold-start-report.md)
 - [Deployment model](operations/deployment.md)
 - [Backups and recovery](operations/backups-and-recovery.md)
 - [Upgrades](operations/upgrades.md)
