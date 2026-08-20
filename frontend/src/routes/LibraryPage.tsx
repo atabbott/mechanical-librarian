@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
-import { Link, useNavigate } from '@tanstack/react-router'
+import { Link, useNavigate, useRouter } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import type { SyntheticEvent } from 'react'
 
@@ -741,11 +741,14 @@ function LibraryCoverChoicesContent({
 
 export default function LibraryPage({ data }: { data: LibraryView }) {
   const search = libraryRoute.useSearch()
+  const router = useRouter()
   const navigate = useNavigate({ from: '/library' })
   const { http } = useReviewContext()
   const currentSearch = useRef(search)
   const pendingSearchQuery = useRef<string | null>(null)
   const searchNavigation = useRef<Promise<void> | null>(null)
+  const searchGeneration = useRef(0)
+  const abandonedSearchTarget = useRef<string | null>(null)
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
@@ -781,6 +784,21 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const urlQuery = search.q ?? ''
   const queryText = searchPending || typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
   const selectedReviewCaseId = search.preview ?? ''
+  useEffect(() => {
+    const mountedGeneration = searchGeneration.current
+    const unsubscribe = router.history.subscribe(({ location }) => {
+      if (location.pathname === '/library') return
+      ++searchGeneration.current
+      pendingSearchQuery.current = null
+      abandonedSearchTarget.current = location.href
+    })
+    return () => {
+      searchGeneration.current = mountedGeneration + 1
+      pendingSearchQuery.current = null
+      abandonedSearchTarget.current = router.state.location.href
+      unsubscribe()
+    }
+  }, [router])
   // A search or lens may temporarily hide the open work's card. The row the
   // owner opened is kept so the summary does not vanish mid-inspection and
   // send them back to the list; clearing the selection releases it.
@@ -1010,23 +1028,36 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     setSearchPending(true)
     pendingSearchQuery.current = q
     if (searchNavigation.current !== null) return
+    const generation = searchGeneration.current
     const drain = async () => {
-      while (pendingSearchQuery.current !== null) {
-        const pending = pendingSearchQuery.current
-        pendingSearchQuery.current = null
-        await navigate({
-          replace: true,
-          search: (current) => {
-            const next = { ...current }
-            delete next.cursor
-            if (pending) next.q = pending
-            else delete next.q
-            return next
-          },
-        })
+      try {
+        while (generation === searchGeneration.current && pendingSearchQuery.current !== null) {
+          const pending = pendingSearchQuery.current
+          pendingSearchQuery.current = null
+          await navigate({
+            replace: true,
+            search: (current) => {
+              const next = { ...current }
+              delete next.cursor
+              if (pending) next.q = pending
+              else delete next.q
+              return next
+            },
+          })
+        }
+      } catch {
+        // A later owner edit may start a fresh drain; a failed read navigation
+        // is never retried without that new intent.
+      } finally {
+        if (generation !== searchGeneration.current) {
+          const target = abandonedSearchTarget.current
+          if (target && router.state.location.href !== target)
+            void router.navigate({ href: target, replace: true }).catch(() => undefined)
+        } else {
+          searchNavigation.current = null
+          setSearchPending(false)
+        }
       }
-      searchNavigation.current = null
-      setSearchPending(false)
     }
     searchNavigation.current = drain()
   }

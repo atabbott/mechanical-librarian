@@ -1245,6 +1245,53 @@ describe('Library route', () => {
     delayedNavigate.mockRestore()
   })
 
+  it('starts a fresh Library search after a rejected replacement', async () => {
+    const user = userEvent.setup()
+    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1')
+    await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    const failedNavigate = vi.spyOn(router, 'navigate').mockRejectedValueOnce(new Error('route unavailable'))
+    const query = screen.getByLabelText('Search title, author, identifier, library, or format')
+
+    await user.clear(query)
+    await waitFor(() => expect(failedNavigate).toHaveBeenCalledTimes(1))
+    await user.clear(query)
+    await user.type(query, 'second')
+
+    await waitFor(() =>
+      expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', q: 'second' }),
+    )
+    failedNavigate.mockRestore()
+  })
+
+  it('does not revive queued Library search after leaving the route', async () => {
+    const user = userEvent.setup()
+    let releaseFirst: (() => void) | undefined
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn<ReviewHttp['getLibrary']>(async (search, signal) => {
+        if (search.q !== undefined) return library
+        await new Promise<void>((resolve, reject) => {
+          releaseFirst = resolve
+          signal?.addEventListener('abort', () => reject(new Error('Library request was aborted')), { once: true })
+        })
+        return library
+      }),
+    }
+    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1', http)
+    await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    const query = screen.getByLabelText('Search title, author, identifier, library, or format')
+
+    await user.clear(query)
+    await waitFor(() => expect(releaseFirst).toBeTypeOf('function'))
+    await user.type(query, 'second')
+    await router.navigate({ to: '/activity', search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 } })
+    await waitFor(() => expect(router.state.location.pathname).toBe('/activity'))
+    act(() => releaseFirst?.())
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/activity'))
+    expect(http.getLibrary).not.toHaveBeenCalledWith({ lens: 'all', q: 'second' }, expect.any(AbortSignal))
+  })
+
   it('preserves an off-page preview deep link without exposing detail target identity', async () => {
     const emptyLibrary: LibraryView = { lens: 'all', page: 1, counts: { attention: 0, all: 0, clear: 0 }, works: [] }
     const http: ReviewHttp = {
