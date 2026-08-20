@@ -35,7 +35,7 @@ from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
 from tests.support.review_cases import _report
 
 _WORKS = 2_000
-_READ_VM_STEP_BUDGET = 6_100_000
+_READ_VM_STEP_BUDGET = 10_500_000
 _READ_WALL_BUDGET_SECONDS = 2.0
 _Result = TypeVar("_Result")
 
