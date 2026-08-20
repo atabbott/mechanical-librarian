@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SyntheticEvent } from 'react'
 
 import { displayValue } from '../api/http'
@@ -749,6 +749,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const searchNavigation = useRef<Promise<void> | null>(null)
   const searchCommitTimer = useRef<number | null>(null)
   const searchGeneration = useRef(0)
+  const observedSearchQuery = useRef(search.q ?? '')
+  const expectedSearchQuery = useRef<string | null>(null)
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
@@ -784,14 +786,30 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const urlQuery = search.q ?? ''
   const queryText = searchPending || typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
   const selectedReviewCaseId = search.preview ?? ''
-  useEffect(() => {
-    const mountedGeneration = searchGeneration.current
-    return () => {
-      searchGeneration.current = mountedGeneration + 1
-      pendingSearchQuery.current = null
-      if (searchCommitTimer.current !== null) window.clearTimeout(searchCommitTimer.current)
+  const invalidateSearch = useCallback(() => {
+    ++searchGeneration.current
+    pendingSearchQuery.current = null
+    expectedSearchQuery.current = null
+    if (searchCommitTimer.current !== null) {
+      window.clearTimeout(searchCommitTimer.current)
+      searchCommitTimer.current = null
     }
   }, [])
+  useEffect(() => {
+    if (observedSearchQuery.current === urlQuery) return
+    observedSearchQuery.current = urlQuery
+    if (expectedSearchQuery.current === urlQuery) {
+      expectedSearchQuery.current = null
+      return
+    }
+    invalidateSearch()
+    setSearchPending(false)
+  }, [invalidateSearch, urlQuery])
+  useEffect(() => {
+    return () => {
+      invalidateSearch()
+    }
+  }, [invalidateSearch])
   // A search or lens may temporarily hide the open work's card. The row the
   // owner opened is kept so the summary does not vanish mid-inspection and
   // send them back to the list; clearing the selection releases it.
@@ -1026,6 +1044,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
           while (generation === searchGeneration.current && pendingSearchQuery.current !== null) {
             const pending = pendingSearchQuery.current
             pendingSearchQuery.current = null
+            expectedSearchQuery.current = pending
             await navigate({
               replace: true,
               search: (current) => {
@@ -1043,8 +1062,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         } finally {
           searchNavigation.current = null
           if (generation === searchGeneration.current) {
+            expectedSearchQuery.current = null
             if (pendingSearchQuery.current !== null) scheduleSearchNavigation()
             else setSearchPending(false)
+          } else if (pendingSearchQuery.current !== null) {
+            scheduleSearchNavigation()
           }
         }
       }

@@ -1270,6 +1270,63 @@ describe('Library route', () => {
     }
   })
 
+  it('relinquishes a pending Library query to a same-route URL change', async () => {
+    const getLibrary = vi.fn<ReviewHttp['getLibrary']>(async () => library)
+    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1', { ...createHttp(), getLibrary })
+    await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    const query = screen.getByLabelText('Search title, author, identifier, library, or format')
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(query, { target: { value: 'typed' } })
+      await router.navigate({ to: '/library', search: { lens: 'all', preview: 'case-1', q: 'external' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+      vi.useRealTimers()
+
+      expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', q: 'external' })
+      expect(getLibrary.mock.calls.map(([search]) => search)).not.toContainEqual({ lens: 'all', preview: 'case-1', q: 'typed' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('starts a later owner query after invalidating an active Library replacement', async () => {
+    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1')
+    await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    const originalNavigate = router.navigate.bind(router)
+    let releaseFirst: (() => void) | undefined
+    let libraryReplacements = 0
+    const delayedNavigate = vi.spyOn(router, 'navigate').mockImplementation((options) => {
+      if (options.from !== '/library') return originalNavigate(options)
+      libraryReplacements += 1
+      if (libraryReplacements !== 1) return originalNavigate(options)
+      return new Promise((resolve) => { releaseFirst = resolve })
+    })
+    const query = screen.getByLabelText('Search title, author, identifier, library, or format')
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(query, { target: { value: '' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+      expect(libraryReplacements).toBe(1)
+      await originalNavigate({ to: '/library', search: { lens: 'all', preview: 'case-1', q: 'external' } })
+      fireEvent.change(query, { target: { value: 'latest' } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(150)
+        releaseFirst?.()
+        await Promise.resolve()
+        await vi.advanceTimersByTimeAsync(150)
+      })
+      vi.useRealTimers()
+
+      await waitFor(() =>
+        expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', q: 'latest' }),
+      )
+      expect(libraryReplacements).toBe(2)
+    } finally {
+      vi.useRealTimers()
+      delayedNavigate.mockRestore()
+    }
+  })
+
   it('starts a fresh Library search after a rejected replacement', async () => {
     const user = userEvent.setup()
     const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1')
