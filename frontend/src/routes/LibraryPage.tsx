@@ -744,6 +744,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const navigate = useNavigate({ from: '/library' })
   const { http } = useReviewContext()
   const currentSearch = useRef(search)
+  const pendingSearchQuery = useRef<string | null>(null)
+  const searchNavigation = useRef<Promise<void> | null>(null)
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
@@ -775,8 +777,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   // URL says something this echo does not, the URL wins — which is what makes
   // Back, Forward and a deep link reseed the box instead of fighting it.
   const [typedQuery, setTypedQuery] = useState({ echo: search.q ?? '', text: search.q ?? '' })
+  const [searchPending, setSearchPending] = useState(false)
   const urlQuery = search.q ?? ''
-  const queryText = typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
+  const queryText = searchPending || typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
   const selectedReviewCaseId = search.preview ?? ''
   // A search or lens may temporarily hide the open work's card. The row the
   // owner opened is kept so the summary does not vanish mid-inspection and
@@ -1004,16 +1007,28 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const runSearch = (value: string) => {
     const q = value.trim()
     setTypedQuery({ echo: q, text: value })
-    void navigate({
-      replace: true,
-      search: (current) => {
-        const next = { ...current }
-        delete next.cursor
-        if (q) next.q = q
-        else delete next.q
-        return next
-      },
-    })
+    setSearchPending(true)
+    pendingSearchQuery.current = q
+    if (searchNavigation.current !== null) return
+    const drain = async () => {
+      while (pendingSearchQuery.current !== null) {
+        const pending = pendingSearchQuery.current
+        pendingSearchQuery.current = null
+        await navigate({
+          replace: true,
+          search: (current) => {
+            const next = { ...current }
+            delete next.cursor
+            if (pending) next.q = pending
+            else delete next.q
+            return next
+          },
+        })
+      }
+      searchNavigation.current = null
+      setSearchPending(false)
+    }
+    searchNavigation.current = drain()
   }
   const submitSearch = (event: SyntheticEvent<HTMLFormElement, SubmitEvent>) => {
     event.preventDefault()

@@ -1214,6 +1214,37 @@ describe('Library route', () => {
     expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
   })
 
+  it('keeps the latest Library query when a prior replacement finishes late', async () => {
+    const user = userEvent.setup()
+    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1')
+    await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    const originalNavigate = router.navigate.bind(router)
+    let releaseClear: (() => void) | undefined
+    let replacements = 0
+    const delayedNavigate = vi.spyOn(router, 'navigate').mockImplementation((options) => {
+      replacements += 1
+      if (replacements !== 1) return originalNavigate(options)
+      return new Promise((resolve, reject) => {
+        releaseClear = () => {
+          void originalNavigate(options).then(resolve, reject)
+        }
+      })
+    })
+    const query = screen.getByLabelText('Search title, author, identifier, library, or format')
+
+    await user.clear(query)
+    await user.type(query, 'second')
+    expect(query).toHaveValue('second')
+    expect(replacements).toBe(1)
+    act(() => releaseClear?.())
+
+    await waitFor(() =>
+      expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', q: 'second' }),
+    )
+    expect(replacements).toBe(2)
+    delayedNavigate.mockRestore()
+  })
+
   it('preserves an off-page preview deep link without exposing detail target identity', async () => {
     const emptyLibrary: LibraryView = { lens: 'all', page: 1, counts: { attention: 0, all: 0, clear: 0 }, works: [] }
     const http: ReviewHttp = {
