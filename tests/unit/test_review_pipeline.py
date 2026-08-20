@@ -1264,31 +1264,83 @@ def test_restart_requeues_claims_across_scopes_without_creating_recovery_effects
     )
     for index, (connection, library, library_id, producer) in enumerate(producers):
         repository.request_review_scan(connection, library, library_id, producer, index)
-    claimed = (
+    discoveries = (
         repository.claim_review_pipeline_action(10),
         repository.claim_review_pipeline_action(11),
     )
     assert [("primary", "ebooks"), ("secondary", "audio")] == [
-        (action.connection, action.library) for action in claimed if action is not None
+        (action.connection, action.library)
+        for action in discoveries
+        if action is not None
     ]
+    for index, action in enumerate(discoveries):
+        assert action is not None
+        repository.complete_review_discovery(
+            action,
+            1,
+            f"{index + 1:064x}",
+            (
+                replace(
+                    _entry(f"running-{index}", f"{index + 1:064x}"),
+                    connection=action.connection,
+                    library=action.library,
+                    library_id=action.library_id,
+                ),
+            ),
+            12 + index,
+        )
+    third_discovery = repository.claim_review_pipeline_action(14)
+    assert third_discovery is not None
+    assert "discovery" == third_discovery.stage
+    repository.complete_review_discovery(
+        third_discovery,
+        1,
+        "3" * 64,
+        (
+            replace(
+                _entry("unrelated", "3" * 64),
+                connection=third_discovery.connection,
+                library=third_discovery.library,
+                library_id=third_discovery.library_id,
+            ),
+        ),
+        15,
+    )
+    running = (
+        repository.claim_review_pipeline_action(16),
+        repository.claim_review_pipeline_action(17),
+    )
+    assert all(
+        action is not None and action.stage == "extraction" for action in running
+    )
+    running_ids = {cast(PipelineAction, action).action_id for action in running}
+    assert (
+        2
+        == repository._connection.execute(
+            "SELECT count(*) FROM review_preparation_work WHERE state='running'"
+        ).fetchone()[0]
+    )
+    provider_calls: list[str] = []
     repository.close()
 
     reopened = open_repository(application_path)
     reopened.recover_review_pipeline(producers)
     states = reopened._connection.execute(
-        "SELECT connection_name,library_name,state FROM review_preparation_scans "
-        "ORDER BY connection_name"
+        "SELECT work_id,state FROM review_preparation_work WHERE work_id IN (?,?) "
+        "ORDER BY work_id",
+        tuple(sorted(running_ids)),
     ).fetchall()
-    assert [
-        ("primary", "ebooks", "queued"),
-        ("secondary", "audio", "queued"),
-        ("tertiary", "other", "queued"),
-    ] == states
+    assert [(work_id, "queued") for work_id in sorted(running_ids)] == states
     assert (0, 0) == reopened._connection.execute(
         "SELECT (SELECT count(*) FROM metadata_reports),"
         "(SELECT count(*) FROM provider_recovery_outbox)"
     ).fetchone()
-    assert reopened.claim_review_pipeline_action(12) is not None
+    resumed = reopened.claim_review_pipeline_action(18)
+    assert resumed is not None and resumed.action_id not in running_ids
+    reopened.fail_review_pipeline_action(resumed, "failed", False, 19)
+    recovered = reopened.claim_review_pipeline_action(20)
+    assert recovered is not None and recovered.action_id in running_ids
+    assert [] == provider_calls
     reopened.close()
 
 

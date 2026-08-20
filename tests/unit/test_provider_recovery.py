@@ -224,6 +224,7 @@ def test_concurrent_enqueue_enrolls_one_scope_before_either_job_is_visible() -> 
 def test_drain_retains_a_failing_row_and_delivers_a_younger_row() -> None:
     class Repository:
         def __init__(self) -> None:
+            self.pages = 0
             self.rows = [
                 (
                     f"bad-{index:03d}",
@@ -235,7 +236,7 @@ def test_drain_retains_a_failing_row_and_delivers_a_younger_row() -> None:
                     None,
                     None,
                     "report_only",
-                    index,
+                    100 + index,
                 )
                 for index in range(100)
             ] + [
@@ -249,12 +250,13 @@ def test_drain_retains_a_failing_row_and_delivers_a_younger_row() -> None:
                     None,
                     None,
                     "report_only",
-                    2,
+                    200,
                 ),
             ]
 
         def pending_provider_recovery_outbox(self, *, limit: int, after=None):
             assert limit == 100
+            self.pages += 1
             return tuple(
                 sorted(
                     (
@@ -297,6 +299,7 @@ def test_drain_retains_a_failing_row_and_delivers_a_younger_row() -> None:
     assert [f"bad-{index:03d}" for index in range(100)] == [
         row[0] for row in repository.rows
     ]
+    assert repository.pages >= 2
 
 
 def test_activation_replay_after_ack_failure_keeps_recovery_state_idempotent() -> None:
