@@ -1468,7 +1468,9 @@ def create_review_pipeline(
         observers=retry_observers,
         provider_resolver=retry_resolver,
         pipeline=lambda: pipeline_holder.get("pipeline"),
-        enqueue=lambda jobs: runner_holder["runner"].enqueue(jobs),
+        enqueue=lambda jobs, enqueued_at: runner_holder["runner"].enqueue(
+            jobs, enqueued_at=enqueued_at
+        ),
         clock=lambda: int(time.time()),
     )
 
@@ -1491,8 +1493,11 @@ def create_review_pipeline(
 
     def recover_provider(now: int) -> RecoveryRun:
         try:
-            activation.drain_outbox()
-            return recovery_runner.run_one(now=now)
+            failures = activation.drain_outbox()
+            recovered = recovery_runner.run_one(now=now)
+            if failures:
+                raise ReviewPipelineError(failures[0])
+            return recovered
         except ProviderRecoveryStoreError as error:
             raise ReviewPipelineError("recovery") from error
 
@@ -1528,6 +1533,13 @@ def create_review_pipeline(
             review_claim_next=claim_next,
             timing=timing,
         )
+
+    def drain_outbox(repository: ReviewPipelineRepository) -> None:
+        failures = activation.drain_outbox(
+            cast("ProviderRecoveryRepository", repository)
+        )
+        if failures:
+            raise ReviewPipelineError(failures[0])
 
     def create_proposal_set_for(
         report_id: str, pipeline_repository: ReviewPipelineRepository
@@ -1576,9 +1588,7 @@ def create_review_pipeline(
         admit_review_case=admit_review_case_for,
         cover_considerations=cover_considerations,
         recovery_observer=provider_recovery,
-        drain_outbox=lambda repository: activation.drain_outbox(
-            cast("ProviderRecoveryRepository", repository)
-        ),
+        drain_outbox=drain_outbox,
         discovery_lock=discovery_lock,
         clock=lambda: int(time.time()),
     )

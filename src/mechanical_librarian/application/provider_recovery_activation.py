@@ -107,7 +107,7 @@ class ProviderRecoveryActivation:
             [str, str, str, str, int], ConfiguredProviderRetry | None
         ],
         pipeline: Callable[[], ReviewPreparationPipeline | None],
-        enqueue: Callable[[tuple[ProviderRecoveryJob, ...]], int],
+        enqueue: Callable[[tuple[ProviderRecoveryJob, ...], int], int],
         clock: Callable[[], int],
     ) -> None:
         self._configuration = configuration
@@ -265,21 +265,38 @@ class ProviderRecoveryActivation:
 
     def drain_outbox(
         self, repository: ProviderRecoveryRepository | None = None
-    ) -> None:
-        """Deliver exact package cutovers idempotently into recovery state."""
+    ) -> tuple[str, ...]:
+        """Deliver exact package cutovers without letting one row stop boot."""
         owns_repository = repository is None
         if repository is None:
             repository = self._repository_factory()
         try:
-            while rows := repository.pending_provider_recovery_outbox(limit=100):
+            failures: set[str] = set()
+            cursor: tuple[int, str] | None = None
+            while rows := repository.pending_provider_recovery_outbox(
+                limit=100, after=cursor
+            ):
                 for row in rows:
-                    self._deliver(
-                        repository,
-                        cast(
-                            "tuple[str, str, str, str, str | None, str, str | None, int | None, str, int]",
-                            row,
-                        ),
+                    typed = cast(
+                        "tuple[str, str, str, str, str | None, str, str | None, int | None, str, int]",
+                        row,
                     )
+                    cursor = (typed[9], typed[0])
+                    try:
+                        self._deliver(repository, typed)
+                    except ReviewPipelineError as error:
+                        # The row remains pending for a later bounded retry.
+                        # Never let a bad oldest row make startup crash-loop or
+                        # prevent a younger independently deliverable cutover.
+                        failures.add(
+                            error.code
+                            if error.code
+                            in {"configuration", "projection", "persistence"}
+                            else "persistence"
+                        )
+                    except Exception:
+                        failures.add("persistence")
+            return tuple(sorted(failures))
         finally:
             if owns_repository:
                 repository.close()
@@ -326,7 +343,10 @@ class ProviderRecoveryActivation:
                 scope=report.target.library,
             )
             if jobs:
-                self._enqueue(jobs)
+                try:
+                    self._enqueue(jobs, created_at)
+                except Exception as error:
+                    raise ReviewPipelineError("persistence") from error
         repository.complete_provider_recovery_outbox(
             outbox_id,
             delivered_at=max(self._clock(), created_at),

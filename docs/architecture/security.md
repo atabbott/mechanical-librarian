@@ -136,8 +136,9 @@ cannot erase coherent sibling evidence or prevent proposal creation; only a
 failure before a complete report exists terminalizes the work. Public
 projection allowlists safe provider identity, lane kind, aggregate bounded
 request count, status, reason, and recovery text, never raw diagnostics,
-queries, headers, credentials, paths, or payloads. The path cannot decide a field, construct an apply plan, write a
-target or media file, or delete media. The supported review server may poll on
+queries, headers, credentials, paths, or payloads. The path cannot decide a
+field, construct an apply plan, write a target or media file, or delete media.
+The supported review server may poll on
 the one bounded configured interval and hold pre-package terminal failure for
 an authenticated owner retry. Per-work retry eligibility, durable pause, and
 fair-claim state contain only bounded operational values; one work never opens
@@ -685,7 +686,10 @@ review-package tuple, target and media identity, the enabled provider binding,
 and the positive configuration generation immediately before constructing the
 client. Provider work runs outside SQLite writer transactions. Shared
 authentication, authorization, quota, unavailable and incomplete results are
-classified before publication, and diagnostics retain no credential, raw
+classified before publication. Outbox delivery atomically enrolls each job's
+bounded member and health scope before it is claimable; a failed delivery keeps
+its row for retry, continues the bounded drain, and returns any already-claimed
+preparation successor through the existing typed state machine. Diagnostics retain no credential, raw
 header, query, payload, response body, work identifier, or private path.
 
 ### Decision authority

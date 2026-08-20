@@ -785,7 +785,22 @@ class ReviewPreparationPipeline:
                 advanced = repository.advance_review_pipeline_action(
                     action, output_id, self._clock(), False
                 )
-            self._after_advance(repository, action, output_id)
+            try:
+                self._after_advance(repository, action, output_id)
+            except Exception:
+                # The cutover is already durable even when its recovery outbox
+                # delivery is not. Readers must refetch the normal committed
+                # state before any claimed successor is settled.
+                try:
+                    self._announce_stage(action, output_id)
+                finally:
+                    # ``advance_review_pipeline_action`` can atomically claim
+                    # the successor before the post-cutover outbox is delivered.
+                    # A delivery fault must settle that successor now; leaving it
+                    # running would consume one of the fixed lanes until restart.
+                    if advanced is not None:
+                        self._fail(repository, advanced, "persistence", True)
+                return None
         except ReviewPipelineError:
             raise
         except Exception as error:
@@ -1047,7 +1062,13 @@ class ReviewPreparationSupervisor:
                     # A failed recovery observation is already persisted by
                     # its runner, so it must not prevent ordinary preparation.
                     if self._recovery_wake is not None:
-                        self._recovery_wake(self._clock())
+                        try:
+                            self._recovery_wake(self._clock())
+                        except ReviewPipelineError:
+                            # Explicit owner recovery reports its closed
+                            # failure. The background lane instead preserves
+                            # preparation capacity until the next normal wake.
+                            pass
                     self._schedule_due()
                 while not self._stop.is_set():
                     advanced = self._pipeline.run_next()

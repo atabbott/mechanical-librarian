@@ -1029,7 +1029,9 @@ class SQLiteProviderRecoveryStore:
                 "provider recovery persistence is unavailable"
             ) from error
 
-    def enqueue_jobs(self, jobs: tuple[ProviderRecoveryJob, ...]) -> int:
+    def enqueue_jobs(
+        self, jobs: tuple[ProviderRecoveryJob, ...], *, enqueued_at: int
+    ) -> int:
         """Durably register exact-current failed lanes before any canary runs.
 
         The full package tuple is deliberately stored with the job.  A caller
@@ -1037,6 +1039,8 @@ class SQLiteProviderRecoveryStore:
         """
         if (
             not jobs
+            or type(enqueued_at) is not int
+            or not 0 <= enqueued_at <= MAX_TIMESTAMP - 7_200
             or tuple(
                 sorted(
                     jobs,
@@ -1057,6 +1061,42 @@ class SQLiteProviderRecoveryStore:
                 self._connection.execute("BEGIN IMMEDIATE")
                 inserted = 0
                 for job in jobs:
+                    # A job is claimable only inside an enrolled scope.  Normal
+                    # report publication has already recorded the exact health
+                    # observation, but enqueue must not depend on that order:
+                    # a replayed package can arrive first. The fallback starts
+                    # at F24's two-hour transient cooldown. A current
+                    # observation always wins unchanged.
+                    self._connection.execute(
+                        "INSERT INTO provider_recovery_members(connection,adapter,scope) VALUES(?,?,?) ON CONFLICT DO NOTHING",
+                        (job.connection, job.adapter, job.scope),
+                    )
+                    enrolled = self._connection.execute(
+                        "INSERT INTO provider_recovery_health(connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at) VALUES(?,?,?,?,?,?,?,NULL,NULL) ON CONFLICT(connection,adapter,scope) DO NOTHING",
+                        (
+                            job.connection,
+                            job.adapter,
+                            job.scope,
+                            job.generation,
+                            "waiting",
+                            1,
+                            enqueued_at + 7_200,
+                        ),
+                    )
+                    if enrolled.rowcount == 1:
+                        self._connection.execute(
+                            "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
+                            (
+                                job.connection,
+                                job.adapter,
+                                job.scope,
+                                job.generation,
+                                "waiting",
+                                1,
+                                enqueued_at + 7_200,
+                                enqueued_at,
+                            ),
+                        )
                     values = (
                         job.connection,
                         job.adapter,

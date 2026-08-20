@@ -11,6 +11,7 @@ aggregate module.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from mechanical_librarian.adapters.persistence.schema import (
@@ -19,6 +20,11 @@ from mechanical_librarian.adapters.persistence.schema import (
 )
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
+from mechanical_librarian.domain.validation import bounded_integer
+
+_OUTBOX_CURSOR_ID = re.compile(r"recovery_outbox_[0-9a-f]{64}")
+_OUTBOX_TIMESTAMP = bounded_integer(0, MAX_TIMESTAMP)
 
 
 class SQLiteRecoveryOutboxRepository(ConnectionScoped):
@@ -58,17 +64,31 @@ class SQLiteRecoveryOutboxRepository(ConnectionScoped):
         self,
         *,
         limit: int = 100,
+        after: tuple[int, str] | None = None,
     ) -> tuple[tuple[object, ...], ...]:
         """Return bounded exact package cutovers awaiting recovery enqueue."""
-        if type(limit) is not int or not 1 <= limit <= 100:
+        if (
+            type(limit) is not int
+            or not 1 <= limit <= 100
+            or after is not None
+            and (
+                type(after) is not tuple
+                or len(after) != 2
+                or not _OUTBOX_TIMESTAMP(after[0])
+                or type(after[1]) is not str
+                or _OUTBOX_CURSOR_ID.fullmatch(after[1]) is None
+            )
+        ):
             raise MetadataReportError("provider recovery outbox query is invalid")
         try:
+            cursor = (-1, "") if after is None else after
             rows = self._connection.execute(
                 "SELECT outbox_id,connection_name,library_name,item_id,"
                 "proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at "
                 "FROM provider_recovery_outbox WHERE delivered_at IS NULL "
+                "AND (created_at>? OR (created_at=? AND outbox_id>?)) "
                 "ORDER BY created_at,outbox_id LIMIT ?",
-                (limit,),
+                (cursor[0], cursor[0], cursor[1], limit),
             ).fetchall()
             for row in rows:
                 _validate_provider_recovery_outbox_row(row)

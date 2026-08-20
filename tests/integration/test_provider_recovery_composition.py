@@ -32,6 +32,8 @@ from mechanical_librarian.application.metadata_report import (
     metadata_discovery_plan,
     provider_observation,
 )
+from mechanical_librarian.application.provider_recovery_runner import RecoveryRun
+from mechanical_librarian.application.review_pipeline import ReviewPipelineError
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -44,6 +46,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.provider_recovery import ProviderRecoveryJob
 from tests.support.proposal_evidence import _claim, _provider
 
 
@@ -102,6 +105,87 @@ class _GoogleProvider:
             for lane in plan.lanes
         )
         return provider_observation(self.name, lanes, authority="google_books")
+
+
+def test_retained_outbox_failure_does_not_skip_an_eligible_recovery_run() -> None:
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        database = root / "reports.sqlite"
+        recovery = SQLiteProviderRecoveryStore.open(root / "recovery.sqlite")
+        open_repository(database).close()
+        recovery.enqueue_jobs(
+            (
+                ProviderRecoveryJob(
+                    "google",
+                    "google_books",
+                    "books",
+                    1,
+                    "member-1",
+                    "primary",
+                    "ebooks",
+                    "eligible-item",
+                    "f" * 64,
+                    "report-" + "2" * 64,
+                    None,
+                    "report-" + "2" * 64,
+                    None,
+                    None,
+                    "report_only",
+                    "[]",
+                ),
+            ),
+            enqueued_at=0,
+        )
+        configuration = ApplicationConfiguration(
+            (
+                TargetConnectionConfiguration(
+                    "primary", "https://example.invalid", "/run/target-token"
+                ),
+            ),
+            (
+                LibraryConfiguration(
+                    "ebooks", "primary", "library-1", "ebook", "books", ("google",)
+                ),
+            ),
+            (MediaMountConfiguration("books", "/container", "/service", True),),
+            (
+                ProviderConnectionConfiguration(
+                    "google", True, False, None, "google_books"
+                ),
+            ),
+            provider_recovery_generation=1,
+            review=ReviewWebConfiguration(
+                "https://review.example.invalid", "/run/owner-password"
+            ),
+        )
+        composition.CoverArtifactStore(root / "artifacts", create=True)
+        with (
+            patch.object(composition.time, "time", return_value=7_200),
+            patch.object(
+                composition.ProviderRecoveryActivation,
+                "drain_outbox",
+                return_value=("persistence",),
+            ),
+            patch.object(
+                composition.ScopedProviderRecoveryRunner,
+                "run_one",
+                autospec=True,
+                return_value=RecoveryRun("idle"),
+            ) as run_one,
+        ):
+            supervisor = composition.create_review_pipeline(
+                configuration,
+                database,
+                root / "catalogue.sqlite",
+                root / "artifacts",
+                provider_recovery=recovery,
+            )
+            with pytest.raises(ReviewPipelineError, match="persistence"):
+                supervisor.recover_provider_once()
+            assert 1 == run_one.call_count
+            assert {"now": 7_200} == run_one.call_args.kwargs
+            assert "waiting" == recovery.snapshot()[0].state
+            supervisor.stop()
 
 
 def test_generation_rollback_rejects_before_cutover_delivery() -> None:
@@ -637,7 +721,7 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
                 ),
             )
         )
-        assert 3 == recovery.enqueue_jobs(jobs)
+        assert 3 == recovery.enqueue_jobs(jobs, enqueued_at=0)
 
         calls: list[ProviderStatus] = []
         outcomes = [

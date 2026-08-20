@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -1212,6 +1212,176 @@ describe('Library route', () => {
     // stays open even when the search no longer lists its card.
     await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', q: 'second' }))
     expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+  })
+
+  it('keeps the latest Library query when a prior replacement finishes late', async () => {
+    const user = userEvent.setup()
+    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1')
+    await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    const originalNavigate = router.navigate.bind(router)
+    let releaseClear: (() => void) | undefined
+    let replacements = 0
+    const delayedNavigate = vi.spyOn(router, 'navigate').mockImplementation((options) => {
+      replacements += 1
+      if (replacements !== 1) return originalNavigate(options)
+      return new Promise((resolve, reject) => {
+        releaseClear = () => {
+          void originalNavigate(options).then(resolve, reject)
+        }
+      })
+    })
+    const query = screen.getByLabelText('Search title, author, identifier, library, or format')
+
+    await user.clear(query)
+    await waitFor(() => expect(replacements).toBe(1))
+    await user.type(query, 'second')
+    expect(query).toHaveValue('second')
+    act(() => releaseClear?.())
+
+    await waitFor(() =>
+      expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', q: 'second' }),
+    )
+    expect(replacements).toBe(2)
+    delayedNavigate.mockRestore()
+  })
+
+  it('coalesces a cleared Library query before its route load begins', async () => {
+    const getLibrary = vi.fn<ReviewHttp['getLibrary']>(async () => library)
+    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1', { ...createHttp(), getLibrary })
+    await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    const query = screen.getByLabelText('Search title, author, identifier, library, or format')
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(query, { target: { value: '' } })
+      fireEvent.change(query, { target: { value: 'second' } })
+      expect(query).toHaveValue('second')
+      expect(getLibrary.mock.calls.map(([search]) => search)).not.toContainEqual({ lens: 'all', preview: 'case-1' })
+      await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+      vi.useRealTimers()
+      await waitFor(() =>
+        expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', q: 'second' }),
+      )
+
+      const searches = getLibrary.mock.calls.map(([search]) => search)
+      expect(searches.filter((search) => search.q === 'second')).toHaveLength(1)
+      expect(searches).not.toContainEqual({ lens: 'all', preview: 'case-1' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('relinquishes a pending Library query to a same-route URL change', async () => {
+    const getLibrary = vi.fn<ReviewHttp['getLibrary']>(async () => library)
+    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1', { ...createHttp(), getLibrary })
+    await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    const query = screen.getByLabelText('Search title, author, identifier, library, or format')
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(query, { target: { value: 'typed' } })
+      await act(async () => {
+        await router.navigate({ to: '/library', search: { lens: 'needs_attention', preview: 'case-1', q: 'first' } })
+        await Promise.resolve()
+      })
+      await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+      vi.useRealTimers()
+
+      expect(router.state.location.search).toEqual({ lens: 'needs_attention', preview: 'case-1', q: 'first' })
+      expect(getLibrary.mock.calls.map(([search]) => search)).not.toContainEqual({ lens: 'all', preview: 'case-1', q: 'typed' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('starts a later owner query after invalidating an active Library replacement', async () => {
+    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1')
+    await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    const originalNavigate = router.navigate.bind(router)
+    let releaseFirst: (() => void) | undefined
+    let libraryReplacements = 0
+    const delayedNavigate = vi.spyOn(router, 'navigate').mockImplementation((options) => {
+      if (options.from !== '/library') return originalNavigate(options)
+      libraryReplacements += 1
+      if (libraryReplacements !== 1) return originalNavigate(options)
+      if (typeof options.search === 'function') options.search(router.state.location.search)
+      return new Promise((resolve) => { releaseFirst = resolve })
+    })
+    const query = screen.getByLabelText('Search title, author, identifier, library, or format')
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(query, { target: { value: 'first ' } })
+      await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+      expect(libraryReplacements).toBe(1)
+      await act(async () => {
+        await originalNavigate({ to: '/library', search: { lens: 'needs_attention', preview: 'case-1', q: 'first' } })
+        await Promise.resolve()
+      })
+      fireEvent.change(query, { target: { value: 'latest' } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(150)
+        releaseFirst?.()
+        await Promise.resolve()
+        await vi.advanceTimersByTimeAsync(150)
+      })
+      vi.useRealTimers()
+
+      await waitFor(() =>
+        expect(router.state.location.search).toEqual({ lens: 'needs_attention', preview: 'case-1', q: 'latest' }),
+      )
+      expect(libraryReplacements).toBe(2)
+    } finally {
+      vi.useRealTimers()
+      delayedNavigate.mockRestore()
+    }
+  })
+
+  it('starts a fresh Library search after a rejected replacement', async () => {
+    const user = userEvent.setup()
+    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1')
+    await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    const failedNavigate = vi.spyOn(router, 'navigate').mockRejectedValueOnce(new Error('route unavailable'))
+    const query = screen.getByLabelText('Search title, author, identifier, library, or format')
+
+    await user.clear(query)
+    await waitFor(() => expect(failedNavigate).toHaveBeenCalledTimes(1))
+    await user.clear(query)
+    await user.type(query, 'second')
+
+    await waitFor(() =>
+      expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', q: 'second' }),
+    )
+    failedNavigate.mockRestore()
+  })
+
+  it('does not revive queued Library search after leaving the route', async () => {
+    const user = userEvent.setup()
+    let releaseFirst: (() => void) | undefined
+    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1')
+    await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    const originalNavigate = router.navigate.bind(router)
+    let libraryReplacements = 0
+    const delayedNavigate = vi.spyOn(router, 'navigate').mockImplementation((options) => {
+      if (options.from !== '/library') return originalNavigate(options)
+      libraryReplacements += 1
+      if (libraryReplacements !== 1) return originalNavigate(options)
+      return new Promise((resolve) => { releaseFirst = resolve })
+    })
+    const query = screen.getByLabelText('Search title, author, identifier, library, or format')
+
+    await user.clear(query)
+    await waitFor(() => expect(releaseFirst).toBeTypeOf('function'))
+    await user.type(query, 'second')
+    await originalNavigate({ to: '/activity', search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 } })
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await originalNavigate({ to: '/policy', search: { section: 'identity' } })
+    await screen.findByRole('heading', { name: 'Library policy' })
+    await act(async () => {
+      releaseFirst?.()
+      await Promise.resolve()
+    })
+
+    expect(router.state.location.pathname).toBe('/policy')
+    expect(libraryReplacements).toBe(1)
+    delayedNavigate.mockRestore()
   })
 
   it('preserves an off-page preview deep link without exposing detail target identity', async () => {

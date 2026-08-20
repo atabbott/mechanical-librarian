@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SyntheticEvent } from 'react'
 
 import { displayValue } from '../api/http'
@@ -22,6 +22,9 @@ import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomatic
 import { ownerChoiceCount } from '../reviewChoiceCounts'
 
 type ReviewField = CaseDetailView['fields'][number]
+const searchNavigationDelay = 150
+const librarySearchIdentity = (search: object) =>
+  JSON.stringify(Object.entries(search).sort(([left], [right]) => left.localeCompare(right)))
 // What the owner has chosen for one field and how far that choice has got.
 // `null` means this field carries no choice of theirs in this session.
 type ChoiceProgress = {
@@ -744,6 +747,12 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const navigate = useNavigate({ from: '/library' })
   const { http } = useReviewContext()
   const currentSearch = useRef(search)
+  const pendingSearchQuery = useRef<string | null>(null)
+  const searchNavigation = useRef<Promise<void> | null>(null)
+  const searchCommitTimer = useRef<number | null>(null)
+  const searchGeneration = useRef(0)
+  const observedSearchIdentity = useRef(librarySearchIdentity(search))
+  const expectedSearchIdentity = useRef<string | null>(null)
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
@@ -775,9 +784,35 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   // URL says something this echo does not, the URL wins — which is what makes
   // Back, Forward and a deep link reseed the box instead of fighting it.
   const [typedQuery, setTypedQuery] = useState({ echo: search.q ?? '', text: search.q ?? '' })
+  const [searchPending, setSearchPending] = useState(false)
   const urlQuery = search.q ?? ''
-  const queryText = typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
+  const searchIdentity = librarySearchIdentity(search)
+  const queryText = searchPending || typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
   const selectedReviewCaseId = search.preview ?? ''
+  const invalidateSearch = useCallback(() => {
+    ++searchGeneration.current
+    pendingSearchQuery.current = null
+    expectedSearchIdentity.current = null
+    if (searchCommitTimer.current !== null) {
+      window.clearTimeout(searchCommitTimer.current)
+      searchCommitTimer.current = null
+    }
+  }, [])
+  useEffect(() => {
+    if (observedSearchIdentity.current === searchIdentity) return
+    observedSearchIdentity.current = searchIdentity
+    if (expectedSearchIdentity.current === searchIdentity) {
+      expectedSearchIdentity.current = null
+      return
+    }
+    invalidateSearch()
+    setSearchPending(false)
+  }, [invalidateSearch, searchIdentity])
+  useEffect(() => {
+    return () => {
+      invalidateSearch()
+    }
+  }, [invalidateSearch])
   // A search or lens may temporarily hide the open work's card. The row the
   // owner opened is kept so the summary does not vanish mid-inspection and
   // send them back to the list; clearing the selection releases it.
@@ -998,22 +1033,55 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       },
     })
   }
-  // Progressive filtering keeps the typed text local so each keystroke paints,
-  // and moves the URL a frame later. The URL stays the single owner of the
-  // query: a Back, a deep link, or a lens change reseeds the box below.
+  // Progressive filtering keeps the typed text local so each keystroke paints.
+  // A short bounded delay avoids loading an obsolete clear before the next
+  // typed value; the URL remains the owner after the committed replacement.
+  const scheduleSearchNavigation = () => {
+    if (searchCommitTimer.current !== null) window.clearTimeout(searchCommitTimer.current)
+    searchCommitTimer.current = window.setTimeout(() => {
+      searchCommitTimer.current = null
+      if (searchNavigation.current !== null || pendingSearchQuery.current === null) return
+      const generation = searchGeneration.current
+      const drain = async () => {
+        try {
+          while (generation === searchGeneration.current && pendingSearchQuery.current !== null) {
+            const pending = pendingSearchQuery.current
+            pendingSearchQuery.current = null
+            await navigate({
+              replace: true,
+              search: (current) => {
+                const next = { ...current }
+                delete next.cursor
+                if (pending) next.q = pending
+                else delete next.q
+                expectedSearchIdentity.current = librarySearchIdentity(next)
+                return next
+              },
+            })
+          }
+        } catch {
+          // A later owner edit may start a fresh drain; a failed read navigation
+          // is never retried without that new intent.
+        } finally {
+          searchNavigation.current = null
+          if (generation === searchGeneration.current) {
+            expectedSearchIdentity.current = null
+            if (pendingSearchQuery.current !== null) scheduleSearchNavigation()
+            else setSearchPending(false)
+          } else if (pendingSearchQuery.current !== null) {
+            scheduleSearchNavigation()
+          }
+        }
+      }
+      searchNavigation.current = drain()
+    }, searchNavigationDelay)
+  }
   const runSearch = (value: string) => {
     const q = value.trim()
     setTypedQuery({ echo: q, text: value })
-    void navigate({
-      replace: true,
-      search: (current) => {
-        const next = { ...current }
-        delete next.cursor
-        if (q) next.q = q
-        else delete next.q
-        return next
-      },
-    })
+    setSearchPending(true)
+    pendingSearchQuery.current = q
+    scheduleSearchNavigation()
   }
   const submitSearch = (event: SyntheticEvent<HTMLFormElement, SubmitEvent>) => {
     event.preventDefault()

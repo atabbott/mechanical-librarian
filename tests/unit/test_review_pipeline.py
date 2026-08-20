@@ -18,9 +18,6 @@ import pytest
 
 import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.adapters.persistence.provider_recovery import (
-    ProviderRecoveryStoreError,
-)
 from mechanical_librarian.adapters.persistence.review_preparation import (
     _FAILURE_CODES,
 )
@@ -62,6 +59,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
 from tests.support.review_cases import _report
 
 _PRODUCER = "f" * 64
@@ -373,6 +371,156 @@ def test_late_target_connection_errors_rollback_and_defer_retained_stage() -> No
     assert callbacks == {"proposal": 1, "admission": 1, "projection": 1}
 
 
+def test_post_cutover_delivery_failure_requeues_the_claimed_successor() -> None:
+    class Repository:
+        def __init__(self, successor: PipelineAction) -> None:
+            self.successor = successor
+            self.failures: list[tuple[PipelineAction, str, bool, int]] = []
+
+        def advance_review_pipeline_action(self, *_args, **_kwargs):
+            return self.successor
+
+        def fail_review_pipeline_action(
+            self, action, code, retryable, completed_at, _failure_root
+        ):
+            self.failures.append((action, code, retryable, completed_at))
+
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "projection",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        "report-1",
+        review_case_id="case-1",
+        source_fingerprint="c" * 64,
+    )
+    successor = replace(action, action_id="action-2", stage="proposal")
+    repository = Repository(successor)
+    announcements: list[tuple[str, str | None]] = []
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, repository),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        after_advance=lambda *_args: (_ for _ in ()).throw(RuntimeError()),
+        clock=lambda: 9,
+        announce=lambda topic, subject: announcements.append((topic, subject)),
+    )
+
+    assert pipeline._advance(repository, action, "complete", claim_next=True) is None
+    assert [(successor, "persistence", True, 9)] == repository.failures
+    assert [
+        ("preparation", None),
+        ("library", "case-1"),
+        ("case", "case-1"),
+        ("preparation", None),
+        ("library", None),
+    ] == announcements
+
+
+def test_post_cutover_delivery_failure_announces_committed_package_without_successor() -> (
+    None
+):
+    class Repository:
+        def advance_review_pipeline_action(self, *_args, **_kwargs):
+            return None
+
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "projection",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        "report-1",
+        review_case_id="case-1",
+        source_fingerprint="c" * 64,
+    )
+    announcements: list[tuple[str, str | None]] = []
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, Repository()),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        after_advance=lambda *_args: (_ for _ in ()).throw(RuntimeError()),
+        clock=lambda: 9,
+        announce=lambda topic, subject: announcements.append((topic, subject)),
+    )
+
+    assert pipeline._advance(Repository(), action, "complete", claim_next=True) is None
+    assert [("preparation", None), ("library", "case-1"), ("case", "case-1")] == (
+        announcements
+    )
+
+
+def test_post_cutover_settlement_failure_propagates_closed_persistence_error() -> None:
+    class Repository:
+        def advance_review_pipeline_action(self, *_args, **_kwargs):
+            return successor
+
+        def fail_review_pipeline_action(self, *_args, **_kwargs):
+            raise sqlite3.OperationalError("injected settlement failure")
+
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "provider",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        "report-1",
+        source_fingerprint="c" * 64,
+    )
+    successor = replace(action, action_id="action-2", stage="proposal")
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, Repository()),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        after_advance=lambda *_args: (_ for _ in ()).throw(RuntimeError()),
+        clock=lambda: 9,
+    )
+
+    with pytest.raises(ReviewPipelineError) as raised:
+        pipeline._advance(Repository(), action, None, claim_next=True)
+    assert "persistence" == raised.value.code
+
+
 def test_connection_hold_guards_claims_and_stale_checkers_fail_closed(
     application_path: Path,
 ) -> None:
@@ -673,6 +821,77 @@ def test_cover_consideration_factory_fault_is_recorded_as_persistence() -> None:
         )
     assert raised.value.code == "persistence"
     assert raised.value.__cause__ is fault
+
+
+def test_stages_outbox_failure_settles_the_claimed_successor() -> None:
+    class Repository:
+        def __init__(self, successor: PipelineAction) -> None:
+            self.successor = successor
+            self.failures: list[tuple[PipelineAction, str, bool]] = []
+
+        def advance_review_pipeline_action(self, *_args, **_kwargs):
+            return self.successor
+
+        def fail_review_pipeline_action(self, action, code, retryable, *_args):
+            self.failures.append((action, code, retryable))
+
+    def unreachable(*_arguments: object, **_keywords: object):
+        raise AssertionError
+
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=unreachable,
+        generate_report=unreachable,
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=lambda _repository: (_ for _ in ()).throw(
+            ReviewPipelineError("persistence")
+        ),
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "projection",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        "report-1",
+        review_case_id="case-1",
+        source_fingerprint="c" * 64,
+    )
+    successor = replace(action, action_id="action-2", stage="proposal")
+    repository = Repository(successor)
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=unreachable,
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=unreachable,
+        extract=unreachable,
+        providers=unreachable,
+        propose=unreachable,
+        admit=unreachable,
+        project=unreachable,
+        after_advance=stages.after_advance,
+        clock=lambda: 7,
+    )
+
+    assert pipeline._advance(repository, action, "complete", claim_next=True) is None
+    assert [(successor, "persistence", True)] == repository.failures
 
 
 def test_checking_condition_allows_admission_replay_and_rejects_stale_finish_epoch(
@@ -1085,6 +1304,185 @@ def test_request_discovery_claim_and_restart_are_persisted(
     )
     assert progress.rescan_requested
     reopened.close()
+
+
+def test_restart_requeues_claims_across_scopes_without_creating_recovery_effects(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    producers = (
+        ("primary", "ebooks", "library-1", _PRODUCER),
+        ("secondary", "audio", "library-2", _PRODUCER),
+        ("tertiary", "other", "library-3", _PRODUCER),
+    )
+    for index, (connection, library, library_id, producer) in enumerate(producers):
+        repository.request_review_scan(connection, library, library_id, producer, index)
+    discoveries = (
+        repository.claim_review_pipeline_action(10),
+        repository.claim_review_pipeline_action(11),
+    )
+    assert [("primary", "ebooks"), ("secondary", "audio")] == [
+        (action.connection, action.library)
+        for action in discoveries
+        if action is not None
+    ]
+    for index, action in enumerate(discoveries):
+        assert action is not None
+        repository.complete_review_discovery(
+            action,
+            1,
+            f"{index + 1:064x}",
+            (
+                replace(
+                    _entry(f"running-{index}", f"{index + 1:064x}"),
+                    connection=action.connection,
+                    library=action.library,
+                    library_id=action.library_id,
+                ),
+            ),
+            12 + index,
+        )
+    third_discovery = repository.claim_review_pipeline_action(14)
+    assert third_discovery is not None
+    assert "discovery" == third_discovery.stage
+    repository.complete_review_discovery(
+        third_discovery,
+        1,
+        "3" * 64,
+        (
+            replace(
+                _entry("unrelated", "3" * 64),
+                connection=third_discovery.connection,
+                library=third_discovery.library,
+                library_id=third_discovery.library_id,
+            ),
+        ),
+        15,
+    )
+    running = (
+        repository.claim_review_pipeline_action(16),
+        repository.claim_review_pipeline_action(17),
+    )
+    assert all(
+        action is not None and action.stage == "extraction" for action in running
+    )
+    running_ids = {cast(PipelineAction, action).action_id for action in running}
+    assert (
+        2
+        == repository._connection.execute(
+            "SELECT count(*) FROM review_preparation_work WHERE state='running'"
+        ).fetchone()[0]
+    )
+    repository.close()
+
+    def provider_spy(*_arguments: object) -> tuple[ProviderStatus, ...]:
+        raise AssertionError("restart recovery must not request a provider")
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: open_repository(application_path),
+        libraries=producers,
+        discover=lambda *_arguments: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_arguments: (_ for _ in ()).throw(AssertionError()),
+        providers=provider_spy,
+        propose=lambda *_arguments: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_arguments: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_arguments: (_ for _ in ()).throw(AssertionError()),
+    )
+    pipeline.recover()
+
+    reopened = open_repository(application_path)
+    states = reopened._connection.execute(
+        "SELECT work_id,state FROM review_preparation_work WHERE work_id IN (?,?) "
+        "ORDER BY work_id",
+        tuple(sorted(running_ids)),
+    ).fetchall()
+    assert [(work_id, "queued") for work_id in sorted(running_ids)] == states
+    assert (0, 0) == reopened._connection.execute(
+        "SELECT (SELECT count(*) FROM metadata_reports),"
+        "(SELECT count(*) FROM provider_recovery_outbox)"
+    ).fetchone()
+    resumed = reopened.claim_review_pipeline_action(18)
+    assert resumed is not None and resumed.action_id not in running_ids
+    reopened.fail_review_pipeline_action(resumed, "failed", False, 19)
+    recovered = reopened.claim_review_pipeline_action(20)
+    assert recovered is not None and recovered.action_id in running_ids
+    reopened.close()
+
+
+@pytest.mark.parametrize(
+    "cursor",
+    (
+        (True, "recovery_outbox_" + "a" * 64),
+        (-1, "recovery_outbox_" + "a" * 64),
+        (MAX_TIMESTAMP + 1, "recovery_outbox_" + "a" * 64),
+        (0, "not-an-outbox-id"),
+        [0, "recovery_outbox_" + "a" * 64],
+    ),
+)
+def test_outbox_cursor_rejects_malformed_or_out_of_range_values(
+    application_path: Path, cursor: object
+) -> None:
+    repository = open_repository(application_path)
+    with pytest.raises(MetadataReportError, match="outbox query is invalid"):
+        repository.pending_provider_recovery_outbox(after=cursor)
+    repository.close()
+
+
+def test_outbox_cursor_accepts_the_persisted_timestamp_and_id_boundaries(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    assert () == repository.pending_provider_recovery_outbox(
+        after=(MAX_TIMESTAMP, "recovery_outbox_" + "f" * 64)
+    )
+    repository.close()
+
+
+def test_outbox_acknowledgement_failure_keeps_the_real_row_pending_for_replay(
+    application_path: Path,
+) -> None:
+    class CommitFailingConnection:
+        def __init__(self, connection: sqlite3.Connection) -> None:
+            self._connection = connection
+            self.fail_commit = True
+
+        @property
+        def in_transaction(self) -> bool:
+            return self._connection.in_transaction
+
+        def execute(self, statement: str, parameters: tuple[object, ...] = ()):
+            return self._connection.execute(statement, parameters)
+
+        def commit(self) -> None:
+            if self.fail_commit:
+                raise sqlite3.OperationalError("injected acknowledgement failure")
+            self._connection.commit()
+
+        def rollback(self) -> None:
+            self._connection.rollback()
+
+    repository = open_repository(application_path)
+    outbox = repository._recovery_outbox
+    report = _report()
+    repository.publish(report, lambda: True)
+    outbox.enqueue(
+        report.target.connection,
+        report.target.library,
+        report.target.item,
+        (None, report.report_id, None, None, "report_only"),
+        7,
+    )
+    pending = repository.pending_provider_recovery_outbox()
+    assert 1 == len(pending)
+    proxy = CommitFailingConnection(repository._connection)
+    with patch.object(outbox, "_connection", cast(sqlite3.Connection, proxy)):
+        with pytest.raises(MetadataReportError, match="outbox is unavailable"):
+            outbox.complete_provider_recovery_outbox(pending[0][0], delivered_at=7)
+    assert pending == repository.pending_provider_recovery_outbox()
+    outbox.complete_provider_recovery_outbox(pending[0][0], delivered_at=7)
+    outbox.complete_provider_recovery_outbox(pending[0][0], delivered_at=7)
+    assert () == repository.pending_provider_recovery_outbox()
+    repository.close()
 
 
 def test_repeated_queued_request_advances_its_freshness_anchor(
@@ -3031,18 +3429,11 @@ def test_lane_zero_wakes_recovery_with_the_supervisor_clock() -> None:
 def test_lane_zero_contains_recovery_store_failure_and_continues() -> None:
     pipeline = _ScheduledPipeline()
     wakes: list[int] = []
-    supervisor: ReviewPreparationSupervisor
+    runs = 0
 
     def recovery(now: int) -> None:
         wakes.append(now)
-        if len(wakes) == 1:
-            supervisor._wake.set()
-            try:
-                raise ProviderRecoveryStoreError(
-                    "provider recovery persistence is unavailable"
-                )
-            except ProviderRecoveryStoreError as error:
-                raise ReviewPipelineError("recovery") from error
+        raise ReviewPipelineError("persistence")
 
     supervisor = ReviewPreparationSupervisor(
         pipeline,
@@ -3052,13 +3443,20 @@ def test_lane_zero_contains_recovery_store_failure_and_continues() -> None:
     )
 
     def run_next() -> bool:
-        supervisor._stop.set()
+        nonlocal runs
+        runs += 1
+        if runs == 3:
+            supervisor._stop.set()
+        else:
+            # The next wake belongs to ordinary preparation, not recovery.
+            supervisor._wake.set()
         return False
 
     pipeline.run_next = run_next
     supervisor._wake.set()
     supervisor._run(0)
-    assert [41, 41] == wakes
+    assert [41, 41, 41] == wakes
+    assert 3 == runs
     assert pipeline.status_calls >= 1
 
 

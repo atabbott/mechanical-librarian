@@ -1118,8 +1118,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         # Searching narrows as the owner types and returns to the first page.
         search_box.fill("Spoken stories")
-        page.get_by_text("The Glass Orchard", exact=True).wait_for()
-        assert page.locator(".library-work-row").count() == 3
+        expect(page.locator(".library-work-row")).to_have_count(3)
         page.get_by_text("Page 1", exact=False).wait_for()
         assert search_box.input_value() == "Spoken stories"
         search_box.fill("no synthetic work has this phrase")

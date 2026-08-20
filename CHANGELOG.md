@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep provider-recovery cutovers from freezing preparation or crash-looping
+  startup: recovery jobs now enroll their exact scope atomically, failed outbox
+  rows remain retryable while later rows drain, and claimed successors return
+  through bounded typed preparation recovery. (#798)
+
 - Keep Library and Attention responsive at 2,000 works. Transactional relational
   field facts replace repeated canonical JSON walks while immutable review and
   shadow documents remain authoritative; startup fails closed on disagreement,
