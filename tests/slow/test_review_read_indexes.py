@@ -1,0 +1,161 @@
+from __future__ import annotations
+
+import sqlite3
+import tempfile
+from collections.abc import Callable
+from pathlib import Path
+
+import pytest
+
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    SQLiteMetadataReportRepository,
+)
+from tests.unit import test_review_read_indexes as support
+
+
+def test_measured_indexes_bound_representative_library_reads() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        connection = support._representative_database(
+            Path(directory) / "application.sqlite3"
+        )
+        try:
+            lineage_plan = support._plan(
+                connection,
+                support._LATEST_PREPARATION_WORK_SQL,
+                ("primary", "books", "item-0000"),
+            )
+            shadow_plan = support._plan(
+                connection,
+                support._SHADOW_OUTCOME_HISTORY_SQL,
+                ("review_case_" + "0" * 64, 100),
+            )
+            count_plan = support._plan(
+                connection,
+                support._CURRENT_REVIEW_CASE_COUNT_SQL,
+                (None, "", "", "", "", ""),
+            )
+            assert any(
+                "USING INDEX review_preparation_work_lineage_history" in step
+                for step in lineage_plan
+            )
+            assert not any("TEMP B-TREE" in step for step in lineage_plan)
+            assert any(
+                "USING INDEX shadow_decision_outcomes_case_history" in step
+                or "USING COVERING INDEX shadow_decision_outcomes_case_history" in step
+                for step in shadow_plan
+            )
+            assert not any("TEMP B-TREE" in step for step in shadow_plan)
+            assert any(
+                "shadow_decision_outcomes_case_history" in step for step in count_plan
+            )
+
+            result, steps, elapsed = support._count_with_step_limit(
+                connection, 1_000_000
+            )
+            assert result == (support._WORKS, support._WORKS // 2)
+            assert steps <= 1_000_000
+            assert elapsed < 2.0
+
+            sizes = dict(
+                connection.execute(
+                    "SELECT name,sum(pgsize) FROM dbstat WHERE name IN "
+                    "('review_preparation_work_lineage_history',"
+                    "'shadow_decision_outcomes_case_history') GROUP BY name"
+                )
+            )
+            assert set(sizes) == {
+                "review_preparation_work_lineage_history",
+                "shadow_decision_outcomes_case_history",
+            }
+            assert all(
+                type(size) is int and size <= 1_048_576 for size in sizes.values()
+            )
+
+            connection.execute("DROP INDEX review_preparation_work_lineage_history")
+            connection.commit()
+            unindexed_lineage = support._plan(
+                connection,
+                support._LATEST_PREPARATION_WORK_SQL + " /* unindexed */",
+                ("primary", "books", "item-0000"),
+            )
+            assert any(
+                "SCAN review_preparation_work" in step for step in unindexed_lineage
+            )
+            assert any("TEMP B-TREE" in step for step in unindexed_lineage)
+            with pytest.raises(sqlite3.OperationalError, match="interrupted"):
+                support._call_with_step_limit(
+                    connection,
+                    2_000_000,
+                    lambda: support._read_each_preparation_lineage(connection),
+                )
+
+            connection.execute("DROP INDEX shadow_decision_outcomes_case_history")
+            connection.commit()
+            with pytest.raises(sqlite3.OperationalError, match="interrupted"):
+                support._call_with_step_limit(
+                    connection,
+                    2_000_000,
+                    lambda: support._read_each_shadow_history(connection),
+                )
+        finally:
+            connection.close()
+
+
+def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        connection = support._representative_database(
+            Path(directory) / "application.sqlite3"
+        )
+        repository = SQLiteMetadataReportRepository(connection)
+        case_id = str(
+            connection.execute(
+                "SELECT review_case_id FROM review_cases LIMIT 1"
+            ).fetchone()[0]
+        )
+        calls: tuple[tuple[str, Callable[[], object]], ...] = (
+            (
+                "Library",
+                lambda: repository.read_review_library(None, 50, 0, None),
+            ),
+            (
+                "Library attention lens",
+                lambda: repository.read_review_library(None, 50, 0, True),
+            ),
+            (
+                "Library search",
+                lambda: repository.read_review_library(
+                    "Representative title 0198", 50, 0, None
+                ),
+            ),
+            (
+                "Attention",
+                lambda: repository.read_review_attention(None, 50, 0),
+            ),
+        )
+        for name, call in calls:
+            result, steps, elapsed = support._call_with_step_limit(
+                connection, support._READ_VM_STEP_BUDGET, call
+            )
+            assert result is not None, name
+            assert steps <= support._READ_VM_STEP_BUDGET, name
+            assert elapsed < support._READ_WALL_BUDGET_SECONDS, name
+
+        plan_calls = calls + (
+            (
+                "selected work and history",
+                lambda: repository.read_current_review_case(case_id, 100),
+            ),
+        )
+        for name, call in plan_calls:
+            shadow_statements = tuple(
+                statement
+                for statement in support._traced_selects(connection, call)
+                if "shadow_decision_outcomes" in statement
+            )
+            assert shadow_statements, name
+            for statement in shadow_statements:
+                assert any(
+                    "shadow_decision_outcomes_case_history" in step
+                    for step in support._plan(connection, statement, ())
+                ), name
+        repository.close()
