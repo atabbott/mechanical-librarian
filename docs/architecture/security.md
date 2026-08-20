@@ -43,9 +43,10 @@ before any writable connection or mutation.
 The offline `schema-adopt` command is the sole pre-release exception to that
 last startup rule. It has one closed code-defined plan, binds an owner-only
 regular DELETE-journal database under exclusive filesystem and SQLite
-authority, rejects sidecars and every schema except the exact current or named
-immediate predecessor, and creates a verified non-overwriting private backup
-before adding two derived read indexes transactionally. It receives no
+authority, rejects configured and stale private-binding recovery state and every
+schema except the exact current or frozen named predecessor, and creates a
+verified non-overwriting private backup whose content is rechecked before
+success after adding two derived read indexes transactionally. It receives no
 configuration or credentials and has no network, provider, reviewer, media,
 target, decision, row-write, import, repair, or arbitrary-SQL authority.
 

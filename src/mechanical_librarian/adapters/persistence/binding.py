@@ -228,6 +228,8 @@ class _LinuxDatabaseBinding:
                     raise MetadataReportError("database authority changed")
             _require_named_identity(parent_descriptor, absolute.name, expected_identity)
             _reject_database_sidecars_in_directory(parent_descriptor, absolute.name)
+            if authority is None:
+                _reject_stale_private_binding(parent_descriptor, expected_identity)
             for _ in range(8):
                 candidate = f".metadata-report-binding-{secrets.token_hex(16)}.sqlite"
                 try:
@@ -425,6 +427,31 @@ def _reject_database_sidecars_in_directory(
                 "database recovery state is unavailable"
             ) from error
         raise MetadataReportError("database recovery state is unsupported")
+
+
+def _reject_stale_private_binding(
+    parent_descriptor: int, expected_identity: tuple[int, int]
+) -> None:
+    prefix = ".metadata-report-binding-"
+    suffix = ".sqlite"
+    try:
+        names = os.listdir(parent_descriptor)
+        for name in names:
+            token = name.removeprefix(prefix).removesuffix(suffix)
+            if (
+                not name.startswith(prefix)
+                or not name.endswith(suffix)
+                or len(token) != 32
+                or any(value not in "0123456789abcdef" for value in token)
+            ):
+                continue
+            information = os.stat(name, dir_fd=parent_descriptor, follow_symlinks=False)
+            if (information.st_dev, information.st_ino) == expected_identity:
+                raise MetadataReportError("database recovery state is unsupported")
+    except MetadataReportError:
+        raise
+    except OSError as error:
+        raise MetadataReportError("database recovery state is unavailable") from error
 
 
 def _require_named_identity(

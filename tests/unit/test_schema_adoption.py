@@ -206,6 +206,25 @@ def test_unrecognized_schema_and_existing_backup_fail_without_mutation(
     assert backup.read_bytes() == b"reserved"
 
 
+def test_named_predecessor_contract_is_frozen_against_future_current_schema(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    import mechanical_librarian.adapters.persistence.schema as schema
+
+    database = _predecessor(tmp_path)
+    current = schema._expected_schema_objects
+    monkeypatch.setattr(
+        schema,
+        "_expected_schema_objects",
+        lambda: [*current(), ("index", "future_schema_object", "future sql")],
+    )
+    connection = sqlite3.connect(database)
+    try:
+        schema._validate_review_read_index_predecessor_schema(connection)
+    finally:
+        connection.close()
+
+
 @pytest.mark.parametrize("suffix", ("-journal", "-wal", "-shm"))
 def test_recovery_sidecars_are_rejected_without_backup(
     tmp_path: Path, suffix: str
@@ -481,7 +500,7 @@ def test_interrupt_after_durable_commit_requires_recovery(
 
 @pytest.mark.parametrize(
     "failure_seam",
-    ("schema", "backup", "cleanup"),
+    ("schema", "backup", "backup-content", "cleanup"),
 )
 def test_postcommit_validation_and_cleanup_failures_require_recovery(
     tmp_path: Path, monkeypatch: MonkeyPatch, failure_seam: str
@@ -510,6 +529,18 @@ def test_postcommit_validation_and_cleanup_failures_require_recovery(
                 MetadataReportError("synthetic backup replacement")
             ),
         )
+    elif failure_seam == "backup-content":
+        real_validate = adoption._validate_schema
+        calls = 0
+
+        def corrupt_backup_after_commit(connection: sqlite3.Connection) -> None:
+            nonlocal calls
+            calls += 1
+            real_validate(connection)
+            if calls == 2:
+                backup.write_bytes(b"same inode, wrong recovery content")
+
+        monkeypatch.setattr(adoption, "_validate_schema", corrupt_backup_after_commit)
     else:
         real_close = adoption._close_adoption_resources
 
@@ -521,6 +552,8 @@ def test_postcommit_validation_and_cleanup_failures_require_recovery(
 
     with pytest.raises(SchemaAdoptionRecoveryRequired):
         adopt_schema(database, backup, REVIEW_READ_INDEXES_V1)
+    if failure_seam == "backup-content":
+        assert backup.read_bytes() == b"same inode, wrong recovery content"
 
 
 def test_postvalidation_path_replacement_cannot_report_success(
@@ -590,4 +623,23 @@ def test_live_database_parent_authority_is_rejected_without_waiting(
     finally:
         fcntl.flock(parent, fcntl.LOCK_UN)
         os.close(parent)
+    assert not backup.exists()
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux binding aliases"
+)
+def test_stale_private_binding_for_source_inode_is_rejected_before_backup(
+    tmp_path: Path,
+) -> None:
+    database = _predecessor(tmp_path)
+    alias = tmp_path / (
+        ".metadata-report-binding-00000000000000000000000000000000.sqlite"
+    )
+    os.link(database, alias)
+    Path(f"{alias}-journal").write_bytes(b"retained hot journal")
+    backup = tmp_path / "backup.sqlite3"
+
+    with pytest.raises(MetadataReportError):
+        adopt_schema(database, backup, REVIEW_READ_INDEXES_V1)
     assert not backup.exists()

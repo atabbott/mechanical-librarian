@@ -34,6 +34,11 @@ it. Runtime SQL, plugins, configuration-supplied operations, canonical row
 conversion, general migration machinery, repair, import, and downgrade remain
 out of scope.
 
+The #800 index change predates this revision and is the sole retrospective
+exception: #805 delivers and qualifies its adoption separately because #800 was
+already merged when the retained experiment established the preservation need.
+Later schema changes do not inherit that exception.
+
 Compatibility requires a named present user need. Post-release migration and
 restore work is deferred to #57; this decision grants no general migration,
 repair, retention, downgrade, or destructive authority.

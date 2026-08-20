@@ -217,7 +217,7 @@ def _copy_verified_backup(
     source_descriptor: int,
     parent_descriptor: int,
     backup_name: str,
-) -> tuple[int, int]:
+) -> tuple[tuple[int, int], str]:
     flags = (
         os.O_RDWR
         | os.O_CREAT
@@ -251,13 +251,12 @@ def _copy_verified_backup(
                 view = view[written:]
             offset += len(block)
         os.fsync(backup_descriptor)
-        if _descriptor_digest(source_descriptor) != _descriptor_digest(
-            backup_descriptor
-        ):
+        source_digest = _descriptor_digest(source_descriptor)
+        if source_digest != _descriptor_digest(backup_descriptor):
             raise MetadataReportError("schema adoption backup is unavailable")
         os.fsync(parent_descriptor)
         succeeded = True
-        return created_identity
+        return created_identity, source_digest
     except FileExistsError as error:
         raise MetadataReportError("schema adoption backup already exists") from error
     except MetadataReportError:
@@ -284,7 +283,10 @@ def _copy_verified_backup(
 
 
 def _require_backup_current(
-    parent_descriptor: int, backup_name: str, expected_identity: tuple[int, int]
+    parent_descriptor: int,
+    backup_name: str,
+    expected_identity: tuple[int, int],
+    expected_digest: str,
 ) -> None:
     descriptor = -1
     try:
@@ -299,6 +301,7 @@ def _require_backup_current(
             or not stat.S_ISREG(information.st_mode)
             or information.st_uid != os.geteuid()
             or information.st_mode & 0o077
+            or _descriptor_digest(descriptor) != expected_digest
         ):
             raise MetadataReportError("schema adoption backup identity changed")
     except OSError as error:
@@ -354,7 +357,6 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
     binding: _LinuxDatabaseBinding | None = None
     connection: sqlite3.Connection | None = None
     recovery_required = False
-    backup_identity: tuple[int, int] | None = None
     try:
         descriptor = os.open(
             database,
@@ -414,7 +416,7 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
 
         _validate_canonical_documents(connection)
         before = _application_table_digest(connection)
-        backup_identity = _copy_verified_backup(
+        backup_identity, backup_digest = _copy_verified_backup(
             source_descriptor, parent_descriptor, backup.name
         )
         if binding is not None:
@@ -429,7 +431,9 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
         _validate_canonical_documents(connection)
         if _application_table_digest(connection) != before:
             raise SchemaAdoptionRecoveryRequired
-        _require_backup_current(parent_descriptor, backup.name, backup_identity)
+        _require_backup_current(
+            parent_descriptor, backup.name, backup_identity, backup_digest
+        )
         _require_source_current(database, source_identity, parent_descriptor, binding)
         return {"plan": plan, "status": "adopted"}
     except BaseException as error:

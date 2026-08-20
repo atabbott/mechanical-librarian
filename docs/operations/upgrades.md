@@ -23,9 +23,10 @@ The command accepts no SQL or configuration. It either verifies an already
 current database without creating the requested backup, or validates the exact
 predecessor, creates and verifies the non-overwriting `0600` backup, and adds
 only the two named read indexes in one transaction. Any other schema, sidecar,
-integrity failure, live database authority, path replacement, or backup
-collision fails closed. Keep both clone and backup until the new build has
-started and its measured behavior is accepted.
+stale private binding, integrity failure, live database authority, path
+replacement, backup collision, or backup-content change fails closed. Keep both
+clone and backup until the new build has started and its measured behavior is
+accepted.
 
 `Schema adoption requires backup recovery.` means commit was attempted and the
 source must not be trusted as predecessor or current; stop and restore the
