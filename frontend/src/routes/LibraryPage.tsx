@@ -22,6 +22,7 @@ import { automaticChoiceSelected, humanChoiceSelected } from '../reviewAutomatic
 import { ownerChoiceCount } from '../reviewChoiceCounts'
 
 type ReviewField = CaseDetailView['fields'][number]
+const searchNavigationDelay = 150
 // What the owner has chosen for one field and how far that choice has got.
 // `null` means this field carries no choice of theirs in this session.
 type ChoiceProgress = {
@@ -746,6 +747,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const currentSearch = useRef(search)
   const pendingSearchQuery = useRef<string | null>(null)
   const searchNavigation = useRef<Promise<void> | null>(null)
+  const searchCommitTimer = useRef<number | null>(null)
   const searchGeneration = useRef(0)
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
@@ -787,6 +789,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     return () => {
       searchGeneration.current = mountedGeneration + 1
       pendingSearchQuery.current = null
+      if (searchCommitTimer.current !== null) window.clearTimeout(searchCommitTimer.current)
     }
   }, [])
   // A search or lens may temporarily hide the open work's card. The row the
@@ -1009,41 +1012,51 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       },
     })
   }
-  // Progressive filtering keeps the typed text local so each keystroke paints,
-  // and moves the URL a frame later. The URL stays the single owner of the
-  // query: a Back, a deep link, or a lens change reseeds the box below.
+  // Progressive filtering keeps the typed text local so each keystroke paints.
+  // A short bounded delay avoids loading an obsolete clear before the next
+  // typed value; the URL remains the owner after the committed replacement.
+  const scheduleSearchNavigation = () => {
+    if (searchCommitTimer.current !== null) window.clearTimeout(searchCommitTimer.current)
+    searchCommitTimer.current = window.setTimeout(() => {
+      searchCommitTimer.current = null
+      if (searchNavigation.current !== null || pendingSearchQuery.current === null) return
+      const generation = searchGeneration.current
+      const drain = async () => {
+        try {
+          while (generation === searchGeneration.current && pendingSearchQuery.current !== null) {
+            const pending = pendingSearchQuery.current
+            pendingSearchQuery.current = null
+            await navigate({
+              replace: true,
+              search: (current) => {
+                const next = { ...current }
+                delete next.cursor
+                if (pending) next.q = pending
+                else delete next.q
+                return next
+              },
+            })
+          }
+        } catch {
+          // A later owner edit may start a fresh drain; a failed read navigation
+          // is never retried without that new intent.
+        } finally {
+          searchNavigation.current = null
+          if (generation === searchGeneration.current) {
+            if (pendingSearchQuery.current !== null) scheduleSearchNavigation()
+            else setSearchPending(false)
+          }
+        }
+      }
+      searchNavigation.current = drain()
+    }, searchNavigationDelay)
+  }
   const runSearch = (value: string) => {
     const q = value.trim()
     setTypedQuery({ echo: q, text: value })
     setSearchPending(true)
     pendingSearchQuery.current = q
-    if (searchNavigation.current !== null) return
-    const generation = searchGeneration.current
-    const drain = async () => {
-      try {
-        while (generation === searchGeneration.current && pendingSearchQuery.current !== null) {
-          const pending = pendingSearchQuery.current
-          pendingSearchQuery.current = null
-          await navigate({
-            replace: true,
-            search: (current) => {
-              const next = { ...current }
-              delete next.cursor
-              if (pending) next.q = pending
-              else delete next.q
-              return next
-            },
-          })
-        }
-      } catch {
-        // A later owner edit may start a fresh drain; a failed read navigation
-        // is never retried without that new intent.
-      } finally {
-        searchNavigation.current = null
-        if (generation === searchGeneration.current) setSearchPending(false)
-      }
-    }
-    searchNavigation.current = drain()
+    scheduleSearchNavigation()
   }
   const submitSearch = (event: SyntheticEvent<HTMLFormElement, SubmitEvent>) => {
     event.preventDefault()

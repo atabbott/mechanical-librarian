@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -1233,9 +1233,9 @@ describe('Library route', () => {
     const query = screen.getByLabelText('Search title, author, identifier, library, or format')
 
     await user.clear(query)
+    await waitFor(() => expect(replacements).toBe(1))
     await user.type(query, 'second')
     expect(query).toHaveValue('second')
-    expect(replacements).toBe(1)
     act(() => releaseClear?.())
 
     await waitFor(() =>
@@ -1243,6 +1243,31 @@ describe('Library route', () => {
     )
     expect(replacements).toBe(2)
     delayedNavigate.mockRestore()
+  })
+
+  it('coalesces a cleared Library query before its route load begins', async () => {
+    const getLibrary = vi.fn<ReviewHttp['getLibrary']>(async () => library)
+    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1', { ...createHttp(), getLibrary })
+    await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    const query = screen.getByLabelText('Search title, author, identifier, library, or format')
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(query, { target: { value: '' } })
+      fireEvent.change(query, { target: { value: 'second' } })
+      expect(query).toHaveValue('second')
+      expect(getLibrary.mock.calls.map(([search]) => search)).not.toContainEqual({ lens: 'all', preview: 'case-1' })
+      await act(async () => { await vi.advanceTimersByTimeAsync(150) })
+      vi.useRealTimers()
+      await waitFor(() =>
+        expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', q: 'second' }),
+      )
+
+      const searches = getLibrary.mock.calls.map(([search]) => search)
+      expect(searches.filter((search) => search.q === 'second')).toHaveLength(1)
+      expect(searches).not.toContainEqual({ lens: 'all', preview: 'case-1' })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('starts a fresh Library search after a rejected replacement', async () => {
