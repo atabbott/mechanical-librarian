@@ -46,13 +46,18 @@ from mechanical_librarian.application.review_web import (
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
 )
+from mechanical_librarian.domain.automatic_decision import (
+    AutomaticDecision,
+    AutomaticDecisionError,
+)
+from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ReportValueError,
 )
 from mechanical_librarian.domain.review_browse import (
+    browse_case_with_id,
     browse_report,
-    browse_review_case_id,
 )
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
@@ -289,18 +294,22 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         }
                     )
                 )
-                case_id = (
+                case_with_id = (
                     None
                     if case_document is None
-                    else browse_review_case_id(case_document)
+                    else browse_case_with_id(case_document)
                 )
+                case = None if case_with_id is None else case_with_id[0]
+                case_id = None if case_with_id is None else case_with_id[1]
                 projected_rows.append(
                     (
                         case_document,
                         report_document,
                         ()
-                        if case_id is None
-                        else self._browse_decision_documents(case_id),
+                        if case is None
+                        else self._browse_decision_documents(
+                            cast("str", case_id), case
+                        ),
                         ()
                         if case_id is None
                         else self._automatic_attention_destinations(case_id),
@@ -324,6 +333,60 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             )
         return snapshot
 
+    def _browse_decision_documents(
+        self, review_case_id: str, case: dict[str, object]
+    ) -> tuple[str, ...]:
+        """Validate only the decision documents attached to one visible row."""
+        human_rows = self._connection.execute(
+            "SELECT decision_id,proposal_id,target_fingerprint,destination,"
+            "actor,outcome,selected_value_document,idempotency_digest,"
+            "request_digest,occurred_at,document FROM human_decisions "
+            "WHERE review_case_id=? ORDER BY ordinal",
+            (review_case_id,),
+        ).fetchall()
+        documents: list[str] = []
+        try:
+            for row in human_rows:
+                if len(row) != 11 or type(row[10]) is not str:
+                    raise MetadataReportError("review library is unavailable")
+                decision = HumanDecision.from_json(row[10])
+                decision.validate_for_browse_case(review_case_id, case)
+                if (
+                    decision.decision_id,
+                    decision.proposal_id,
+                    decision.target_fingerprint,
+                    decision.destination,
+                    decision.actor,
+                    decision.outcome,
+                    _canonical_json(decision.selected_value),
+                    decision.idempotency_digest,
+                    decision.request_digest,
+                    decision.occurred_at,
+                ) != row[:10]:
+                    raise MetadataReportError("review library is unavailable")
+                documents.append(decision.to_json())
+            automatic_rows = self._connection.execute(
+                "SELECT decision_id,destination,idempotency_digest,occurred_at,document "
+                "FROM automatic_decisions WHERE review_case_id=? "
+                "ORDER BY occurred_at,decision_id",
+                (review_case_id,),
+            ).fetchall()
+            for row in automatic_rows:
+                if len(row) != 5 or type(row[4]) is not str:
+                    raise MetadataReportError("review library is unavailable")
+                automatic_decision = AutomaticDecision.from_json(row[4])
+                if (
+                    automatic_decision.decision_id,
+                    automatic_decision.destination,
+                    automatic_decision.idempotency_digest,
+                    automatic_decision.occurred_at,
+                ) != row[:4] or automatic_decision.review_case_id != review_case_id:
+                    raise MetadataReportError("review library is unavailable")
+                documents.append(automatic_decision.to_json())
+        except (HumanDecisionError, AutomaticDecisionError, TypeError) as error:
+            raise MetadataReportError("review library is unavailable") from error
+        return tuple(documents)
+
     def _automatic_attention_destinations(self, review_case_id: str) -> tuple[str, ...]:
         rows = self._connection.execute(
             "SELECT DISTINCT outcome.destination FROM shadow_outcome_field_facts outcome, "
@@ -336,20 +399,6 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):
             raise MetadataReportError("review attention is unavailable")
-        return tuple(row[0] for row in rows)
-
-    def _browse_decision_documents(self, review_case_id: str) -> tuple[str, ...]:
-        """Read already-validated immutable decisions for a bounded browse row."""
-        rows = self._connection.execute(
-            "SELECT document,0 AS origin_order,ordinal AS decision_order "
-            "FROM human_decisions WHERE review_case_id=? UNION ALL "
-            "SELECT document,1 AS origin_order,occurred_at AS decision_order "
-            "FROM automatic_decisions WHERE review_case_id=? "
-            "ORDER BY origin_order,decision_order",
-            (review_case_id, review_case_id),
-        ).fetchall()
-        if any(len(row) != 3 or type(row[0]) is not str for row in rows):
-            raise MetadataReportError("review library is unavailable")
         return tuple(row[0] for row in rows)
 
     def _shadow_abstention_destinations(self, review_case_id: str) -> tuple[str, ...]:

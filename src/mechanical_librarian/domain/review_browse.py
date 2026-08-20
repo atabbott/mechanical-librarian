@@ -127,15 +127,22 @@ def browse_case_and_report(
     return case, report
 
 
+def browse_case_with_id(case_document: str) -> tuple[dict[str, object], str]:
+    """Read one bounded case envelope and derive its content identity once."""
+    return browse_case(case_document), "review_case_" + hashlib.sha256(
+        case_document.encode("utf-8")
+    ).hexdigest()
+
+
 def browse_review_case_id(case_document: str) -> str:
     """Return the stable ID of a canonical case envelope."""
-    browse_case(case_document)
-    return "review_case_" + hashlib.sha256(case_document.encode("utf-8")).hexdigest()
+    return browse_case_with_id(case_document)[1]
 
 
 __all__ = [
     "ReviewBrowseValueError",
     "browse_case",
+    "browse_case_with_id",
     "browse_case_and_report",
     "browse_report",
     "browse_review_case_id",

@@ -33,6 +33,8 @@ from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
     FileFacts,
     MetadataReport,
     ReportValueError,
@@ -42,6 +44,15 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from tests.support.proposal_evidence import (
+    _claim as _proposal_claim,
+)
+from tests.support.proposal_evidence import (
+    _provider as _proposal_provider,
+)
+from tests.support.proposal_evidence import (
+    _report as _proposal_report,
+)
 from tests.support.review_cases import _report
 
 _WORKS = 2_000
@@ -555,7 +566,7 @@ def test_canonical_inserts_project_exact_review_and_shadow_field_facts(
     repository.close()
 
 
-def test_repository_browse_projection_does_not_repeat_full_canonical_validation(
+def test_repository_browse_projection_does_not_repeat_report_or_case_validation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     connection = _representative_database(tmp_path / "application.sqlite3", works=8)
@@ -566,11 +577,156 @@ def test_repository_browse_projection_does_not_repeat_full_canonical_validation(
     def unexpected_validation(*_args: object) -> object:
         raise AssertionError("browse repeated full canonical validation")
 
-    for document_type in (MetadataReport, ProposalSet, ReviewCase, HumanDecision):
+    for document_type in (MetadataReport, ReviewCase):
         monkeypatch.setattr(document_type, "from_json", unexpected_validation)
 
     assert repository.read_review_library(None, 6, 0, None) == expected_library
     assert repository.read_review_attention(None, 6, 0) == expected_attention
+    repository.close()
+
+
+def test_browse_projection_rejects_a_decision_document_that_disagrees_with_its_row(
+    tmp_path: Path,
+) -> None:
+    connection = _representative_database(tmp_path / "application.sqlite3", works=8)
+    decision_id, item_id = connection.execute(
+        "SELECT decision.decision_id,report.item_id "
+        "FROM human_decisions decision "
+        "JOIN review_cases case_record "
+        "ON case_record.review_case_id=decision.review_case_id "
+        "JOIN metadata_reports report ON report.report_id=case_record.report_id LIMIT 1"
+    ).fetchone()
+    connection.execute("DROP TRIGGER human_decisions_no_update")
+    connection.execute(
+        "UPDATE human_decisions SET destination='corrupt-destination' "
+        "WHERE decision_id=?",
+        (decision_id,),
+    )
+    connection.commit()
+    repository = SQLiteMetadataReportRepository(connection)
+
+    with pytest.raises(ReviewWebError, match="unavailable"):
+        BrowseReviewLibrary(repository).library(
+            lens="all", search=item_id, limit=50, cursor=None
+        )
+    repository.close()
+
+
+def test_browse_projection_rejects_an_automatic_decision_bound_to_another_case(
+    tmp_path: Path,
+) -> None:
+    connection = _representative_database(tmp_path / "application.sqlite3", works=8)
+    decision_id, document, item_id, relational_case_id = connection.execute(
+        "SELECT decision.decision_id,decision.document,report.item_id "
+        ",decision.review_case_id "
+        "FROM automatic_decisions decision "
+        "JOIN review_cases case_record "
+        "ON case_record.review_case_id=decision.review_case_id "
+        "JOIN metadata_reports report ON report.report_id=case_record.report_id LIMIT 1"
+    ).fetchone()
+    original = AutomaticDecision.from_json(document)
+    foreign = AutomaticDecision.create(
+        review_case_id="review_case_" + "f" * 64,
+        report_id=original.report_id,
+        proposal_set_id=original.proposal_set_id,
+        proposal_id=original.proposal_id,
+        target_fingerprint=original.target_fingerprint,
+        destination=original.destination,
+        outcome=original.outcome,
+        candidate_id=original.candidate_id,
+        resolved_policy_id=original.resolved_policy_id,
+        policy_generation=original.policy_generation,
+        rule_id=original.rule_id,
+        policy_category=original.policy_category,
+        policy_option=original.policy_option,
+        qualification_manifest_sha256=original.qualification_manifest_sha256,
+        source_outcome_id=original.source_outcome_id,
+        bundle_id=original.bundle_id,
+        occurred_at=original.occurred_at,
+    )
+    connection.execute("DROP TRIGGER automatic_decisions_no_update")
+    connection.execute(
+        "UPDATE automatic_decisions SET decision_id=?,destination=?,"
+        "idempotency_digest=?,occurred_at=?,document=? WHERE decision_id=?",
+        (
+            foreign.decision_id,
+            foreign.destination,
+            foreign.idempotency_digest,
+            foreign.occurred_at,
+            foreign.to_json(),
+            decision_id,
+        ),
+    )
+    assert relational_case_id != foreign.review_case_id
+    connection.commit()
+    repository = SQLiteMetadataReportRepository(connection)
+
+    with pytest.raises(ReviewWebError, match="unavailable"):
+        BrowseReviewLibrary(repository).library(
+            lens="all", search=item_id, limit=50, cursor=None
+        )
+    repository.close()
+
+
+def test_relationship_bearing_case_keeps_its_historical_human_proposal_identity(
+    tmp_path: Path,
+) -> None:
+    claims = tuple(
+        _proposal_claim(
+            "catalogue",
+            "edition-1",
+            kind,
+            value,
+            scope=ClaimScope.WORK,
+        )
+        for kind, value in (
+            (ClaimKind.TITLE, "Candidate title"),
+            (ClaimKind.SUBTITLE, "A Novel"),
+            (ClaimKind.SERIES, "Synthetic series"),
+        )
+    )
+    report = _proposal_report(
+        providers=(_proposal_provider("catalogue", "edition-1", claims),)
+    )
+    proposal = evaluate_report(report)
+    case = ReviewCase.create(proposal, report)
+    combinations = case.relationships["bibliographic_combinations"]
+    assert type(combinations) is list and combinations
+    chosen = next(
+        value
+        for value in case.proposals
+        if value["result"]["outcome"]
+        in {"propose_change", "acceptable_choice", "unresolved_choice"}
+    )
+    repository = SQLiteMetadataReportRepository(
+        _representative_database(tmp_path / "application.sqlite3", works=8)
+    )
+    repository.publish(report, lambda: True)
+    repository.publish_proposal(proposal)
+    review_case_id = json.loads(repository.admit_review_case(proposal))[
+        "review_case_id"
+    ]
+    repository.record_human_decision(
+        HumanDecision.create(
+            case,
+            proposal_id=str(chosen["proposal_id"]),
+            target_fingerprint=case.target_fingerprint,
+            destination=str(chosen["destination"]),
+            actor="owner",
+            outcome="keep_current",
+            selected_value=None,
+            idempotency_key="relationship-identity-0001",
+            occurred_at=50,
+        )
+    )
+
+    page = BrowseReviewLibrary(repository).library(
+        lens="all", search="Current title", limit=50, cursor=None
+    )
+    item = next(
+        value for value in page["items"] if value["review_case_id"] == review_case_id
+    )
+    assert item["review_case_id"] == review_case_id
     repository.close()
 
 
