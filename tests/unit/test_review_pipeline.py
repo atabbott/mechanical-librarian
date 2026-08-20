@@ -1320,11 +1320,24 @@ def test_restart_requeues_claims_across_scopes_without_creating_recovery_effects
             "SELECT count(*) FROM review_preparation_work WHERE state='running'"
         ).fetchone()[0]
     )
-    provider_calls: list[str] = []
     repository.close()
 
+    def provider_spy(*_arguments: object) -> tuple[ProviderStatus, ...]:
+        raise AssertionError("restart recovery must not request a provider")
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: open_repository(application_path),
+        libraries=producers,
+        discover=lambda *_arguments: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_arguments: (_ for _ in ()).throw(AssertionError()),
+        providers=provider_spy,
+        propose=lambda *_arguments: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_arguments: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_arguments: (_ for _ in ()).throw(AssertionError()),
+    )
+    pipeline.recover()
+
     reopened = open_repository(application_path)
-    reopened.recover_review_pipeline(producers)
     states = reopened._connection.execute(
         "SELECT work_id,state FROM review_preparation_work WHERE work_id IN (?,?) "
         "ORDER BY work_id",
@@ -1340,7 +1353,6 @@ def test_restart_requeues_claims_across_scopes_without_creating_recovery_effects
     reopened.fail_review_pipeline_action(resumed, "failed", False, 19)
     recovered = reopened.claim_review_pipeline_action(20)
     assert recovered is not None and recovered.action_id in running_ids
-    assert [] == provider_calls
     reopened.close()
 
 
