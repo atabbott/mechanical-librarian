@@ -131,11 +131,11 @@ def test_job_rejects_a_case_id_the_report_only_outcome_forbids() -> None:
 def test_enqueue_enrolls_an_unseen_member_and_health_before_its_job() -> None:
     with tempfile.TemporaryDirectory() as directory:
         store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
-        assert 1 == store.enqueue_jobs((_job("unseen"),))
+        assert 1 == store.enqueue_jobs((_job("unseen"),), enqueued_at=3)
         assert [("google", "google_books", "books")] == store._connection.execute(
             "SELECT connection,adapter,scope FROM provider_recovery_members"
         ).fetchall()
-        assert [("google", "google_books", "books", 1, "waiting", 1, 7_200)] == (
+        assert [("google", "google_books", "books", 1, "waiting", 1, 7_203)] == (
             store._connection.execute(
                 "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at "
                 "FROM provider_recovery_health"
@@ -262,7 +262,7 @@ def test_drain_retains_a_failing_row_and_delivers_a_younger_row() -> None:
         observers=cast(object, lambda *_args: None),
         provider_resolver=cast(object, lambda *_args: None),
         pipeline=lambda: None,
-        enqueue=lambda _jobs: 0,
+        enqueue=lambda _jobs, _enqueued_at: 0,
         clock=lambda: 2,
     )
 

@@ -1468,7 +1468,9 @@ def create_review_pipeline(
         observers=retry_observers,
         provider_resolver=retry_resolver,
         pipeline=lambda: pipeline_holder.get("pipeline"),
-        enqueue=lambda jobs: runner_holder["runner"].enqueue(jobs),
+        enqueue=lambda jobs, enqueued_at: runner_holder["runner"].enqueue(
+            jobs, enqueued_at=enqueued_at
+        ),
         clock=lambda: int(time.time()),
     )
 

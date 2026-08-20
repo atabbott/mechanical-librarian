@@ -107,7 +107,7 @@ class ProviderRecoveryActivation:
             [str, str, str, str, int], ConfiguredProviderRetry | None
         ],
         pipeline: Callable[[], ReviewPreparationPipeline | None],
-        enqueue: Callable[[tuple[ProviderRecoveryJob, ...]], int],
+        enqueue: Callable[[tuple[ProviderRecoveryJob, ...], int], int],
         clock: Callable[[], int],
     ) -> None:
         self._configuration = configuration
@@ -344,7 +344,7 @@ class ProviderRecoveryActivation:
             )
             if jobs:
                 try:
-                    self._enqueue(jobs)
+                    self._enqueue(jobs, created_at)
                 except Exception as error:
                     raise ReviewPipelineError("persistence") from error
         repository.complete_provider_recovery_outbox(

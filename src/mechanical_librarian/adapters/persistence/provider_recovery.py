@@ -1029,7 +1029,9 @@ class SQLiteProviderRecoveryStore:
                 "provider recovery persistence is unavailable"
             ) from error
 
-    def enqueue_jobs(self, jobs: tuple[ProviderRecoveryJob, ...]) -> int:
+    def enqueue_jobs(
+        self, jobs: tuple[ProviderRecoveryJob, ...], *, enqueued_at: int = 0
+    ) -> int:
         """Durably register exact-current failed lanes before any canary runs.
 
         The full package tuple is deliberately stored with the job.  A caller
@@ -1037,6 +1039,8 @@ class SQLiteProviderRecoveryStore:
         """
         if (
             not jobs
+            or type(enqueued_at) is not int
+            or not 0 <= enqueued_at <= MAX_TIMESTAMP - 7_200
             or tuple(
                 sorted(
                     jobs,
@@ -1076,7 +1080,7 @@ class SQLiteProviderRecoveryStore:
                             job.generation,
                             "waiting",
                             1,
-                            7_200,
+                            enqueued_at + 7_200,
                         ),
                     )
                     values = (
