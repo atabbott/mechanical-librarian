@@ -1266,30 +1266,30 @@ describe('Library route', () => {
   it('does not revive queued Library search after leaving the route', async () => {
     const user = userEvent.setup()
     let releaseFirst: (() => void) | undefined
-    const http: ReviewHttp = {
-      ...createHttp(),
-      getLibrary: vi.fn<ReviewHttp['getLibrary']>(async (search, signal) => {
-        if (search.q !== undefined) return library
-        await new Promise<void>((resolve, reject) => {
-          releaseFirst = resolve
-          signal?.addEventListener('abort', () => reject(new Error('Library request was aborted')), { once: true })
-        })
-        return library
-      }),
-    }
-    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1', http)
+    const { router } = renderRoute('/library?lens=all&q=first&cursor=next&preview=case-1')
     await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    const originalNavigate = router.navigate.bind(router)
+    let libraryReplacements = 0
+    const delayedNavigate = vi.spyOn(router, 'navigate').mockImplementation((options) => {
+      if (options.from !== '/library') return originalNavigate(options)
+      libraryReplacements += 1
+      if (libraryReplacements !== 1) return originalNavigate(options)
+      return new Promise((resolve) => { releaseFirst = resolve })
+    })
     const query = screen.getByLabelText('Search title, author, identifier, library, or format')
 
     await user.clear(query)
     await waitFor(() => expect(releaseFirst).toBeTypeOf('function'))
     await user.type(query, 'second')
-    await router.navigate({ to: '/activity', search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 } })
-    await waitFor(() => expect(router.state.location.pathname).toBe('/activity'))
+    await originalNavigate({ to: '/activity', search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 } })
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    await originalNavigate({ to: '/policy', search: { section: 'identity' } })
+    await screen.findByRole('heading', { name: 'Library policy' })
     act(() => releaseFirst?.())
 
-    await waitFor(() => expect(router.state.location.pathname).toBe('/activity'))
-    expect(http.getLibrary).not.toHaveBeenCalledWith({ lens: 'all', q: 'second' }, expect.any(AbortSignal))
+    await waitFor(() => expect(router.state.location.pathname).toBe('/policy'))
+    expect(libraryReplacements).toBe(1)
+    delayedNavigate.mockRestore()
   })
 
   it('preserves an off-page preview deep link without exposing detail target identity', async () => {
