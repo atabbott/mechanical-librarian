@@ -20,24 +20,41 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _LATEST_PREPARATION_WORK_SQL,
     _SHADOW_OUTCOME_HISTORY_SQL,
 )
-from mechanical_librarian.adapters.persistence.schema import _create_schema
+from mechanical_librarian.adapters.persistence.schema import (
+    _NO_UPDATE_SQL,
+    _create_schema,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_web import (
+    BrowseReviewLibrary,
+    ReviewWebError,
+)
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
+    ReportValueError,
     TargetFacts,
     default_target_fields,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
+from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from tests.support.review_cases import _report
 
 _WORKS = 2_000
-_READ_VM_STEP_BUDGET = 10_500_000
-_READ_WALL_BUDGET_SECONDS = 2.0
+_READ_VM_STEP_BUDGET = 4_000_000
+_READ_WALL_BUDGET_SECONDS = 1.0
 _Result = TypeVar("_Result")
+
+
+def _field_fact_digest(value: object) -> str:
+    serialized = json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
 def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connection:
@@ -509,3 +526,334 @@ def test_exact_schema_requires_both_measured_indexes(index_name: str) -> None:
             MetadataReportError, match="database is unavailable or incompatible"
         ):
             open_repository(database, create=False)
+
+
+def test_canonical_inserts_project_exact_review_and_shadow_field_facts(
+    tmp_path: Path,
+) -> None:
+    connection = _representative_database(tmp_path / "application.sqlite3", works=8)
+    review_expected = connection.execute(
+        "SELECT count(*) FROM review_cases rc,json_each(rc.document,'$.results')"
+    ).fetchone()
+    shadow_expected = connection.execute(
+        "SELECT count(*) FROM shadow_decision_outcomes shadow,"
+        "json_each(shadow.document,'$.outcomes')"
+    ).fetchone()
+
+    assert (
+        connection.execute("SELECT count(*) FROM review_case_field_facts").fetchone()
+        == review_expected
+    )
+    assert (
+        connection.execute("SELECT count(*) FROM shadow_outcome_field_facts").fetchone()
+        == shadow_expected
+    )
+    connection.close()
+    (tmp_path / "application.sqlite3").chmod(0o600)
+
+    repository = open_repository(tmp_path / "application.sqlite3", create=False)
+    repository.close()
+
+
+def test_repository_browse_projection_does_not_repeat_full_canonical_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection = _representative_database(tmp_path / "application.sqlite3", works=8)
+    repository = SQLiteMetadataReportRepository(connection)
+    expected_library = repository.read_review_library(None, 6, 0, None)
+    expected_attention = repository.read_review_attention(None, 6, 0)
+
+    def unexpected_validation(*_args: object) -> object:
+        raise AssertionError("browse repeated full canonical validation")
+
+    for document_type in (MetadataReport, ProposalSet, ReviewCase, HumanDecision):
+        monkeypatch.setattr(document_type, "from_json", unexpected_validation)
+
+    assert repository.read_review_library(None, 6, 0, None) == expected_library
+    assert repository.read_review_attention(None, 6, 0) == expected_attention
+    repository.close()
+
+
+def test_visible_row_semantic_corruption_fails_closed_after_restart(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    connection = _representative_database(database, works=8)
+    report_id, document = connection.execute(
+        "SELECT report_id,document FROM metadata_reports ORDER BY item_id LIMIT 1"
+    ).fetchone()
+    value = json.loads(document)
+    value["providers"] = [
+        {
+            "authority": "bogus-authority",
+            "lanes": [{"kind": "bogus-lane", "status": "bogus-status"}],
+            "request_accounting": {"logical_requests": 1},
+        }
+    ]
+    corrupt = json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(corrupt)
+    connection.execute("DROP TRIGGER metadata_reports_no_update")
+    connection.execute(
+        "UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?",
+        (corrupt, hashlib.sha256(corrupt.encode("utf-8")).hexdigest(), report_id),
+    )
+    connection.execute(_NO_UPDATE_SQL)
+    connection.commit()
+    connection.close()
+    database.chmod(0o600)
+
+    repository = open_repository(database, create=False)
+    with pytest.raises(ReviewWebError, match="unavailable"):
+        BrowseReviewLibrary(repository).library(
+            lens="all",
+            search="Representative title 0000",
+            limit=50,
+            cursor=None,
+        )
+    repository.close()
+
+
+def test_visible_case_must_bind_the_exact_proposal_admitted_for_its_report(
+    tmp_path: Path,
+) -> None:
+    connection = _representative_database(tmp_path / "application.sqlite3", works=8)
+    report_document, proposal_document, review_case_id = connection.execute(
+        "SELECT mr.document,ps.document,rc.review_case_id FROM review_cases rc "
+        "JOIN metadata_reports mr ON mr.report_id=rc.report_id "
+        "JOIN proposal_sets ps ON ps.proposal_set_id=rc.proposal_set_id "
+        "ORDER BY mr.item_id LIMIT 1"
+    ).fetchone()
+    report = MetadataReport.from_json(report_document)
+    admitted = ProposalSet.from_json(proposal_document)
+    alternate = evaluate_report(
+        report,
+        admitted.resolved_policy_id,
+        {destination: "ignore" for destination in OPTION_CATALOGUE},
+    )
+    assert alternate.to_json() != admitted.to_json()
+    alternate_case = ReviewCase.create(alternate, report)
+    assert ReviewCase.from_json(alternate_case.to_json()) == alternate_case
+
+    connection.execute("DROP TRIGGER review_cases_no_update")
+    connection.execute(
+        "UPDATE review_cases SET document=? WHERE review_case_id=?",
+        (alternate_case.to_json(), review_case_id),
+    )
+    connection.commit()
+    repository = SQLiteMetadataReportRepository(connection)
+
+    with pytest.raises(ReviewWebError, match="unavailable"):
+        BrowseReviewLibrary(repository).library(
+            lens="all",
+            search="Representative title 0000",
+            limit=50,
+            cursor=None,
+        )
+    repository.close()
+
+
+def test_post_start_work_becomes_visible_only_at_complete_pipeline_boundaries(
+    tmp_path: Path,
+) -> None:
+    connection = _representative_database(tmp_path / "application.sqlite3", works=8)
+    repository = SQLiteMetadataReportRepository(connection)
+    browse = BrowseReviewLibrary(repository)
+    source = _report()
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary",
+            "books",
+            "item-streamed",
+            default_target_fields("Streamed work"),
+        ),
+        file=FileFacts(0, "f" * 64, "e" * 64),
+        local_claims=source.local_claims,
+        local_reasons=source.local_reasons,
+        providers=source.providers,
+    )
+
+    repository.publish(report, lambda: True)
+    report_page = browse.library(lens="all", search="Streamed", limit=50, cursor=None)
+    assert report_page["counts"] == {
+        "all": 1,
+        "needs_attention": 0,
+        "no_attention_needed": 1,
+    }
+    assert report_page["items"][0]["review_case_id"] is None
+
+    proposal = evaluate_report(report)
+    repository.publish_proposal(proposal)
+    repository.admit_review_case(proposal)
+    case_page = browse.library(lens="all", search="Streamed", limit=50, cursor=None)
+    assert case_page["counts"] == {
+        "all": 1,
+        "needs_attention": 1,
+        "no_attention_needed": 0,
+    }
+    item = case_page["items"][0]
+    assert item["review_case_id"] is not None
+    assert item["attention_count"] == 1
+    repository.close()
+
+
+def test_projection_failure_rolls_back_the_canonical_insert(tmp_path: Path) -> None:
+    connection = _representative_database(tmp_path / "application.sqlite3", works=8)
+    proposal_set_id, report_id, document = connection.execute(
+        "SELECT proposal_set_id,report_id,document FROM review_cases LIMIT 1"
+    ).fetchone()
+    value = json.loads(document)
+    value["results"].append(value["results"][0])
+    duplicate_destination_document = json.dumps(
+        value, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+    )
+    review_case_id = "review_case_" + "a" * 64
+
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "INSERT INTO review_cases("
+            "review_case_id,proposal_set_id,report_id,document) VALUES(?,?,?,?)",
+            (
+                review_case_id,
+                proposal_set_id,
+                report_id,
+                duplicate_destination_document,
+            ),
+        )
+
+    assert connection.execute(
+        "SELECT count(*) FROM review_cases WHERE review_case_id=?", (review_case_id,)
+    ).fetchone() == (0,)
+    assert connection.execute(
+        "SELECT count(*) FROM review_case_field_facts WHERE review_case_id=?",
+        (review_case_id,),
+    ).fetchone() == (0,)
+    connection.close()
+
+
+def test_shadow_projection_failure_rolls_back_the_canonical_insert(
+    tmp_path: Path,
+) -> None:
+    connection = _representative_database(tmp_path / "application.sqlite3", works=8)
+    row = connection.execute(
+        "SELECT review_case_id,report_id,proposal_set_id,resolved_policy_id,"
+        "source_decision_set_id,evaluated_at,document "
+        "FROM shadow_decision_outcomes LIMIT 1"
+    ).fetchone()
+    value = json.loads(row[6])
+    value["outcomes"].append(value["outcomes"][0])
+    duplicate_destination_document = json.dumps(
+        value, ensure_ascii=True, separators=(",", ":"), sort_keys=True
+    )
+    outcome_set_id = "shadow_outcome_set_" + "a" * 64
+
+    with pytest.raises(sqlite3.IntegrityError):
+        connection.execute(
+            "INSERT INTO shadow_decision_outcomes("
+            "outcome_set_id,review_case_id,report_id,proposal_set_id,"
+            "resolved_policy_id,source_decision_set_id,evaluated_at,document) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (outcome_set_id, *row[:6], duplicate_destination_document),
+        )
+
+    assert connection.execute(
+        "SELECT count(*) FROM shadow_decision_outcomes WHERE outcome_set_id=?",
+        (outcome_set_id,),
+    ).fetchone() == (0,)
+    assert connection.execute(
+        "SELECT count(*) FROM shadow_outcome_field_facts WHERE outcome_set_id=?",
+        (outcome_set_id,),
+    ).fetchone() == (0,)
+    connection.close()
+
+
+def test_attention_uses_the_newest_shadow_disposition(tmp_path: Path) -> None:
+    connection = _representative_database(tmp_path / "application.sqlite3", works=8)
+    repository = SQLiteMetadataReportRepository(connection)
+    before = repository.list_current_attention_documents(
+        "Representative title 0000", 50, 0
+    )
+    destination = "title"
+    older = next(item for item in before if item[2] == destination)
+    assert older[4] == "abstention"
+    row = connection.execute(
+        "SELECT review_case_id,report_id,proposal_set_id,resolved_policy_id,"
+        "source_decision_set_id,evaluated_at,document "
+        "FROM shadow_decision_outcomes WHERE review_case_id=(SELECT review_case_id "
+        "FROM current_review_packages WHERE item_id='item-0000')"
+    ).fetchone()
+    value = json.loads(row[6])
+    outcome = next(
+        item for item in value["outcomes"] if item["destination"] == destination
+    )
+    outcome["candidate_id"] = "alternative_" + "b" * 64
+    outcome["disposition"] = "candidate"
+    outcome["qualification_candidate_id"] = (
+        "qualification_candidate_"
+        + _field_fact_digest(
+            {
+                "action_id": outcome["action_id"],
+                "candidate_id": outcome["candidate_id"],
+                "catalogue_sha256": value["catalogue_sha256"],
+                "citation_ids": outcome["citation_ids"],
+                "combination_ids": outcome["combination_ids"],
+                "rule_id": outcome["rule_id"],
+            }
+        )
+    )
+    outcome_identity = dict(outcome)
+    del outcome_identity["outcome_id"]
+    outcome["outcome_id"] = "shadow_outcome_" + _field_fact_digest(outcome_identity)
+    value_identity = dict(value)
+    del value_identity["outcome_set_id"]
+    value["outcome_set_id"] = "shadow_outcome_set_" + _field_fact_digest(value_identity)
+    newest_document = json.dumps(
+        value, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    )
+    newest = ShadowOutcomeSet.from_json(newest_document)
+    assert newest.outcome_set_id == value["outcome_set_id"]
+    assert older[4] != outcome["disposition"]
+    connection.execute(
+        "INSERT INTO shadow_decision_outcomes("
+        "outcome_set_id,review_case_id,report_id,proposal_set_id,"
+        "resolved_policy_id,source_decision_set_id,evaluated_at,document) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        (newest.outcome_set_id, *row[:5], row[5] + 1, newest_document),
+    )
+    connection.commit()
+
+    after = repository.list_current_attention_documents(
+        "Representative title 0000", 50, 0
+    )
+    selected = next(item for item in after if item[2] == destination)
+    assert selected[4] == "candidate"
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    (
+        "DELETE FROM review_case_field_facts WHERE (review_case_id,destination)="
+        "(SELECT review_case_id,destination FROM review_case_field_facts LIMIT 1)",
+        "INSERT INTO review_case_field_facts("
+        "review_case_id,destination,unresolved_choice,manual_bibliographic_attention) "
+        "SELECT review_case_id,'unexpected',0,0 "
+        "FROM review_cases LIMIT 1",
+    ),
+)
+def test_restart_rejects_projection_that_disagrees_with_canonical_state(
+    tmp_path: Path, corruption: str
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    connection = _representative_database(database, works=8)
+    connection.execute(corruption)
+    connection.commit()
+    connection.close()
+    database.chmod(0o600)
+
+    with pytest.raises(
+        MetadataReportError, match="database is unavailable or incompatible"
+    ):
+        open_repository(database, create=False)

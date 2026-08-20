@@ -1526,8 +1526,7 @@ def test_row_projection_refuses_every_document_the_parsers_cannot_read() -> None
     assert raised.value.code == "unavailable"
 
     # Both handlers let a fault in the projection itself past. `_library_item`
-    # caught every exception before the guard moved, so this is the
-    # suppression the narrowing removes.
+    # catches only the domain parser's declared refusal, not arbitrary faults.
     fault = RuntimeError("projection is broken")
     with patch.object(MetadataReport, "from_json", side_effect=fault):
         with pytest.raises(RuntimeError) as surfaced:

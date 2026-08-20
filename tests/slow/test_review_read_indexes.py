@@ -10,6 +10,7 @@ import pytest
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
 )
+from mechanical_librarian.application.review_web import BrowseReviewLibrary
 from tests.unit import test_review_read_indexes as support
 
 
@@ -45,16 +46,16 @@ def test_measured_indexes_bound_representative_library_reads() -> None:
                 for step in shadow_plan
             )
             assert not any("TEMP B-TREE" in step for step in shadow_plan)
-            assert any(
-                "shadow_decision_outcomes_case_history" in step for step in count_plan
-            )
+            assert any("SEARCH result USING PRIMARY KEY" in step for step in count_plan)
+            assert any("shadow_outcome_field_facts_case" in step for step in count_plan)
+            assert not any("result VIRTUAL TABLE" in step for step in count_plan)
 
             result, steps, elapsed = support._count_with_step_limit(
                 connection, 1_000_000
             )
             assert result == (support._WORKS, support._WORKS // 2)
             assert steps <= 1_000_000
-            assert elapsed < 2.0
+            assert elapsed < 1.0
 
             sizes = dict(
                 connection.execute(
@@ -107,6 +108,7 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
             Path(directory) / "application.sqlite3"
         )
         repository = SQLiteMetadataReportRepository(connection)
+        browse = BrowseReviewLibrary(repository)
         case_id = str(
             connection.execute(
                 "SELECT review_case_id FROM review_cases LIMIT 1"
@@ -115,21 +117,26 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
         calls: tuple[tuple[str, Callable[[], object]], ...] = (
             (
                 "Library",
-                lambda: repository.read_review_library(None, 50, 0, None),
+                lambda: browse.library(lens="all", search=None, limit=50, cursor=None),
             ),
             (
                 "Library attention lens",
-                lambda: repository.read_review_library(None, 50, 0, True),
+                lambda: browse.library(
+                    lens="needs_attention", search=None, limit=50, cursor=None
+                ),
             ),
             (
                 "Library search",
-                lambda: repository.read_review_library(
-                    "Representative title 0198", 50, 0, None
+                lambda: browse.library(
+                    lens="all",
+                    search="Representative title 0198",
+                    limit=50,
+                    cursor=None,
                 ),
             ),
             (
                 "Attention",
-                lambda: repository.read_review_attention(None, 50, 0),
+                lambda: browse.attention(search=None, limit=50, cursor=None),
             ),
         )
         for name, call in calls:
@@ -147,15 +154,31 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
             ),
         )
         for name, call in plan_calls:
-            shadow_statements = tuple(
+            field_fact_statements = tuple(
                 statement
                 for statement in support._traced_selects(connection, call)
-                if "shadow_decision_outcomes" in statement
+                if "shadow_outcome_field_facts" in statement
             )
-            assert shadow_statements, name
-            for statement in shadow_statements:
+            assert field_fact_statements, name
+            for statement in field_fact_statements:
                 assert any(
-                    "shadow_decision_outcomes_case_history" in step
+                    "shadow_outcome_field_facts_case" in step
                     for step in support._plan(connection, statement, ())
                 ), name
+        history_statements = tuple(
+            statement
+            for statement in support._traced_selects(
+                connection,
+                lambda: repository.read_current_review_case(case_id, 100),
+            )
+            if "FROM shadow_decision_outcomes " in statement
+        )
+        assert history_statements
+        assert all(
+            any(
+                "shadow_decision_outcomes_case_history" in step
+                for step in support._plan(connection, statement, ())
+            )
+            for statement in history_statements
+        )
         repository.close()

@@ -11,22 +11,25 @@ conversion, compatibility, downgrade, or repair facility.
 
 Stop the container before adoption and retain the original volume as rollback.
 Run a delivered plan only against a complete clone, with the database and new
-backup in the same owner-only directory. For #800's exact predecessor:
+backup in the same owner-only directory. To adopt #802 from its exact #805
+predecessor:
 
 ```console
-mechanical-librarian schema-adopt review-read-indexes-v1 \
+mechanical-librarian schema-adopt review-field-facts-v1 \
   --database /data/application.sqlite3 \
-  --backup /data/application.before-review-read-indexes-v1.sqlite3
+  --backup /data/application.before-review-field-facts-v1.sqlite3
 ```
 
 The command accepts no SQL or configuration. It either verifies an already
 current database without creating the requested backup, or validates the exact
 predecessor, creates and verifies the non-overwriting `0600` backup, and adds
-only the two named read indexes in one transaction. Any other schema, sidecar,
-stale private binding, integrity failure, live database authority, path
-replacement, backup collision, or backup-content change fails closed. Keep both
-clone and backup until the new build has started and its measured behavior is
-accepted.
+only the two derived field-fact tables, their triggers, and measured index in
+one transaction. It reconstructs those facts from canonical ReviewCase and
+shadow-outcome documents without changing a canonical row. Any other schema,
+sidecar, stale private binding, integrity failure, live database authority,
+path replacement, backup collision, or backup-content change fails closed.
+Keep both clone and backup until the new build has started and its measured
+behavior is accepted.
 
 `Schema adoption requires backup recovery.` means commit was attempted and the
 source must not be trusted as predecessor or current; stop and restore the

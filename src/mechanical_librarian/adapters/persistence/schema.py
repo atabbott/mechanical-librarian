@@ -161,6 +161,31 @@ _REVIEW_CASES_SQL = (
     "proposal_set_id TEXT NOT NULL REFERENCES proposal_sets(proposal_set_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
     "document TEXT NOT NULL CHECK (typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152))"
 )
+_REVIEW_CASE_FIELD_FACTS_SQL = (
+    "CREATE TABLE review_case_field_facts ("
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "destination TEXT NOT NULL, unresolved_choice INTEGER NOT NULL "
+    "CHECK(unresolved_choice IN (0,1)), "
+    "manual_bibliographic_attention INTEGER NOT NULL "
+    "CHECK(manual_bibliographic_attention IN (0,1)), "
+    "PRIMARY KEY(review_case_id,destination)) WITHOUT ROWID"
+)
+_REVIEW_CASE_FIELD_FACT_VALUES_SQL = (
+    "json_extract(result.value,'$.destination'),"
+    "CASE WHEN json_extract(result.value,'$.outcome')='unresolved_choice' "
+    "THEN 1 ELSE 0 END,CASE WHEN "
+    "json_extract(result.value,'$.destination') IN ('title','subtitle','series') "
+    "AND json_array_length(json_extract(result.value,'$.reasons'))=1 "
+    "AND json_extract(result.value,'$.reasons[0]')="
+    "'no_safe_bibliographic_combination' THEN 1 ELSE 0 END"
+)
+_REVIEW_CASE_FIELD_FACTS_INSERT_SQL = (
+    "CREATE TRIGGER review_cases_project_field_facts AFTER INSERT ON review_cases "
+    "BEGIN INSERT INTO review_case_field_facts("
+    "review_case_id,destination,unresolved_choice,manual_bibliographic_attention) "
+    "SELECT NEW.review_case_id," + _REVIEW_CASE_FIELD_FACT_VALUES_SQL + " "
+    "FROM json_each(NEW.document,'$.results') result; END"
+)
 _REVIEW_POINTERS_SQL = (
     "CREATE TABLE current_review_case_lineages ("
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
@@ -451,6 +476,34 @@ _SHADOW_DECISION_OUTCOMES_SQL = (
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 1048576 "
     "AND json_extract(document,'$.schema_version')='shadow-outcome-set-v3'))"
 )
+_SHADOW_OUTCOME_FIELD_FACTS_SQL = (
+    "CREATE TABLE shadow_outcome_field_facts ("
+    "outcome_set_id TEXT NOT NULL REFERENCES shadow_decision_outcomes(outcome_set_id), "
+    "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), "
+    "destination TEXT NOT NULL, disposition TEXT NOT NULL, "
+    "automatic_destination INTEGER NOT NULL "
+    "CHECK(automatic_destination IN (0,1)), policy_category TEXT, "
+    "PRIMARY KEY(outcome_set_id,destination)) WITHOUT ROWID"
+)
+_SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL = (
+    "CREATE INDEX shadow_outcome_field_facts_case "
+    "ON shadow_outcome_field_facts(review_case_id,destination,disposition)"
+)
+_SHADOW_OUTCOME_FIELD_FACT_VALUES_SQL = (
+    "json_extract(outcome.value,'$.destination'),"
+    "json_extract(outcome.value,'$.disposition'),"
+    "CASE WHEN json_extract(outcome.value,'$.policy_destination')='automatic' "
+    "THEN 1 ELSE 0 END,json_extract(outcome.value,'$.policy_category')"
+)
+_SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL = (
+    "CREATE TRIGGER shadow_outcomes_project_field_facts AFTER INSERT ON shadow_decision_outcomes "
+    "BEGIN INSERT INTO shadow_outcome_field_facts("
+    "outcome_set_id,review_case_id,destination,disposition,"
+    "automatic_destination,policy_category) SELECT NEW.outcome_set_id,NEW.review_case_id,"
+    + _SHADOW_OUTCOME_FIELD_FACT_VALUES_SQL
+    + " "
+    "FROM json_each(NEW.document,'$.outcomes') outcome; END"
+)
 _SHADOW_DECISION_OUTCOMES_CASE_HISTORY_INDEX_SQL = (
     "CREATE INDEX shadow_decision_outcomes_case_history "
     "ON shadow_decision_outcomes(review_case_id,evaluated_at DESC,outcome_set_id DESC)"
@@ -533,6 +586,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         (bootstrap_transition_id, builtin_policy.policy_id, builtin_policy.policy_id),
     )
     connection.execute(_REVIEW_CASES_SQL)
+    connection.execute(_REVIEW_CASE_FIELD_FACTS_SQL)
+    connection.execute(_REVIEW_CASE_FIELD_FACTS_INSERT_SQL)
     connection.execute(_REVIEW_POINTERS_SQL)
     connection.execute(_CURRENT_REVIEW_PACKAGES_SQL)
     connection.execute(_PROVIDER_RECOVERY_OUTBOX_SQL)
@@ -576,6 +631,9 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_FIELD_EFFECT_CLEANUPS_SQL)
     connection.execute(_SHADOW_DECISION_OUTCOMES_SQL)
     connection.execute(_SHADOW_DECISION_OUTCOMES_CASE_HISTORY_INDEX_SQL)
+    connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_SQL)
+    connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL)
+    connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL)
     connection.execute(_NO_UPDATE_SQL)
     connection.execute(_COVER_NO_UPDATE_SQL)
     connection.execute(_COVER_NO_DELETE_SQL)
@@ -708,6 +766,11 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 "shadow_decision_outcomes_case_history",
                 _SHADOW_DECISION_OUTCOMES_CASE_HISTORY_INDEX_SQL,
             ),
+            (
+                "index",
+                "shadow_outcome_field_facts_case",
+                _SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL,
+            ),
             ("table", "current_metadata_reports", _CURRENT_SQL),
             ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
             ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
@@ -748,6 +811,7 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
             ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
             ("table", "review_cases", _REVIEW_CASES_SQL),
+            ("table", "review_case_field_facts", _REVIEW_CASE_FIELD_FACTS_SQL),
             ("table", "review_preparation_control", _REVIEW_CONTROL_SQL),
             (
                 "table",
@@ -760,6 +824,11 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("table", "review_login_failures", _REVIEW_LOGIN_FAILURES_SQL),
             ("table", "review_sessions", _REVIEW_SESSIONS_SQL),
             ("table", "shadow_decision_outcomes", _SHADOW_DECISION_OUTCOMES_SQL),
+            (
+                "table",
+                "shadow_outcome_field_facts",
+                _SHADOW_OUTCOME_FIELD_FACTS_SQL,
+            ),
             (
                 "trigger",
                 "metadata_report_cover_references_no_delete",
@@ -860,6 +929,11 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("trigger", "review_cases_no_update", _REVIEW_NO_UPDATE_SQL),
             (
                 "trigger",
+                "review_cases_project_field_facts",
+                _REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
+            ),
+            (
+                "trigger",
                 "shadow_decision_outcomes_no_delete",
                 _SHADOW_DECISION_OUTCOME_NO_DELETE_SQL,
             ),
@@ -867,6 +941,11 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 "trigger",
                 "shadow_decision_outcomes_no_update",
                 _SHADOW_DECISION_OUTCOME_NO_UPDATE_SQL,
+            ),
+            (
+                "trigger",
+                "shadow_outcomes_project_field_facts",
+                _SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL,
             ),
         )
     )
@@ -885,6 +964,13 @@ def _validate_schema_against(
 
 
 def _validate_schema_contents(connection: sqlite3.Connection) -> None:
+    _validate_schema_contents_without_review_field_facts(connection)
+    _validate_review_field_facts(connection)
+
+
+def _validate_schema_contents_without_review_field_facts(
+    connection: sqlite3.Connection,
+) -> None:
     if connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute(
         "PRAGMA integrity_check"
     ).fetchone() != ("ok",):
@@ -899,16 +985,48 @@ def _validate_schema_contents(connection: sqlite3.Connection) -> None:
         _validate_provider_recovery_outbox_row(row)
 
 
+def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
+    """Require every reconstructible review fact to equal its canonical JSON."""
+    review_expected = (
+        "SELECT rc.review_case_id," + _REVIEW_CASE_FIELD_FACT_VALUES_SQL + " "
+        "FROM review_cases rc,json_each(rc.document,'$.results') result"
+    )
+    review_actual = (
+        "SELECT review_case_id,destination,unresolved_choice,"
+        "manual_bibliographic_attention FROM review_case_field_facts"
+    )
+    shadow_expected = (
+        "SELECT shadow.outcome_set_id,shadow.review_case_id,"
+        + _SHADOW_OUTCOME_FIELD_FACT_VALUES_SQL
+        + " FROM "
+        "shadow_decision_outcomes shadow,json_each(shadow.document,'$.outcomes') outcome"
+    )
+    shadow_actual = (
+        "SELECT outcome_set_id,review_case_id,destination,disposition,"
+        "automatic_destination,policy_category FROM shadow_outcome_field_facts"
+    )
+    for expected, actual in (
+        (review_expected, review_actual),
+        (shadow_expected, shadow_actual),
+    ):
+        mismatch = connection.execute(
+            "SELECT 1 FROM (" + expected + " EXCEPT " + actual + ") "
+            "UNION ALL SELECT 1 FROM (" + actual + " EXCEPT " + expected + ") LIMIT 1"
+        ).fetchone()
+        if mismatch is not None:
+            raise MetadataReportError("database is unavailable or incompatible")
+
+
 def _validate_schema(connection: sqlite3.Connection) -> None:
     _validate_schema_against(connection, _expected_schema_objects())
 
 
-_REVIEW_READ_INDEX_PREDECESSOR_OBJECTS_SHA256 = (
-    "a546e2e8e5f9dc510acd3ac4b169f3b4c93b0df8c4b14758f4b6252e8ef1d963"
+_REVIEW_FIELD_FACTS_PREDECESSOR_OBJECTS_SHA256 = (
+    "04b95c4319c01b3bedc0a4894767b937b5e6d5015f505beb95bd82604b7e4245"
 )
 
 
-def _validate_review_read_index_predecessor_schema(
+def _validate_review_field_facts_predecessor_schema(
     connection: sqlite3.Connection,
 ) -> None:
     objects = connection.execute(
@@ -917,9 +1035,9 @@ def _validate_review_read_index_predecessor_schema(
     digest = hashlib.sha256(
         json.dumps(objects, ensure_ascii=True, separators=(",", ":")).encode()
     ).hexdigest()
-    if digest != _REVIEW_READ_INDEX_PREDECESSOR_OBJECTS_SHA256:
+    if digest != _REVIEW_FIELD_FACTS_PREDECESSOR_OBJECTS_SHA256:
         raise MetadataReportError("database is unavailable or incompatible")
-    _validate_schema_contents(connection)
+    _validate_schema_contents_without_review_field_facts(connection)
 
 
 def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:

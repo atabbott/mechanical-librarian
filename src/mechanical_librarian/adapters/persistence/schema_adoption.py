@@ -24,16 +24,21 @@ from mechanical_librarian.adapters.persistence.proposal_sets import (
     _validate_proposal_row,
 )
 from mechanical_librarian.adapters.persistence.schema import (
-    _REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL,
-    _SHADOW_DECISION_OUTCOMES_CASE_HISTORY_INDEX_SQL,
+    _REVIEW_CASE_FIELD_FACT_VALUES_SQL,
+    _REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
+    _REVIEW_CASE_FIELD_FACTS_SQL,
+    _SHADOW_OUTCOME_FIELD_FACT_VALUES_SQL,
+    _SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL,
+    _SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL,
+    _SHADOW_OUTCOME_FIELD_FACTS_SQL,
     _expected_schema_objects,
     _validate_report_row,
-    _validate_review_read_index_predecessor_schema,
+    _validate_review_field_facts_predecessor_schema,
     _validate_schema,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.schema_adoption import (
-    REVIEW_READ_INDEXES_V1,
+    REVIEW_FIELD_FACTS_V1,
     SchemaAdoptionRecoveryRequired,
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
@@ -41,6 +46,7 @@ from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.review_case import ReviewCase
 
 _CHUNK_BYTES = 1024 * 1024
+_DERIVED_TABLES = {"review_case_field_facts", "shadow_outcome_field_facts"}
 
 
 def _descriptor_digest(descriptor: int) -> str:
@@ -72,7 +78,9 @@ def _application_table_digest(connection: sqlite3.Connection) -> str:
     """Digest every application value in stable physical table order."""
     digest = hashlib.sha256()
     table_names = sorted(
-        value[1] for value in _expected_schema_objects() if value[0] == "table"
+        value[1]
+        for value in _expected_schema_objects()
+        if value[0] == "table" and value[1] not in _DERIVED_TABLES
     )
     for table_name in table_names:
         encoded_name = table_name.encode("utf-8")
@@ -345,7 +353,7 @@ def _close_adoption_resources(
 
 def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str, str]:
     """Apply one named exact-predecessor plan without changing application rows."""
-    if plan != REVIEW_READ_INDEXES_V1:
+    if plan != REVIEW_FIELD_FACTS_V1:
         raise MetadataReportError("schema adoption plan is unsupported")
     database = database_path.absolute()
     backup = backup_path.absolute()
@@ -405,7 +413,7 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
         try:
             _validate_schema(connection)
         except MetadataReportError:
-            _validate_review_read_index_predecessor_schema(connection)
+            _validate_review_field_facts_predecessor_schema(connection)
         else:
             _validate_canonical_documents(connection)
             connection.rollback()
@@ -421,8 +429,24 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
         )
         if binding is not None:
             binding.require_current()
-        connection.execute(_REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL)
-        connection.execute(_SHADOW_DECISION_OUTCOMES_CASE_HISTORY_INDEX_SQL)
+        connection.execute(_REVIEW_CASE_FIELD_FACTS_SQL)
+        connection.execute(
+            "INSERT INTO review_case_field_facts("
+            "review_case_id,destination,unresolved_choice,manual_bibliographic_attention) "
+            "SELECT rc.review_case_id," + _REVIEW_CASE_FIELD_FACT_VALUES_SQL + " "
+            "FROM review_cases rc,json_each(rc.document,'$.results') result"
+        )
+        connection.execute(_REVIEW_CASE_FIELD_FACTS_INSERT_SQL)
+        connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_SQL)
+        connection.execute(
+            "INSERT INTO shadow_outcome_field_facts("
+            "outcome_set_id,review_case_id,destination,disposition,"
+            "automatic_destination,policy_category) SELECT shadow.outcome_set_id,"
+            "shadow.review_case_id," + _SHADOW_OUTCOME_FIELD_FACT_VALUES_SQL + " FROM "
+            "shadow_decision_outcomes shadow,json_each(shadow.document,'$.outcomes') outcome"
+        )
+        connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL)
+        connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL)
         recovery_required = True
         connection.commit()
         if binding is not None:

@@ -52,19 +52,22 @@ COLD_START_REPORT_SCHEMA = "cold-start-report-v1"
 
 _ATTENTION_FIELD_ROWS_SQL = (
     "SELECT c.connection_name,c.library_name,"
-    "json_extract(result.value,'$.destination'),"
-    "json_extract(result.value,'$.outcome'),"
-    "json_extract(result.value,'$.reasons'),"
+    "result.destination,"
+    "json_extract(canonical_result.value,'$.outcome'),"
+    "json_extract(canonical_result.value,'$.reasons'),"
     "(SELECT json_extract(outcome.value,'$.reason_code') "
     "FROM shadow_decision_outcomes shadow,"
     "json_each(shadow.document,'$.outcomes') outcome "
     "WHERE shadow.review_case_id=rc.review_case_id "
     "AND json_extract(outcome.value,'$.destination')="
-    "json_extract(result.value,'$.destination') "
+    "result.destination "
     "AND json_extract(outcome.value,'$.disposition')='abstention' LIMIT 1) "
     + _CURRENT_REVIEW_FROM_SQL
-    + ",json_each(rc.document,'$.results') result "
-    "WHERE " + _REVIEW_FIELD_ATTENTION_SQL
+    + " JOIN review_case_field_facts result "
+    "ON result.review_case_id=rc.review_case_id,"
+    "json_each(rc.document,'$.results') canonical_result WHERE "
+    "json_extract(canonical_result.value,'$.destination')=result.destination AND "
+    + _REVIEW_FIELD_ATTENTION_SQL
 )
 _LIBRARY_WORK_COUNTS_SQL = (
     "SELECT ml.connection_name,ml.library_name,count(*),"

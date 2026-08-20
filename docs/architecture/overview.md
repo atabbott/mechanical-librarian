@@ -125,13 +125,22 @@ their existing authority. These rules are the current-runtime application
 of repository-wide ADR-0013.
 
 The exact schema indexes the two relational history paths exercised for every
-Library work: the latest preparation row in a work lineage and the retained
-shadow outcomes for a review case. Bounded `json_each` scans remain for values
-inside canonical result, outcome, and author documents; ordinary SQLite
-B-tree indexes cannot serve those document-value scans. If measurements on a
-representative library put one of those paths outside its owner-visible budget,
-it requires a separately justified relational read projection or search index,
-not speculative indexes or a cache that can diverge from canonical state.
+Library work and transactionally projects the bounded field facts needed by
+Library, Attention, and selected-work classification. Immutable ReviewCase and
+shadow-outcome documents remain authoritative. Insert triggers derive their
+field facts in the canonical write transaction, and startup rejects either a
+missing fact or an extra fact before serving. `json_each` deliberately remains
+for title-author search and the small automatic-safety category document; the
+leading-wildcard search contract belongs to #642 if it alone exceeds its
+owner-visible budget.
+
+Repository startup proves schema, SQLite integrity, and exact derived-field
+equivalence. Library and Attention repositories then use bounded closed
+envelopes and lineage facts, including the exact immutable ProposalSet admitted
+for each case, instead of repeatedly rebuilding the domain graph. The
+application performs one complete semantic parse of each visible row before
+returning its DTO. New canonical writes retain their complete validation and
+commit their derived facts atomically.
 
 The `metadata-report-v26` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or

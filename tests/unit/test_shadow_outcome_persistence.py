@@ -2608,8 +2608,8 @@ def test_canonical_hostile_shadow_row_fails_closed_without_exposure() -> None:
             "DROP TRIGGER shadow_decision_outcomes_no_update"
         )
         repository._connection.execute(
-            "UPDATE shadow_decision_outcomes SET outcome_set_id=?,document=?",
-            (persisted["outcome_set_id"], hostile),
+            "UPDATE shadow_decision_outcomes SET document=?",
+            (hostile,),
         )
         repository._connection.commit()
 
