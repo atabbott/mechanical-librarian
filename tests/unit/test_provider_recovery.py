@@ -13,6 +13,8 @@ from unittest.mock import patch
 import pytest
 
 import mechanical_librarian.adapters.persistence.provider_recovery as recovery_persistence
+import mechanical_librarian.application.provider_recovery_activation as recovery_activation
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.provider_recovery import (
     ProviderRecoveryJob,
     ProviderRecoveryStoreError,
@@ -40,6 +42,7 @@ from mechanical_librarian.domain.provider_recovery import (
     ProviderRecovery,
     ProviderRecoveryError,
 )
+from tests.support.review_cases import _report
 
 _COMMON_JOB_PREFIX = (
     "google",
@@ -147,6 +150,17 @@ def test_enqueue_enrolls_an_unseen_member_and_health_before_its_job() -> None:
         store.close()
 
 
+@pytest.mark.parametrize("enqueued_at", (True, -1, MAX_TIMESTAMP - 7_199))
+def test_enqueue_rejects_noncanonical_or_overflowing_admission_timestamps(
+    enqueued_at: object,
+) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        with pytest.raises(ProviderRecoveryStoreError, match="jobs are invalid"):
+            store.enqueue_jobs((_job("invalid-time"),), enqueued_at=enqueued_at)
+        store.close()
+
+
 def test_enqueue_is_idempotent_and_preserves_observed_current_health() -> None:
     with tempfile.TemporaryDirectory() as directory:
         store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
@@ -160,8 +174,8 @@ def test_enqueue_is_idempotent_and_preserves_observed_current_health() -> None:
             retry_after=19,
         )
         store.record(observed, occurred_at=7)
-        assert 1 == store.enqueue_jobs((_job("current"),))
-        assert 0 == store.enqueue_jobs((_job("current"),))
+        assert 1 == store.enqueue_jobs((_job("current"),), enqueued_at=0)
+        assert 0 == store.enqueue_jobs((_job("current"),), enqueued_at=0)
         assert [("waiting", 1, 26)] == store._connection.execute(
             "SELECT state,attempt,next_eligible_at FROM provider_recovery_health"
         ).fetchall()
@@ -180,7 +194,7 @@ def test_concurrent_enqueue_enrolls_one_scope_before_either_job_is_visible() -> 
         def enqueue(store: SQLiteProviderRecoveryStore, member: str) -> None:
             try:
                 barrier.wait()
-                store.enqueue_jobs((_job(member),))
+                store.enqueue_jobs((_job(member),), enqueued_at=0)
             except BaseException as error:
                 failures.append(error)
 
@@ -285,6 +299,113 @@ def test_drain_retains_a_failing_row_and_delivers_a_younger_row() -> None:
     ]
 
 
+def test_activation_replay_after_ack_failure_keeps_recovery_state_idempotent() -> None:
+    class CommitFailingConnection:
+        def __init__(self, connection: sqlite3.Connection) -> None:
+            self._connection = connection
+
+        @property
+        def in_transaction(self) -> bool:
+            return self._connection.in_transaction
+
+        def execute(self, statement: str, parameters: tuple[object, ...] = ()):
+            return self._connection.execute(statement, parameters)
+
+        def commit(self) -> None:
+            raise sqlite3.OperationalError("injected acknowledgement failure")
+
+        def rollback(self) -> None:
+            self._connection.rollback()
+
+    class Repository:
+        def __init__(self, delegate, package) -> None:
+            self._delegate = delegate
+            self._package = package
+
+        def __getattr__(self, name: str):
+            return getattr(self._delegate, name)
+
+        def current_review_package(self, *_args):
+            return self._package
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "application.sqlite3"
+        repository = open_repository(path)
+        report = _report()
+        repository.publish(report, lambda: True)
+        package = (None, report.report_id, None, None, "report_only")
+        repository._recovery_outbox.enqueue(
+            report.target.connection,
+            report.target.library,
+            report.target.item,
+            package,
+            7,
+        )
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        activation = ProviderRecoveryActivation(
+            configuration=cast(object, SimpleNamespace()),
+            repository_factory=lambda: cast(ProviderRecoveryRepository, repository),
+            observers=cast(object, lambda *_args: None),
+            provider_resolver=cast(object, lambda *_args: None),
+            pipeline=lambda: None,
+            enqueue=lambda jobs, enqueued_at: store.enqueue_jobs(
+                jobs, enqueued_at=enqueued_at
+            ),
+            clock=lambda: 7,
+        )
+        wrapped = Repository(repository, package)
+        pending = repository.pending_provider_recovery_outbox()
+        assert 1 == len(pending)
+        with (
+            patch.object(
+                recovery_activation,
+                "provider_recovery_jobs",
+                return_value=(_job("outbox"),),
+            ),
+            patch.object(
+                repository._recovery_outbox,
+                "_connection",
+                cast(
+                    sqlite3.Connection, CommitFailingConnection(repository._connection)
+                ),
+            ),
+        ):
+            assert ("persistence",) == activation.drain_outbox(
+                cast(ProviderRecoveryRepository, wrapped)
+            )
+        before = (
+            tuple(store._connection.execute("SELECT * FROM provider_recovery_health")),
+            tuple(store._connection.execute("SELECT * FROM provider_recovery_jobs")),
+        )
+        dispatches: list[str] = []
+        runner = ScopedProviderRecoveryRunner(
+            store=store,
+            generation=1,
+            retry=lambda _, job, __: dispatches.append(job.member_id),
+            classify_failure=lambda _: ("transient", None),
+        )
+        assert "idle" == runner.run_one(now=7, token="before-replay").state
+        assert pending == repository.pending_provider_recovery_outbox()
+        with patch.object(
+            recovery_activation,
+            "provider_recovery_jobs",
+            return_value=(_job("outbox"),),
+        ):
+            assert () == activation.drain_outbox(
+                cast(ProviderRecoveryRepository, wrapped)
+            )
+        after = (
+            tuple(store._connection.execute("SELECT * FROM provider_recovery_health")),
+            tuple(store._connection.execute("SELECT * FROM provider_recovery_jobs")),
+        )
+        assert before == after
+        assert () == repository.pending_provider_recovery_outbox()
+        assert "idle" == runner.run_one(now=7, token="after-replay").state
+        assert [] == dispatches
+        repository.close()
+        store.close()
+
+
 def test_activation_runner_claims_one_canary_then_fans_out_current_members_once() -> (
     None
 ):
@@ -309,7 +430,9 @@ def test_activation_runner_claims_one_canary_then_fans_out_current_members_once(
             retry=lambda _, member, __: calls.append(member.source_report_id),
             classify_failure=lambda _: ("transient", None),
         )
-        runner.enqueue((_job("canary"), _job("sibling-a"), _job("sibling-b")))
+        runner.enqueue(
+            (_job("canary"), _job("sibling-a"), _job("sibling-b")), enqueued_at=0
+        )
         result = runner.run_one(now=1, token="owner")
         assert ("recovered", 2) == (result.state, result.fanout)
         assert "idle" == runner.run_one(now=1, token="other").state
@@ -384,7 +507,9 @@ def test_interrupted_fanout_does_not_repeat_the_completed_canary() -> None:
             retry=retry,
             classify_failure=lambda _: ("transient", None),
         )
-        runner.enqueue((_job("canary"), _job("sibling-a"), _job("sibling-b")))
+        runner.enqueue(
+            (_job("canary"), _job("sibling-a"), _job("sibling-b")), enqueued_at=0
+        )
         with pytest.raises(KeyboardInterrupt):
             runner.run_one(now=1, token="owner")
         # The canary job is durably complete while the scope lease remains
@@ -431,7 +556,7 @@ def test_activation_runner_failure_has_zero_fanout_and_schedules_backoff() -> No
             retry=retry,
             classify_failure=lambda _: ("transient", None),
         )
-        runner.enqueue((_job("canary"), _job("sibling")))
+        runner.enqueue((_job("canary"), _job("sibling")), enqueued_at=0)
         assert "waiting" == runner.run_one(now=1, token="owner").state
         assert ["report-canary"] == calls
         current = store.snapshot()[0]
@@ -458,7 +583,7 @@ def test_target_hold_canary_restores_exact_health_job_and_event_snapshot() -> No
             ),
             occurred_at=0,
         )
-        store.enqueue_jobs((_job("canary"),))
+        store.enqueue_jobs((_job("canary"),), enqueued_at=0)
         before = (
             tuple(store._connection.execute("SELECT * FROM provider_recovery_health")),
             tuple(store._connection.execute("SELECT * FROM provider_recovery_jobs")),
@@ -510,7 +635,7 @@ def test_target_hold_fanout_restores_exact_health_job_and_event_snapshot() -> No
             ),
             occurred_at=0,
         )
-        store.enqueue_jobs((_job("canary"), _job("sibling")))
+        store.enqueue_jobs((_job("canary"), _job("sibling")), enqueued_at=0)
         claimed = store.claim_one(generation=1, now=1, token="owner")
         assert claimed is not None
         canary = store.claim_job(recovery=claimed, token="owner", now=1)
@@ -564,7 +689,7 @@ def test_non_target_outcomes_append_checking_before_the_terminal_event() -> None
             ),
             occurred_at=0,
         )
-        store.enqueue_jobs((_job("canary"),))
+        store.enqueue_jobs((_job("canary"),), enqueued_at=0)
         success = ScopedProviderRecoveryRunner(
             store=store,
             generation=1,
@@ -595,7 +720,7 @@ def test_non_target_outcomes_append_checking_before_the_terminal_event() -> None
             ),
             occurred_at=0,
         )
-        store.enqueue_jobs((_job("canary"),))
+        store.enqueue_jobs((_job("canary"),), enqueued_at=0)
         failure = ScopedProviderRecoveryRunner(
             store=store,
             generation=1,
@@ -628,7 +753,7 @@ def test_blocked_target_emits_nothing_then_recovers_on_a_later_tick() -> None:
             ),
             occurred_at=0,
         )
-        store.enqueue_jobs((_job("canary"),))
+        store.enqueue_jobs((_job("canary"),), enqueued_at=0)
         blocked = frozenset(("primary",))
         calls: list[str] = []
         runner = ScopedProviderRecoveryRunner(
@@ -676,7 +801,7 @@ def test_blocked_active_member_releases_mixed_scope_after_open_member_exhausts()
         )
         blocked = _job("blocked")
         exhausted = replace(_job("open"), target_connection="secondary", attempt=5)
-        store.enqueue_jobs((blocked, exhausted))
+        store.enqueue_jobs((blocked, exhausted), enqueued_at=0)
         held = frozenset(("primary",))
         calls: list[str] = []
         runner = ScopedProviderRecoveryRunner(
@@ -731,7 +856,7 @@ def test_attempt_five_job_is_never_persisted_as_attempt_six() -> None:
             ),
             occurred_at=0,
         )
-        store.enqueue_jobs((replace(_job("canary"), attempt=5),))
+        store.enqueue_jobs((replace(_job("canary"), attempt=5),), enqueued_at=0)
 
         def _must_not_dispatch(*_: object) -> None:
             raise AssertionError("exhausted member must not dispatch")
@@ -772,7 +897,7 @@ def test_credential_failure_is_dormant_not_requeued() -> None:
             ),
             occurred_at=0,
         )
-        store.enqueue_jobs((_job("canary"),))
+        store.enqueue_jobs((_job("canary"),), enqueued_at=0)
         runner = ScopedProviderRecoveryRunner(
             store=store,
             generation=1,
@@ -803,7 +928,7 @@ def test_terminal_successor_failure_exhausts_without_requeue() -> None:
             ),
             occurred_at=0,
         )
-        store.enqueue_jobs((_job("canary"), _job("sibling")))
+        store.enqueue_jobs((_job("canary"), _job("sibling")), enqueued_at=0)
         runner = ScopedProviderRecoveryRunner(
             store=store,
             generation=1,
@@ -851,16 +976,16 @@ def test_reenqueue_refreshes_current_package_and_invalidates_running_claim() -> 
             package_report_id="current-package",
             lane_ids='["current"]',
         )
-        assert 1 == store.enqueue_jobs((original,))
+        assert 1 == store.enqueue_jobs((original,), enqueued_at=0)
         claimed = store.claim_one(generation=1, now=1, token="owner")
         assert claimed is not None
         running = store.claim_job(recovery=claimed, token="owner", now=1)
         assert running is not None
-        assert 0 == store.enqueue_jobs((original,))
+        assert 0 == store.enqueue_jobs((original,), enqueued_at=0)
         assert ("running", 1, "owner") == store._connection.execute(
             "SELECT state,attempt,claim_token FROM provider_recovery_jobs"
         ).fetchone()
-        assert 1 == store.enqueue_jobs((current,))
+        assert 1 == store.enqueue_jobs((current,), enqueued_at=0)
         assert (
             "current-file",
             "current-report",
@@ -877,7 +1002,7 @@ def test_reenqueue_refreshes_current_package_and_invalidates_running_claim() -> 
         refreshed = store.claim_job(recovery=claimed, token="owner", now=1)
         assert refreshed is not None
         store.complete_job(job=refreshed, token="owner", now=1, success=True)
-        assert 0 == store.enqueue_jobs((current,))
+        assert 0 == store.enqueue_jobs((current,), enqueued_at=0)
         assert ("complete", 1, None) == store._connection.execute(
             "SELECT state,attempt,claim_token FROM provider_recovery_jobs"
         ).fetchone()
@@ -899,7 +1024,7 @@ def test_rejected_scope_claim_rolls_back_before_valid_claimant() -> None:
             ),
             occurred_at=0,
         )
-        store.enqueue_jobs((_job("canary"),))
+        store.enqueue_jobs((_job("canary"),), enqueued_at=0)
         claimed = store.claim_one(generation=1, now=1, token="owner")
         assert claimed is not None
         with pytest.raises(ProviderRecoveryStoreError):
@@ -931,8 +1056,8 @@ def test_generation_reconciliation_keeps_current_duplicate_member() -> None:
             source_report_id="current-report",
             package_report_id="current-package",
         )
-        store.enqueue_jobs((stale,))
-        store.enqueue_jobs((current,))
+        store.enqueue_jobs((stale,), enqueued_at=0)
+        store.enqueue_jobs((current,), enqueued_at=0)
         assert 1 == store.reconcile_generation(generation=2, now=2)
         assert [(2, "current-report", "current-package")] == store._connection.execute(
             "SELECT generation,source_report_id,package_report_id "
@@ -972,7 +1097,9 @@ def test_shared_failure_during_fanout_stops_uncontacted_siblings_and_reopens_sco
             retry=retry,
             classify_failure=lambda _: ("rate_limited", 19),
         )
-        runner.enqueue((_job("canary"), _job("sibling-a"), _job("sibling-b")))
+        runner.enqueue(
+            (_job("canary"), _job("sibling-a"), _job("sibling-b")), enqueued_at=0
+        )
         result = runner.run_one(now=1, token="owner")
         assert ("waiting", 0) == (result.state, result.fanout)
         assert ["canary", "sibling-a"] == calls
@@ -1022,7 +1149,7 @@ def test_nonretryable_canary_exhausts_scope_without_sibling_egress() -> None:
             retry=retry,
             classify_failure=lambda _: ("disabled", None),
         )
-        runner.enqueue((_job("canary"), _job("sibling")))
+        runner.enqueue((_job("canary"), _job("sibling")), enqueued_at=0)
         assert "exhausted" == runner.run_one(now=1, token="owner").state
         assert ["canary"] == calls
         assert "exhausted" == store.snapshot()[0].state
@@ -1123,7 +1250,7 @@ def test_authentication_and_authorization_jobs_wake_only_with_generation(
             failure=failure,
             now=0,
         )
-        store.enqueue_jobs((_job("canary"),))
+        store.enqueue_jobs((_job("canary"),), enqueued_at=0)
         assert store.claim_one(generation=1, now=10_000, token="too-soon") is None
         assert 1 == store.reconcile_generation(generation=2, now=20)
         calls: list[str] = []
@@ -1184,7 +1311,7 @@ def test_terminal_authentication_and_authorization_lanes_create_exact_jobs(
             failure=status.value,
             now=0,
         )
-        assert 1 == store.enqueue_jobs(jobs)
+        assert 1 == store.enqueue_jobs(jobs, enqueued_at=0)
         assert [
             ("report-auth", '["isbn-lane"]', "queued")
         ] == store._connection.execute(
@@ -1224,7 +1351,7 @@ def test_stale_canary_retires_only_itself_before_current_canary() -> None:
                 None,
             ),
         )
-        runner.enqueue((_job("a-stale"), _job("b-current")))
+        runner.enqueue((_job("a-stale"), _job("b-current")), enqueued_at=0)
         result = runner.run_one(now=1, token="owner")
         assert ("recovered", 0) == (result.state, result.fanout)
         assert ["a-stale", "b-current"] == calls
@@ -1252,7 +1379,7 @@ def test_stage_renewal_prevents_manual_reclaim_beyond_initial_lease() -> None:
             ),
             occurred_at=0,
         )
-        store.enqueue_jobs((_job("canary"),))
+        store.enqueue_jobs((_job("canary"),), enqueued_at=0)
         clock = [1]
         competing: list[str] = []
         competitor = ScopedProviderRecoveryRunner(

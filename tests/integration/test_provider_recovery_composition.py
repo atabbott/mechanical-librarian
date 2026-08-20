@@ -637,7 +637,7 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
                 ),
             )
         )
-        assert 3 == recovery.enqueue_jobs(jobs)
+        assert 3 == recovery.enqueue_jobs(jobs, enqueued_at=0)
 
         calls: list[ProviderStatus] = []
         outcomes = [

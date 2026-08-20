@@ -1534,7 +1534,11 @@ def create_review_pipeline(
         )
 
     def drain_outbox(repository: ReviewPipelineRepository) -> None:
-        activation.drain_outbox(cast("ProviderRecoveryRepository", repository))
+        failures = activation.drain_outbox(
+            cast("ProviderRecoveryRepository", repository)
+        )
+        if failures:
+            raise ReviewPipelineError(failures[0])
 
     def create_proposal_set_for(
         report_id: str, pipeline_repository: ReviewPipelineRepository

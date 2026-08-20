@@ -1030,7 +1030,7 @@ class SQLiteProviderRecoveryStore:
             ) from error
 
     def enqueue_jobs(
-        self, jobs: tuple[ProviderRecoveryJob, ...], *, enqueued_at: int = 0
+        self, jobs: tuple[ProviderRecoveryJob, ...], *, enqueued_at: int
     ) -> int:
         """Durably register exact-current failed lanes before any canary runs.
 
@@ -1064,8 +1064,8 @@ class SQLiteProviderRecoveryStore:
                     # A job is claimable only inside an enrolled scope.  Normal
                     # report publication has already recorded the exact health
                     # observation, but enqueue must not depend on that order:
-                    # a replayed package can arrive first.  The fallback is
-                    # starts at F24's two-hour transient cooldown. A current
+                    # a replayed package can arrive first. The fallback starts
+                    # at F24's two-hour transient cooldown. A current
                     # observation always wins unchanged.
                     self._connection.execute(
                         "INSERT INTO provider_recovery_members(connection,adapter,scope) VALUES(?,?,?) ON CONFLICT DO NOTHING",

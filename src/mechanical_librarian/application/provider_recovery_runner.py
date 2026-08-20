@@ -21,7 +21,7 @@ from mechanical_librarian.domain.provider_recovery import (
 
 class ProviderRecoveryStore(Protocol):
     def enqueue_jobs(
-        self, jobs: tuple[ProviderRecoveryJob, ...], *, enqueued_at: int = 0
+        self, jobs: tuple[ProviderRecoveryJob, ...], *, enqueued_at: int
     ) -> int: ...
     def claim_one(
         self, *, generation: int, now: int, token: str, blocked_targets: frozenset[str]
@@ -165,7 +165,7 @@ class ScopedProviderRecoveryRunner:
         return floor if self._clock is None else max(floor, self._clock())
 
     def enqueue(
-        self, jobs: tuple[ProviderRecoveryJob, ...], *, enqueued_at: int = 0
+        self, jobs: tuple[ProviderRecoveryJob, ...], *, enqueued_at: int
     ) -> int:
         """Persist the complete eligible set before it becomes claimable."""
         return self._store.enqueue_jobs(jobs, enqueued_at=enqueued_at)

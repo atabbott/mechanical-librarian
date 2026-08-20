@@ -770,6 +770,77 @@ def test_cover_consideration_factory_fault_is_recorded_as_persistence() -> None:
     assert raised.value.__cause__ is fault
 
 
+def test_stages_outbox_failure_settles_the_claimed_successor() -> None:
+    class Repository:
+        def __init__(self, successor: PipelineAction) -> None:
+            self.successor = successor
+            self.failures: list[tuple[PipelineAction, str, bool]] = []
+
+        def advance_review_pipeline_action(self, *_args, **_kwargs):
+            return self.successor
+
+        def fail_review_pipeline_action(self, action, code, retryable, *_args):
+            self.failures.append((action, code, retryable))
+
+    def unreachable(*_arguments: object, **_keywords: object):
+        raise AssertionError
+
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=unreachable,
+        generate_report=unreachable,
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=lambda _repository: (_ for _ in ()).throw(
+            ReviewPipelineError("persistence")
+        ),
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "projection",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        "report-1",
+        review_case_id="case-1",
+        source_fingerprint="c" * 64,
+    )
+    successor = replace(action, action_id="action-2", stage="proposal")
+    repository = Repository(successor)
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=unreachable,
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=unreachable,
+        extract=unreachable,
+        providers=unreachable,
+        propose=unreachable,
+        admit=unreachable,
+        project=unreachable,
+        after_advance=stages.after_advance,
+        clock=lambda: 7,
+    )
+
+    assert pipeline._advance(repository, action, "complete", claim_next=True) is None
+    assert [(successor, "persistence", True)] == repository.failures
+
+
 def test_checking_condition_allows_admission_replay_and_rejects_stale_finish_epoch(
     application_path: Path,
 ) -> None:
