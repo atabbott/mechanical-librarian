@@ -10,12 +10,16 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import sqlite3
 import tempfile
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import cast
 
 import pytest
 import scripts.cold_start_report as cold_start
+import scripts.persistence_census as persistence_census
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import (
@@ -113,6 +117,12 @@ def test_snapshot_reconciles_with_the_attention_surface_and_redacts() -> None:
             repository.publish_proposal(copy_proposal)
             status = json.loads(repository.admit_review_case(copy_proposal))["status"]
             assert status == "no_case"
+        pending = _for_item(
+            _plain_report("Pending work", "7", "8", actionable=False),
+            "pending-item",
+            "7",
+        )
+        repository.publish(pending, lambda: True)
         surface_count = repository.count_current_attention_fields(None)
         repository.close()
 
@@ -208,6 +218,7 @@ def test_snapshot_reconciles_with_the_attention_surface_and_redacts() -> None:
             "Duplicate copy",
             "copy-one",
             "copy-two",
+            "Pending work",
             "item-1",
             "edition-1",
         ):
@@ -218,15 +229,15 @@ def test_duplicate_determinism_is_conditioned_on_target_context() -> None:
     snapshot = _empty_snapshot()
     snapshot["duplicates"] = [
         # Same bytes, same target context, different results: nondeterminism.
-        ("digest-1", "context-a", "results-1"),
-        ("digest-1", "context-a", "results-2"),
+        ("primary", "ebooks", "digest-1", "context-a", "results-1"),
+        ("primary", "ebooks", "digest-1", "context-a", "results-2"),
         # Same bytes but different target context: a different input, so the
         # differing results are expected and the group is not even compared.
-        ("digest-2", "context-a", "results-1"),
-        ("digest-2", "context-b", "results-2"),
+        ("primary", "ebooks", "digest-2", "context-a", "results-1"),
+        ("primary", "ebooks", "digest-2", "context-b", "results-2"),
         # Same bytes, same context, same results: compared and clean.
-        ("digest-3", "context-a", "results-1"),
-        ("digest-3", "context-a", "results-1"),
+        ("primary", "ebooks", "digest-3", "context-a", "results-1"),
+        ("primary", "ebooks", "digest-3", "context-a", "results-1"),
     ]
     report = cold_start.assemble_cold_start_report(
         _configuration(), snapshot, None, {}, 0
@@ -235,6 +246,102 @@ def test_duplicate_determinism_is_conditioned_on_target_context() -> None:
         "duplicate_groups_compared": 2,
         "divergent_groups": 1,
     }
+
+
+def test_duplicate_determinism_is_scoped_to_one_configured_library() -> None:
+    snapshot = _empty_snapshot()
+    snapshot["duplicates"] = [
+        ("primary", "ebooks", "digest", "context", "results-1"),
+        ("secondary", "ebooks", "digest", "context", "results-2"),
+    ]
+    report = cold_start.assemble_cold_start_report(
+        _configuration(), snapshot, None, {}, 0
+    )
+    assert report["determinism"] == {
+        "duplicate_groups_compared": 0,
+        "divergent_groups": 0,
+    }
+
+
+def test_duplicate_groups_compare_quiet_proposal_results() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        "CREATE TABLE current_review_packages ("
+        "connection_name TEXT,library_name TEXT,report_id TEXT,"
+        "proposal_set_id TEXT,outcome TEXT);"
+        "CREATE TABLE metadata_reports ("
+        "report_id TEXT,content_digest TEXT,document TEXT);"
+        "CREATE TABLE proposal_sets (proposal_set_id TEXT,document TEXT);"
+    )
+    report = json.dumps({"target": {"fields": {"title": "same"}}})
+    for number, outcome in enumerate(("defer", "keep"), start=1):
+        report_id = f"report-{number}"
+        proposal_id = f"proposal-{number}"
+        connection.execute(
+            "INSERT INTO metadata_reports VALUES(?,?,?)",
+            (report_id, "digest", report),
+        )
+        connection.execute(
+            "INSERT INTO proposal_sets VALUES(?,?)",
+            (proposal_id, json.dumps({"results": [{"outcome": outcome}]})),
+        )
+        connection.execute(
+            "INSERT INTO current_review_packages VALUES(?,?,?,?,?)",
+            ("primary", "ebooks", report_id, proposal_id, "no_case"),
+        )
+
+    groups = cold_start._duplicate_groups(connection)
+    connection.close()
+
+    assert len(groups) == 2
+    assert all(group[4] != "null" for group in groups)
+    assert groups[0][4] != groups[1][4]
+
+
+def test_headline_totals_include_only_configured_libraries() -> None:
+    snapshot = _empty_snapshot()
+    snapshot["libraries"] = [
+        ("primary", "ebooks", 2, 1),
+        ("retired", "old-library", 50, 20),
+    ]
+    report = cold_start.assemble_cold_start_report(
+        _configuration(), snapshot, None, {}, 0
+    )
+    assert report["totals"] == {
+        "works": 2,
+        "attention_works": 1,
+        "quiet_works": 1,
+        "quiet_fraction": 0.5,
+    }
+
+
+def test_reused_scan_ledger_is_hidden_until_discovery_refreshes_it() -> None:
+    connection = sqlite3.connect(":memory:")
+    connection.executescript(
+        "CREATE TABLE review_preparation_scans ("
+        "scan_id TEXT,connection_name TEXT,library_name TEXT,"
+        "catalogue_generation INTEGER);"
+        "CREATE TABLE review_preparation_work ("
+        "scan_id TEXT,connection_name TEXT,library_name TEXT,"
+        "state TEXT,updated_at INTEGER);"
+        "CREATE TABLE review_preparation_absences (scan_id TEXT,kind TEXT);"
+        "INSERT INTO review_preparation_scans VALUES("
+        "'scan','primary','ebooks',NULL);"
+        "INSERT INTO review_preparation_work VALUES("
+        "'scan','primary','ebooks','complete',100);"
+        "INSERT INTO review_preparation_absences VALUES('scan','retired');"
+    )
+    assert cold_start._rows(connection, cold_start._WORK_STATE_COUNTS_SQL) == []
+    assert cold_start._rows(connection, cold_start._ABSENCE_COUNTS_SQL) == []
+
+    connection.execute("UPDATE review_preparation_scans SET catalogue_generation=7")
+    assert cold_start._rows(connection, cold_start._WORK_STATE_COUNTS_SQL) == [
+        ("primary", "ebooks", 1, 0, 1, 100, 100)
+    ]
+    assert cold_start._rows(connection, cold_start._ABSENCE_COUNTS_SQL) == [
+        ("primary", "ebooks", "retired", 1)
+    ]
+    connection.close()
 
 
 def test_timing_derives_from_the_scan_request_and_the_work_ledger() -> None:
@@ -271,6 +378,10 @@ def test_main_reads_existing_state_and_remaps_mounts() -> None:
         repository = open_repository(database)
         work = _plain_report("Runner work", "5", "6", actionable=False)
         repository.publish(work, lambda: True)
+        proposal = evaluate_report(work)
+        repository.publish_proposal(proposal)
+        status = json.loads(repository.admit_review_case(proposal))["status"]
+        assert status == "no_case"
         repository.close()
         before = database.read_bytes()
         mount_root = root / "books"
@@ -278,6 +389,7 @@ def test_main_reads_existing_state_and_remaps_mounts() -> None:
         (mount_root / "one.epub").write_bytes(b"a")
         (mount_root / "two.EPUB").write_bytes(b"b")
         (mount_root / "notes.txt").write_bytes(b"c")
+        (mount_root / "alias.epub").symlink_to("one.epub")
         config = root / "config.json"
         config.write_text(
             json.dumps(
@@ -350,6 +462,53 @@ def test_main_reads_existing_state_and_remaps_mounts() -> None:
         assert fidelity["mount_files_by_extension"] == {"epub": 2, "txt": 1}
         assert fidelity["target_items_by_classification"] is None
         assert "Runner work" not in output.getvalue()
+
+
+@pytest.mark.parametrize(
+    "opener",
+    (cold_start._open_read_only, persistence_census._open_read_only),
+)
+def test_read_only_database_uris_encode_filename_syntax(
+    tmp_path: Path,
+    opener: Callable[[Path], sqlite3.Connection],
+) -> None:
+    database = tmp_path / "application#copy.sqlite3"
+    writable = sqlite3.connect(database)
+    writable.execute("CREATE TABLE marker (value INTEGER)")
+    writable.execute("INSERT INTO marker VALUES(7)")
+    writable.commit()
+    writable.close()
+
+    connection = opener(database)
+    assert connection.execute("SELECT value FROM marker").fetchone() == (7,)
+    connection.close()
+    assert not (tmp_path / "application").exists()
+
+
+def test_mount_census_is_unavailable_when_the_file_cap_is_exceeded(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "one.epub").write_bytes(b"1")
+    (tmp_path / "two.epub").write_bytes(b"2")
+    monkeypatch.setattr(cold_start, "_MAX_MOUNT_WALK_FILES", 1)
+    assert cold_start._count_mount_files(tmp_path) is None
+
+
+def test_mount_census_is_unavailable_when_a_directory_cannot_be_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unreadable_walk(
+        _root: Path,
+        *,
+        onerror: Callable[[OSError], None],
+    ) -> Iterator[tuple[str, list[str], list[str]]]:
+        onerror(PermissionError())
+        return iter(())
+
+    monkeypatch.setattr(os, "walk", unreadable_walk)
+    assert cold_start._count_mount_files(tmp_path) is None
 
 
 def test_main_rejects_a_malformed_mount_root() -> None:

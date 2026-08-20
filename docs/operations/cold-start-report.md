@@ -28,7 +28,9 @@ interface about which field needs attention.
 
 Per configured library the document reports: the latest preparation scan
 (state, discovered total, timestamps); work counts (current, attention, quiet,
-preparation-ledger ready/blocked, absences by kind); attention fields split by
+preparation-ledger ready/blocked, absences by kind), excluding an in-flight
+`report_only` package until proposal derivation has produced a completed
+outcome; attention fields split by
 destination, by exact cause (the shadow abstention reason code when one
 exists, otherwise the joined proposal reasons, otherwise the automatic-safety
 suspension), and by cause class (conflict, owner_subjective, capability,
@@ -44,20 +46,25 @@ preparation ledger); and automatic decisions bucketed by how many independent
 provider sources corroborate the chosen candidate (0, 1, 2, 3_plus).
 
 Top-level totals give the quiet fraction — the headline first-boot attention
-rate is its complement. The determinism block compares works that share a
-content digest: members are bucketed by their current target-field context
-first, and a group counts as divergent only when members with identical bytes
-and identical context carry different review results, so a copy whose target
-already differs is treated as a different input rather than nondeterminism.
+rate is its complement and includes only libraries still present in the loaded
+configuration. The determinism block compares works in the same configured
+library that share a content digest: members are bucketed by their current
+target-field context first, and a group counts as divergent only when members
+with identical bytes and identical context carry different persisted proposal
+results, including quiet `no_case` outcomes. A copy whose target already differs
+is treated as a different input rather than nondeterminism.
 
 Timing uses the preparation scan and work ledgers, not the diagnostic timing
 ring buffer: the ring holds at most 256 uncorrelated samples and is disabled
-by default, so it cannot support throughput claims.
+by default, so it cannot support throughput claims. When a repeated scan has
+not yet published its new catalogue generation, retained work and absence rows
+from the preceding cycle are suppressed rather than presented as current.
 
-The mount walk counts regular files by lowercased extension, is capped at
-1,000,000 files, and records `null` for a root that is not a readable
-directory. A missing or unreadable catalogue likewise records `null` fidelity
-tiers instead of failing the report.
+The mount walk counts regular files by lowercased extension without following
+symlinks. It is capped at 1,000,000 files and records `null` rather than partial
+counts when the cap is exceeded or any directory or entry cannot be read; a
+root that is not a readable directory is also `null`. A missing or unreadable
+catalogue likewise records `null` fidelity tiers instead of failing the report.
 
 `scripts/persistence_census.py` is the companion workbench tool for the
 persistence health census. Run it against copies of the two database files,

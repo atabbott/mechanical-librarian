@@ -21,6 +21,7 @@ import json
 import sqlite3
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_FROM_SQL,
@@ -70,7 +71,8 @@ _HOT_STATEMENTS: dict[str, str] = {
 
 
 def _open_read_only(path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    absolute = str(path.absolute())
+    connection = sqlite3.connect(f"file:{quote(absolute, safe='/')}?mode=ro", uri=True)
     connection.row_factory = None
     # The planner only needs the function to exist to prepare statements that
     # name it; census plans never evaluate rows through it.

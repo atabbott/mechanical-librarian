@@ -30,11 +30,13 @@ import argparse
 import json
 import os
 import sqlite3
+import stat
 import sys
 import time
 from collections import Counter
 from pathlib import Path
 from typing import TextIO, cast
+from urllib.parse import quote
 
 from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_LIBRARY_FROM_SQL,
@@ -70,7 +72,8 @@ _LIBRARY_WORK_COUNTS_SQL = (
     + _REVIEW_ATTENTION_SQL
     + " THEN 1 ELSE 0 END) "
     + _CURRENT_LIBRARY_FROM_SQL
-    + " GROUP BY ml.connection_name,ml.library_name"
+    + " WHERE ml.outcome!='report_only' "
+    "GROUP BY ml.connection_name,ml.library_name"
 )
 _PROVIDER_ROWS_SQL = (
     "SELECT ml.connection_name,ml.library_name,"
@@ -79,13 +82,15 @@ _PROVIDER_ROWS_SQL = (
     "json_extract(provider.value,'$.lanes') "
     "FROM current_review_packages ml "
     "JOIN metadata_reports mr ON mr.report_id=ml.report_id,"
-    "json_each(mr.document,'$.providers') provider"
+    "json_each(mr.document,'$.providers') provider "
+    "WHERE ml.outcome!='report_only'"
 )
 _UNMATCHED_WORKS_SQL = (
     "SELECT ml.connection_name,ml.library_name,count(*) "
     "FROM current_review_packages ml "
     "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
-    "WHERE NOT EXISTS (SELECT 1 FROM json_each(mr.document,'$.providers') provider "
+    "WHERE ml.outcome!='report_only' "
+    "AND NOT EXISTS (SELECT 1 FROM json_each(mr.document,'$.providers') provider "
     "WHERE json_extract(provider.value,'$.status')='candidates') "
     "GROUP BY 1,2"
 )
@@ -101,27 +106,36 @@ _SCAN_ROWS_SQL = (
 # that is the majority outcome, so conditioning on review_case_id would
 # exclude exactly the completions throughput must count.
 _WORK_STATE_COUNTS_SQL = (
-    "SELECT connection_name,library_name,"
-    "SUM(CASE WHEN state='complete' THEN 1 ELSE 0 END),"
-    "SUM(CASE WHEN state IN ('failed','stale') THEN 1 ELSE 0 END),count(*),"
-    "MIN(CASE WHEN state='complete' THEN updated_at END),"
-    "MAX(CASE WHEN state='complete' THEN updated_at END) "
-    "FROM review_preparation_work GROUP BY connection_name,library_name"
+    "SELECT work.connection_name,work.library_name,"
+    "SUM(CASE WHEN work.state='complete' THEN 1 ELSE 0 END),"
+    "SUM(CASE WHEN work.state IN ('failed','stale') THEN 1 ELSE 0 END),count(*),"
+    "MIN(CASE WHEN work.state='complete' THEN work.updated_at END),"
+    "MAX(CASE WHEN work.state='complete' THEN work.updated_at END) "
+    "FROM review_preparation_work work "
+    "JOIN review_preparation_scans scan ON scan.scan_id=work.scan_id "
+    "WHERE scan.catalogue_generation IS NOT NULL "
+    "GROUP BY work.connection_name,work.library_name"
 )
 _ABSENCE_COUNTS_SQL = (
     "SELECT work.connection_name,work.library_name,absence.kind,count(*) "
     "FROM review_preparation_absences absence "
     "JOIN review_preparation_scans work ON work.scan_id=absence.scan_id "
+    "WHERE work.catalogue_generation IS NOT NULL "
     "GROUP BY 1,2,3"
 )
 _DUPLICATE_GROUPS_SQL = (
-    "SELECT mr.content_digest,rc.document,mr.document "
+    "SELECT ml.connection_name,ml.library_name,mr.content_digest,"
+    "ps.document,mr.document "
     "FROM current_review_packages ml "
     "JOIN metadata_reports mr ON mr.report_id=ml.report_id "
-    "LEFT JOIN review_cases rc ON rc.review_case_id=ml.review_case_id "
-    "WHERE mr.content_digest IN (SELECT source.content_digest "
+    "JOIN proposal_sets ps ON ps.proposal_set_id=ml.proposal_set_id "
+    "WHERE ml.outcome!='report_only' AND mr.content_digest IN ("
+    "SELECT source.content_digest "
     "FROM current_review_packages package "
     "JOIN metadata_reports source ON source.report_id=package.report_id "
+    "WHERE package.connection_name=ml.connection_name "
+    "AND package.library_name=ml.library_name "
+    "AND package.outcome!='report_only' "
     "GROUP BY source.content_digest HAVING count(*)>1)"
 )
 _AUTOMATIC_AGREEMENT_SQL = (
@@ -193,7 +207,8 @@ _MAX_MOUNT_WALK_FILES = 1_000_000
 
 
 def _open_read_only(path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    absolute = str(path.absolute())
+    return sqlite3.connect(f"file:{quote(absolute, safe='/')}?mode=ro", uri=True)
 
 
 def _without_identities(value: object) -> object:
@@ -262,8 +277,10 @@ def _provider_lane_rows(connection: sqlite3.Connection) -> list[tuple[object, ..
     return rows
 
 
-def _duplicate_groups(connection: sqlite3.Connection) -> list[tuple[str, str, str]]:
-    """Return (digest, context, results) per duplicated-content member.
+def _duplicate_groups(
+    connection: sqlite3.Connection,
+) -> list[tuple[str, str, str, str, str]]:
+    """Return (connection, library, digest, context, results) per duplicate.
 
     The context is the member's current target fields with run-scoped
     identifiers stripped — deliberately not the item identity, which differs
@@ -272,16 +289,20 @@ def _duplicate_groups(connection: sqlite3.Connection) -> list[tuple[str, str, st
     target already carries different values never counts as pipeline
     divergence.
     """
-    groups: list[tuple[str, str, str]] = []
-    for digest, case_document, report_document in connection.execute(
-        _DUPLICATE_GROUPS_SQL
-    ).fetchall():
+    groups: list[tuple[str, str, str, str, str]] = []
+    for (
+        connection_name,
+        library_name,
+        digest,
+        proposal_document,
+        report_document,
+    ) in connection.execute(_DUPLICATE_GROUPS_SQL).fetchall():
         results: object = None
-        if isinstance(case_document, str):
-            case = json.loads(case_document)
-            if isinstance(case, dict):
+        if isinstance(proposal_document, str):
+            proposal = json.loads(proposal_document)
+            if isinstance(proposal, dict):
                 results = _without_identities(
-                    cast("dict[str, object]", case).get("results")
+                    cast("dict[str, object]", proposal).get("results")
                 )
         context: object = None
         if isinstance(report_document, str):
@@ -294,6 +315,8 @@ def _duplicate_groups(connection: sqlite3.Connection) -> list[tuple[str, str, st
                     )
         groups.append(
             (
+                cast("str", connection_name),
+                cast("str", library_name),
                 cast("str", digest),
                 json.dumps(context, sort_keys=True, separators=(",", ":")),
                 json.dumps(results, sort_keys=True, separators=(",", ":")),
@@ -420,15 +443,32 @@ def _count_mount_files(root: Path) -> dict[str, int] | None:
         return None
     counts: dict[str, int] = {}
     seen = 0
-    for _directory, _subdirectories, files in os.walk(root):
+    unavailable = False
+
+    def mark_unavailable(_error: OSError) -> None:
+        nonlocal unavailable
+        unavailable = True
+
+    for directory, _subdirectories, files in os.walk(root, onerror=mark_unavailable):
+        if unavailable:
+            return None
         for name in files:
+            try:
+                information = os.stat(
+                    Path(directory) / name,
+                    follow_symlinks=False,
+                )
+            except OSError:
+                return None
+            if not stat.S_ISREG(information.st_mode):
+                continue
             seen += 1
             if seen > _MAX_MOUNT_WALK_FILES:
-                return counts
+                return None
             suffix = Path(name).suffix.lower().lstrip(".")
             key = suffix if suffix else "none"
             counts[key] = counts.get(key, 0) + 1
-    return counts
+    return None if unavailable else counts
 
 
 def _cause_class(reasons: tuple[str, ...]) -> str:
@@ -566,20 +606,21 @@ def assemble_cold_start_report(
     # Determinism is judged only where it is expected: members of one digest
     # group that also share a target-field context. A copy whose target
     # already differs is a different pipeline input, not nondeterminism.
-    duplicate_buckets: dict[str, dict[str, list[str]]] = {}
-    for digest, context, results in cast(
-        "list[tuple[str, str, str]]", snapshot["duplicates"]
+    duplicate_buckets: dict[tuple[str, str, str], dict[str, list[str]]] = {}
+    for connection_name, library_name, digest, context, results in cast(
+        "list[tuple[str, str, str, str, str]]", snapshot["duplicates"]
     ):
-        duplicate_buckets.setdefault(digest, {}).setdefault(context, []).append(results)
-    compared: set[str] = set()
-    divergent: set[str] = set()
-    for digest, contexts in duplicate_buckets.items():
+        scope = (connection_name, library_name, digest)
+        duplicate_buckets.setdefault(scope, {}).setdefault(context, []).append(results)
+    compared: set[tuple[str, str, str]] = set()
+    divergent: set[tuple[str, str, str]] = set()
+    for scope, contexts in duplicate_buckets.items():
         for members in contexts.values():
             if len(members) < 2:
                 continue
-            compared.add(digest)
+            compared.add(scope)
             if len(set(members)) > 1:
-                divergent.add(digest)
+                divergent.add(scope)
 
     libraries: list[dict[str, object]] = []
     zero_lane_providers: set[str] = set()
@@ -704,8 +745,8 @@ def assemble_cold_start_report(
             }
         )
 
-    total_works = sum(item[0] for item in work_counts.values())
-    total_attention = sum(item[1] for item in work_counts.values())
+    total_works = sum(work_counts.get(key, (0, 0))[0] for key in library_keys)
+    total_attention = sum(work_counts.get(key, (0, 0))[1] for key in library_keys)
     return {
         "schema_version": COLD_START_REPORT_SCHEMA,
         "generated_at": generated_at,
