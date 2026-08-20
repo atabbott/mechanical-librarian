@@ -1062,7 +1062,13 @@ class ReviewPreparationSupervisor:
                     # A failed recovery observation is already persisted by
                     # its runner, so it must not prevent ordinary preparation.
                     if self._recovery_wake is not None:
-                        self._recovery_wake(self._clock())
+                        try:
+                            self._recovery_wake(self._clock())
+                        except ReviewPipelineError:
+                            # Explicit owner recovery reports its closed
+                            # failure. The background lane instead preserves
+                            # preparation capacity until the next normal wake.
+                            pass
                     self._schedule_due()
                 while not self._stop.is_set():
                     advanced = self._pipeline.run_next()

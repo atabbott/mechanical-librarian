@@ -18,9 +18,6 @@ import pytest
 
 import mechanical_librarian.bootstrap.composition as composition
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.adapters.persistence.provider_recovery import (
-    ProviderRecoveryStoreError,
-)
 from mechanical_librarian.adapters.persistence.review_preparation import (
     _FAILURE_CODES,
 )
@@ -3432,18 +3429,11 @@ def test_lane_zero_wakes_recovery_with_the_supervisor_clock() -> None:
 def test_lane_zero_contains_recovery_store_failure_and_continues() -> None:
     pipeline = _ScheduledPipeline()
     wakes: list[int] = []
-    supervisor: ReviewPreparationSupervisor
+    runs = 0
 
     def recovery(now: int) -> None:
         wakes.append(now)
-        if len(wakes) == 1:
-            supervisor._wake.set()
-            try:
-                raise ProviderRecoveryStoreError(
-                    "provider recovery persistence is unavailable"
-                )
-            except ProviderRecoveryStoreError as error:
-                raise ReviewPipelineError("recovery") from error
+        raise ReviewPipelineError("persistence")
 
     supervisor = ReviewPreparationSupervisor(
         pipeline,
@@ -3453,13 +3443,20 @@ def test_lane_zero_contains_recovery_store_failure_and_continues() -> None:
     )
 
     def run_next() -> bool:
-        supervisor._stop.set()
+        nonlocal runs
+        runs += 1
+        if runs == 3:
+            supervisor._stop.set()
+        else:
+            # The next wake belongs to ordinary preparation, not recovery.
+            supervisor._wake.set()
         return False
 
     pipeline.run_next = run_next
     supervisor._wake.set()
     supervisor._run(0)
-    assert [41, 41] == wakes
+    assert [41, 41, 41] == wakes
+    assert 3 == runs
     assert pipeline.status_calls >= 1
 
 
