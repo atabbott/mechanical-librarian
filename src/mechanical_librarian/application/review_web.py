@@ -1561,16 +1561,15 @@ def _library_item(
                 }
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise ReviewWebError("unavailable") from error
-    try:
-        report = MetadataReport.from_json(report_document)
-    except ReportValueError as error:
-        # ``from_json`` now funnels every malformed-document outcome, the length
-        # guard's codec failure included, into its one declared type, so a row
-        # this surface cannot render is one ``unavailable`` page and a fault in
-        # the parser itself surfaces as itself.
-        raise ReviewWebError("unavailable") from error
-    case = None
-    if case_document is not None:
+    if case_document is None:
+        try:
+            report = MetadataReport.from_json(report_document)
+        except ReportValueError as error:
+            # ``from_json`` now funnels every malformed-document outcome, the
+            # length guard's codec failure included, into its one declared type.
+            raise ReviewWebError("unavailable") from error
+        case = None
+    else:
         case, report = _case_and_report(case_document, report_document)
     decisions = set()
     automatic_outcomes: dict[str, str] = {}

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Keep Library and Attention responsive at 2,000 works. Transactional relational
+  field facts replace repeated canonical JSON walks while immutable review and
+  shadow documents remain authoritative; startup fails closed on disagreement,
+  new works validate and project atomically, and each visible case is checked
+  once against its exact admitted proposal and report rather than repeatedly
+  evaluated. An exact-predecessor plan preserves state. (#802)
+
 - Preserve expensive pre-release review state when a schema change adds only
   reconstructible derived objects. An explicit offline command now verifies a
   private backup and adopts #800's two indexes from its exact predecessor;

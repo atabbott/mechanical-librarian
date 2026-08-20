@@ -46,9 +46,18 @@ from mechanical_librarian.application.review_web import (
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
 )
+from mechanical_librarian.domain.automatic_decision import (
+    AutomaticDecision,
+    AutomaticDecisionError,
+)
+from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ReportValueError,
+)
+from mechanical_librarian.domain.review_browse import (
+    browse_case_with_id,
+    browse_report,
 )
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
@@ -251,13 +260,16 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         (case_document, report_document, (), (), (), (), None)
                     )
                     continue
-                report = MetadataReport.from_json(report_document)
+                report = browse_report(report_document)
+                target = report["target"]
+                if type(target) is not dict:
+                    raise MetadataReportError("review library is unavailable")
                 terminal = self._connection.execute(
                     _LATEST_PREPARATION_WORK_SQL,
                     (
-                        report.target.connection,
-                        report.target.library,
-                        report.target.item,
+                        target["connection"],
+                        target["library"],
+                        target["item"],
                     ),
                 ).fetchone()
                 terminal_document = (
@@ -270,11 +282,11 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     else _canonical_json(
                         {
                             "attempt": terminal[2],
-                            "connection": report.target.connection,
+                            "connection": target["connection"],
                             "failure_root": terminal[6],
-                            "item": report.target.item,
+                            "item": target["item"],
                             "lane": terminal[1],
-                            "library": report.target.library,
+                            "library": target["library"],
                             "recovery_attempt": terminal[3],
                             "schema_version": "review-terminal-work-v1",
                             "status": terminal[5],
@@ -282,18 +294,22 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         }
                     )
                 )
-                case_id = (
+                case_with_id = (
                     None
                     if case_document is None
-                    else ReviewCase.from_json(case_document).review_case_id
+                    else browse_case_with_id(case_document)
                 )
+                case = None if case_with_id is None else case_with_id[0]
+                case_id = None if case_with_id is None else case_with_id[1]
                 projected_rows.append(
                     (
                         case_document,
                         report_document,
                         ()
-                        if case_id is None
-                        else self.get_review_case_decisions(case_id),
+                        if case is None
+                        else self._browse_decision_documents(
+                            cast("str", case_id), case
+                        ),
                         ()
                         if case_id is None
                         else self._automatic_attention_destinations(case_id),
@@ -317,12 +333,68 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             )
         return snapshot
 
+    def _browse_decision_documents(
+        self, review_case_id: str, case: dict[str, object]
+    ) -> tuple[str, ...]:
+        """Validate only the decision documents attached to one visible row."""
+        human_rows = self._connection.execute(
+            "SELECT decision_id,proposal_id,target_fingerprint,destination,"
+            "actor,outcome,selected_value_document,idempotency_digest,"
+            "request_digest,occurred_at,document FROM human_decisions "
+            "WHERE review_case_id=? ORDER BY ordinal",
+            (review_case_id,),
+        ).fetchall()
+        documents: list[str] = []
+        try:
+            for row in human_rows:
+                if len(row) != 11 or type(row[10]) is not str:
+                    raise MetadataReportError("review library is unavailable")
+                decision = HumanDecision.from_json(row[10])
+                decision.validate_for_browse_case(review_case_id, case)
+                if (
+                    decision.decision_id,
+                    decision.proposal_id,
+                    decision.target_fingerprint,
+                    decision.destination,
+                    decision.actor,
+                    decision.outcome,
+                    _canonical_json(decision.selected_value),
+                    decision.idempotency_digest,
+                    decision.request_digest,
+                    decision.occurred_at,
+                ) != row[:10]:
+                    raise MetadataReportError("review library is unavailable")
+                documents.append(decision.to_json())
+            automatic_rows = self._connection.execute(
+                "SELECT decision_id,destination,idempotency_digest,occurred_at,document "
+                "FROM automatic_decisions WHERE review_case_id=? "
+                "ORDER BY occurred_at,decision_id",
+                (review_case_id,),
+            ).fetchall()
+            for row in automatic_rows:
+                if len(row) != 5 or type(row[4]) is not str:
+                    raise MetadataReportError("review library is unavailable")
+                automatic_decision = AutomaticDecision.from_json(row[4])
+                if (
+                    automatic_decision.decision_id,
+                    automatic_decision.destination,
+                    automatic_decision.idempotency_digest,
+                    automatic_decision.occurred_at,
+                ) != row[:4] or automatic_decision.review_case_id != review_case_id:
+                    raise MetadataReportError("review library is unavailable")
+                documents.append(automatic_decision.to_json())
+        except (HumanDecisionError, AutomaticDecisionError, TypeError) as error:
+            raise MetadataReportError("review library is unavailable") from error
+        return tuple(documents)
+
     def _automatic_attention_destinations(self, review_case_id: str) -> tuple[str, ...]:
         rows = self._connection.execute(
-            "SELECT DISTINCT json_extract(outcome.value,'$.destination') FROM shadow_decision_outcomes shadow, "
-            "json_each(shadow.document,'$.outcomes') outcome, automatic_safety_state safety "
-            "WHERE shadow.review_case_id=? AND json_extract(outcome.value,'$.policy_destination')='automatic' AND ("
-            "safety.paused=1 OR safety.global_suspension IS NOT NULL OR EXISTS(SELECT 1 FROM json_each(safety.category_suspensions_document) category WHERE json_extract(category.value,'$[0]')=json_extract(outcome.value,'$.policy_category'))) ORDER BY 1",
+            "SELECT DISTINCT outcome.destination FROM shadow_outcome_field_facts outcome, "
+            "automatic_safety_state safety WHERE outcome.review_case_id=? "
+            "AND outcome.automatic_destination=1 AND (safety.paused=1 OR "
+            "safety.global_suspension IS NOT NULL OR EXISTS(SELECT 1 FROM "
+            "json_each(safety.category_suspensions_document) category WHERE "
+            "json_extract(category.value,'$[0]')=outcome.policy_category)) ORDER BY 1",
             (review_case_id,),
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):
@@ -331,9 +403,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
 
     def _shadow_abstention_destinations(self, review_case_id: str) -> tuple[str, ...]:
         rows = self._connection.execute(
-            "SELECT DISTINCT json_extract(outcome.value,'$.destination') FROM shadow_decision_outcomes shadow, "
-            "json_each(shadow.document,'$.outcomes') outcome WHERE shadow.review_case_id=? "
-            "AND json_extract(outcome.value,'$.disposition')='abstention' ORDER BY 1",
+            "SELECT DISTINCT outcome.destination FROM shadow_outcome_field_facts outcome "
+            "WHERE outcome.review_case_id=? AND outcome.disposition='abstention' ORDER BY 1",
             (review_case_id,),
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):
@@ -368,16 +439,15 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         review_case_id: str,
     ) -> tuple[str, ...]:
         rows = self._connection.execute(
-            "SELECT json_extract(result.value,'$.destination') "
-            "FROM current_review_case_lineages c JOIN review_cases rc "
-            "ON rc.review_case_id=c.review_case_id,"
-            "json_each(rc.document,'$.results') result "
-            "WHERE rc.review_case_id=? AND EXISTS(SELECT 1 "
+            "SELECT result.destination FROM current_review_case_lineages c "
+            "JOIN review_case_field_facts result "
+            "ON result.review_case_id=c.review_case_id "
+            "WHERE result.review_case_id=? AND EXISTS(SELECT 1 "
             "FROM field_effect_suspensions suspension "
             "WHERE suspension.connection_name=c.connection_name AND ("
             "(suspension.scope='connection' AND suspension.destination='') OR "
             "(suspension.scope='destination' AND suspension.destination="
-            "json_extract(result.value,'$.destination')))) ORDER BY 1",
+            "result.destination))) ORDER BY 1",
             (review_case_id,),
         ).fetchall()
         if any(type(row[0]) is not str for row in rows):
@@ -389,21 +459,21 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         review_case_id: str,
     ) -> tuple[tuple[str, ReviewFieldCause], ...]:
         rows = self._connection.execute(
-            "SELECT json_extract(result.value,'$.destination'),(SELECT "
+            "SELECT result.destination,(SELECT "
             "suspension.scope FROM field_effect_suspensions suspension "
             "WHERE suspension.connection_name=c.connection_name AND (("
             "suspension.scope='connection' AND suspension.destination='') OR "
             "(suspension.scope='destination' AND suspension.destination="
-            "json_extract(result.value,'$.destination'))) ORDER BY CASE "
+            "result.destination)) ORDER BY CASE "
             "suspension.scope WHEN 'connection' THEN 0 ELSE 1 END LIMIT 1) "
-            "FROM current_review_case_lineages c JOIN review_cases rc "
-            "ON rc.review_case_id=c.review_case_id,json_each(rc.document,'$.results') result "
-            "WHERE rc.review_case_id=? AND EXISTS(SELECT 1 FROM "
+            "FROM current_review_case_lineages c JOIN review_case_field_facts result "
+            "ON result.review_case_id=c.review_case_id "
+            "WHERE result.review_case_id=? AND EXISTS(SELECT 1 FROM "
             "field_effect_suspensions suspension WHERE "
             "suspension.connection_name=c.connection_name AND (("
             "suspension.scope='connection' AND suspension.destination='') OR "
             "(suspension.scope='destination' AND suspension.destination="
-            "json_extract(result.value,'$.destination')))) ORDER BY 1",
+            "result.destination))) ORDER BY 1",
             (review_case_id,),
         ).fetchall()
         causes: dict[str, ReviewFieldCause] = {

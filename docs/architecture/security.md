@@ -46,9 +46,12 @@ regular DELETE-journal database under exclusive filesystem and SQLite
 authority, rejects configured and stale private-binding recovery state and every
 schema except the exact current or frozen named predecessor, and creates a
 verified non-overwriting private backup whose content is rechecked before
-success after adding two derived read indexes transactionally. It receives no
-configuration or credentials and has no network, provider, reviewer, media,
-target, decision, row-write, import, repair, or arbitrary-SQL authority.
+success after adding only the plan's reconstructible derived schema objects
+transactionally. A field-fact plan may read canonical rows solely to populate
+those derived objects and proves the canonical-table digest unchanged. It
+receives no configuration or credentials and has no network, provider,
+reviewer, media, target, decision, canonical-row-write, import, repair, or
+arbitrary-SQL authority.
 
 Foreground batch manifests are private immutable operator artifacts. Preview and
 read bind bounded regular no-follow descriptors under a private parent, validate
@@ -98,10 +101,19 @@ authenticated activity projection reads all library progress and pause state
 from one validated repository snapshot. Only one worker lane evaluates automatic
 scan admission, using that aggregate snapshot and a retained next deadline rather
 than repeated per-library integrity validation. The server performs the full
-schema-object, foreign-key, and SQLite-integrity admission once for its locked
-database inode. Derived worker connections prove that same live filesystem
-authority and borrow its admission instead of rescanning the database. A claimed
-stage retains its already-validated repository connection, without an open
+schema-object, foreign-key, SQLite-integrity, and derived-field equivalence
+admission once for its locked database inode. Derived worker connections prove
+that same live filesystem authority and borrow its admission instead of
+rescanning the database. A Library or Attention repository request uses
+size-bounded closed envelopes and lineage facts instead of repeatedly evaluating
+the same provider, proposal, and decision documents. It also proves that each
+case still embeds the exact immutable ProposalSet accepted by admission. Before
+returning the DTO, the application performs one complete semantic parse of
+every visible row.
+Canonical documents remain immutable, and every insert still crosses the
+complete domain validator and projects its field facts in the same transaction.
+
+A claimed stage retains its already-validated repository connection, without an open
 transaction, until its separate durable transition; composed report, proposal,
 admission, and projection services borrow that validated connection without
 owning or closing it. Proposal

@@ -13,7 +13,11 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     TargetFacts,
 )
-from mechanical_librarian.domain.proposal_set import ProposalOutcome, ProposalSet
+from mechanical_librarian.domain.proposal_set import (
+    ProposalOutcome,
+    ProposalSet,
+    ProposalValueError,
+)
 
 REVIEW_CASE_SCHEMA = "review-case-v2"
 REVIEW_ADMISSION_SCHEMA = "review-admission-v1"
@@ -34,6 +38,60 @@ MAX_REVIEW_CASE_BYTES = 2_097_152
 
 class ReviewCaseValueError(ValueError):
     """A review case is outside the closed production-admission contract."""
+
+
+def review_proposals(
+    proposal_set_id: str,
+    proposal_document: str,
+    results: tuple[dict[str, object], ...] | list[dict[str, object]],
+) -> tuple[dict[str, object], ...]:
+    """Project case proposals without reconstructing their report or evaluator."""
+    try:
+        proposal = ProposalSet.from_json(proposal_document)
+    except ProposalValueError as error:
+        raise ReviewCaseValueError("review case proposal is invalid") from error
+    if proposal.proposal_set_id != proposal_set_id or tuple(
+        result.to_data() for result in proposal.results
+    ) != tuple(results):
+        raise ReviewCaseValueError("review case proposal is invalid")
+    result_set_id = ProposalSet.create(
+        report_id=proposal.report_id,
+        target_fingerprint=proposal.target_fingerprint,
+        results=proposal.results,
+        resolved_policy_id=proposal.resolved_policy_id,
+    ).proposal_set_id
+    bibliographic_destinations = {
+        TargetDestination.TITLE.value,
+        TargetDestination.SUBTITLE.value,
+        TargetDestination.SERIES.value,
+    }
+    manual_destinations = (
+        bibliographic_destinations
+        if any(
+            result["destination"] in bibliographic_destinations
+            and result["reasons"] == ["no_safe_bibliographic_combination"]
+            for result in results
+        )
+        else set()
+    )
+    return tuple(
+        {
+            "destination": result["destination"],
+            "manual_required": result["destination"] in manual_destinations,
+            "proposal_id": "review_proposal_"
+            + hashlib.sha256(
+                _canonical(
+                    {
+                        "destination": result["destination"],
+                        "proposal_set_id": result_set_id,
+                        "result": result,
+                    }
+                ).encode("utf-8")
+            ).hexdigest(),
+            "result": _thaw_json_object(result),
+        }
+        for result in results
+    )
 
 
 class ReviewAdmissionStaleError(RuntimeError):
@@ -457,44 +515,8 @@ class ReviewCase:
     @property
     def proposals(self) -> tuple[dict[str, object], ...]:
         """Target-ordered immutable proposal projections with stable identities."""
-        proposal = ProposalSet.from_json(self.proposal_document)
-        result_set_id = ProposalSet.create(
-            report_id=proposal.report_id,
-            target_fingerprint=proposal.target_fingerprint,
-            results=proposal.results,
-            resolved_policy_id=proposal.resolved_policy_id,
-        ).proposal_set_id
-        bibliographic_destinations = {
-            TargetDestination.TITLE.value,
-            TargetDestination.SUBTITLE.value,
-            TargetDestination.SERIES.value,
-        }
-        manual_destinations = (
-            bibliographic_destinations
-            if any(
-                result["destination"] in bibliographic_destinations
-                and result["reasons"] == ["no_safe_bibliographic_combination"]
-                for result in self._results
-            )
-            else set()
-        )
-        return tuple(
-            {
-                "destination": result["destination"],
-                "manual_required": result["destination"] in manual_destinations,
-                "proposal_id": "review_proposal_"
-                + hashlib.sha256(
-                    _canonical(
-                        {
-                            "destination": result["destination"],
-                            "proposal_set_id": result_set_id,
-                            "result": result,
-                        }
-                    ).encode("utf-8")
-                ).hexdigest(),
-                "result": _thaw_json_object(result),
-            }
-            for result in self._results
+        return review_proposals(
+            self.proposal_set_id, self.proposal_document, list(self._results)
         )
 
     def to_data(self) -> dict[str, object]:

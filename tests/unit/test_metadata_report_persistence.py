@@ -420,6 +420,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("metadata_reports",),
             ("proposal_sets",),
             ("provider_recovery_outbox",),
+            ("review_case_field_facts",),
             ("review_case_transitions",),
             ("review_cases",),
             ("review_login_failures",),
@@ -430,6 +431,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("review_preparation_work",),
             ("review_sessions",),
             ("shadow_decision_outcomes",),
+            ("shadow_outcome_field_facts",),
         ]
         assert len(rows) == 2
         assert schema_version == ("metadata-report-v26",)

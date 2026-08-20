@@ -41,8 +41,10 @@ _HOT_STATEMENTS: dict[str, str] = {
     "attention_field_count": (
         "SELECT count(*) "
         + _CURRENT_REVIEW_FROM_SQL
-        + ",json_each(rc.document,'$.results') result "
-        "WHERE " + _REVIEW_FIELD_ATTENTION_SQL + _REVIEW_SEARCH_SQL
+        + " JOIN review_case_field_facts result "
+        "ON result.review_case_id=rc.review_case_id WHERE "
+        + _REVIEW_FIELD_ATTENTION_SQL
+        + _REVIEW_SEARCH_SQL
     ),
     "library_work_counts": report_sql._LIBRARY_WORK_COUNTS_SQL,
     "attention_field_rows": report_sql._ATTENTION_FIELD_ROWS_SQL,

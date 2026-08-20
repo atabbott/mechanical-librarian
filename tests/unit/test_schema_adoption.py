@@ -29,7 +29,9 @@ from mechanical_librarian.adapters.persistence.schema_adoption import (
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.schema_adoption import (
-    REVIEW_READ_INDEXES_V1,
+    REVIEW_FIELD_FACTS_V1 as REVIEW_READ_INDEXES_V1,
+)
+from mechanical_librarian.application.schema_adoption import (
     SchemaAdoptionRecoveryRequired,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
@@ -43,6 +45,14 @@ _INDEXES = (
 )
 
 
+def _drop_field_facts_projection(connection: sqlite3.Connection) -> None:
+    connection.execute("DROP TRIGGER shadow_outcomes_project_field_facts")
+    connection.execute("DROP INDEX shadow_outcome_field_facts_case")
+    connection.execute("DROP TABLE shadow_outcome_field_facts")
+    connection.execute("DROP TRIGGER review_cases_project_field_facts")
+    connection.execute("DROP TABLE review_case_field_facts")
+
+
 def _predecessor(root: Path) -> Path:
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     root.chmod(0o700)
@@ -50,8 +60,7 @@ def _predecessor(root: Path) -> Path:
     repository = open_repository(database)
     repository.close()
     connection = sqlite3.connect(database)
-    for index in _INDEXES:
-        connection.execute(f"DROP INDEX {index}")
+    _drop_field_facts_projection(connection)
     connection.commit()
     connection.close()
     return database
@@ -77,8 +86,7 @@ def _predecessor_with_case(root: Path) -> tuple[Path, str, str, str]:
     case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
     repository.close()
     connection = sqlite3.connect(database)
-    for index in _INDEXES:
-        connection.execute(f"DROP INDEX {index}")
+    _drop_field_facts_projection(connection)
     connection.commit()
     connection.close()
     return database, report.report_id, proposal.proposal_set_id, str(case_id)
@@ -118,14 +126,13 @@ def _predecessor_with_decision(root: Path) -> Path:
     repository.record_human_decision(decision)
     repository.close()
     connection = sqlite3.connect(database)
-    for index in _INDEXES:
-        connection.execute(f"DROP INDEX {index}")
+    _drop_field_facts_projection(connection)
     connection.commit()
     connection.close()
     return database
 
 
-def test_exact_predecessor_adopts_indexes_without_changing_any_table(
+def test_exact_predecessor_adopts_field_facts_without_changing_canonical_tables(
     tmp_path: Path,
 ) -> None:
     database = _predecessor(tmp_path)
@@ -144,6 +151,19 @@ def test_exact_predecessor_adopts_indexes_without_changing_any_table(
     assert os.stat(backup).st_mode & 0o777 == 0o600
 
     connection = sqlite3.connect(database)
+    assert (
+        connection.execute("SELECT count(*) FROM review_case_field_facts").fetchone()
+        == connection.execute(
+            "SELECT count(*) FROM review_cases rc,json_each(rc.document,'$.results')"
+        ).fetchone()
+    )
+    assert (
+        connection.execute("SELECT count(*) FROM shadow_outcome_field_facts").fetchone()
+        == connection.execute(
+            "SELECT count(*) FROM shadow_decision_outcomes shadow,"
+            "json_each(shadow.document,'$.outcomes')"
+        ).fetchone()
+    )
     lineage_plan = connection.execute(
         "EXPLAIN QUERY PLAN " + _LATEST_PREPARATION_WORK_SQL,
         ("primary", "books", "item-1"),
@@ -220,7 +240,7 @@ def test_named_predecessor_contract_is_frozen_against_future_current_schema(
     )
     connection = sqlite3.connect(database)
     try:
-        schema._validate_review_read_index_predecessor_schema(connection)
+        schema._validate_review_field_facts_predecessor_schema(connection)
     finally:
         connection.close()
 
@@ -271,14 +291,14 @@ def test_backup_write_failure_removes_partial_file_without_mutating_source(
     assert not backup.exists()
 
 
-def test_second_index_failure_rolls_back_first_and_retains_verified_backup(
+def test_projection_index_failure_rolls_back_tables_and_retains_verified_backup(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     database = _predecessor(tmp_path)
     before = database.read_bytes()
     backup = tmp_path / "backup.sqlite3"
     monkeypatch.setattr(
-        "mechanical_librarian.adapters.persistence.schema_adoption._SHADOW_DECISION_OUTCOMES_CASE_HISTORY_INDEX_SQL",
+        "mechanical_librarian.adapters.persistence.schema_adoption._SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL",
         "CREATE INDEX invalid plan text",
     )
 
@@ -286,14 +306,14 @@ def test_second_index_failure_rolls_back_first_and_retains_verified_backup(
         adopt_schema(database, backup, REVIEW_READ_INDEXES_V1)
     assert backup.read_bytes() == before
     connection = sqlite3.connect(database)
-    indexes = {
+    objects = {
         str(row[0])
         for row in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type='index'"
+            "SELECT name FROM sqlite_master WHERE name LIKE '%field_facts%'"
         )
     }
     connection.close()
-    assert not set(_INDEXES) & indexes
+    assert not objects
 
 
 def test_installed_module_command_adopts_a_generated_predecessor(
@@ -319,7 +339,7 @@ def test_installed_module_command_adopts_a_generated_predecessor(
     )
 
     assert result.returncode == 0
-    assert result.stdout == ('{"plan":"review-read-indexes-v1","status":"adopted"}\n')
+    assert result.stdout == ('{"plan":"review-field-facts-v1","status":"adopted"}\n')
     assert result.stderr == ""
     repository = open_repository(database, create=False)
     repository.close()

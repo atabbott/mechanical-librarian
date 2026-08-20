@@ -26,31 +26,23 @@ _CURRENT_LIBRARY_FROM_SQL = (
     "AND c.library_name=ml.library_name AND c.item_id=ml.item_id "
     "LEFT JOIN review_cases rc ON rc.review_case_id=ml.review_case_id"
 )
-_REVIEW_MANUAL_BIBLIOGRAPHIC_SQL = (
-    "json_extract(result.value,'$.destination') IN ('title','subtitle','series') "
-    "AND json_array_length(json_extract(result.value,'$.reasons'))=1 "
-    "AND json_extract(result.value,'$.reasons[0]')="
-    "'no_safe_bibliographic_combination'"
-)
+_REVIEW_MANUAL_BIBLIOGRAPHIC_SQL = "result.manual_bibliographic_attention=1"
 _SHADOW_ABSTENTION_SQL = (
-    "EXISTS (SELECT 1 FROM shadow_decision_outcomes shadow,"
-    "json_each(shadow.document,'$.outcomes') outcome WHERE "
-    "shadow.review_case_id=rc.review_case_id AND "
-    "json_extract(outcome.value,'$.destination')=json_extract(result.value,'$.destination') AND "
-    "json_extract(outcome.value,'$.disposition')='abstention')"
+    "EXISTS (SELECT 1 FROM shadow_outcome_field_facts outcome WHERE "
+    "outcome.review_case_id=rc.review_case_id AND "
+    "outcome.destination=result.destination AND outcome.disposition='abstention')"
 )
 _AUTOMATIC_SAFETY_ATTENTION_SQL = (
-    "EXISTS (SELECT 1 FROM shadow_decision_outcomes shadow,"
-    " json_each(shadow.document,'$.outcomes') outcome,automatic_safety_state safety "
-    "WHERE shadow.review_case_id=rc.review_case_id "
-    "AND json_extract(outcome.value,'$.destination')=json_extract(result.value,'$.destination') "
-    "AND json_extract(outcome.value,'$.policy_destination')='automatic' AND ("
+    "EXISTS (SELECT 1 FROM shadow_outcome_field_facts outcome,automatic_safety_state safety "
+    "WHERE outcome.review_case_id=rc.review_case_id "
+    "AND outcome.destination=result.destination "
+    "AND outcome.automatic_destination=1 AND ("
     "safety.paused=1 OR safety.global_suspension IS NOT NULL OR EXISTS("
     "SELECT 1 FROM json_each(safety.category_suspensions_document) category "
-    "WHERE json_extract(category.value,'$[0]')=json_extract(outcome.value,'$.policy_category'))))"
+    "WHERE json_extract(category.value,'$[0]')=outcome.policy_category)))"
 )
 _REVIEW_FIELD_ATTENTION_SQL = (
-    "(json_extract(result.value,'$.outcome')='unresolved_choice' "
+    "(result.unresolved_choice=1 "
     "OR "
     + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
     + " OR "
@@ -59,21 +51,20 @@ _REVIEW_FIELD_ATTENTION_SQL = (
     + _SHADOW_ABSTENTION_SQL
     + ") AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
-    "AND decision.destination=json_extract(result.value,'$.destination')) "
+    "AND decision.destination=result.destination) "
     "AND NOT EXISTS (SELECT 1 FROM automatic_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
-    "AND decision.destination=json_extract(result.value,'$.destination') "
+    "AND decision.destination=result.destination "
     ") "
     "AND NOT EXISTS (SELECT 1 FROM field_effect_suspensions suspension "
     "WHERE suspension.connection_name=c.connection_name AND ("
     "(suspension.scope='connection' AND suspension.destination='') OR "
     "(suspension.scope='destination' AND suspension.destination="
-    "json_extract(result.value,'$.destination'))))"
+    "result.destination)))"
 )
 _REVIEW_ATTENTION_SQL = (
-    "EXISTS (SELECT 1 FROM json_each(rc.document,'$.results') result WHERE "
-    + _REVIEW_FIELD_ATTENTION_SQL
-    + ")"
+    "EXISTS (SELECT 1 FROM review_case_field_facts result WHERE "
+    "result.review_case_id=rc.review_case_id AND " + _REVIEW_FIELD_ATTENTION_SQL + ")"
 )
 _REVIEW_SEARCH_SQL = (
     " AND (? IS NULL OR "

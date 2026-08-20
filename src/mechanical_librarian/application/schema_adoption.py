@@ -2,8 +2,8 @@
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
 
-REVIEW_READ_INDEXES_V1 = "review-read-indexes-v1"
-SCHEMA_ADOPTION_PLANS = (REVIEW_READ_INDEXES_V1,)
+REVIEW_FIELD_FACTS_V1 = "review-field-facts-v1"
+SCHEMA_ADOPTION_PLANS = (REVIEW_FIELD_FACTS_V1,)
 
 
 class SchemaAdoptionRecoveryRequired(MetadataReportError):

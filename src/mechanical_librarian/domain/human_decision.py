@@ -8,7 +8,11 @@ import re
 from dataclasses import dataclass
 from typing import Self
 
-from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.review_case import (
+    ReviewCase,
+    ReviewCaseValueError,
+    review_proposals,
+)
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 _OUTCOMES = {"accept", "keep_current", "reject"}
@@ -163,18 +167,52 @@ class HumanDecision:
         return value
 
     def validate_for(self, case: ReviewCase) -> None:
+        self._validate_for(
+            case.review_case_id, case.target_fingerprint, list(case.proposals)
+        )
+
+    def validate_for_browse_case(
+        self, review_case_id: str, case: dict[str, object]
+    ) -> None:
+        """Validate against the bounded case envelope used by browse projections."""
+        target_fingerprint = case.get("target_fingerprint")
+        proposal_set_id = case.get("proposal_set_id")
+        proposal_document = case.get("proposal_document")
+        results = case.get("results")
+        if (
+            type(review_case_id) is not str
+            or type(target_fingerprint) is not str
+            or type(proposal_set_id) is not str
+            or type(proposal_document) is not str
+            or type(results) is not list
+            or any(type(result) is not dict for result in results)
+        ):
+            raise HumanDecisionError("stale")
+        try:
+            proposals = review_proposals(proposal_set_id, proposal_document, results)
+        except ReviewCaseValueError as error:
+            raise HumanDecisionError("stale") from error
+        self._validate_for(review_case_id, target_fingerprint, proposals)
+
+    def _validate_for(
+        self,
+        review_case_id: str,
+        target_fingerprint: str,
+        proposals: list[object] | tuple[dict[str, object], ...],
+    ) -> None:
         proposal = next(
             (
                 value
-                for value in case.proposals
+                for value in proposals
+                if type(value) is dict
                 if value["destination"] == self.destination
                 and value["proposal_id"] == self.proposal_id
             ),
             None,
         )
         if (
-            self.review_case_id != case.review_case_id
-            or self.target_fingerprint != case.target_fingerprint
+            self.review_case_id != review_case_id
+            or self.target_fingerprint != target_fingerprint
             or proposal is None
         ):
             raise HumanDecisionError("stale")

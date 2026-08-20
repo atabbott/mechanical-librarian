@@ -58,7 +58,6 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _validate_report_row,
-    _validate_review_browse_row,
 )
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -74,6 +73,11 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
     ProposalValueError,
     evaluate_report,
+)
+from mechanical_librarian.domain.review_browse import (
+    ReviewBrowseValueError,
+    browse_case_and_report,
+    browse_report,
 )
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionIncompatibleError,
@@ -482,7 +486,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     "'failure_root',failure_root,'item',item_id,'lane',stage,"
                     "'library',library_name,'recovery_attempt',recovery_attempt,"
                     "'schema_version','review-terminal-work-v1','status',failure_code,"
-                    "'work_id',work_id),connection_name,library_name,item_id,NULL,"
+                    "'work_id',work_id),NULL,connection_name,library_name,item_id,NULL,"
                     "1,'preparation unavailable','' FROM review_preparation_work "
                     "WHERE state='failed' AND failure_code IS NOT NULL AND NOT EXISTS ("
                     "SELECT 1 FROM current_review_packages p WHERE "
@@ -497,10 +501,13 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 parameters.extend((query, pattern, pattern, pattern, pattern))
             parameters.extend((limit, offset))
             rows = self._connection.execute(
-                "SELECT case_document,report_document,connection_name,library_name,"
-                "item_id,outcome FROM (SELECT rc.document AS case_document,"
-                "mr.document AS report_document,ml.connection_name AS connection_name,"
-                "ml.library_name AS library_name,ml.item_id AS item_id,c.outcome AS outcome,"
+                "SELECT case_document,report_document,proposal_set_id,connection_name,"
+                "library_name,item_id,outcome FROM (SELECT rc.document AS case_document,"
+                "mr.document AS report_document,CASE WHEN "
+                "rc.proposal_set_id=ml.proposal_set_id AND rc.report_id=ml.report_id "
+                "THEN rc.proposal_set_id ELSE NULL END AS proposal_set_id,"
+                "ml.connection_name AS connection_name,ml.library_name AS library_name,"
+                "ml.item_id AS item_id,c.outcome AS outcome,"
                 "CASE WHEN "
                 + _REVIEW_ATTENTION_SQL
                 + " THEN 0 ELSE 1 END AS attention_order,"
@@ -518,13 +525,13 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             values: list[tuple[str | None, str]] = []
             for row in rows:
                 if (
-                    len(row) != 6
+                    len(row) != 7
                     or type(row[1]) is not str
-                    or any(type(value) is not str for value in row[2:5])
-                    or (row[5] is not None and type(row[5]) is not str)
+                    or any(type(value) is not str for value in row[3:6])
+                    or (row[6] is not None and type(row[6]) is not str)
                 ):
                     raise MetadataReportError("review browse row is invalid")
-                if row[0] is None and row[5] is None:
+                if row[0] is None and row[6] is None:
                     terminal = json.loads(row[1])
                     if (
                         type(terminal) is dict
@@ -532,40 +539,36 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     ):
                         values.append((None, _canonical_json(terminal)))
                         continue
-                lineage = (row[2], row[3], row[4])
-                report = MetadataReport.from_json(row[1])
+                lineage = (row[3], row[4], row[5])
+                report = browse_report(row[1])
+                target = report["target"]
+                if type(target) is not dict:
+                    raise MetadataReportError("review browse row is invalid")
                 if (
-                    report.target.connection,
-                    report.target.library,
-                    report.target.item,
+                    target.get("connection"),
+                    target.get("library"),
+                    target.get("item"),
                 ) != lineage:
                     raise MetadataReportError("review browse row disagrees")
-                if row[5] is None:
+                if row[6] is None:
                     if row[0] is not None:
                         raise MetadataReportError("review browse row disagrees")
-                    values.append((None, report.to_json()))
+                    values.append((None, row[1]))
                     continue
                 if row[0] is None:
-                    if row[5] not in {"report_only", "no_case", "retired"}:
+                    if row[6] not in {"report_only", "no_case", "retired"}:
                         raise MetadataReportError("review browse row disagrees")
-                    values.append((None, report.to_json()))
+                    values.append((None, row[1]))
                     continue
-                case_document, report_document = _validate_review_browse_row(
-                    row[:2],
-                    self._policy_destinations_for(
-                        report,
-                        ProposalSet.from_json(
-                            ReviewCase.from_json(row[0]).proposal_document
-                        ),
-                    ),
-                )
-                values.append((case_document, report_document))
+                browse_case_and_report(row[0], row[1], row[2])
+                values.append((row[0], row[1]))
             return tuple(values)
         except (
             sqlite3.Error,
             MetadataReportError,
             ReviewCaseValueError,
             ReportValueError,
+            ReviewBrowseValueError,
             TypeError,
             ValueError,
         ) as error:
@@ -608,55 +611,58 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         try:
             query, pattern = _review_search_pattern(search)
             rows = self._connection.execute(
-                "SELECT rc.document,mr.document,"
-                "json_extract(result.value,'$.destination'),"
-                "(SELECT count(*) FROM json_each(rc.document,'$.results') result "
-                "WHERE " + _REVIEW_FIELD_ATTENTION_SQL + "),"
-                "(SELECT json_extract(outcome.value,'$.disposition') FROM shadow_decision_outcomes shadow, "
-                "json_each(shadow.document,'$.outcomes') outcome WHERE shadow.review_case_id=rc.review_case_id "
-                "AND json_extract(outcome.value,'$.destination')=json_extract(result.value,'$.destination') LIMIT 1),"
+                "SELECT rc.document,mr.document,CASE WHEN "
+                "rc.proposal_set_id=c.proposal_set_id AND rc.report_id=c.report_id "
+                "THEN rc.proposal_set_id ELSE NULL END,"
+                "result.destination,"
+                "(SELECT count(*) FROM review_case_field_facts result "
+                "WHERE result.review_case_id=rc.review_case_id AND "
+                + _REVIEW_FIELD_ATTENTION_SQL
+                + "),"
+                "(SELECT outcome.disposition FROM shadow_decision_outcomes shadow "
+                "JOIN shadow_outcome_field_facts outcome "
+                "ON outcome.outcome_set_id=shadow.outcome_set_id "
+                "WHERE outcome.review_case_id=rc.review_case_id "
+                "AND outcome.destination=result.destination "
+                "ORDER BY shadow.evaluated_at DESC,shadow.outcome_set_id DESC LIMIT 1),"
                 "(CASE WHEN "
                 + _AUTOMATIC_SAFETY_ATTENTION_SQL
                 + " THEN 'automatic_safety_suspended' ELSE NULL END) "
                 + _CURRENT_REVIEW_FROM_SQL
-                + ",json_each(rc.document,'$.results') result "
-                "WHERE "
+                + " JOIN review_case_field_facts result "
+                "ON result.review_case_id=rc.review_case_id WHERE "
                 + _REVIEW_FIELD_ATTENTION_SQL
                 + _REVIEW_SEARCH_SQL
                 + " ORDER BY "
                 "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')),"
                 "c.library_name,c.item_id,"
-                "json_extract(result.value,'$.destination'),rc.review_case_id "
+                "result.destination,rc.review_case_id "
                 "LIMIT ? OFFSET ?",
                 (query, pattern, pattern, pattern, pattern, pattern, limit, offset),
             ).fetchall()
             values = []
             for row in rows:
-                case_document, report_document = _validate_review_browse_row(
-                    row[:2],
-                    self._policy_destinations_for(
-                        MetadataReport.from_json(row[1]),
-                        ProposalSet.from_json(
-                            ReviewCase.from_json(row[0]).proposal_document
-                        ),
-                    ),
-                )
+                if type(row[0]) is not str or type(row[1]) is not str:
+                    raise MetadataReportError("review attention field is invalid")
+                browse_case_and_report(row[0], row[1], row[2])
+                case_document, report_document = row[0], row[1]
                 if (
                     type(row[2]) is not str
-                    or type(row[3]) is not int
-                    or row[3] < 1
-                    or (row[4] is not None and type(row[4]) is not str)
+                    or type(row[3]) is not str
+                    or type(row[4]) is not int
+                    or row[4] < 1
                     or (row[5] is not None and type(row[5]) is not str)
+                    or (row[6] is not None and type(row[6]) is not str)
                 ):
                     raise MetadataReportError("review attention field is invalid")
                 values.append(
                     (
                         case_document,
                         report_document,
-                        row[2],
                         row[3],
                         row[4],
-                        cast("ReviewFieldCause | None", row[5]),
+                        row[5],
+                        cast("ReviewFieldCause | None", row[6]),
                     )
                 )
             return tuple(values)
@@ -665,6 +671,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             MetadataReportError,
             ReviewCaseValueError,
             ReportValueError,
+            ReviewBrowseValueError,
             TypeError,
             ValueError,
         ) as error:
@@ -676,8 +683,10 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             row = self._connection.execute(
                 "SELECT count(*) "
                 + _CURRENT_REVIEW_FROM_SQL
-                + ",json_each(rc.document,'$.results') result "
-                "WHERE " + _REVIEW_FIELD_ATTENTION_SQL + _REVIEW_SEARCH_SQL,
+                + " JOIN review_case_field_facts result "
+                "ON result.review_case_id=rc.review_case_id WHERE "
+                + _REVIEW_FIELD_ATTENTION_SQL
+                + _REVIEW_SEARCH_SQL,
                 (query, pattern, pattern, pattern, pattern, pattern),
             ).fetchone()
             if row is None or len(row) != 1 or type(row[0]) is not int or row[0] < 0:
