@@ -2020,7 +2020,7 @@ def run_review_server(
         review.tls_certificate_file, review.tls_private_key_file
     ) as tls:
         private_root = _private_root(database_path)
-        repository = open_repository(database_path, create=False, cross_thread=True)
+        repository = open_repository(database_path, create=True, cross_thread=True)
         try:
             from mechanical_librarian.adapters.operational_evidence import (
                 LocalTimingStore,

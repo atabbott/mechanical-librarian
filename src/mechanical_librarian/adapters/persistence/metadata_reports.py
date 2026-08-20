@@ -2014,6 +2014,7 @@ def open_repository(
     created_identity: tuple[int, int] | None = None
     connection: sqlite3.Connection | None = None
     binding: _LinuxDatabaseBinding | None = None
+    schema_validated = False
     try:
         nofollow = getattr(os, "O_NOFOLLOW", 0)
         if not nofollow:
@@ -2033,12 +2034,16 @@ def open_repository(
             if sys.platform.startswith("linux"):
                 binding = _LinuxDatabaseBinding.create(path, descriptor, authority)
                 descriptor = -1
-                _validate_existing_read_only(binding.alias_path, binding.descriptor)
+                schema_validated = binding.borrows_schema_validation()
+                if not schema_validated:
+                    _validate_existing_read_only(binding.alias_path, binding.descriptor)
+                    schema_validated = True
                 binding.require_current()
             else:
                 _reject_database_sidecars(path)
                 _validate_existing_read_only(path, descriptor)
                 _reject_database_sidecars(path)
+                schema_validated = True
         elif expected_identity is not None:
             raise MetadataReportError("database authority changed")
         elif create:
@@ -2075,7 +2080,10 @@ def open_repository(
         connection.execute("PRAGMA busy_timeout=5000")
         if created:
             _create_schema(connection)
-        _validate_schema(connection)
+        if not schema_validated:
+            _validate_schema(connection)
+        if binding is not None:
+            binding.mark_schema_validated()
         if binding is None:
             os.close(descriptor)
             descriptor = -1
