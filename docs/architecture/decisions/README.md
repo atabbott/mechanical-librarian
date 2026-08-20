@@ -70,6 +70,7 @@ context and consequences rather than reproducing code.
 | [0054](0054-scoped-provider-successors.md) | accepted | Bind retry-eligible provider lanes to scoped successor evidence |
 | [0055](0055-connection-scoped-preparation-recovery.md) | accepted | Pause review preparation by target connection |
 | [0056](0056-edition-overflow-work-witness.md) | accepted | Retain a work-only witness for bounded edition overflow |
+| [0057](0057-sustain-explicit-sqlite-aggregate-topology.md) | accepted | Sustain the explicit SQLite aggregate topology |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.
