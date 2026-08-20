@@ -10,7 +10,10 @@
 
 The project is pre-release and has no supported historical installation base.
 Schema evolution machinery would add authority and recovery promises without a
-named present user need.
+named present user need. The retained 2,022-work first-boot experiment later
+created one such need: repeating hours of provider observations merely to add
+reconstructible read indexes would discard valuable canonical development
+state without improving its meaning.
 
 ## Decision
 
@@ -21,16 +24,32 @@ silently deleted; they need not be read, migrated, imported, or converted. A
 clean rebuild may be required. Current-schema restart, replay, and crash safety
 remain mandatory.
 
+A persisted-schema change may instead deliver one closed, code-defined adoption
+from its exact immediate predecessor when every mutation is confined to
+reconstructible derived objects. The plan belongs to that schema change's issue
+and pull request, names the complete predecessor and result contracts, creates
+and verifies a private backup, validates canonical state before and after, and
+runs only through explicit offline owner action. Ordinary startup does not run
+it. Runtime SQL, plugins, configuration-supplied operations, canonical row
+conversion, general migration machinery, repair, import, and downgrade remain
+out of scope.
+
+The #800 index change predates this revision and is the sole retrospective
+exception: #805 delivers and qualifies its adoption separately because #800 was
+already merged when the retained experiment established the preservation need.
+Later schema changes do not inherit that exception.
+
 Compatibility requires a named present user need. Post-release migration and
 restore work is deferred to #57; this decision grants no general migration,
 repair, retention, downgrade, or destructive authority.
 
 ## Consequences
 
-- Pre-release schema changes update the exact-current contract and prove clean
-  creation plus current-schema safety, not an upgrade matrix.
+- Pre-release schema changes update the exact-current contract, prove clean
+  creation plus current-schema safety, and declare either `clean rebuild
+  required` or one same-change exact-predecessor derived-object adoption.
 - Operators retain older state offline and create a clean current state when a
-  schema changes.
+  schema changes unless that exact predecessor has a delivered adoption plan.
 - The first production release must make a separate, explicit compatibility
   decision before users can rely on upgrade support.
 

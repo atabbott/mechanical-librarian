@@ -621,11 +621,9 @@ def _validate_existing_read_only(path: Path, descriptor: int) -> None:
             connection.close()
 
 
-def _validate_schema(connection: sqlite3.Connection) -> None:
-    objects = connection.execute(
-        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
-    ).fetchall()
-    expected_objects = sorted(
+def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
+    """Return the one exact-current SQLite object contract."""
+    return sorted(
         (
             ("index", "sqlite_autoindex_current_metadata_reports_1", None),
             ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
@@ -872,11 +870,24 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
             ),
         )
     )
-    if (
-        objects != expected_objects
-        or connection.execute("PRAGMA foreign_key_check").fetchall()
-        or connection.execute("PRAGMA integrity_check").fetchone() != ("ok",)
-    ):
+
+
+def _validate_schema_against(
+    connection: sqlite3.Connection,
+    expected_objects: list[tuple[str, str, str | None]],
+) -> None:
+    objects = connection.execute(
+        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+    ).fetchall()
+    if objects != expected_objects:
+        raise MetadataReportError("database is unavailable or incompatible")
+    _validate_schema_contents(connection)
+
+
+def _validate_schema_contents(connection: sqlite3.Connection) -> None:
+    if connection.execute("PRAGMA foreign_key_check").fetchall() or connection.execute(
+        "PRAGMA integrity_check"
+    ).fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
     _validate_metadata_policy_documents(connection)
     _validate_field_effect_state(connection)
@@ -886,6 +897,29 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         "FROM provider_recovery_outbox"
     ):
         _validate_provider_recovery_outbox_row(row)
+
+
+def _validate_schema(connection: sqlite3.Connection) -> None:
+    _validate_schema_against(connection, _expected_schema_objects())
+
+
+_REVIEW_READ_INDEX_PREDECESSOR_OBJECTS_SHA256 = (
+    "a546e2e8e5f9dc510acd3ac4b169f3b4c93b0df8c4b14758f4b6252e8ef1d963"
+)
+
+
+def _validate_review_read_index_predecessor_schema(
+    connection: sqlite3.Connection,
+) -> None:
+    objects = connection.execute(
+        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+    ).fetchall()
+    digest = hashlib.sha256(
+        json.dumps(objects, ensure_ascii=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if digest != _REVIEW_READ_INDEX_PREDECESSOR_OBJECTS_SHA256:
+        raise MetadataReportError("database is unavailable or incompatible")
+    _validate_schema_contents(connection)
 
 
 def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:

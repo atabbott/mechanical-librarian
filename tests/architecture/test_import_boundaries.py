@@ -165,9 +165,18 @@ def _registered_commands(path: Path) -> list[str]:
     ]
 
 
-def test_runtime_has_one_cli_command_and_no_write_authority() -> None:
+def test_runtime_has_only_the_closed_installed_command_set() -> None:
     commands = _registered_commands(PACKAGE_ROOT / "interfaces" / "cli" / "__init__.py")
-    assert commands.count("review-serve") == 1
+    assert sorted(commands) == sorted(
+        (
+            "review-serve",
+            "policy-preview",
+            "cover-review",
+            "review-activity",
+            "provider-recovery",
+            "schema-adopt",
+        )
+    )
     for unsupported in (
         "metadata-report",
         "proposal-set",

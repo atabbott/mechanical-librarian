@@ -212,9 +212,12 @@ Every change must include the smallest appropriate combination of:
 
 - tests proving behavior and failure handling;
 - documentation updates;
-- for persisted-schema changes before the first production release, enforce the
-  clean-schema policy in ADR-0013: accept only absent or exact-current state;
-  do not add migrations, imports, or conversions;
+- for persisted-schema changes before the first production release, enforce
+  ADR-0013: declare `clean rebuild required` or deliver one code-defined
+  exact-predecessor adoption plan in the same issue and pull request. Ordinary
+  startup accepts only absent or exact-current state; an adoption may be an
+  explicit offline operation over reconstructible derived objects only, never
+  a generic migration, import, repair, downgrade, or canonical-data conversion;
 - an ADR when a durable architectural decision changes;
 - changelog entry for user-visible behavior, stating the outcome in at most six
   lines with its issue reference and leaving the arithmetic, proof narrative,
