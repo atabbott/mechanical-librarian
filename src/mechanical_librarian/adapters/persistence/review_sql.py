@@ -87,15 +87,37 @@ _REVIEW_SEARCH_SQL = (
     "OR ml_casefold(COALESCE(json_extract(mr.document,'$.file.format'),'')) "
     "LIKE ? ESCAPE '\\')"
 )
+_CURRENT_REVIEW_CASE_COUNT_SQL = (
+    "SELECT count(*),COALESCE(sum(CASE WHEN "
+    + _REVIEW_ATTENTION_SQL
+    + " THEN 1 ELSE 0 END),0) "
+    + _CURRENT_LIBRARY_FROM_SQL
+    + " WHERE COALESCE(c.outcome,'')<>'tombstoned'"
+    + _REVIEW_SEARCH_SQL
+)
+_LATEST_PREPARATION_WORK_SQL = (
+    "SELECT work_id,stage,attempt,recovery_attempt,state,failure_code,failure_root "
+    "FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=? "
+    "ORDER BY updated_at DESC,work_id DESC LIMIT 1"
+)
+_SHADOW_OUTCOME_HISTORY_SQL = (
+    "SELECT outcome_set_id,review_case_id,report_id,proposal_set_id,"
+    "resolved_policy_id,source_decision_set_id,evaluated_at,document "
+    "FROM shadow_decision_outcomes "
+    "WHERE review_case_id=? ORDER BY evaluated_at DESC,outcome_set_id DESC LIMIT ?"
+)
 
 
 __all__ = [
     "_AUTOMATIC_SAFETY_ATTENTION_SQL",
     "_CURRENT_LIBRARY_FROM_SQL",
+    "_CURRENT_REVIEW_CASE_COUNT_SQL",
     "_CURRENT_REVIEW_FROM_SQL",
+    "_LATEST_PREPARATION_WORK_SQL",
     "_REVIEW_ATTENTION_SQL",
     "_REVIEW_FIELD_ATTENTION_SQL",
     "_REVIEW_MANUAL_BIBLIOGRAPHIC_SQL",
     "_REVIEW_SEARCH_SQL",
     "_SHADOW_ABSTENTION_SQL",
+    "_SHADOW_OUTCOME_HISTORY_SQL",
 ]

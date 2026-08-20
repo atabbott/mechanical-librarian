@@ -50,6 +50,7 @@ from mechanical_librarian.adapters.persistence.proposal_sets import (
 from mechanical_librarian.adapters.persistence.review_sql import (
     _AUTOMATIC_SAFETY_ATTENTION_SQL,
     _CURRENT_LIBRARY_FROM_SQL,
+    _CURRENT_REVIEW_CASE_COUNT_SQL,
     _CURRENT_REVIEW_FROM_SQL,
     _REVIEW_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
@@ -574,12 +575,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         try:
             query, pattern = _review_search_pattern(search)
             row = self._connection.execute(
-                "SELECT count(*),COALESCE(sum(CASE WHEN "
-                + _REVIEW_ATTENTION_SQL
-                + " THEN 1 ELSE 0 END),0) "
-                + _CURRENT_LIBRARY_FROM_SQL
-                + " WHERE COALESCE(c.outcome,'')<>'tombstoned'"
-                + _REVIEW_SEARCH_SQL,
+                _CURRENT_REVIEW_CASE_COUNT_SQL,
                 (query, pattern, pattern, pattern, pattern, pattern),
             ).fetchone()
             if (

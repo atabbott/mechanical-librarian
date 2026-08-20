@@ -34,6 +34,9 @@ from typing import Iterator, cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _LATEST_PREPARATION_WORK_SQL,
+)
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -250,9 +253,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     continue
                 report = MetadataReport.from_json(report_document)
                 terminal = self._connection.execute(
-                    "SELECT work_id,stage,attempt,recovery_attempt,state,failure_code,failure_root "
-                    "FROM review_preparation_work WHERE connection_name=? AND library_name=? AND item_id=? "
-                    "ORDER BY updated_at DESC,work_id DESC LIMIT 1",
+                    _LATEST_PREPARATION_WORK_SQL,
                     (
                         report.target.connection,
                         report.target.library,

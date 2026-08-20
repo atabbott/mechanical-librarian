@@ -264,6 +264,10 @@ _REVIEW_WORK_RECENT_CLAIM_INDEX_SQL = (
     "CREATE INDEX review_preparation_work_recent_claim "
     "ON review_preparation_work(state,library_name,updated_at DESC,ordinal)"
 )
+_REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL = (
+    "CREATE INDEX review_preparation_work_lineage_history "
+    "ON review_preparation_work(connection_name,library_name,item_id,updated_at DESC,work_id DESC)"
+)
 _REVIEW_SESSIONS_SQL = (
     "CREATE TABLE review_sessions ("
     "session_digest TEXT PRIMARY KEY NOT NULL CHECK(length(session_digest)=64 AND session_digest NOT GLOB '*[^0-9a-f]*'), "
@@ -447,6 +451,10 @@ _SHADOW_DECISION_OUTCOMES_SQL = (
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 1048576 "
     "AND json_extract(document,'$.schema_version')='shadow-outcome-set-v3'))"
 )
+_SHADOW_DECISION_OUTCOMES_CASE_HISTORY_INDEX_SQL = (
+    "CREATE INDEX shadow_decision_outcomes_case_history "
+    "ON shadow_decision_outcomes(review_case_id,evaluated_at DESC,outcome_set_id DESC)"
+)
 _NO_UPDATE_SQL = (
     "CREATE TRIGGER metadata_reports_no_update BEFORE UPDATE ON metadata_reports "
     "BEGIN SELECT RAISE(ABORT, 'metadata reports are append-only'); END"
@@ -540,6 +548,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_REVIEW_ABSENCES_SQL)
     connection.execute(_REVIEW_WORK_AGED_CLAIM_INDEX_SQL)
     connection.execute(_REVIEW_WORK_RECENT_CLAIM_INDEX_SQL)
+    connection.execute(_REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL)
     connection.execute(_REVIEW_SESSIONS_SQL)
     connection.execute(_REVIEW_LOGIN_FAILURES_SQL)
     connection.execute(_HUMAN_DECISIONS_SQL)
@@ -566,6 +575,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_FIELD_EFFECT_ACTIONS_SQL)
     connection.execute(_FIELD_EFFECT_CLEANUPS_SQL)
     connection.execute(_SHADOW_DECISION_OUTCOMES_SQL)
+    connection.execute(_SHADOW_DECISION_OUTCOMES_CASE_HISTORY_INDEX_SQL)
     connection.execute(_NO_UPDATE_SQL)
     connection.execute(_COVER_NO_UPDATE_SQL)
     connection.execute(_COVER_NO_DELETE_SQL)
@@ -687,9 +697,19 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
                 "review_preparation_work_recent_claim",
                 _REVIEW_WORK_RECENT_CLAIM_INDEX_SQL,
             ),
+            (
+                "index",
+                "review_preparation_work_lineage_history",
+                _REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL,
+            ),
             ("index", "sqlite_autoindex_review_login_failures_1", None),
             ("index", "sqlite_autoindex_review_sessions_1", None),
             ("index", "sqlite_autoindex_shadow_decision_outcomes_1", None),
+            (
+                "index",
+                "shadow_decision_outcomes_case_history",
+                _SHADOW_DECISION_OUTCOMES_CASE_HISTORY_INDEX_SQL,
+            ),
             ("table", "current_metadata_reports", _CURRENT_SQL),
             ("table", "current_metadata_report_lineages", _CURRENT_LINEAGE_SQL),
             ("table", "current_review_case_lineages", _REVIEW_POINTERS_SQL),
