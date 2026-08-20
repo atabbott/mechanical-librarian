@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Preserve expensive pre-release review state when a schema change adds only
+  reconstructible derived objects. An explicit offline command now verifies a
+  private backup and adopts #800's two indexes from its exact predecessor;
+  ordinary startup and every unrecognized schema still fail closed. (#805)
+
 - Keep Library reads bounded as review history grows. The exact schema now
   indexes each work's latest preparation row and each case's shadow outcome
   history; a 2,000-work count no longer repeatedly scans either history table,

@@ -32,7 +32,9 @@ split are recorded in [ADR-0010](../architecture/decisions/0010-0-4-neutral-evid
 
 Until the first production release, ADR-0013 requires clean schemas: each
 database, report, artifact, configuration, and internal-document schema accepts
-only absent or exact-current state. Do not present a pre-release checkpoint as
+only absent or exact-current state during ordinary startup. A schema change may
+also deliver one explicit offline exact-predecessor adoption for reconstructible
+derived objects in the same change; that bounded preservation operation is not
 an upgrade migration. Migration notes and the migration procedure below apply
 only after an explicit post-release compatibility decision.
 

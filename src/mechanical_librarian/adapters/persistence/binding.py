@@ -190,6 +190,8 @@ class _LinuxDatabaseBinding:
         path: Path,
         descriptor: int,
         authority: object | None = None,
+        *,
+        wait_for_authority: bool = True,
     ) -> "_LinuxDatabaseBinding":
         if fcntl is None:
             raise MetadataReportError("database private binding is unavailable")
@@ -207,7 +209,10 @@ class _LinuxDatabaseBinding:
             expected = os.fstat(descriptor)
             expected_identity = (expected.st_dev, expected.st_ino)
             if authority is None:
-                fcntl.flock(parent_descriptor, fcntl.LOCK_EX)
+                operation = fcntl.LOCK_EX
+                if not wait_for_authority:
+                    operation |= fcntl.LOCK_NB
+                fcntl.flock(parent_descriptor, operation)
                 locked = True
             elif type(authority) is not cls:
                 raise MetadataReportError("database authority changed")

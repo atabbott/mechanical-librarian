@@ -40,6 +40,15 @@ deletion, repair, import, schema-migration, or backward-compatibility authority.
 An existing database must match the installed increment's exact current schema
 before any writable connection or mutation.
 
+The offline `schema-adopt` command is the sole pre-release exception to that
+last startup rule. It has one closed code-defined plan, binds an owner-only
+regular DELETE-journal database under exclusive filesystem and SQLite
+authority, rejects sidecars and every schema except the exact current or named
+immediate predecessor, and creates a verified non-overwriting private backup
+before adding two derived read indexes transactionally. It receives no
+configuration or credentials and has no network, provider, reviewer, media,
+target, decision, row-write, import, repair, or arbitrary-SQL authority.
+
 Foreground batch manifests are private immutable operator artifacts. Preview and
 read bind bounded regular no-follow descriptors under a private parent, validate
 strict UTF-8 canonical JSON before authority, and bind execution to the

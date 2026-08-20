@@ -621,11 +621,9 @@ def _validate_existing_read_only(path: Path, descriptor: int) -> None:
             connection.close()
 
 
-def _validate_schema(connection: sqlite3.Connection) -> None:
-    objects = connection.execute(
-        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
-    ).fetchall()
-    expected_objects = sorted(
+def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
+    """Return the one exact-current SQLite object contract."""
+    return sorted(
         (
             ("index", "sqlite_autoindex_current_metadata_reports_1", None),
             ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
@@ -872,6 +870,15 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
             ),
         )
     )
+
+
+def _validate_schema_against(
+    connection: sqlite3.Connection,
+    expected_objects: list[tuple[str, str, str | None]],
+) -> None:
+    objects = connection.execute(
+        "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+    ).fetchall()
     if (
         objects != expected_objects
         or connection.execute("PRAGMA foreign_key_check").fetchall()
@@ -886,6 +893,23 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
         "FROM provider_recovery_outbox"
     ):
         _validate_provider_recovery_outbox_row(row)
+
+
+def _validate_schema(connection: sqlite3.Connection) -> None:
+    _validate_schema_against(connection, _expected_schema_objects())
+
+
+def _validate_review_read_index_predecessor_schema(
+    connection: sqlite3.Connection,
+) -> None:
+    omitted = {
+        "review_preparation_work_lineage_history",
+        "shadow_decision_outcomes_case_history",
+    }
+    predecessor = [
+        value for value in _expected_schema_objects() if value[1] not in omitted
+    ]
+    _validate_schema_against(connection, predecessor)
 
 
 def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:

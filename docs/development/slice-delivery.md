@@ -329,9 +329,10 @@ A new-functionality slice is done only when:
   tested in proportion to risk;
 - architecture, security, privacy, compatibility, and resource bounds remain
   intact;
-- persisted changes before the first production release accept only absent or
-  exact-current state under ADR-0013; post-release changes include migration
-  and recovery evidence;
+- persisted changes before the first production release declare a clean rebuild
+  or deliver their exact-predecessor derived-object adoption under ADR-0013;
+  ordinary startup remains absent-or-exact-current, and post-release changes
+  include migration and recovery evidence;
 - operator and contributor documentation describes the delivered behavior;
 - changelog and generated contracts are current;
 - the branch contains no unrelated or deferred work disguised as TODOs;

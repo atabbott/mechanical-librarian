@@ -12,6 +12,10 @@ from pathlib import Path
 from typing import NoReturn, TextIO
 
 from mechanical_librarian.application.configuration import ConfigurationError
+from mechanical_librarian.application.schema_adoption import (
+    SCHEMA_ADOPTION_PLANS,
+    SchemaAdoptionRecoveryRequired,
+)
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 
 ReviewServeRunner = Callable[[Path, Path, Path, Path, str, int], None]
@@ -21,6 +25,7 @@ CoverReviewRunner = Callable[
 ]
 ReviewActivityRunner = Callable[[Path, Path], dict[str, object]]
 ProviderRecoveryRunner = Callable[[Path, Path, Path, Path], None]
+SchemaAdoptionRunner = Callable[[Path, Path, str], dict[str, str]]
 _MAX_PROFILE_BYTES = 16_384
 
 
@@ -109,6 +114,12 @@ def _parser() -> _Parser:
     recovery.add_argument("--database", required=True, metavar="PATH", type=Path)
     recovery.add_argument("--catalogue", required=True, metavar="PATH", type=Path)
     recovery.add_argument("--artifacts", required=True, metavar="PATH", type=Path)
+    adoption = commands.add_parser(
+        "schema-adopt", help="adopt one exact predecessor schema while offline"
+    )
+    adoption.add_argument("plan", choices=SCHEMA_ADOPTION_PLANS, metavar="PLAN")
+    adoption.add_argument("--database", required=True, metavar="PATH", type=Path)
+    adoption.add_argument("--backup", required=True, metavar="PATH", type=Path)
     return parser
 
 
@@ -120,6 +131,7 @@ def main(
     cover_review_runner: CoverReviewRunner | None = None,
     review_activity_runner: ReviewActivityRunner | None = None,
     provider_recovery_runner: ProviderRecoveryRunner | None = None,
+    schema_adoption_runner: SchemaAdoptionRunner | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -132,6 +144,17 @@ def main(
         errors.write("Review server failed: invalid invocation.\n")
         return 2
     try:
+        if arguments.command == "schema-adopt":
+            if schema_adoption_runner is None:
+                raise RuntimeError("runtime composition unavailable")
+            adoption_result = schema_adoption_runner(
+                arguments.database, arguments.backup, arguments.plan
+            )
+            output.write(
+                json.dumps(adoption_result, sort_keys=True, separators=(",", ":"))
+                + "\n"
+            )
+            return 0
         if arguments.command == "review-activity":
             if review_activity_runner is None:
                 raise RuntimeError("runtime composition unavailable")
@@ -218,11 +241,18 @@ def main(
             arguments.host,
             arguments.port,
         )
+    except SchemaAdoptionRecoveryRequired:
+        errors.write("Schema adoption requires backup recovery.\n")
+        return 1
     except ConfigurationError:
         errors.write("Review server failed: configuration unavailable.\n")
         return 3
     except Exception:
-        errors.write("Review server failed safely.\n")
+        errors.write(
+            "Schema adoption failed safely.\n"
+            if arguments.command == "schema-adopt"
+            else "Review server failed safely.\n"
+        )
         return 1
     return 0
 

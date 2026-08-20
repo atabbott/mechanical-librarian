@@ -1,12 +1,36 @@
 # Upgrades and compatibility
 
-Until the first production release, every database, report, artifact,
-configuration, and internal-document schema recognizes only absent state or its
-exact current state. Earlier state is rejected fail-closed and never silently
-deleted. No migration, import, conversion, preservation, compatibility parser,
-downgrade, or repair is supported. Exact-ID and current-scope replay apply only
-to reports stored in the exact current schema; restart, replay, and crash safety
-remain mandatory.
+Until the first production release, ordinary startup recognizes only absent
+state or exact current state. Earlier state is rejected fail-closed and never
+silently changed. Each schema-changing issue and pull request declares a clean
+rebuild or delivers one explicit exact-predecessor adoption limited to
+reconstructible derived objects. This is not a general migration, import,
+conversion, compatibility, downgrade, or repair facility.
+
+## Offline derived-schema adoption
+
+Stop the container before adoption and retain the original volume as rollback.
+Run a delivered plan only against a complete clone, with the database and new
+backup in the same owner-only directory. For #800's exact predecessor:
+
+```console
+mechanical-librarian schema-adopt review-read-indexes-v1 \
+  --database /data/application.sqlite3 \
+  --backup /data/application.before-review-read-indexes-v1.sqlite3
+```
+
+The command accepts no SQL or configuration. It either verifies an already
+current database without creating the requested backup, or validates the exact
+predecessor, creates and verifies the non-overwriting `0600` backup, and adds
+only the two named read indexes in one transaction. Any other schema, sidecar,
+integrity failure, live database authority, path replacement, or backup
+collision fails closed. Keep both clone and backup until the new build has
+started and its measured behavior is accepted.
+
+`Schema adoption requires backup recovery.` means commit was attempted and the
+source must not be trusted as predecessor or current; stop and restore the
+named backup to a fresh clone before retrying. The ordinary safe-failure message
+means no commit was attempted.
 
 To adopt an increment, retain an older development database and its matching
 artifact directory offline together as one historical state set. Supply an
@@ -18,8 +42,8 @@ crash recovery removes unreferenced 64-hex artifact files, so that reuse is
 destructive and unsupported. Pointing a current binary at an older or
 intermediate database fails closed and does not rewrite it.
 
-Retain older development state only as an offline historical artifact, then use
-an absent path and rerun the supported current operation. Post-release migration
-and restore policy requires a named present user need and a separate decision;
-it grants no pre-release repair, import, downgrade, retention, pruning, purge,
-or general migration authority.
+Retain older development state only as an offline historical artifact unless
+its exact schema change delivered such a plan; otherwise use an absent path and
+rerun the supported current operation. Post-release migration and restore policy
+requires a separate decision and grants no pre-release repair, import,
+downgrade, retention, pruning, purge, or general migration authority.

@@ -44,9 +44,9 @@ grant current behavior.
 
 - Behavior changes update documentation in the same pull request.
 - Persisted or API contract changes update reference docs. Before the first
-  production release, use ADR-0013 clean-schema handling; migration and
-  compatibility notes require a named compatibility decision and post-release
-  obligation.
+  production release, use ADR-0013 clean-schema handling and declare a clean
+  rebuild or same-change exact-predecessor derived-object adoption; migration
+  and compatibility notes require a named post-release obligation.
 - Architectural changes add or supersede an ADR.
 - Security boundary changes update the threat model.
 - Deployment changes update installation, upgrade, backup, and rollback docs.
