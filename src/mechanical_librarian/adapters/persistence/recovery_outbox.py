@@ -58,17 +58,32 @@ class SQLiteRecoveryOutboxRepository(ConnectionScoped):
         self,
         *,
         limit: int = 100,
+        after: tuple[int, str] | None = None,
     ) -> tuple[tuple[object, ...], ...]:
         """Return bounded exact package cutovers awaiting recovery enqueue."""
-        if type(limit) is not int or not 1 <= limit <= 100:
+        if (
+            type(limit) is not int
+            or not 1 <= limit <= 100
+            or after is not None
+            and (
+                type(after) is not tuple
+                or len(after) != 2
+                or type(after[0]) is not int
+                or after[0] < 0
+                or type(after[1]) is not str
+                or not after[1]
+            )
+        ):
             raise MetadataReportError("provider recovery outbox query is invalid")
         try:
+            cursor = (-1, "") if after is None else after
             rows = self._connection.execute(
                 "SELECT outbox_id,connection_name,library_name,item_id,"
                 "proposal_set_id,report_id,review_case_id,checkpoint,outcome,created_at "
                 "FROM provider_recovery_outbox WHERE delivered_at IS NULL "
+                "AND (created_at>? OR (created_at=? AND outbox_id>?)) "
                 "ORDER BY created_at,outbox_id LIMIT ?",
-                (limit,),
+                (cursor[0], cursor[0], cursor[1], limit),
             ).fetchall()
             for row in rows:
                 _validate_provider_recovery_outbox_row(row)

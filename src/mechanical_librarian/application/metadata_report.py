@@ -716,7 +716,7 @@ class ReportRepository(Protocol):
         self, connection: str, library: str, item: str
     ) -> str | None: ...
     def pending_provider_recovery_outbox(
-        self, *, limit: int = 100
+        self, *, limit: int = 100, after: tuple[int, str] | None = None
     ) -> tuple[tuple[object, ...], ...]: ...
     def complete_provider_recovery_outbox(
         self, outbox_id: str, *, delivered_at: int

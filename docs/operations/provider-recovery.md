@@ -20,7 +20,9 @@ it rejects persisted generations newer than configuration before any outbox
 delivery or database mutation. It then drains committed package cutovers from
 the durable outbox. Each delivery atomically enrolls its exact member and
 health scope before its job can be claimed; an existing current health record
-is preserved. A failed row stays pending for a later retry while the bounded
+is preserved. If the outbox is the first record of the scope, its fallback is
+the documented two-hour transient cooldown rather than immediate provider
+egress. A failed row stays pending for a later retry while the bounded
 drain continues to younger deliverable rows, so startup remains available and
 does not discard recovery work. Authentication and authorization wake only
 when that delivered exact job proves the new configured generation; otherwise

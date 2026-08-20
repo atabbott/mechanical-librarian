@@ -1778,9 +1778,12 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self,
         *,
         limit: int = 100,
+        after: tuple[int, str] | None = None,
     ) -> tuple[tuple[object, ...], ...]:
         """Return bounded exact package cutovers awaiting recovery enqueue."""
-        return self._recovery_outbox.pending_provider_recovery_outbox(limit=limit)
+        return self._recovery_outbox.pending_provider_recovery_outbox(
+            limit=limit, after=after
+        )
 
     def complete_provider_recovery_outbox(
         self,

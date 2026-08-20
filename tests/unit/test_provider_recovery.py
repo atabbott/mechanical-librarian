@@ -135,7 +135,7 @@ def test_enqueue_enrolls_an_unseen_member_and_health_before_its_job() -> None:
         assert [("google", "google_books", "books")] == store._connection.execute(
             "SELECT connection,adapter,scope FROM provider_recovery_members"
         ).fetchall()
-        assert [("google", "google_books", "books", 1, "waiting", 1, 0)] == (
+        assert [("google", "google_books", "books", 1, "waiting", 1, 7_200)] == (
             store._connection.execute(
                 "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at "
                 "FROM provider_recovery_health"
@@ -197,7 +197,7 @@ def test_concurrent_enqueue_enrolls_one_scope_before_either_job_is_visible() -> 
         assert [("google", "google_books", "books")] == first._connection.execute(
             "SELECT connection,adapter,scope FROM provider_recovery_members"
         ).fetchall()
-        assert [("waiting", 1, 0)] == first._connection.execute(
+        assert [("waiting", 1, 7_200)] == first._connection.execute(
             "SELECT state,attempt,next_eligible_at FROM provider_recovery_health"
         ).fetchall()
         assert [("first",), ("second",)] == first._connection.execute(
@@ -212,7 +212,7 @@ def test_drain_retains_a_failing_row_and_delivers_a_younger_row() -> None:
         def __init__(self) -> None:
             self.rows = [
                 (
-                    "bad",
+                    f"bad-{index:03d}",
                     "primary",
                     "books",
                     "one",
@@ -221,8 +221,10 @@ def test_drain_retains_a_failing_row_and_delivers_a_younger_row() -> None:
                     None,
                     None,
                     "report_only",
-                    1,
-                ),
+                    index,
+                )
+                for index in range(100)
+            ] + [
                 (
                     "good",
                     "primary",
@@ -237,9 +239,18 @@ def test_drain_retains_a_failing_row_and_delivers_a_younger_row() -> None:
                 ),
             ]
 
-        def pending_provider_recovery_outbox(self, *, limit: int):
+        def pending_provider_recovery_outbox(self, *, limit: int, after=None):
             assert limit == 100
-            return tuple(self.rows)
+            return tuple(
+                sorted(
+                    (
+                        row
+                        for row in self.rows
+                        if after is None or (row[9], row[0]) > after
+                    ),
+                    key=lambda row: (row[9], row[0]),
+                )[:limit]
+            )
 
         def close(self) -> None:
             return None
@@ -261,14 +272,17 @@ def test_drain_retains_a_failing_row_and_delivers_a_younger_row() -> None:
             str, str, str, str, str | None, str, str | None, int | None, str, int
         ],
     ) -> None:
-        if row[0] == "bad":
+        if row[0].startswith("bad"):
             raise ReviewPipelineError("recovery")
         repository.rows.remove(row)
 
     with patch.object(activation, "_deliver", side_effect=deliver):
-        activation.drain_outbox(cast(ProviderRecoveryRepository, repository))
+        result = activation.drain_outbox(cast(ProviderRecoveryRepository, repository))
 
-    assert ["bad"] == [row[0] for row in repository.rows]
+    assert ("persistence",) == result
+    assert [f"bad-{index:03d}" for index in range(100)] == [
+        row[0] for row in repository.rows
+    ]
 
 
 def test_activation_runner_claims_one_canary_then_fans_out_current_members_once() -> (

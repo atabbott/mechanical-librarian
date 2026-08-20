@@ -1061,8 +1061,8 @@ class SQLiteProviderRecoveryStore:
                     # report publication has already recorded the exact health
                     # observation, but enqueue must not depend on that order:
                     # a replayed package can arrive first.  The fallback is
-                    # deliberately inert except for making one bounded canary
-                    # eligible; a current observation always wins unchanged.
+                    # starts at F24's two-hour transient cooldown. A current
+                    # observation always wins unchanged.
                     self._connection.execute(
                         "INSERT INTO provider_recovery_members(connection,adapter,scope) VALUES(?,?,?) ON CONFLICT DO NOTHING",
                         (job.connection, job.adapter, job.scope),
@@ -1076,7 +1076,7 @@ class SQLiteProviderRecoveryStore:
                             job.generation,
                             "waiting",
                             1,
-                            0,
+                            7_200,
                         ),
                     )
                     values = (
