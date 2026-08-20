@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep the medium Library Attention drawer clear of a wrapped masthead. Its
+  fixed position now follows the shell's measured height with deliberate
+  clearance, while preserving the drawer's existing scroll and focus behavior.
+  (#813)
+
 - Keep provider-recovery cutovers from freezing preparation or crash-looping
   startup: recovery jobs now enroll their exact scope atomically, failed outbox
   rows remain retryable while later rows drain, and claimed successors return
