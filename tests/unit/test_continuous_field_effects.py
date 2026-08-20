@@ -1613,6 +1613,45 @@ def test_scheduler_retries_a_candidate_after_a_transient_processing_failure() ->
     assert planner.planned == [repository.decisions[0].decision_id]
 
 
+def test_capability_recovery_requeues_a_candidate_behind_the_retained_cursor() -> None:
+    class ConsentedRepository(_PagedRepository):
+        def current_field_effect_consent(self, *_context):
+            return object()
+
+    class RecoveringCapability:
+        category = "insufficient_permission"
+
+        def observe(self, _probe):
+            return SimpleNamespace(category=self.category, digest="a" * 64)
+
+    repository = ConsentedRepository(_decisions(1))
+    planner = _Planner()
+    capability = RecoveringCapability()
+    now = [1]
+    service = ContinuousGuardedApplication(
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): planner},
+        ),
+        {("primary", "alpha"): capability},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: now[0],
+        lambda *_: None,
+    )
+
+    assert service.schedule(1) == 0
+    assert repository.suspensions
+    capability.category = "allowed"
+    now[0] = 2
+    service._capability_readiness(("alpha",), force=True)
+
+    assert repository.suspensions == {}
+    assert service.schedule(1) == 1
+    assert planner.planned == [repository.decisions[0].decision_id]
+
+
 def test_background_cycle_bounds_permission_waiting_work_to_one_candidate() -> None:
     class ObservedRepository(_PagedRepository):
         def __init__(self) -> None:

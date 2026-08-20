@@ -7,6 +7,9 @@ from typing import cast, get_protocol_members, get_type_hints
 
 import pytest
 
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
 from mechanical_librarian.application.metadata_policy import (
     AutomaticSafetyControls,
     AutomaticSafetyRepository,
@@ -194,6 +197,52 @@ def test_a_later_shutdown_failure_is_kept_on_the_one_that_propagates(
     assert getattr(raised.value, "__notes__", []) == [
         "further shutdown failure: RuntimeError('preparation lane did not stop')"
     ]
+
+
+def test_published_preparation_work_wakes_the_guarded_scheduler(
+    repository: FakeReviewRepository,
+) -> None:
+    class Preparation:
+        def attach_updates(self, announce) -> None:
+            self.announce = announce
+
+    class FieldApplication(ContinuousGuardedApplication):
+        def __init__(self) -> None:
+            self.wakes = 0
+
+        def attach_timing(self, _timing) -> None:
+            return None
+
+        def attach_serialization(self, _serialize) -> None:
+            return None
+
+        def attach_updates(self, _announce) -> None:
+            return None
+
+        def wake(self) -> None:
+            self.wakes += 1
+
+    preparation = Preparation()
+    field_application = FieldApplication()
+    compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda value: value == "correct horse",
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        preparation=cast("ReviewPreparationSupervisor", preparation),
+        field_application=field_application,
+    )
+
+    preparation.announce("preparation", None)
+    assert field_application.wakes == 0
+    preparation.announce("library", "review_case")
+    assert field_application.wakes == 1
 
 
 def test_policy_candidate_workflows_are_application_operations(

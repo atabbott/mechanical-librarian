@@ -1107,6 +1107,11 @@ class ContinuousGuardedApplication:
                         }
                     )
                     if observed.category == "allowed":
+                        prior_suspension = (
+                            self._repository.field_effect_capability_suspension(
+                                connection, destination
+                            )
+                        )
                         if not self._activity_only:
                             for reason in (
                                 "insufficient_permission",
@@ -1129,6 +1134,8 @@ class ContinuousGuardedApplication:
                         remaining = self._repository.field_effect_capability_suspension(
                             connection, destination
                         )
+                        if prior_suspension is not None and remaining is None:
+                            self.wake()
                         if remaining is not None:
                             destinations[-1]["state"] = remaining
                     elif observed.category == "connection_unavailable":

@@ -1033,7 +1033,15 @@ def compose_review_application(
         field_application.attach_serialization(serialized)
         field_application.attach_updates(updates.publish)
     if preparation is not None:
-        preparation.attach_updates(updates.publish)
+
+        def announce_preparation(topic: str, review_case_id: str | None) -> None:
+            updates.publish(topic, review_case_id)
+            if topic == "library" and isinstance(
+                field_application, ContinuousGuardedApplication
+            ):
+                field_application.wake()
+
+        preparation.attach_updates(announce_preparation)
     operations = (
         None
         if operational_timings is None
