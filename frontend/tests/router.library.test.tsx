@@ -1285,9 +1285,12 @@ describe('Library route', () => {
     await screen.findByRole('heading', { name: 'Activity and recovery' })
     await originalNavigate({ to: '/policy', search: { section: 'identity' } })
     await screen.findByRole('heading', { name: 'Library policy' })
-    act(() => releaseFirst?.())
+    await act(async () => {
+      releaseFirst?.()
+      await Promise.resolve()
+    })
 
-    await waitFor(() => expect(router.state.location.pathname).toBe('/policy'))
+    expect(router.state.location.pathname).toBe('/policy')
     expect(libraryReplacements).toBe(1)
     delayedNavigate.mockRestore()
   })
