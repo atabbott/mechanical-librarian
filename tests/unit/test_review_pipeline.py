@@ -62,6 +62,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
 from tests.support.review_cases import _report
 
 _PRODUCER = "f" * 64
@@ -421,6 +422,50 @@ def test_post_cutover_delivery_failure_requeues_the_claimed_successor() -> None:
 
     assert pipeline._advance(repository, action, None, claim_next=True) is None
     assert [(successor, "persistence", True, 9)] == repository.failures
+
+
+def test_post_cutover_settlement_failure_propagates_closed_persistence_error() -> None:
+    class Repository:
+        def advance_review_pipeline_action(self, *_args, **_kwargs):
+            return successor
+
+        def fail_review_pipeline_action(self, *_args, **_kwargs):
+            raise sqlite3.OperationalError("injected settlement failure")
+
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "provider",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        "report-1",
+        source_fingerprint="c" * 64,
+    )
+    successor = replace(action, action_id="action-2", stage="proposal")
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, Repository()),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        after_advance=lambda *_args: (_ for _ in ()).throw(RuntimeError()),
+        clock=lambda: 9,
+    )
+
+    with pytest.raises(ReviewPipelineError) as raised:
+        pipeline._advance(Repository(), action, None, claim_next=True)
+    assert "persistence" == raised.value.code
 
 
 def test_connection_hold_guards_claims_and_stale_checkers_fail_closed(
@@ -1135,6 +1180,121 @@ def test_request_discovery_claim_and_restart_are_persisted(
     )
     assert progress.rescan_requested
     reopened.close()
+
+
+def test_restart_requeues_claims_across_scopes_without_creating_recovery_effects(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    producers = (
+        ("primary", "ebooks", "library-1", _PRODUCER),
+        ("secondary", "audio", "library-2", _PRODUCER),
+        ("tertiary", "other", "library-3", _PRODUCER),
+    )
+    for index, (connection, library, library_id, producer) in enumerate(producers):
+        repository.request_review_scan(connection, library, library_id, producer, index)
+    claimed = (
+        repository.claim_review_pipeline_action(10),
+        repository.claim_review_pipeline_action(11),
+    )
+    assert [("primary", "ebooks"), ("secondary", "audio")] == [
+        (action.connection, action.library) for action in claimed if action is not None
+    ]
+    repository.close()
+
+    reopened = open_repository(application_path)
+    reopened.recover_review_pipeline(producers)
+    states = reopened._connection.execute(
+        "SELECT connection_name,library_name,state FROM review_preparation_scans "
+        "ORDER BY connection_name"
+    ).fetchall()
+    assert [
+        ("primary", "ebooks", "queued"),
+        ("secondary", "audio", "queued"),
+        ("tertiary", "other", "queued"),
+    ] == states
+    assert (0, 0) == reopened._connection.execute(
+        "SELECT (SELECT count(*) FROM metadata_reports),"
+        "(SELECT count(*) FROM provider_recovery_outbox)"
+    ).fetchone()
+    assert reopened.claim_review_pipeline_action(12) is not None
+    reopened.close()
+
+
+@pytest.mark.parametrize(
+    "cursor",
+    (
+        (True, "recovery_outbox_" + "a" * 64),
+        (-1, "recovery_outbox_" + "a" * 64),
+        (MAX_TIMESTAMP + 1, "recovery_outbox_" + "a" * 64),
+        (0, "not-an-outbox-id"),
+        [0, "recovery_outbox_" + "a" * 64],
+    ),
+)
+def test_outbox_cursor_rejects_malformed_or_out_of_range_values(
+    application_path: Path, cursor: object
+) -> None:
+    repository = open_repository(application_path)
+    with pytest.raises(MetadataReportError, match="outbox query is invalid"):
+        repository.pending_provider_recovery_outbox(after=cursor)
+    repository.close()
+
+
+def test_outbox_cursor_accepts_the_persisted_timestamp_and_id_boundaries(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    assert () == repository.pending_provider_recovery_outbox(
+        after=(MAX_TIMESTAMP, "recovery_outbox_" + "f" * 64)
+    )
+    repository.close()
+
+
+def test_outbox_acknowledgement_failure_keeps_the_real_row_pending_for_replay(
+    application_path: Path,
+) -> None:
+    class CommitFailingConnection:
+        def __init__(self, connection: sqlite3.Connection) -> None:
+            self._connection = connection
+            self.fail_commit = True
+
+        @property
+        def in_transaction(self) -> bool:
+            return self._connection.in_transaction
+
+        def execute(self, statement: str, parameters: tuple[object, ...] = ()):
+            return self._connection.execute(statement, parameters)
+
+        def commit(self) -> None:
+            if self.fail_commit:
+                raise sqlite3.OperationalError("injected acknowledgement failure")
+            self._connection.commit()
+
+        def rollback(self) -> None:
+            self._connection.rollback()
+
+    repository = open_repository(application_path)
+    outbox = repository._recovery_outbox
+    report = _report()
+    repository.publish(report, lambda: True)
+    outbox.enqueue(
+        report.target.connection,
+        report.target.library,
+        report.target.item,
+        (None, report.report_id, None, None, "report_only"),
+        7,
+    )
+    pending = repository.pending_provider_recovery_outbox()
+    assert 1 == len(pending)
+    proxy = CommitFailingConnection(repository._connection)
+    with patch.object(outbox, "_connection", cast(sqlite3.Connection, proxy)):
+        with pytest.raises(MetadataReportError, match="outbox is unavailable"):
+            outbox.complete_provider_recovery_outbox(pending[0][0], delivered_at=7)
+    assert pending == repository.pending_provider_recovery_outbox()
+    outbox.complete_provider_recovery_outbox(pending[0][0], delivered_at=7)
+    outbox.complete_provider_recovery_outbox(pending[0][0], delivered_at=7)
+    assert () == repository.pending_provider_recovery_outbox()
+    repository.close()
 
 
 def test_repeated_queued_request_advances_its_freshness_anchor(

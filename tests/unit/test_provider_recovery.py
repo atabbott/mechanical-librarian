@@ -1845,6 +1845,84 @@ class _CommitFailingConnection:
         self._connection.close()
 
 
+class _WriteFailingConnection(_CommitFailingConnection):
+    """Fail one real write by ordinal, without coupling a test to SQL text."""
+
+    def __init__(self, connection: sqlite3.Connection, *, write_number: int) -> None:
+        super().__init__(connection, commit_error=None)
+        self._write_number = write_number
+        self._writes = 0
+
+    def execute(
+        self, statement: str, parameters: tuple[object, ...] = ()
+    ) -> sqlite3.Cursor:
+        if statement not in {"BEGIN IMMEDIATE", "COMMIT", "ROLLBACK"}:
+            self._writes += 1
+            if self._writes == self._write_number:
+                raise sqlite3.OperationalError("injected write failure")
+        return super().execute(statement, parameters)
+
+
+@pytest.mark.parametrize("write_number", (2, 3), ids=("health", "job"))
+def test_enqueue_rolls_back_each_enrollment_or_job_write_failure(
+    write_number: int,
+) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "recovery.sqlite"
+        SQLiteProviderRecoveryStore.open(path).close()
+        connection = sqlite3.connect(
+            path, isolation_level=None, check_same_thread=False
+        )
+        connection.execute("PRAGMA foreign_keys=ON")
+        proxy = _WriteFailingConnection(connection, write_number=write_number)
+        store = SQLiteProviderRecoveryStore(cast(sqlite3.Connection, proxy))
+
+        with pytest.raises(
+            ProviderRecoveryStoreError, match="persistence is unavailable"
+        ):
+            store.enqueue_jobs((_job("fault"),), enqueued_at=7)
+
+        assert not proxy.in_transaction
+        assert [(0, 0, 0)] == connection.execute(
+            "SELECT (SELECT count(*) FROM provider_recovery_members),"
+            "(SELECT count(*) FROM provider_recovery_health),"
+            "(SELECT count(*) FROM provider_recovery_jobs)"
+        ).fetchall()
+        store.close()
+
+
+def test_enqueue_enrolls_each_exact_input_pair_without_cross_scope_reuse() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        jobs = (
+            replace(_job("google-audio"), scope="audio", library="audio"),
+            _job("google-books"),
+            replace(
+                _job("hardcover-books"),
+                connection="hardcover",
+                adapter="hardcover",
+            ),
+        )
+        assert 3 == store.enqueue_jobs(jobs, enqueued_at=9)
+        assert [
+            ("google", "google_books", "audio"),
+            ("google", "google_books", "books"),
+            ("hardcover", "hardcover", "books"),
+        ] == store._connection.execute(
+            "SELECT connection,adapter,scope FROM provider_recovery_members "
+            "ORDER BY connection,adapter,scope"
+        ).fetchall()
+        assert [
+            ("google", "google_books", "audio", 7_209),
+            ("google", "google_books", "books", 7_209),
+            ("hardcover", "hardcover", "books", 7_209),
+        ] == store._connection.execute(
+            "SELECT connection,adapter,scope,next_eligible_at "
+            "FROM provider_recovery_health ORDER BY connection,adapter,scope"
+        ).fetchall()
+        store.close()
+
+
 def _store_over(
     directory: str, *, generation: int, commit_error: BaseException | None
 ) -> tuple[SQLiteProviderRecoveryStore, _CommitFailingConnection]:

@@ -11,6 +11,7 @@ aggregate module.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from mechanical_librarian.adapters.persistence.schema import (
@@ -19,6 +20,11 @@ from mechanical_librarian.adapters.persistence.schema import (
 )
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
+from mechanical_librarian.domain.validation import bounded_integer
+
+_OUTBOX_CURSOR_ID = re.compile(r"recovery_outbox_[0-9a-f]{64}")
+_OUTBOX_TIMESTAMP = bounded_integer(0, MAX_TIMESTAMP)
 
 
 class SQLiteRecoveryOutboxRepository(ConnectionScoped):
@@ -68,10 +74,9 @@ class SQLiteRecoveryOutboxRepository(ConnectionScoped):
             and (
                 type(after) is not tuple
                 or len(after) != 2
-                or type(after[0]) is not int
-                or after[0] < 0
+                or not _OUTBOX_TIMESTAMP(after[0])
                 or type(after[1]) is not str
-                or not after[1]
+                or _OUTBOX_CURSOR_ID.fullmatch(after[1]) is None
             )
         ):
             raise MetadataReportError("provider recovery outbox query is invalid")

@@ -1493,7 +1493,9 @@ def create_review_pipeline(
 
     def recover_provider(now: int) -> RecoveryRun:
         try:
-            activation.drain_outbox()
+            failures = activation.drain_outbox()
+            if failures:
+                raise ReviewPipelineError(failures[0])
             return recovery_runner.run_one(now=now)
         except ProviderRecoveryStoreError as error:
             raise ReviewPipelineError("recovery") from error
@@ -1530,6 +1532,9 @@ def create_review_pipeline(
             review_claim_next=claim_next,
             timing=timing,
         )
+
+    def drain_outbox(repository: ReviewPipelineRepository) -> None:
+        activation.drain_outbox(cast("ProviderRecoveryRepository", repository))
 
     def create_proposal_set_for(
         report_id: str, pipeline_repository: ReviewPipelineRepository
@@ -1578,9 +1583,7 @@ def create_review_pipeline(
         admit_review_case=admit_review_case_for,
         cover_considerations=cover_considerations,
         recovery_observer=provider_recovery,
-        drain_outbox=lambda repository: activation.drain_outbox(
-            cast("ProviderRecoveryRepository", repository)
-        ),
+        drain_outbox=drain_outbox,
         discovery_lock=discovery_lock,
         clock=lambda: int(time.time()),
     )
