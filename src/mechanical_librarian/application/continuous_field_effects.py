@@ -403,10 +403,23 @@ class ContinuousGuardedApplication:
         self.wait_for_drain(deadline)
 
     def wake(self) -> None:
+        self._restart_schedule()
+        self._wake.set()
+
+    def _restart_schedule(self) -> None:
         with self._schedule_lock:
             self._schedule_generation += 1
             self._schedule_cursor = None
-        self._wake.set()
+
+    def _advance_schedule_cursor(
+        self, decision: AutomaticDecision | HumanDecision, generation: int
+    ) -> None:
+        with self._schedule_lock:
+            if generation == self._schedule_generation:
+                self._schedule_cursor = (
+                    decision.occurred_at,
+                    decision.decision_id,
+                )
 
     def enable(
         self, grants: tuple[tuple[str, tuple[str, ...]], ...]
@@ -590,12 +603,6 @@ class ContinuousGuardedApplication:
         planned = 0
         for document in documents:
             decision = self._decision(document)
-            with self._schedule_lock:
-                if generation == self._schedule_generation:
-                    self._schedule_cursor = (
-                        decision.occurred_at,
-                        decision.decision_id,
-                    )
             # This is intentionally before authority, consent and capability: an
             # equal automatic candidate is a terminal decision fact, not a write.
             no_change = getattr(
@@ -606,6 +613,7 @@ class ContinuousGuardedApplication:
                 and no_change is not None
                 and no_change(decision, self._clock())
             ):
+                self._advance_schedule_cursor(decision, generation)
                 continue
             try:
                 snapshot = self._authority.resolve(decision)
@@ -622,12 +630,14 @@ class ContinuousGuardedApplication:
                         decision.decision_id, self._clock()
                     )
                 ):
+                    self._advance_schedule_cursor(decision, generation)
                     continue
                 raise
             key = (snapshot.connection, snapshot.library)
             application = self._applications.get(key)
             capability = self._capabilities.get(key)
             if application is None or capability is None:
+                self._advance_schedule_cursor(decision, generation)
                 continue
             try:
                 consent = self._repository.current_field_effect_consent(
@@ -635,6 +645,7 @@ class ContinuousGuardedApplication:
                 )
             except FieldEffectError as error:
                 if error.code == "consent":
+                    self._advance_schedule_cursor(decision, generation)
                     continue
                 raise
             del consent
@@ -655,6 +666,7 @@ class ContinuousGuardedApplication:
                     reason=observed.category,
                     changed_at=observed_at,
                 )
+                self._advance_schedule_cursor(decision, generation)
                 continue
             for reason in ("insufficient_permission", "field_unavailable"):
                 self._repository.clear_field_effect_capability_suspension(
@@ -677,6 +689,7 @@ class ContinuousGuardedApplication:
                 )
                 is not None
             ):
+                self._advance_schedule_cursor(decision, generation)
                 continue
             operation = application.plan(
                 decision,
@@ -695,6 +708,7 @@ class ContinuousGuardedApplication:
             )
             if operation is not None:
                 planned += 1
+            self._advance_schedule_cursor(decision, generation)
         if planned:
             self._announce("activity", None)
         return planned
@@ -1255,9 +1269,11 @@ class ContinuousGuardedApplication:
                 or cast(_ScanProgress, progress).updated_at < release.requested_at
             ):
                 continue
-            self._repository.clear_field_effect_manual_hold(
+            cleared = self._repository.clear_field_effect_manual_hold(
                 review_case_id, destination, self._clock(), release.hold_token
             )
+            if cleared is not None:
+                self._restart_schedule()
         self._manual_return_cursor = (
             (pending[-1][7], pending[-1][0], pending[-1][1])
             if len(pending) == 100

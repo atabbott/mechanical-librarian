@@ -571,7 +571,37 @@ def test_schedule_and_activity_accept_a_prior_persisted_f20_decision() -> None:
 
 
 def test_return_to_automatic_releases_only_after_current_scan_completes() -> None:
-    repository = _HoldRepository()
+    class ReleaseRepository(_HoldRepository):
+        def __init__(self) -> None:
+            super().__init__()
+            self.decisions = _decisions(1)
+
+        def pending_field_effect_decision_documents(self, limit, after=None):
+            values = self.decisions
+            if after is not None:
+                values = [
+                    value
+                    for value in values
+                    if (value.occurred_at, value.decision_id) > after
+                ]
+            return tuple(value.to_json() for value in values[:limit])
+
+        def current_field_effect_consent(self, *_context):
+            if self.hold is not None:
+                raise FieldEffectError("consent")
+            return object()
+
+        def suspend_field_effect_capability(self, **_values):
+            return None
+
+        def clear_field_effect_capability_suspension(self, **_values):
+            return None
+
+        def field_effect_capability_suspension(self, *_context):
+            return None
+
+    repository = ReleaseRepository()
+    planner = _Planner()
     scans = []
     progress = SimpleNamespace(
         scan_id="review_scan",
@@ -583,7 +613,7 @@ def test_return_to_automatic_releases_only_after_current_scan_completes() -> Non
         repository,
         cast(
             "dict[tuple[str, str], GuardedFieldApplication]",
-            {("primary", "alpha"): _Planner()},
+            {("primary", "alpha"): planner},
         ),
         {("primary", "alpha"): _AllowedCapability()},
         _Authority(),
@@ -597,10 +627,12 @@ def test_return_to_automatic_releases_only_after_current_scan_completes() -> Non
     assert scans == [("primary", "alpha")]
     service.schedule()
     assert repository.hold is not None
+    assert planner.planned == []
     progress.state = "completed"
     progress.updated_at = 11
     service.schedule()
     assert repository.hold is None
+    assert planner.planned == [repository.decisions[0].decision_id]
 
 
 def test_return_to_automatic_recovers_the_persisted_request_after_restart() -> None:
@@ -1541,6 +1573,44 @@ def test_idle_scheduler_keeps_its_completed_cursor_until_a_real_wake() -> None:
     service.wake()
     assert service.schedule(100) == 0
     assert repository.afters[-1] is None
+
+
+def test_scheduler_retries_a_candidate_after_a_transient_processing_failure() -> None:
+    class ConsentedRepository(_PagedRepository):
+        def current_field_effect_consent(self, *_context):
+            return object()
+
+    class FailingOnceAuthority(_Authority):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def resolve(self, decision):
+            self.calls += 1
+            if self.calls == 1:
+                raise FieldEffectError("persistence")
+            return super().resolve(decision)
+
+    repository = ConsentedRepository(_decisions(1))
+    planner = _Planner()
+    authority = FailingOnceAuthority()
+    service = ContinuousGuardedApplication(
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): planner},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        authority,
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+    )
+
+    with pytest.raises(FieldEffectError, match="persistence"):
+        service.schedule(1)
+    assert service.schedule(1) == 1
+    assert authority.calls == 2
+    assert planner.planned == [repository.decisions[0].decision_id]
 
 
 def test_background_cycle_bounds_permission_waiting_work_to_one_candidate() -> None:
