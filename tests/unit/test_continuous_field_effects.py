@@ -1507,6 +1507,73 @@ def test_blocked_oldest_page_does_not_starve_later_eligible_work() -> None:
     assert len(planners[("primary", "beta")].planned) == 1
 
 
+def test_idle_scheduler_keeps_its_completed_cursor_until_a_real_wake() -> None:
+    class ObservedRepository(_PagedRepository):
+        def __init__(self) -> None:
+            super().__init__(_decisions(100))
+            self.afters: list[tuple[int, str] | None] = []
+
+        def pending_field_effect_decision_documents(self, limit, after=None):
+            self.afters.append(after)
+            return super().pending_field_effect_decision_documents(limit, after)
+
+    repository = ObservedRepository()
+    service = ContinuousGuardedApplication(
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+    )
+
+    assert service.schedule(100) == 0
+    assert service.schedule(100) == 0
+    assert service.schedule(100) == 0
+    assert repository.afters[0] is None
+    assert repository.afters[1] == repository.afters[2]
+    assert repository.afters[1] is not None
+
+    service.wake()
+    assert service.schedule(100) == 0
+    assert repository.afters[-1] is None
+
+
+def test_background_cycle_bounds_permission_waiting_work_to_one_candidate() -> None:
+    class ObservedRepository(_PagedRepository):
+        def __init__(self) -> None:
+            super().__init__(_decisions(100))
+            self.limits: list[int] = []
+
+        def pending_field_effect_decision_documents(self, limit, after=None):
+            self.limits.append(limit)
+            return super().pending_field_effect_decision_documents(limit, after)
+
+        def next_field_effect_plan_id(self, _last_library):
+            return None
+
+    repository = ObservedRepository()
+    service = ContinuousGuardedApplication(
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _AllowedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+    )
+
+    assert not service.run_cycle()
+    assert repository.limits == [1]
+
+
 def _decisions(count: int):
     def digest(value) -> str:
         document = json.dumps(

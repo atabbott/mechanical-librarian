@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Stop idle preparation from repeatedly integrity-scanning the complete
+  application database, and stop the guarded-write scheduler from reparsing a
+  completed page cycle until real work wakes it. The server validates its
+  locked SQLite inode once, keeping owner reads responsive after preparation
+  completes. (#799)
+
 - Say what an Activity record actually changed. Each row reads work, field,
   exact change, and result in the owner's words, with the before/after, who
   chose it, and whether Audiobookshelf confirmed it behind one disclosure; a

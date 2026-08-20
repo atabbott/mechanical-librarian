@@ -440,7 +440,13 @@ current-schema database after schema-object, foreign-key, SQLite-integrity, and
 exact-current metadata-policy document checks. It validates report content and
 current-pointer scope only when selected by an exact-ID/current-scope read or
 involved in publication; opening the repository otherwise does not semantically
-audit unrelated report history. It has no
+audit unrelated report history. In the supported Linux service, that complete
+admission runs once for the root locked inode; derived connections re-prove the
+same live filesystem authority and borrow the result. The guarded-write
+scheduler likewise retains the end of a completed decision pass while idle and
+restarts the pass only when an owner or preparation event wakes it; unattended
+recovery admits one permission-waiting candidate per serialized cycle so owner
+reads cannot wait behind a large parsing page. It has no
 backward-compatibility authority. It cannot browse inventory, review or decide
 claims, apply changes, write a service or media file, run background work,
 retry, prune, repair, import, downgrade, retain selectively, or migrate any

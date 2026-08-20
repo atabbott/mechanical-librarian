@@ -13,11 +13,12 @@ import tempfile
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
 import mechanical_librarian.adapters.persistence.binding as persistence_binding
+import mechanical_librarian.adapters.persistence.metadata_reports as persistence_reports
 import mechanical_librarian.adapters.persistence.schema as persistence_schema
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.metadata_report import (
@@ -1218,6 +1219,107 @@ def test_linux_database_authority_allows_same_process_derived_connection() -> No
         assert derived.get(synthetic_report().report_id) == synthetic_report().to_json()
         derived.close()
         owner.close()
+
+
+def test_existing_database_runs_full_schema_validation_once_before_writable_use() -> (
+    None
+):
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        repository = open_repository(path)
+        repository.close()
+        validate = persistence_schema._validate_schema
+        with (
+            patch.object(
+                persistence_schema, "_validate_schema", wraps=validate
+            ) as read,
+            patch.object(
+                persistence_reports, "_validate_schema", wraps=validate
+            ) as write,
+        ):
+            reopened = open_repository(path, create=False)
+        reopened.close()
+    assert read.call_count + write.call_count == 1
+
+
+def test_foreign_key_corruption_stops_before_writable_connection() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        repository = open_repository(path)
+        repository.close()
+        connection = sqlite3.connect(path)
+        connection.execute("PRAGMA foreign_keys=OFF")
+        connection.execute(
+            "INSERT INTO current_metadata_reports "
+            "(connection_name,library_name,item_id,file_identity,report_id) "
+            "VALUES ('primary','fiction','item','file','missing-report')"
+        )
+        connection.commit()
+        connection.close()
+        with patch.object(persistence_reports, "_connect_bound") as writable:
+            with pytest.raises(MetadataReportError):
+                open_repository(path, create=False)
+    writable.assert_not_called()
+
+
+def test_integrity_failure_stops_before_writable_connection() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        repository = open_repository(path)
+        repository.close()
+        validated = sqlite3.connect(
+            f"file:{path.absolute()}?mode=ro", uri=True, isolation_level=None
+        )
+        execute = validated.execute
+
+        def fail_integrity(statement: str):
+            if statement == "PRAGMA integrity_check":
+                result = Mock()
+                result.fetchone.return_value = ("database disk image is malformed",)
+                return result
+            return execute(statement)
+
+        validation_connection = Mock(wraps=validated)
+        validation_connection.execute.side_effect = fail_integrity
+        validation_connection.close.side_effect = validated.close
+        with (
+            patch.object(
+                persistence_schema.sqlite3,
+                "connect",
+                return_value=validation_connection,
+            ),
+            patch.object(persistence_reports, "_connect_bound") as writable,
+        ):
+            with pytest.raises(MetadataReportError):
+                open_repository(path, create=False)
+    writable.assert_not_called()
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux descriptor proof"
+)
+def test_derived_connections_borrow_the_live_authoritys_schema_validation() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        owner = open_repository(path)
+        validate = persistence_schema._validate_schema
+        with (
+            patch.object(
+                persistence_schema, "_validate_schema", wraps=validate
+            ) as read,
+            patch.object(
+                persistence_reports, "_validate_schema", wraps=validate
+            ) as write,
+        ):
+            for _ in range(8):
+                derived = open_repository(
+                    path,
+                    create=False,
+                    authority=owner.authority,
+                )
+                derived.close()
+        owner.close()
+    assert read.call_count + write.call_count == 0
 
 
 @pytest.mark.skipif(

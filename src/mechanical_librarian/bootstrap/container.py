@@ -7,7 +7,6 @@ import stat
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.bootstrap.composition import run_review_server
 
 DATA = Path("/data")
@@ -29,8 +28,6 @@ def main() -> None:
     os.chmod(DATA, 0o700)
     ARTIFACTS.mkdir(mode=0o700, exist_ok=True)
     os.chmod(ARTIFACTS, 0o700)
-    repository = open_repository(DATABASE, create=True, cross_thread=True)
-    repository.close()
     catalogue = open_catalogue(CATALOGUE, create=True)
     catalogue.close()
     run_review_server(CONFIG, DATABASE, CATALOGUE, ARTIFACTS, HOST, PORT)
