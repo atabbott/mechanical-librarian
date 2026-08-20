@@ -18,8 +18,11 @@ After correcting a dormant condition, increment the positive
 container. Startup first performs a read-only generation compatibility check;
 it rejects persisted generations newer than configuration before any outbox
 delivery or database mutation. It then drains committed package cutovers from
-the durable outbox and
-advances every older row atomically. Authentication and authorization wake only
+the durable outbox. Each delivery atomically enrolls its exact member and
+health scope before its job can be claimed; an existing current health record
+is preserved. A failed row stays pending for a later retry while the bounded
+drain continues to younger deliverable rows, so startup remains available and
+does not discard recovery work. Authentication and authorization wake only
 when that delivered exact job proves the new configured generation; otherwise
 they remain dormant. Outbox delivery and job registration are idempotent, so a
 crash between cutover and enqueue is recovered on restart. No environment variable,
@@ -35,6 +38,11 @@ replaying a sibling. Recovery never writes target metadata.
 One stale member is retired without retiring current siblings. A restart after
 an exact successor package cutover resumes from its persisted lineage, so the
 completed canary is not sent to the provider again.
+
+If inline delivery fails after a package cutover claimed the next preparation
+action, that successor is returned to the existing bounded preparation state
+machine with the typed `persistence` failure. It is never left running to
+occupy a worker lane; restart retains the same three-attempt recovery limit.
 
 Recovery state contains bounded connection, adapter, scope, generation, phase,
 attempt, and timing data plus the exact private work, source-report, lane, file,

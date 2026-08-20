@@ -373,6 +373,56 @@ def test_late_target_connection_errors_rollback_and_defer_retained_stage() -> No
     assert callbacks == {"proposal": 1, "admission": 1, "projection": 1}
 
 
+def test_post_cutover_delivery_failure_requeues_the_claimed_successor() -> None:
+    class Repository:
+        def __init__(self, successor: PipelineAction) -> None:
+            self.successor = successor
+            self.failures: list[tuple[PipelineAction, str, bool, int]] = []
+
+        def advance_review_pipeline_action(self, *_args, **_kwargs):
+            return self.successor
+
+        def fail_review_pipeline_action(
+            self, action, code, retryable, completed_at, _failure_root
+        ):
+            self.failures.append((action, code, retryable, completed_at))
+
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "provider",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        "report-1",
+        source_fingerprint="c" * 64,
+    )
+    successor = replace(action, action_id="action-2", stage="proposal")
+    repository = Repository(successor)
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, repository),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        after_advance=lambda *_args: (_ for _ in ()).throw(RuntimeError()),
+        clock=lambda: 9,
+    )
+
+    assert pipeline._advance(repository, action, None, claim_next=True) is None
+    assert [(successor, "persistence", True, 9)] == repository.failures
+
+
 def test_connection_hold_guards_claims_and_stale_checkers_fail_closed(
     application_path: Path,
 ) -> None:

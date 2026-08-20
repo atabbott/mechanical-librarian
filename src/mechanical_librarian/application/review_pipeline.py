@@ -785,7 +785,16 @@ class ReviewPreparationPipeline:
                 advanced = repository.advance_review_pipeline_action(
                     action, output_id, self._clock(), False
                 )
-            self._after_advance(repository, action, output_id)
+            try:
+                self._after_advance(repository, action, output_id)
+            except Exception:
+                # ``advance_review_pipeline_action`` can atomically claim the
+                # successor before the post-cutover outbox is delivered.  A
+                # delivery fault must settle that successor now; leaving it
+                # running would consume one of the fixed lanes until restart.
+                if advanced is not None:
+                    self._fail(repository, advanced, "persistence", True)
+                return None
         except ReviewPipelineError:
             raise
         except Exception as error:

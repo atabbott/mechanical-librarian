@@ -1057,6 +1057,28 @@ class SQLiteProviderRecoveryStore:
                 self._connection.execute("BEGIN IMMEDIATE")
                 inserted = 0
                 for job in jobs:
+                    # A job is claimable only inside an enrolled scope.  Normal
+                    # report publication has already recorded the exact health
+                    # observation, but enqueue must not depend on that order:
+                    # a replayed package can arrive first.  The fallback is
+                    # deliberately inert except for making one bounded canary
+                    # eligible; a current observation always wins unchanged.
+                    self._connection.execute(
+                        "INSERT INTO provider_recovery_members(connection,adapter,scope) VALUES(?,?,?) ON CONFLICT DO NOTHING",
+                        (job.connection, job.adapter, job.scope),
+                    )
+                    self._connection.execute(
+                        "INSERT INTO provider_recovery_health(connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at) VALUES(?,?,?,?,?,?,?,NULL,NULL) ON CONFLICT(connection,adapter,scope) DO NOTHING",
+                        (
+                            job.connection,
+                            job.adapter,
+                            job.scope,
+                            job.generation,
+                            "waiting",
+                            1,
+                            0,
+                        ),
+                    )
                     values = (
                         job.connection,
                         job.adapter,

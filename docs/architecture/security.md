@@ -685,7 +685,10 @@ review-package tuple, target and media identity, the enabled provider binding,
 and the positive configuration generation immediately before constructing the
 client. Provider work runs outside SQLite writer transactions. Shared
 authentication, authorization, quota, unavailable and incomplete results are
-classified before publication, and diagnostics retain no credential, raw
+classified before publication. Outbox delivery atomically enrolls each job's
+bounded member and health scope before it is claimable; a failed delivery keeps
+its row for retry, continues the bounded drain, and returns any already-claimed
+preparation successor through the existing typed state machine. Diagnostics retain no credential, raw
 header, query, payload, response body, work identifier, or private path.
 
 ### Decision authority

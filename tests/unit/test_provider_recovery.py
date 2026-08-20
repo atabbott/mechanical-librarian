@@ -19,12 +19,17 @@ from mechanical_librarian.adapters.persistence.provider_recovery import (
     SQLiteProviderRecoveryStore,
 )
 from mechanical_librarian.application.metadata_report import CredentialError
+from mechanical_librarian.application.provider_recovery_activation import (
+    ProviderRecoveryActivation,
+    ProviderRecoveryRepository,
+)
 from mechanical_librarian.application.provider_recovery_runner import (
     ScopedProviderRecoveryRunner,
 )
 from mechanical_librarian.application.provider_retry_successor import (
     ProviderRetrySuccessorError,
 )
+from mechanical_librarian.application.review_pipeline import ReviewPipelineError
 from mechanical_librarian.bootstrap.composition import (
     _provider_recovery_jobs,
     _record_provider_recovery_observations,
@@ -121,6 +126,149 @@ def test_job_rejects_a_case_id_the_report_only_outcome_forbids() -> None:
         ProviderRecoveryJob(
             *common, None, "report", "case", 1, "report_only", '["work"]'
         )
+
+
+def test_enqueue_enrolls_an_unseen_member_and_health_before_its_job() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        assert 1 == store.enqueue_jobs((_job("unseen"),))
+        assert [("google", "google_books", "books")] == store._connection.execute(
+            "SELECT connection,adapter,scope FROM provider_recovery_members"
+        ).fetchall()
+        assert [("google", "google_books", "books", 1, "waiting", 1, 0)] == (
+            store._connection.execute(
+                "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at "
+                "FROM provider_recovery_health"
+            ).fetchall()
+        )
+        assert [("unseen", "queued")] == store._connection.execute(
+            "SELECT member_id,state FROM provider_recovery_jobs"
+        ).fetchall()
+        store.close()
+
+
+def test_enqueue_is_idempotent_and_preserves_observed_current_health() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
+        observed = ProviderRecovery.failed(
+            connection="google",
+            adapter="google_books",
+            scope="books",
+            generation=1,
+            failure="transient",
+            now=7,
+            retry_after=19,
+        )
+        store.record(observed, occurred_at=7)
+        assert 1 == store.enqueue_jobs((_job("current"),))
+        assert 0 == store.enqueue_jobs((_job("current"),))
+        assert [("waiting", 1, 26)] == store._connection.execute(
+            "SELECT state,attempt,next_eligible_at FROM provider_recovery_health"
+        ).fetchall()
+        store.close()
+
+
+def test_concurrent_enqueue_enrolls_one_scope_before_either_job_is_visible() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "recovery.sqlite"
+        SQLiteProviderRecoveryStore.open(path).close()
+        first = SQLiteProviderRecoveryStore.open(path)
+        second = SQLiteProviderRecoveryStore.open(path)
+        barrier = threading.Barrier(2)
+        failures: list[BaseException] = []
+
+        def enqueue(store: SQLiteProviderRecoveryStore, member: str) -> None:
+            try:
+                barrier.wait()
+                store.enqueue_jobs((_job(member),))
+            except BaseException as error:
+                failures.append(error)
+
+        workers = (
+            threading.Thread(target=enqueue, args=(first, "first")),
+            threading.Thread(target=enqueue, args=(second, "second")),
+        )
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+
+        assert [] == failures
+        assert [("google", "google_books", "books")] == first._connection.execute(
+            "SELECT connection,adapter,scope FROM provider_recovery_members"
+        ).fetchall()
+        assert [("waiting", 1, 0)] == first._connection.execute(
+            "SELECT state,attempt,next_eligible_at FROM provider_recovery_health"
+        ).fetchall()
+        assert [("first",), ("second",)] == first._connection.execute(
+            "SELECT member_id FROM provider_recovery_jobs ORDER BY member_id"
+        ).fetchall()
+        first.close()
+        second.close()
+
+
+def test_drain_retains_a_failing_row_and_delivers_a_younger_row() -> None:
+    class Repository:
+        def __init__(self) -> None:
+            self.rows = [
+                (
+                    "bad",
+                    "primary",
+                    "books",
+                    "one",
+                    None,
+                    "report-1",
+                    None,
+                    None,
+                    "report_only",
+                    1,
+                ),
+                (
+                    "good",
+                    "primary",
+                    "books",
+                    "two",
+                    None,
+                    "report-2",
+                    None,
+                    None,
+                    "report_only",
+                    2,
+                ),
+            ]
+
+        def pending_provider_recovery_outbox(self, *, limit: int):
+            assert limit == 100
+            return tuple(self.rows)
+
+        def close(self) -> None:
+            return None
+
+    repository = Repository()
+    activation = ProviderRecoveryActivation(
+        configuration=cast(object, SimpleNamespace()),
+        repository_factory=lambda: cast(ProviderRecoveryRepository, repository),
+        observers=cast(object, lambda *_args: None),
+        provider_resolver=cast(object, lambda *_args: None),
+        pipeline=lambda: None,
+        enqueue=lambda _jobs: 0,
+        clock=lambda: 2,
+    )
+
+    def deliver(
+        _repository: object,
+        row: tuple[
+            str, str, str, str, str | None, str, str | None, int | None, str, int
+        ],
+    ) -> None:
+        if row[0] == "bad":
+            raise ReviewPipelineError("recovery")
+        repository.rows.remove(row)
+
+    with patch.object(activation, "_deliver", side_effect=deliver):
+        activation.drain_outbox(cast(ProviderRecoveryRepository, repository))
+
+    assert ["bad"] == [row[0] for row in repository.rows]
 
 
 def test_activation_runner_claims_one_canary_then_fans_out_current_members_once() -> (
