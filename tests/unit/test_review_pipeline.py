@@ -391,7 +391,7 @@ def test_post_cutover_delivery_failure_requeues_the_claimed_successor() -> None:
     action = PipelineAction(
         "action-1",
         "scan-1",
-        "provider",
+        "projection",
         1,
         "primary",
         "ebooks",
@@ -403,10 +403,12 @@ def test_post_cutover_delivery_failure_requeues_the_claimed_successor() -> None:
         "b" * 64,
         0,
         "report-1",
+        review_case_id="case-1",
         source_fingerprint="c" * 64,
     )
     successor = replace(action, action_id="action-2", stage="proposal")
     repository = Repository(successor)
+    announcements: list[tuple[str, str | None]] = []
     pipeline = ReviewPreparationPipeline(
         repository_factory=lambda: cast(ReviewPipelineRepository, repository),
         libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
@@ -418,10 +420,64 @@ def test_post_cutover_delivery_failure_requeues_the_claimed_successor() -> None:
         project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
         after_advance=lambda *_args: (_ for _ in ()).throw(RuntimeError()),
         clock=lambda: 9,
+        announce=lambda topic, subject: announcements.append((topic, subject)),
     )
 
-    assert pipeline._advance(repository, action, None, claim_next=True) is None
+    assert pipeline._advance(repository, action, "complete", claim_next=True) is None
     assert [(successor, "persistence", True, 9)] == repository.failures
+    assert [
+        ("preparation", None),
+        ("library", "case-1"),
+        ("case", "case-1"),
+        ("preparation", None),
+        ("library", None),
+    ] == announcements
+
+
+def test_post_cutover_delivery_failure_announces_committed_package_without_successor() -> (
+    None
+):
+    class Repository:
+        def advance_review_pipeline_action(self, *_args, **_kwargs):
+            return None
+
+    action = PipelineAction(
+        "action-1",
+        "scan-1",
+        "projection",
+        1,
+        "primary",
+        "ebooks",
+        "library-id",
+        _PRODUCER,
+        1,
+        "a" * 64,
+        "item-1",
+        "b" * 64,
+        0,
+        "report-1",
+        review_case_id="case-1",
+        source_fingerprint="c" * 64,
+    )
+    announcements: list[tuple[str, str | None]] = []
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: cast(ReviewPipelineRepository, Repository()),
+        libraries=(("primary", "ebooks", "library-id", _PRODUCER),),
+        discover=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
+        after_advance=lambda *_args: (_ for _ in ()).throw(RuntimeError()),
+        clock=lambda: 9,
+        announce=lambda topic, subject: announcements.append((topic, subject)),
+    )
+
+    assert pipeline._advance(Repository(), action, "complete", claim_next=True) is None
+    assert [("preparation", None), ("library", "case-1"), ("case", "case-1")] == (
+        announcements
+    )
 
 
 def test_post_cutover_settlement_failure_propagates_closed_persistence_error() -> None:

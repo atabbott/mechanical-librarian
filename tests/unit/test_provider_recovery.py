@@ -147,6 +147,10 @@ def test_enqueue_enrolls_an_unseen_member_and_health_before_its_job() -> None:
         assert [("unseen", "queued")] == store._connection.execute(
             "SELECT member_id,state FROM provider_recovery_jobs"
         ).fetchall()
+        assert [("waiting", 1, 7_203, 3)] == store._connection.execute(
+            "SELECT state,attempt,next_eligible_at,occurred_at "
+            "FROM provider_recovery_events"
+        ).fetchall()
         store.close()
 
 
@@ -178,6 +182,10 @@ def test_enqueue_is_idempotent_and_preserves_observed_current_health() -> None:
         assert 0 == store.enqueue_jobs((_job("current"),), enqueued_at=0)
         assert [("waiting", 1, 26)] == store._connection.execute(
             "SELECT state,attempt,next_eligible_at FROM provider_recovery_health"
+        ).fetchall()
+        assert [("waiting", 1, 26, 7)] == store._connection.execute(
+            "SELECT state,attempt,next_eligible_at,occurred_at "
+            "FROM provider_recovery_events"
         ).fetchall()
         store.close()
 
@@ -1993,7 +2001,7 @@ class _WriteFailingConnection(_CommitFailingConnection):
         return super().execute(statement, parameters)
 
 
-@pytest.mark.parametrize("write_number", (2, 3), ids=("health", "job"))
+@pytest.mark.parametrize("write_number", (2, 3, 4), ids=("health", "event", "job"))
 def test_enqueue_rolls_back_each_enrollment_or_job_write_failure(
     write_number: int,
 ) -> None:

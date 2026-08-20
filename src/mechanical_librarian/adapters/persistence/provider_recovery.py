@@ -1071,7 +1071,7 @@ class SQLiteProviderRecoveryStore:
                         "INSERT INTO provider_recovery_members(connection,adapter,scope) VALUES(?,?,?) ON CONFLICT DO NOTHING",
                         (job.connection, job.adapter, job.scope),
                     )
-                    self._connection.execute(
+                    enrolled = self._connection.execute(
                         "INSERT INTO provider_recovery_health(connection,adapter,scope,generation,state,attempt,next_eligible_at,claim_token,claim_expires_at) VALUES(?,?,?,?,?,?,?,NULL,NULL) ON CONFLICT(connection,adapter,scope) DO NOTHING",
                         (
                             job.connection,
@@ -1083,6 +1083,20 @@ class SQLiteProviderRecoveryStore:
                             enqueued_at + 7_200,
                         ),
                     )
+                    if enrolled.rowcount == 1:
+                        self._connection.execute(
+                            "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
+                            (
+                                job.connection,
+                                job.adapter,
+                                job.scope,
+                                job.generation,
+                                "waiting",
+                                1,
+                                enqueued_at + 7_200,
+                                enqueued_at,
+                            ),
+                        )
                     values = (
                         job.connection,
                         job.adapter,

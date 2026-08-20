@@ -1494,9 +1494,10 @@ def create_review_pipeline(
     def recover_provider(now: int) -> RecoveryRun:
         try:
             failures = activation.drain_outbox()
+            recovered = recovery_runner.run_one(now=now)
             if failures:
                 raise ReviewPipelineError(failures[0])
-            return recovery_runner.run_one(now=now)
+            return recovered
         except ProviderRecoveryStoreError as error:
             raise ReviewPipelineError("recovery") from error
 
