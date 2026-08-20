@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep Library reads bounded as review history grows. The exact schema now
+  indexes each work's latest preparation row and each case's shadow outcome
+  history; a 2,000-work count no longer repeatedly scans either history table,
+  while canonical documents and search results remain unchanged. (#800)
+
 - Stop idle preparation from repeatedly integrity-scanning the complete
   application database, and stop the guarded-write scheduler from reparsing a
   completed page cycle until real work wakes it. The server validates its

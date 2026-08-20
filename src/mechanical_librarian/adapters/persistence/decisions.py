@@ -32,6 +32,9 @@ from collections.abc import Callable
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _SHADOW_OUTCOME_HISTORY_SQL,
+)
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.automatic_decision import (
@@ -720,10 +723,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 (review_case_id, limit),
             ).fetchall()
             shadow_rows = self._connection.execute(
-                "SELECT outcome_set_id,review_case_id,report_id,proposal_set_id,"
-                "resolved_policy_id,source_decision_set_id,evaluated_at,document "
-                "FROM shadow_decision_outcomes "
-                "WHERE review_case_id=? ORDER BY evaluated_at DESC,outcome_set_id DESC LIMIT ?",
+                _SHADOW_OUTCOME_HISTORY_SQL,
                 (review_case_id, limit),
             ).fetchall()
             automatic_rows = self._connection.execute(

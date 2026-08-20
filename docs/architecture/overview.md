@@ -123,6 +123,16 @@ progression and reconciles one current per-work row on a later scan; immutable
 reports, ProposalSets, ReviewCases, decisions, and audit transitions retain
 their existing authority. These rules are the current-runtime application
 of repository-wide ADR-0013.
+
+The exact schema indexes the two relational history paths exercised for every
+Library work: the latest preparation row in a work lineage and the retained
+shadow outcomes for a review case. Bounded `json_each` scans remain for values
+inside canonical result, outcome, and author documents; ordinary SQLite
+B-tree indexes cannot serve those document-value scans. If measurements on a
+representative library put one of those paths outside its owner-visible budget,
+it requires a separately justified relational read projection or search index,
+not speculative indexes or a cache that can diverge from canonical state.
+
 The `metadata-report-v26` document retains all 16 ordered Audiobookshelf target
 destinations and their missing, null, empty, unloaded, malformed, oversized, or
 value state in target currentness. It also retains the closed ordered local-field states,
