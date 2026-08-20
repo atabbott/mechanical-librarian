@@ -1278,11 +1278,14 @@ describe('Library route', () => {
     vi.useFakeTimers()
     try {
       fireEvent.change(query, { target: { value: 'typed' } })
-      await router.navigate({ to: '/library', search: { lens: 'all', preview: 'case-1', q: 'external' } })
+      await act(async () => {
+        await router.navigate({ to: '/library', search: { lens: 'needs_attention', preview: 'case-1', q: 'first' } })
+        await Promise.resolve()
+      })
       await act(async () => { await vi.advanceTimersByTimeAsync(150) })
       vi.useRealTimers()
 
-      expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', q: 'external' })
+      expect(router.state.location.search).toEqual({ lens: 'needs_attention', preview: 'case-1', q: 'first' })
       expect(getLibrary.mock.calls.map(([search]) => search)).not.toContainEqual({ lens: 'all', preview: 'case-1', q: 'typed' })
     } finally {
       vi.useRealTimers()
@@ -1299,15 +1302,19 @@ describe('Library route', () => {
       if (options.from !== '/library') return originalNavigate(options)
       libraryReplacements += 1
       if (libraryReplacements !== 1) return originalNavigate(options)
+      if (typeof options.search === 'function') options.search(router.state.location.search)
       return new Promise((resolve) => { releaseFirst = resolve })
     })
     const query = screen.getByLabelText('Search title, author, identifier, library, or format')
     vi.useFakeTimers()
     try {
-      fireEvent.change(query, { target: { value: '' } })
+      fireEvent.change(query, { target: { value: 'first ' } })
       await act(async () => { await vi.advanceTimersByTimeAsync(150) })
       expect(libraryReplacements).toBe(1)
-      await originalNavigate({ to: '/library', search: { lens: 'all', preview: 'case-1', q: 'external' } })
+      await act(async () => {
+        await originalNavigate({ to: '/library', search: { lens: 'needs_attention', preview: 'case-1', q: 'first' } })
+        await Promise.resolve()
+      })
       fireEvent.change(query, { target: { value: 'latest' } })
       await act(async () => {
         await vi.advanceTimersByTimeAsync(150)
@@ -1318,7 +1325,7 @@ describe('Library route', () => {
       vi.useRealTimers()
 
       await waitFor(() =>
-        expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', q: 'latest' }),
+        expect(router.state.location.search).toEqual({ lens: 'needs_attention', preview: 'case-1', q: 'latest' }),
       )
       expect(libraryReplacements).toBe(2)
     } finally {

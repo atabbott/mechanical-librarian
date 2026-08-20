@@ -23,6 +23,8 @@ import { ownerChoiceCount } from '../reviewChoiceCounts'
 
 type ReviewField = CaseDetailView['fields'][number]
 const searchNavigationDelay = 150
+const librarySearchIdentity = (search: object) =>
+  JSON.stringify(Object.entries(search).sort(([left], [right]) => left.localeCompare(right)))
 // What the owner has chosen for one field and how far that choice has got.
 // `null` means this field carries no choice of theirs in this session.
 type ChoiceProgress = {
@@ -749,8 +751,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const searchNavigation = useRef<Promise<void> | null>(null)
   const searchCommitTimer = useRef<number | null>(null)
   const searchGeneration = useRef(0)
-  const observedSearchQuery = useRef(search.q ?? '')
-  const expectedSearchQuery = useRef<string | null>(null)
+  const observedSearchIdentity = useRef(librarySearchIdentity(search))
+  const expectedSearchIdentity = useRef<string | null>(null)
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
@@ -784,27 +786,28 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const [typedQuery, setTypedQuery] = useState({ echo: search.q ?? '', text: search.q ?? '' })
   const [searchPending, setSearchPending] = useState(false)
   const urlQuery = search.q ?? ''
+  const searchIdentity = librarySearchIdentity(search)
   const queryText = searchPending || typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
   const selectedReviewCaseId = search.preview ?? ''
   const invalidateSearch = useCallback(() => {
     ++searchGeneration.current
     pendingSearchQuery.current = null
-    expectedSearchQuery.current = null
+    expectedSearchIdentity.current = null
     if (searchCommitTimer.current !== null) {
       window.clearTimeout(searchCommitTimer.current)
       searchCommitTimer.current = null
     }
   }, [])
   useEffect(() => {
-    if (observedSearchQuery.current === urlQuery) return
-    observedSearchQuery.current = urlQuery
-    if (expectedSearchQuery.current === urlQuery) {
-      expectedSearchQuery.current = null
+    if (observedSearchIdentity.current === searchIdentity) return
+    observedSearchIdentity.current = searchIdentity
+    if (expectedSearchIdentity.current === searchIdentity) {
+      expectedSearchIdentity.current = null
       return
     }
     invalidateSearch()
     setSearchPending(false)
-  }, [invalidateSearch, urlQuery])
+  }, [invalidateSearch, searchIdentity])
   useEffect(() => {
     return () => {
       invalidateSearch()
@@ -1044,7 +1047,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
           while (generation === searchGeneration.current && pendingSearchQuery.current !== null) {
             const pending = pendingSearchQuery.current
             pendingSearchQuery.current = null
-            expectedSearchQuery.current = pending
             await navigate({
               replace: true,
               search: (current) => {
@@ -1052,6 +1054,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 delete next.cursor
                 if (pending) next.q = pending
                 else delete next.q
+                expectedSearchIdentity.current = librarySearchIdentity(next)
                 return next
               },
             })
@@ -1062,7 +1065,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         } finally {
           searchNavigation.current = null
           if (generation === searchGeneration.current) {
-            expectedSearchQuery.current = null
+            expectedSearchIdentity.current = null
             if (pendingSearchQuery.current !== null) scheduleSearchNavigation()
             else setSearchPending(false)
           } else if (pendingSearchQuery.current !== null) {
