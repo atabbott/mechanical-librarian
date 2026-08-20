@@ -413,7 +413,7 @@ def test_server_uses_validated_tls_before_opening_the_database() -> None:
                 "127.0.0.1",
                 8443,
             )
-        opened.assert_called_once_with(database, create=False, cross_thread=True)
+        opened.assert_called_once_with(database, create=True, cross_thread=True)
 
 
 def test_missing_or_invalid_tls_fails_before_database_or_server() -> None:

@@ -268,6 +268,8 @@ class ContinuousGuardedApplication:
         self._last_library: str | None = None
         self._last_failure: str | None = None
         self._schedule_cursor: tuple[int, str] | None = None
+        self._schedule_generation = 0
+        self._schedule_lock = threading.Lock()
         self._manual_return_cursor: tuple[int, str, str] | None = None
         self._capability_cache: dict[str, tuple[int, dict[str, object]]] = {}
         self._capability_lock = threading.Lock()
@@ -401,7 +403,23 @@ class ContinuousGuardedApplication:
         self.wait_for_drain(deadline)
 
     def wake(self) -> None:
+        self._restart_schedule()
         self._wake.set()
+
+    def _restart_schedule(self) -> None:
+        with self._schedule_lock:
+            self._schedule_generation += 1
+            self._schedule_cursor = None
+
+    def _advance_schedule_cursor(
+        self, decision: AutomaticDecision | HumanDecision, generation: int
+    ) -> None:
+        with self._schedule_lock:
+            if generation == self._schedule_generation:
+                self._schedule_cursor = (
+                    decision.occurred_at,
+                    decision.decision_id,
+                )
 
     def enable(
         self, grants: tuple[tuple[str, tuple[str, ...]], ...]
@@ -576,16 +594,15 @@ class ContinuousGuardedApplication:
 
     def schedule(self, limit: int = 100) -> int:
         self._release_completed_manual_returns()
+        with self._schedule_lock:
+            generation = self._schedule_generation
+            cursor = self._schedule_cursor
         documents = self._repository.pending_field_effect_decision_documents(
-            limit, self._schedule_cursor
+            limit, cursor
         )
-        if not documents and self._schedule_cursor is not None:
-            self._schedule_cursor = None
-            documents = self._repository.pending_field_effect_decision_documents(limit)
         planned = 0
         for document in documents:
             decision = self._decision(document)
-            self._schedule_cursor = (decision.occurred_at, decision.decision_id)
             # This is intentionally before authority, consent and capability: an
             # equal automatic candidate is a terminal decision fact, not a write.
             no_change = getattr(
@@ -596,6 +613,7 @@ class ContinuousGuardedApplication:
                 and no_change is not None
                 and no_change(decision, self._clock())
             ):
+                self._advance_schedule_cursor(decision, generation)
                 continue
             try:
                 snapshot = self._authority.resolve(decision)
@@ -612,12 +630,14 @@ class ContinuousGuardedApplication:
                         decision.decision_id, self._clock()
                     )
                 ):
+                    self._advance_schedule_cursor(decision, generation)
                     continue
                 raise
             key = (snapshot.connection, snapshot.library)
             application = self._applications.get(key)
             capability = self._capabilities.get(key)
             if application is None or capability is None:
+                self._advance_schedule_cursor(decision, generation)
                 continue
             try:
                 consent = self._repository.current_field_effect_consent(
@@ -625,6 +645,7 @@ class ContinuousGuardedApplication:
                 )
             except FieldEffectError as error:
                 if error.code == "consent":
+                    self._advance_schedule_cursor(decision, generation)
                     continue
                 raise
             del consent
@@ -645,6 +666,7 @@ class ContinuousGuardedApplication:
                     reason=observed.category,
                     changed_at=observed_at,
                 )
+                self._advance_schedule_cursor(decision, generation)
                 continue
             for reason in ("insufficient_permission", "field_unavailable"):
                 self._repository.clear_field_effect_capability_suspension(
@@ -667,6 +689,7 @@ class ContinuousGuardedApplication:
                 )
                 is not None
             ):
+                self._advance_schedule_cursor(decision, generation)
                 continue
             operation = application.plan(
                 decision,
@@ -685,12 +708,16 @@ class ContinuousGuardedApplication:
             )
             if operation is not None:
                 planned += 1
+            self._advance_schedule_cursor(decision, generation)
         if planned:
             self._announce("activity", None)
         return planned
 
     def run_cycle(self) -> bool:
-        self.schedule(100)
+        # A timed recovery poll shares the owner-operation serialization gate.
+        # Admit one undecided candidate per cycle so a large permission-waiting
+        # library cannot hold that gate for a whole page of report parsing.
+        self.schedule(1)
         selected = self._repository.next_field_effect_plan_id(self._last_library)
         if selected is None:
             return False
@@ -1080,6 +1107,11 @@ class ContinuousGuardedApplication:
                         }
                     )
                     if observed.category == "allowed":
+                        prior_suspension = (
+                            self._repository.field_effect_capability_suspension(
+                                connection, destination
+                            )
+                        )
                         if not self._activity_only:
                             for reason in (
                                 "insufficient_permission",
@@ -1102,6 +1134,8 @@ class ContinuousGuardedApplication:
                         remaining = self._repository.field_effect_capability_suspension(
                             connection, destination
                         )
+                        if prior_suspension is not None and remaining is None:
+                            self.wake()
                         if remaining is not None:
                             destinations[-1]["state"] = remaining
                     elif observed.category == "connection_unavailable":
@@ -1242,9 +1276,11 @@ class ContinuousGuardedApplication:
                 or cast(_ScanProgress, progress).updated_at < release.requested_at
             ):
                 continue
-            self._repository.clear_field_effect_manual_hold(
+            cleared = self._repository.clear_field_effect_manual_hold(
                 review_case_id, destination, self._clock(), release.hold_token
             )
+            if cleared is not None:
+                self._restart_schedule()
         self._manual_return_cursor = (
             (pending[-1][7], pending[-1][0], pending[-1][1])
             if len(pending) == 100

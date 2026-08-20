@@ -87,10 +87,14 @@ causes typed shutdown failure before the shared repository closes.
 authenticated activity projection reads all library progress and pause state
 from one validated repository snapshot. Only one worker lane evaluates automatic
 scan admission, using that aggregate snapshot and a retained next deadline rather
-than repeated per-library integrity validation. A claimed stage retains its
-already-validated repository connection, without an open transaction, until its
-separate durable transition; composed report, proposal, admission, and projection
-services borrow that validated connection without owning or closing it. Proposal
+than repeated per-library integrity validation. The server performs the full
+schema-object, foreign-key, and SQLite-integrity admission once for its locked
+database inode. Derived worker connections prove that same live filesystem
+authority and borrow its admission instead of rescanning the database. A claimed
+stage retains its already-validated repository connection, without an open
+transaction, until its separate durable transition; composed report, proposal,
+admission, and projection services borrow that validated connection without
+owning or closing it. Proposal
 and admission output publication shares the full-synchronous transaction that
 advances its stage and may claim the next globally fair action, so the next
 action is durable before execution and crash recovery can requeue it. External

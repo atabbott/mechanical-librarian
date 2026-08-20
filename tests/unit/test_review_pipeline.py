@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import sys
 import tempfile
 import threading
 from collections.abc import Callable, Iterator
@@ -2921,6 +2922,59 @@ def test_terminal_failures_wait_for_owner_action_without_idle_status_reads() -> 
     supervisor.retry("primary", "fiction")
     supervisor._schedule_due()
     assert pipeline.status_calls == 2
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"), reason="Linux descriptor proof"
+)
+def test_two_idle_lanes_borrow_startup_schema_validation(
+    application_path: Path,
+) -> None:
+    import mechanical_librarian.adapters.persistence.metadata_reports as reports
+    import mechanical_librarian.adapters.persistence.schema as schema
+
+    owner = open_repository(application_path)
+    condition = threading.Condition()
+    opens = 0
+
+    def repository_factory() -> ReviewPipelineRepository:
+        nonlocal opens
+        repository = open_repository(
+            application_path,
+            create=False,
+            authority=owner.authority,
+        )
+        with condition:
+            opens += 1
+            condition.notify_all()
+        return repository
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=repository_factory,
+        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+    )
+    supervisor = ReviewPreparationSupervisor(pipeline)
+    validate = schema._validate_schema
+    try:
+        with (
+            patch.object(schema, "_validate_schema", wraps=validate) as read,
+            patch.object(reports, "_validate_schema", wraps=validate) as write,
+        ):
+            supervisor.start()
+            with condition:
+                assert condition.wait_for(lambda: opens >= 4, timeout=3)
+            supervisor.stop()
+        assert read.call_count + write.call_count == 0
+    finally:
+        if supervisor._threads:
+            supervisor.stop()
+        owner.close()
 
 
 def test_lane_zero_rechecks_due_deadline_between_bounded_work_batches() -> None:

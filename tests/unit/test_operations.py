@@ -81,7 +81,6 @@ def test_deployment_contract_names_the_composed_guarded_target() -> None:
 
 
 def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> None:
-    repository = Mock()
     catalogue = Mock()
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -92,19 +91,12 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
             patch.object(container, "CATALOGUE", root / "catalogue.sqlite3"),
             patch.object(container, "ARTIFACTS", root / "artifacts"),
             patch.object(
-                container, "open_repository", return_value=repository
-            ) as open_db,
-            patch.object(
                 container, "open_catalogue", return_value=catalogue
             ) as open_cat,
             patch.object(container, "run_review_server") as serve,
         ):
             container.main()
-        open_db.assert_called_once_with(
-            root / "application.sqlite3", create=True, cross_thread=True
-        )
         open_cat.assert_called_once_with(root / "catalogue.sqlite3", create=True)
-        repository.close.assert_called_once_with()
         catalogue.close.assert_called_once_with()
         serve.assert_called_once_with(
             root / "config.json",

@@ -1163,7 +1163,7 @@ def test_composition_opens_the_single_database_for_worker_threads(
         )
     opened.assert_called_once_with(
         database,
-        create=False,
+        create=True,
         cross_thread=True,
     )
 

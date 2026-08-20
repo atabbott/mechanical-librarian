@@ -1,9 +1,11 @@
 """Filesystem authority for the one database file a connection is bound to.
 
-This is a file-authority spine, not a transaction or schema spine: it gives one
-connection over one inode, plus the revalidation that proves the pathname still
-resolves to that inode. It imports nothing from this package, so every other
-persistence module may depend on it.
+This is a file-authority spine, not a transaction or schema implementation: it
+gives one connection over one inode, plus the revalidation that proves the
+pathname still resolves to that inode.  A root binding may also attest that this
+exact inode passed the installed schema admission check, so derived connections
+do not repeat that database-wide check.  It imports nothing from this package,
+so every other persistence module may depend on it.
 """
 
 from __future__ import annotations
@@ -180,6 +182,7 @@ class _LinuxDatabaseBinding:
         self.authority = authority
         self.alias_path = Path(f"/proc/self/fd/{self.parent_descriptor}/{alias_name}")
         self.closed = False
+        self._schema_validated = False
 
     @classmethod
     def create(
@@ -291,6 +294,18 @@ class _LinuxDatabaseBinding:
             _reject_database_sidecars_in_directory(current_parent, self.configured_name)
         finally:
             os.close(current_parent)
+
+    def borrows_schema_validation(self) -> bool:
+        """Return whether the live root authority admitted this exact inode."""
+        if self.authority is None:
+            return False
+        self.authority.require_current()
+        return self.authority._schema_validated
+
+    def mark_schema_validated(self) -> None:
+        """Attest schema admission only after the full validator succeeds."""
+        self.require_current()
+        self._schema_validated = True
 
     def close(self) -> None:
         if self.closed:
