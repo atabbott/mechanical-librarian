@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -27,6 +28,8 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalSet,
     evaluate_report,
 )
+from tests.support.proposal_evidence import _claim, _fields, _provider
+from tests.support.proposal_evidence import _report as _proposal_report
 
 
 def _report(title: str, digest: str) -> MetadataReport:
@@ -121,6 +124,40 @@ def test_publish_is_idempotent_and_reopens_exact_document() -> None:
         repository.close()
 
 
+def test_generic_provider_subtitle_persists_as_a_nonactionable_replay() -> None:
+    subtitle = _claim(
+        "catalogue",
+        "edition-1",
+        ClaimKind.SUBTITLE,
+        "A Novel",
+        scope=ClaimScope.EDITION,
+        applicability="ebook",
+    )
+    report = _proposal_report(
+        fields=_fields(
+            subtitle=TargetField(TargetDestination.SUBTITLE, TargetFieldState.MISSING)
+        ),
+        providers=(_provider("catalogue", "edition-1", (subtitle,)),),
+    )
+    proposal = evaluate_report(report)
+
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        repository.publish(report, lambda: True)
+        assert proposal.to_json() == repository.publish_proposal(proposal)
+        first = repository.admit_review_case(proposal)
+        assert first == repository.admit_review_case(proposal)
+        assert {
+            "review_case_id": None,
+            "schema_version": "review-admission-v1",
+            "status": "no_case",
+        } == json.loads(first)
+        assert (1, 0) == repository.count_current_review_cases(None)
+        assert 0 == repository.count_current_attention_fields(None)
+        assert 0 == repository.read_review_attention(None, 10, 0).total
+        repository.close()
+
+
 def test_prior_policy_store_schema_is_rejected_without_mutation() -> None:
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "reports.sqlite"
@@ -152,7 +189,7 @@ def test_persisted_v8_proposal_state_is_rejected_during_bootstrap() -> None:
         connection.execute("PRAGMA writable_schema=ON")
         connection.execute(
             "UPDATE sqlite_master SET sql=replace(sql, ?, ?) WHERE name='proposal_sets'",
-            (POLICY_VERSION, "fixed-conservative-v8"),
+            (POLICY_VERSION, "fixed-conservative-v9"),
         )
         connection.commit()
         connection.close()
@@ -161,7 +198,7 @@ def test_persisted_v8_proposal_state_is_rejected_during_bootstrap() -> None:
         connection.execute("DROP TRIGGER proposal_sets_no_update")
         connection.execute(
             "UPDATE proposal_sets SET policy_version=?,document=replace(document, ?, ?)",
-            ("fixed-conservative-v8", POLICY_VERSION, "fixed-conservative-v8"),
+            ("fixed-conservative-v9", POLICY_VERSION, "fixed-conservative-v9"),
         )
         connection.execute(
             "CREATE TRIGGER proposal_sets_no_update BEFORE UPDATE ON proposal_sets "

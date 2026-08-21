@@ -3,6 +3,7 @@ complete safe cover artifacts, and the eligibility rules that
 refuse to manufacture evidence.
 """
 
+import json
 from dataclasses import replace
 
 import pytest
@@ -38,6 +39,8 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalAssessment,
     ProposalOutcome,
     ProposalScope,
+    ProposalSet,
+    ProposalValueError,
     evaluate_report,
 )
 from tests.support.proposal_evidence import (
@@ -184,6 +187,127 @@ def test_subtitle_scope_admission_is_source_sensitive() -> None:
     )
     assert ProposalOutcome.INELIGIBLE == provider_result.outcome
     assert () == provider_result.alternatives
+
+
+def test_generic_provider_subtitle_preserves_blank_without_making_a_case() -> None:
+    generic = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.TITLE,
+                "Current title",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.SUBTITLE,
+                "A Novel",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+                order=1,
+            ),
+        ),
+    )
+
+    proposal = evaluate_report(
+        _report(
+            fields=_fields(
+                subtitle=TargetField(
+                    TargetDestination.SUBTITLE, TargetFieldState.MISSING
+                )
+            ),
+            providers=(generic,),
+        )
+    )
+
+    subtitle = _result(proposal, TargetDestination.SUBTITLE)
+    title = _result(proposal, TargetDestination.TITLE)
+    assert (ProposalOutcome.INELIGIBLE, ("generic_provider_subtitle",)) == (
+        subtitle.outcome,
+        subtitle.reasons,
+    )
+    assert () == subtitle.alternatives
+    assert (ProposalOutcome.KEEP, ("positive_preservation_evidence",)) == (
+        title.outcome,
+        title.reasons,
+    )
+    assert title.alternatives[0].assessment is ProposalAssessment.PRESERVES_TARGET
+    assert 1 == len(proposal.bibliographic_combinations)
+    assert all(
+        selection.kind.value == "preserve_target"
+        for selection in proposal.bibliographic_combinations[0].selections
+    )
+    assert 1 == len(proposal.bibliographic_combinations[0].source_representations)
+
+    tampered = json.loads(proposal.to_json())
+    tampered["relationships"]["bibliographic_combinations"][0][
+        "source_representations"
+    ] = []
+    with pytest.raises(ProposalValueError):
+        ProposalSet.from_json(json.dumps(tampered))
+
+
+@pytest.mark.parametrize(
+    "value",
+    ("A Novel of Manners", "Novel", "A Novella"),
+)
+def test_generic_provider_subtitle_vocabulary_does_not_discard_legitimate_text(
+    value: str,
+) -> None:
+    provider = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.SUBTITLE,
+                value,
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+        ),
+    )
+
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    subtitle=TargetField(
+                        TargetDestination.SUBTITLE, TargetFieldState.MISSING
+                    )
+                ),
+                providers=(provider,),
+            )
+        ),
+        TargetDestination.SUBTITLE,
+    )
+
+    assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+    assert {value} == {candidate.value.value for candidate in result.alternatives}
+
+
+def test_generic_subtitle_rule_does_not_apply_to_local_evidence() -> None:
+    local = _local_subtitle("A Novel", ClaimScope.WORK)
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    subtitle=TargetField(
+                        TargetDestination.SUBTITLE, TargetFieldState.MISSING
+                    )
+                ),
+                local_claims=(local,),
+            )
+        ),
+        TargetDestination.SUBTITLE,
+    )
+
+    assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
 
 
 def test_equal_subtitles_keep_local_and_provider_scopes_separate() -> None:

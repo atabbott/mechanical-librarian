@@ -634,6 +634,7 @@ def _combination_selections(
             != _COMBINATION_DESTINATIONS
         ):
             continue
+        all_preserve = all(value["kind"] == "preserve_target" for value in selections)
         selected_title: PolicyAction | None = None
         for selection in cast("list[dict[str, object]]", combination["selections"]):
             destination = cast("str", selection["destination"])
@@ -653,8 +654,14 @@ def _combination_selections(
                 break
             proposal = proposals[0]
             available = (
-                eligible_by_proposal[cast("str", proposal["proposal_id"])]
-                if destination == _COMBINATION_SELECTED_DESTINATION
+                tuple(
+                    action
+                    for action in catalogue.actions
+                    if action.proposal_id == proposal["proposal_id"]
+                    and action.destination == destination
+                    and action.recommendation != "manual"
+                )
+                if destination == _COMBINATION_SELECTED_DESTINATION and all_preserve
                 else tuple(
                     action
                     for action in catalogue.actions
@@ -662,6 +669,8 @@ def _combination_selections(
                     and action.destination == destination
                     and action.recommendation != "manual"
                 )
+                if destination != _COMBINATION_SELECTED_DESTINATION
+                else eligible_by_proposal[cast("str", proposal["proposal_id"])]
             )
             matches = [
                 action

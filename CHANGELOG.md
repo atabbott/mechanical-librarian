@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Preserve an empty subtitle when eligible provider evidence contains only the
+  exact generic marketing label `A Novel`. Legitimate and local subtitles stay
+  reviewable; the v10 proposal policy requires a clean rebuild of v9 state.
+  (#807)
+
+- Record a qualified automatic series membership only when two independent
+  provider lineages agree. Duplicate lineage, provider failure, and incomplete
+  membership remain visible as a stable owner-review reason. (#809)
+
 - Keep an empty ISBN field truthful when retained identifier lineage cannot
   produce an eligible alternative. Invalid values now retain their specific
   rejection reason rather than appearing as missing evidence, while unresolved

@@ -1448,7 +1448,61 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
     )
     series_report = _bibliographic_report(
         current_title="Book",
-        providers=(_provider("catalogue", "edition-1", series_claims),),
+        providers=(
+            _provider(
+                "catalogue",
+                "edition-1",
+                series_claims,
+                authority="hardcover",
+            ),
+            _provider(
+                "search",
+                "edition-2",
+                (
+                    _claim(
+                        "search",
+                        "edition-2",
+                        ClaimKind.TITLE,
+                        "Book",
+                        scope=ClaimScope.WORK,
+                        order=0,
+                    ),
+                    _claim(
+                        "search",
+                        "edition-2",
+                        ClaimKind.SERIES,
+                        "Reading Order",
+                        scope=ClaimScope.WORK,
+                        order=1,
+                    ),
+                    _claim(
+                        "search",
+                        "edition-2",
+                        ClaimKind.SERIES_SEQUENCE,
+                        "2",
+                        scope=ClaimScope.WORK,
+                        order=2,
+                    ),
+                    _claim(
+                        "search",
+                        "edition-2",
+                        ClaimKind.SERIES,
+                        "Publication Order",
+                        scope=ClaimScope.WORK,
+                        order=3,
+                    ),
+                    _claim(
+                        "search",
+                        "edition-2",
+                        ClaimKind.SERIES_SEQUENCE,
+                        "4",
+                        scope=ClaimScope.WORK,
+                        order=4,
+                    ),
+                ),
+                authority="open_library",
+            ),
+        ),
     )
     genre_claims = tuple(
         _claim(
@@ -3256,6 +3310,155 @@ def test_nonautomatic_policy_destination_never_constructs_an_automatic_decision(
         assert (
             AutomaticSafetyState(False, None, ()) == repository.automatic_safety_state()
         )
+        repository.close()
+
+
+def test_generic_subtitle_preservation_records_only_the_title_no_op() -> None:
+    report = _bibliographic_report(
+        current_title="Current title",
+        providers=(
+            _source(
+                "catalogue",
+                "edition-1",
+                titles=("Current title",),
+                subtitle="A Novel",
+            ),
+        ),
+    )
+    profile = _preview_automatic_profile()
+
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "reports.sqlite"
+        repository = open_repository(path)
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        resolved = resolve_policy(profile, report.target.library)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, dict(resolved.destinations)
+        )
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        repository.set_automatic_safety_state(AutomaticSafetyState(False, None, ()), 2)
+
+        persisted = repository.persist_shadow_outcome(case_id, 3)
+        outcome = ShadowOutcomeSet.from_json(persisted)
+
+        assert persisted == repository.persist_shadow_outcome(case_id, 4)
+        assert [("title", "keep_current")] == [
+            (value.destination, value.disposition)
+            for value in outcome.outcomes
+            if value.destination == "title"
+        ]
+        assert ("title", "keep_current") == repository._connection.execute(
+            "SELECT destination,document ->> '$.outcome' FROM automatic_decisions"
+        ).fetchone()
+        assert (0,) == repository._connection.execute(
+            "SELECT COUNT(*) FROM automatic_decisions WHERE destination='subtitle'"
+        ).fetchone()
+        assert 0 == repository.count_current_attention_fields(None)
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        title = next(
+            value for value in detail["fields"] if value["destination"] == "title"
+        )
+        subtitle = next(
+            value for value in detail["fields"] if value["destination"] == "subtitle"
+        )
+        assert not title["needs_attention"]
+        assert not subtitle["needs_attention"]
+        assert 0 == repository.read_review_attention(None, 50, 0).total
+        activity = repository.field_effect_activity_page(
+            search=None, event_type="metadata", occurred_after=0, page=1, page_size=50
+        )
+        assert 1 == activity["total"]
+        assert "title" == activity["events"][0]["destination"]
+        repository.close()
+
+        reopened = open_repository(path, create=False)
+        assert persisted == reopened.persist_shadow_outcome(case_id, 5)
+        assert (1,) == reopened._connection.execute(
+            "SELECT COUNT(*) FROM automatic_decisions"
+        ).fetchone()
+        newer = _bibliographic_report(
+            current_title="New current title",
+            providers=(
+                _source(
+                    "catalogue",
+                    "edition-1",
+                    titles=("New current title",),
+                    subtitle="A Novel",
+                ),
+            ),
+        )
+        reopened.publish(newer, lambda: True, report.report_id)
+        assert "stale" == reopened.persist_shadow_outcome(case_id, 6)
+        reopened.close()
+
+
+def test_incomplete_series_memberships_remain_in_attention_after_persistence() -> None:
+    report = _bibliographic_report(
+        current_title="Current title",
+        providers=(
+            _source(
+                "hardcover",
+                "edition-1",
+                titles=("Current title",),
+                series="Reading Order",
+            ),
+            _source(
+                "open_library",
+                "edition-2",
+                titles=("Current title",),
+                series="Reading Order",
+            ),
+        ),
+    )
+    base = _preview_automatic_profile()
+    profile = MetadataPolicyProfile.create(
+        "Automatic series requires positions",
+        {**dict(base.options), "series": "source_order"},
+        {**dict(base.destinations), "series": "automatic"},
+    )
+
+    with tempfile.TemporaryDirectory() as temporary:
+        repository = open_repository(Path(temporary) / "reports.sqlite")
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        resolved = resolve_policy(profile, report.target.library)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, dict(resolved.destinations)
+        )
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        repository.set_automatic_safety_state(AutomaticSafetyState(False, None, ()), 2)
+
+        repository.persist_shadow_outcome(case_id, 3)
+        assert 1 == repository.count_current_attention_fields(None)
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        series = next(
+            value for value in detail["fields"] if value["destination"] == "series"
+        )
+        assert series["needs_attention"]
+        assert "propose_change" == series["deterministic_disposition"]
+        assert 1 == repository.read_review_attention(None, 50, 0).total
+        assert (0,) == repository._connection.execute(
+            "SELECT COUNT(*) FROM automatic_decisions WHERE destination='series'"
+        ).fetchone()
         repository.close()
 
 

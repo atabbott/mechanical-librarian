@@ -16,9 +16,9 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
 )
 from mechanical_librarian.domain.metadata_report import (
-    MAX_TAGS, ClaimKind, ClaimScope, IdentifierRelation, MetadataReport,
-    ProviderClaim, ProviderEvidenceKind, TargetDestination, TargetField,
-    TargetFieldState, isbn_family,
+    MAX_TAGS, ClaimKind, ClaimScope, FieldState, IdentifierRelation,
+    MetadataReport, ProviderClaim, ProviderEvidenceKind, ProviderStatus,
+    TargetDestination, TargetField, TargetFieldState, isbn_family,
 )
 from mechanical_librarian.domain.proposal_set import (
     BibliographicSelectionKind, ProposalAlternative, ProposalAssessment,
@@ -189,6 +189,12 @@ def _project(
         if field in {"genres", "tags"}
         else _candidate(result)
     )
+    if field == "series" and destination == "automatic":
+        reason = _automatic_series_abstention(
+            report, result, candidate, retained_claims
+        )
+        if reason is not None:
+            return _abstain(field, option, target, current, reason)
     if candidate is None:
         reason = _candidate_reason(result)
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, reason)
@@ -259,6 +265,60 @@ def _series_candidate(result: ProposalResult) -> ProposalAlternative | None:
         and alternative.assessment is ProposalAssessment.PRESERVES_TARGET
     ):
         return alternative
+    return None
+
+
+def _automatic_series_abstention(
+    report: MetadataReport,
+    result: ProposalResult,
+    candidate: ProposalAlternative | None,
+    retained_claims: dict[str, _RetainedClaim],
+) -> str | None:
+    """Keep automatic series authority within its existing two-lineage proof."""
+    if any(
+        provider.status
+        in {
+            ProviderStatus.AUTHENTICATION,
+            ProviderStatus.AUTHORIZATION,
+            ProviderStatus.RATE_LIMITED,
+            ProviderStatus.UNAVAILABLE,
+            ProviderStatus.INCOMPLETE,
+            ProviderStatus.MALFORMED,
+            ProviderStatus.OVERSIZED,
+            ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            ProviderStatus.QUERY_LIMIT_EXCEEDED,
+        }
+        for provider in report.providers
+    ):
+        return "series_provider_failure"
+    if any(
+        claim.kind is ClaimKind.SERIES_SEQUENCE
+        and claim.state is not FieldState.VALID
+        and not (claim.state is FieldState.ABSENT and claim.value is None)
+        for provider in report.providers
+        for source in provider.candidates
+        for claim in source.claims
+    ):
+        return "series_membership_incomplete"
+    if candidate is None:
+        return (
+            "series_conflicting_membership"
+            if result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+            else None
+        )
+    if candidate.value.kind is ProposalValueKind.SERIES and any(
+        value.sequence is None for value in candidate.value.value
+    ):
+        return "series_membership_incomplete"
+    lineages = {
+        retained.provider.authority
+        for reference in candidate.evidence_references
+        if (retained := retained_claims.get(reference)) is not None
+        and retained.provider is not None
+        and retained.provider.authority is not None
+    }
+    if len(lineages) < 2:
+        return "series_independent_corroboration_required"
     return None
 
 
