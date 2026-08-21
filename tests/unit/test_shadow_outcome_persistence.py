@@ -938,54 +938,191 @@ def test_manual_cover_predecessor_drift_rolls_back_and_releases_the_writer_lock(
         repository.close()
 
 
-def test_automatic_keep_current_is_a_single_no_change_fact_without_guards() -> None:
-    isbn10 = LocalClaim.create(
-        kind=ClaimKind.ISBN,
-        observed="0306406152",
-        canonical="0306406152",
-        excerpt="0306406152",
-        applicability="ebook",
-        checksum="valid_isbn_10",
-        applicability_basis="ebook",
-        scope=ClaimScope.EDITION,
-    )
-    report = _proposal_report(
-        fields=_fields(
-            isbn=TargetField(
-                TargetDestination.ISBN,
-                TargetFieldState.VALUE,
-                "0306406152",
-            )
-        ),
-        local_claims=(isbn10,),
-        providers=(
-            _provider(
-                "catalogue",
-                "edition-1",
-                (
-                    _claim(
+def _automatic_no_change_inputs(
+    scenario: str,
+) -> tuple[MetadataReport, str, str, str]:
+    """Build one naturally qualified, equal automatic policy outcome."""
+    if scenario in {"exact_title", "canonical_title"}:
+        current_title = (
+            "Secret History" if scenario == "exact_title" else "secret history"
+        )
+        local_title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Secret History",
+            canonical="Secret History",
+            excerpt="Secret History",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        )
+        return (
+            _proposal_report(
+                fields=_fields(
+                    current_title,
+                    subtitle=TargetField(
+                        TargetDestination.SUBTITLE, TargetFieldState.NULL
+                    ),
+                    series=TargetField(
+                        TargetDestination.SERIES, TargetFieldState.MISSING
+                    ),
+                ),
+                local_claims=(local_title,),
+                providers=(
+                    _source(
                         "catalogue",
                         "edition-1",
-                        ClaimKind.ISBN,
-                        "9780306406157",
-                        scope=ClaimScope.EDITION,
-                        applicability="ebook",
+                        titles=("Secret History",),
+                        subtitle="A Mistborn Novella",
                     ),
                 ),
             ),
-        ),
-    )
+            "title_layout",
+            "title_and_subtitle",
+            "title",
+        )
+    if scenario in {"exact_authors", "canonical_authors"}:
+        authors = ("Mick Herron",) if scenario == "exact_authors" else ("mick herron",)
+        local_creator = LocalClaim.create(
+            kind=ClaimKind.CREATOR,
+            observed="Mick Herron",
+            canonical="Mick Herron",
+            excerpt="Mick Herron",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+            role="author",
+        )
+        return (
+            _proposal_report(
+                fields=_fields(
+                    authors=TargetField(
+                        TargetDestination.AUTHORS, TargetFieldState.VALUE, authors
+                    ),
+                    isbn=TargetField(
+                        TargetDestination.ISBN,
+                        TargetFieldState.VALUE,
+                        "0-306-40615-2",
+                    ),
+                ),
+                local_claims=(
+                    local_creator,
+                    LocalClaim.create(
+                        kind=ClaimKind.ISBN,
+                        observed="0-306-40615-2",
+                        canonical="0306406152",
+                        excerpt="0-306-40615-2",
+                        applicability="ebook",
+                        checksum="valid_isbn_10",
+                        applicability_basis="ebook",
+                        scope=ClaimScope.EDITION,
+                    ),
+                ),
+                providers=(
+                    _provider(
+                        "catalogue",
+                        "work-1",
+                        (
+                            _claim(
+                                "catalogue",
+                                "work-1",
+                                ClaimKind.CREATOR,
+                                "Mick Herron",
+                                scope=ClaimScope.WORK,
+                                role="author",
+                            ),
+                            _claim(
+                                "catalogue",
+                                "work-1",
+                                ClaimKind.ISBN,
+                                "9780306406157",
+                                scope=ClaimScope.EDITION,
+                                applicability="ebook",
+                                order=1,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            "contributor_names",
+            "preserve",
+            "authors",
+        )
+    if scenario == "formatted_isbn":
+        isbn10 = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="0-306-40615-2",
+            canonical="0306406152",
+            excerpt="0-306-40615-2",
+            applicability="ebook",
+            checksum="valid_isbn_10",
+            applicability_basis="ebook",
+            scope=ClaimScope.EDITION,
+        )
+        return (
+            _proposal_report(
+                fields=_fields(
+                    isbn=TargetField(
+                        TargetDestination.ISBN,
+                        TargetFieldState.VALUE,
+                        "0-306-40615-2",
+                    )
+                ),
+                local_claims=(isbn10,),
+                providers=(
+                    _provider(
+                        "catalogue",
+                        "edition-1",
+                        (
+                            _claim(
+                                "catalogue",
+                                "edition-1",
+                                ClaimKind.ISBN,
+                                "9780306406157",
+                                scope=ClaimScope.EDITION,
+                                applicability="ebook",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            "isbn_form",
+            "preserve_exact",
+            "isbn",
+        )
+    raise AssertionError(f"unknown automatic no-change scenario: {scenario}")
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    (
+        "exact_title",
+        "canonical_title",
+        "exact_authors",
+        "canonical_authors",
+        "formatted_isbn",
+    ),
+)
+def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
+    scenario: str,
+) -> None:
+    report, category, option, destination = _automatic_no_change_inputs(scenario)
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "reports.sqlite"
         repository = open_repository(path)
         options = dict(DEFAULT_OPTIONS)
-        options["isbn_form"] = "preserve_exact"
+        options[category] = option
         destinations = {
             name: "unsupported" if name == "explicit" else "ask"
             for name in OPTION_CATALOGUE
         }
-        destinations["isbn_form"] = "automatic"
-        profile = MetadataPolicyProfile.create("No-change ISBN", options, destinations)
+        destinations[category] = "automatic"
+        if category == "contributor_names":
+            destinations["isbn_form"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "No-change policy", options, destinations
+        )
         resolved = resolve_policy(profile, report.target.library)
         repository.enter_shadow_preview(1)
         repository.create_metadata_policy_draft(profile.canonical_json)
@@ -1014,15 +1151,22 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards() -> N
             repository.persist_shadow_outcome(case_id, 4)
         )
         outcome = next(
-            value for value in persisted.outcomes if value.destination == "isbn"
+            value for value in persisted.outcomes if value.destination == destination
         )
         assert "keep_current" == outcome.disposition
         decisions = tuple(
             AutomaticDecision.from_json(value)
             for value in repository.get_review_case_decisions(case.review_case_id)
         )
-        decision = next(value for value in decisions if value.destination == "isbn")
+        expected_decisions = (
+            ("authors", "isbn") if category == "contributor_names" else (destination,)
+        )
+        assert set(expected_decisions) == {value.destination for value in decisions}
+        decision = next(
+            value for value in decisions if value.destination == destination
+        )
         assert "keep_current" == decision.outcome
+        assert repository.persist_shadow_outcome(case_id, 5) == persisted.to_json()
         assert repository.count_current_attention_fields(None) == 0
 
         class UnexpectedAuthority:
@@ -1041,7 +1185,7 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards() -> N
         assert scheduler.schedule() == 0
         assert repository._connection.execute(
             "SELECT count(*) FROM field_effect_no_changes"
-        ).fetchone() == (1,)
+        ).fetchone() == (len(expected_decisions),)
         assert repository._connection.execute(
             "SELECT count(*) FROM field_effects"
         ).fetchone() == (0,)
@@ -1054,6 +1198,9 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards() -> N
         assert repository._connection.execute(
             "SELECT count(*) FROM field_effect_actions"
         ).fetchone() == (0,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM automatic_decisions"
+        ).fetchone() == (len(expected_decisions),)
         assert repository.pending_field_effect_decision_documents(100) == ()
         assert repository.count_current_attention_fields(None) == 0
         page = repository.field_effect_activity_page(
@@ -1069,6 +1216,7 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards() -> N
         assert no_change["report_id"] == report.report_id
         repository.close()
         reopened = open_repository(path, create=False)
+        assert reopened.persist_shadow_outcome(case_id, 11) == persisted.to_json()
         assert (
             reopened.field_effect_activity_page(
                 search="item-1",
@@ -1080,6 +1228,9 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards() -> N
             == "no_change_required"
         )
         assert reopened.pending_field_effect_decision_documents(100) == ()
+        assert reopened._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (len(expected_decisions),)
         reopened.close()
 
 
