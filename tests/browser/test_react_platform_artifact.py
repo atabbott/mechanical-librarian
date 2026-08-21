@@ -551,6 +551,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 )
                 activity_ledger = page.locator(".cm-activity-ledger")
                 for work, label in (
+                    ("Equal automatic title", "No change required"),
                     ("Synthetic completed cover advice", "Cover advice completed"),
                     ("Synthetic unavailable cover advice", "Cover advice unavailable"),
                     ("Synthetic failed cover advice", "Cover advice failed safely"),

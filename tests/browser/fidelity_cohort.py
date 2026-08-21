@@ -964,6 +964,14 @@ def _cohort_category(destination: str, origin: str, failure: str | None) -> str:
 def _activity(query: dict[str, list[str]]) -> dict[str, object]:
     events = [
         (
+            "Equal automatic title",
+            "Household ebooks",
+            "title",
+            "no_change_required",
+            "automatic_policy",
+            None,
+        ),
+        (
             "The Glass Orchard",
             "Spoken stories",
             "title",
