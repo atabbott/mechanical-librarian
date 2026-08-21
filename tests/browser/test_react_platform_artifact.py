@@ -1367,6 +1367,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
 
         stage[0] = "library:return-to-automatic"
         page.goto("https://react-platform.invalid/library?lens=all&preview=case-4&field=title")
+        page.get_by_role("button", name="Resume automatic handling").wait_for()
         capture_visual_proof("library-manual-handling-collapsed")
         page.get_by_role("button", name="Resume automatic handling").click()
         page.get_by_role("heading", name="Automatic handling is paused for this field").wait_for()

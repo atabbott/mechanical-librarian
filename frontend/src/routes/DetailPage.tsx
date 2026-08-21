@@ -90,7 +90,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
           <h1>{data.title}</h1>
           <p>{data.authors.length ? data.authors.join(', ') : 'Author details unavailable'}</p>
         </div>
-        <Link to="/library" search={backSearch}>
+        <Link className="diagnostic-back-to-work" to="/library" search={backSearch}>
           Back to work
         </Link>
       </header>

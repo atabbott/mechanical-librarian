@@ -160,6 +160,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .page-heading, .policy-layout, .activity-layout { display:grid; grid-template-columns:minmax(0,2fr) minmax(16rem,1fr); gap:1.5rem; }
 .detail-layout { display:grid; grid-template-columns:minmax(12rem,15rem) minmax(0,1fr); align-items:start; gap:1.5rem; }
 .page-heading { margin-bottom:1.5rem; }
+.diagnostic-back-to-work { display:inline-flex; min-height:44px; align-items:center; justify-content:center; align-self:start; padding:.55rem .8rem; border:1px solid var(--line-strong); border-radius:.5rem; color:var(--accent-strong); background:var(--surface); font-weight:650; text-decoration:none; }
 .counts { display:flex; flex-wrap:wrap; gap:.75rem; margin:0; }
 .counts div, .metric { display:flex; flex-direction:column-reverse; padding:1rem; background:var(--surface); border-radius:.5rem; }
 .counts dd { margin:0; font-size:1.5rem; font-weight:700; }
@@ -443,6 +444,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .theme-toggle > span:last-child { display:none; }
   main { padding:1rem .75rem 4rem; }
   .library-header, .attention-header, .page-heading, .detail-layout, .activity-layout, .activity-ledger-layout, .comparison { grid-template-columns:1fr; }
+  .diagnostic-back-to-work { justify-self:start; }
   .activity-state-card { position:static; }
   .activity-assurances { grid-template-columns:1fr; }
   .activity-ledger article { grid-template-columns:1fr; gap:.35rem; }
