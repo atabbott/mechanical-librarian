@@ -20,8 +20,6 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     FieldState,
-    IdentifierEvidence,
-    IdentifierEvidenceBasis,
     IdentifierRelation,
     LocalClaim,
     ProviderCandidate,
@@ -40,7 +38,6 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalAssessment,
     ProposalOutcome,
     ProposalScope,
-    _isbn_rejection_reason,
     evaluate_report,
 )
 from tests.support.proposal_evidence import (
@@ -813,12 +810,14 @@ def test_identifier_and_explicit_rules_do_not_manufacture_evidence() -> None:
             False,
         ),
     )
-    proposal_set = evaluate_report(
-        _report(
-            fields=fields,
-            providers=(_provider("catalogue", "edition-1", (isbn,)),),
-        )
+    report = _report(
+        fields=fields,
+        providers=(_provider("catalogue", "edition-1", (isbn,)),),
     )
+    assert {IdentifierRelation.UNRESOLVED} == {
+        evidence.relation for evidence in report.identifier_evidence
+    }
+    proposal_set = evaluate_report(report)
     isbn_result = _result(proposal_set, TargetDestination.ISBN)
     assert ProposalOutcome.DEFER == isbn_result.outcome
     assert () == isbn_result.alternatives
@@ -863,48 +862,71 @@ def test_invalid_isbn_lineage_is_specific_when_empty_target_has_no_alternative()
 
 
 @pytest.mark.parametrize(
-    ("relation", "basis", "expected"),
+    "state",
     (
-        (
-            IdentifierRelation.INVALID,
-            IdentifierEvidenceBasis.INVALID_IDENTIFIER,
-            "identifier_validity_invalid",
-        ),
-        (
-            IdentifierRelation.UNRESOLVED,
-            IdentifierEvidenceBasis.INSUFFICIENT_CONTEXT,
-            "identifier_applicability_unresolved",
-        ),
-        (
-            IdentifierRelation.ASSOCIATED,
-            IdentifierEvidenceBasis.PROVIDER_WORK_IDENTITY,
-            "identifier_manifestation_unestablished",
-        ),
-        (
-            IdentifierRelation.UNRELATED,
-            IdentifierEvidenceBasis.PROVIDER_OTHER_WORK,
-            "identifier_manifestation_incompatible",
-        ),
+        TargetFieldState.MALFORMED,
+        TargetFieldState.UNLOADED,
+        TargetFieldState.OVERSIZED,
     ),
 )
-def test_isbn_rejection_reason_preserves_retained_lineage(
-    relation: IdentifierRelation,
-    basis: IdentifierEvidenceBasis,
-    expected: str,
+def test_isbn_lineage_does_not_override_unusable_target_state(
+    state: TargetFieldState,
 ) -> None:
-    if relation in {IdentifierRelation.ASSOCIATED, IdentifierRelation.UNRELATED}:
-        evidence = IdentifierEvidence(
-            "provider_" + "a" * 64,
-            relation,
-            basis,
-            provider="catalogue",
-            candidate_identity="edition-1",
-            work_identity="work-1",
-        )
-    else:
-        evidence = IdentifierEvidence("local_" + "a" * 64, relation, basis)
+    invalid = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="not-an-isbn",
+        canonical=None,
+        excerpt="not-an-isbn",
+        applicability="unknown",
+        checksum="invalid",
+        applicability_basis="unlabelled",
+        scope=ClaimScope.EDITION,
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    isbn=TargetField(TargetDestination.ISBN, state),
+                ),
+                local_claims=(invalid,),
+            )
+        ),
+        TargetDestination.ISBN,
+    )
 
-    assert expected == _isbn_rejection_reason((evidence,))
+    assert ProposalOutcome.INELIGIBLE == result.outcome
+    assert ("target_state_unusable",) == result.reasons
+
+
+def test_isbn_lineage_does_not_override_populated_target_preservation() -> None:
+    invalid = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="not-an-isbn",
+        canonical=None,
+        excerpt="not-an-isbn",
+        applicability="unknown",
+        checksum="invalid",
+        applicability_basis="unlabelled",
+        scope=ClaimScope.EDITION,
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    isbn=TargetField(
+                        TargetDestination.ISBN,
+                        TargetFieldState.VALUE,
+                        "9780306406157",
+                    ),
+                ),
+                local_claims=(invalid,),
+            )
+        ),
+        TargetDestination.ISBN,
+    )
+
+    assert ProposalOutcome.DEFER == result.outcome
+    assert ("no_positive_preservation_evidence",) == result.reasons
 
 
 def test_explicit_local_ebook_isbn_remains_eligible() -> None:

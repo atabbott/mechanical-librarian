@@ -157,9 +157,8 @@ The policy is deliberately conservative:
   empty field;
 - ISBNs must have an `accepted` report relationship proving validated,
   edition-applicable evidence; unresolved applicability defers, while retained
-  invalid or manifestation-ineligible identifier lineage supplies its specific
-  ineligible reason rather than appearing as absent evidence; ISBN-13 and ASIN
-  are never manufactured;
+  invalid identifier lineage supplies its specific ineligible reason rather
+  than appearing as absent evidence; ISBN-13 and ASIN are never manufactured;
 - explicit changes require direct evidence, so absence supports neither
   `false` nor `keep`; and
 - an existing verified ABS cover is kept. An absent target gets a selected

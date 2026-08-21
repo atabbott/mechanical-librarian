@@ -246,8 +246,6 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ),
     ProposalOutcome.INELIGIBLE: frozenset(
         {
-            ("identifier_manifestation_incompatible",),
-            ("identifier_manifestation_unestablished",),
             ("identifier_validity_invalid",),
             ("no_supported_evidence",),
             ("policy_ignored",),
@@ -979,6 +977,8 @@ def evaluate_report(
         if (
             destination is TargetDestination.ISBN
             and not observations
+            and result.outcome is ProposalOutcome.INELIGIBLE
+            and result.reasons == ("no_supported_evidence",)
             and (reason := _isbn_rejection_reason(report.identifier_evidence))
             is not None
         ):
@@ -2570,10 +2570,6 @@ def _isbn_rejection_reason(
     relations = {item.relation for item in evidence}
     if IdentifierRelation.UNRESOLVED in relations:
         return "identifier_applicability_unresolved"
-    if IdentifierRelation.UNRELATED in relations:
-        return "identifier_manifestation_incompatible"
-    if IdentifierRelation.ASSOCIATED in relations:
-        return "identifier_manifestation_unestablished"
     if relations == {IdentifierRelation.INVALID}:
         return "identifier_validity_invalid"
     return None

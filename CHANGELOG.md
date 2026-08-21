@@ -3,9 +3,9 @@
 ## Unreleased
 
 - Keep an empty ISBN field truthful when retained identifier lineage cannot
-  produce an eligible alternative. Invalid or manifestation-ineligible values
-  now retain their specific rejection reason rather than appearing as missing
-  evidence, while unresolved applicability still defers. (#595)
+  produce an eligible alternative. Invalid values now retain their specific
+  rejection reason rather than appearing as missing evidence, while unresolved
+  applicability still defers. (#595)
 
 - Treat an automatic decision that preserves the current value as a durable
   no-change outcome. Canonically equal title, identifier, creator, and nullable
