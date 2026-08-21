@@ -62,9 +62,16 @@ _REVIEW_FIELD_ATTENTION_SQL = (
     "(suspension.scope='destination' AND suspension.destination="
     "result.destination)))"
 )
+_EPUB_INAPPLICABLE_ATTENTION_SQL = (
+    " AND NOT (json_extract(mr.document,'$.file.format')='epub' "
+    "AND result.destination IN ('narrators','explicit'))"
+)
 _REVIEW_ATTENTION_SQL = (
     "EXISTS (SELECT 1 FROM review_case_field_facts result WHERE "
-    "result.review_case_id=rc.review_case_id AND " + _REVIEW_FIELD_ATTENTION_SQL + ")"
+    "result.review_case_id=rc.review_case_id AND "
+    + _REVIEW_FIELD_ATTENTION_SQL
+    + _EPUB_INAPPLICABLE_ATTENTION_SQL
+    + ")"
 )
 _REVIEW_SEARCH_SQL = (
     " AND (? IS NULL OR "
@@ -104,6 +111,7 @@ __all__ = [
     "_CURRENT_LIBRARY_FROM_SQL",
     "_CURRENT_REVIEW_CASE_COUNT_SQL",
     "_CURRENT_REVIEW_FROM_SQL",
+    "_EPUB_INAPPLICABLE_ATTENTION_SQL",
     "_LATEST_PREPARATION_WORK_SQL",
     "_REVIEW_ATTENTION_SQL",
     "_REVIEW_FIELD_ATTENTION_SQL",

@@ -1606,7 +1606,10 @@ def _library_item(
             value
             for value in case.proposals
             if (
-                value["destination"] not in decisions
+                not _omitted_for_epub(
+                    cast(str, value["destination"]), report.file.format
+                )
+                and value["destination"] not in decisions
                 and value["destination"] not in suspended_destinations
                 and classify_review_field(
                     attention_candidate=_needs_attention(

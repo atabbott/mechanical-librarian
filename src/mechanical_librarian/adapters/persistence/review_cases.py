@@ -52,6 +52,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_LIBRARY_FROM_SQL,
     _CURRENT_REVIEW_CASE_COUNT_SQL,
     _CURRENT_REVIEW_FROM_SQL,
+    _EPUB_INAPPLICABLE_ATTENTION_SQL,
     _REVIEW_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
     _REVIEW_SEARCH_SQL,
@@ -87,11 +88,6 @@ from mechanical_librarian.domain.review_case import (
     is_actionable,
 )
 from mechanical_librarian.domain.review_field_classification import ReviewFieldCause
-
-_EPUB_INAPPLICABLE_ATTENTION_SQL = (
-    " AND NOT (json_extract(mr.document,'$.file.format')='epub' "
-    "AND result.destination IN ('narrators','explicit'))"
-)
 
 # The exact column shape of the current_review_case_lineages pointer selected
 # by _validated_review_pointer.  Nullability follows the schema below:
