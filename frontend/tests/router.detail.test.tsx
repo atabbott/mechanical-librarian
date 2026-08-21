@@ -236,7 +236,12 @@ describe('Library review ownership', () => {
       ),
     ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Keep manual handling' }))
-    expect(screen.getByRole('button', { name: 'Fresh checks requested' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Fresh checks requested' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+    expect(screen.getByRole('button', { name: 'Fresh checks requested' })).toHaveFocus()
+    await user.click(screen.getByRole('button', { name: 'Fresh checks requested' }))
     expect(returnToAutomatic).toHaveBeenCalledOnce()
   })
 

@@ -600,7 +600,8 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .protected-choice .proposed-choice-list > header small { color: var(--soft); font-size: .68rem; text-align: right; }
 .protected-choice .proposed-choice-list > header small.is-active { color: var(--accent-strong); font-weight: 700; }
 .metadata-choice.is-recommended { background: color-mix(in srgb, var(--accent-soft) 64%, var(--surface)); }
-.protected-choice .proposed-choice-list:has(.metadata-choice:only-child) { align-content:center; }
+.protected-choice .proposed-choice-list.has-one-choice { position:relative; align-content:center; }
+.protected-choice .proposed-choice-list.has-one-choice > header { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap; }
 .protected-choice .proposed-value { min-height: 76px; text-align: left; }
 .protected-choice .proposed-value + .proposed-value { border-top: 1px solid var(--line); border-radius: 0; }
 .metadata-choice { position:relative; display:grid; min-width:0; border:1px solid transparent; background:var(--surface-strong); }
@@ -624,6 +625,8 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .choice-description { margin:0; font:inherit; }
 .choice-description summary { color:var(--ink); cursor:pointer; font:600 1rem/1.55 Georgia, 'Times New Roman', serif; }
 .choice-description p { max-width:68ch; margin:12px 0 0; color:var(--ink); font:400 .93rem/1.6 Georgia, 'Times New Roman', serif; white-space:pre-wrap; overflow-wrap:anywhere; }
+.choice-description-value { cursor:pointer; }
+.choice-description-value:focus-visible { outline:2px solid var(--accent-strong); outline-offset:3px; }
 .comparison-notice { margin-top:14px; padding:12px 14px; border:1px solid var(--notice); border-radius:8px; background:var(--notice-soft); color:var(--ink); }
 .comparison-notice p { margin:0; overflow-wrap:anywhere; font-size:.75rem; line-height:1.45; }
 .comparison-notice p + p { margin-top:5px; }

@@ -434,6 +434,10 @@ describe('Library route', () => {
     disclosure.focus()
     await user.keyboard('{Enter}')
     expect(http.recordDecision).not.toHaveBeenCalled()
+
+    const fullValue = screen.getByRole('button', { name: 'Choose current full description' })
+    await user.click(fullValue)
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
   })
 
   it('keeps the current cover pinned beside a complete eligible gallery and retains advisory reasons', async () => {

@@ -385,7 +385,20 @@ function MetadataChoice({
       {longDescription ? (
         <details className="choice-description">
           <summary>Read full description</summary>
-          <p>{value}</p>
+          <p
+            aria-label={`Choose ${current ? 'current' : 'proposed'} full description`}
+            className="choice-description-value"
+            role="button"
+            tabIndex={0}
+            onClick={onChoose}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              onChoose()
+            }}
+          >
+            {value}
+          </p>
         </details>
       ) : null}
       {hasEvidence && !expanded ? (
@@ -986,7 +999,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   }, [selected?.destination])
   useEffect(() => {
     if (automaticPanelVisible) keepManualHandling.current?.focus()
-  }, [automaticPanelVisible])
+  }, [automaticPanelVisible, automaticResult])
   useEffect(() => {
     if (automaticPanel !== null || !restoreAutomaticTrigger.current) return
     restoreAutomaticTrigger.current = false
@@ -1659,7 +1672,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                             value={selected.currentValue}
                           />
                           {selected.preservationOnly ? null : (
-                            <div className="proposed-choice-list">
+                            <div
+                              className={`proposed-choice-list${selected.proposedValues.length === 1 ? ' has-one-choice' : ''}`}
+                            >
                               <header>
                                 <strong>Choose a new value</strong>
                                 <small
@@ -1787,11 +1802,15 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         <button
                           ref={automaticTrigger}
                           type="button"
-                          disabled={automaticCompletedForSelected}
-                          onClick={() => {
-                            setAutomaticResult(null)
-                            setAutomaticPanel(selectedAutomaticKey)
-                          }}
+                          aria-disabled={automaticCompletedForSelected}
+                          onClick={
+                            automaticCompletedForSelected
+                              ? undefined
+                              : () => {
+                                  setAutomaticResult(null)
+                                  setAutomaticPanel(selectedAutomaticKey)
+                                }
+                          }
                         >
                           {automaticCompletedForSelected
                             ? 'Fresh checks requested'

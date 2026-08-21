@@ -124,6 +124,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
     activity_failures = 0
     ambiguous_decisions = 0
     fail_policy_persistently = False
+    description_mode = False
     consent_payloads: list[object] = []
     return_automatic_requests = 0
     failed_requests: list[tuple[str, str, str | None]] = []
@@ -179,10 +180,29 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     body=json.dumps(rich_payload("/api/v1/activity")),
                 )
                 return
+            payload = rich_payload(route.request.url)
+            if description_mode and path == "/api/v1/review-cases/case-1":
+                detail = cast("dict[str, object]", payload)
+                fields = cast("list[dict[str, object]]", detail["fields"])
+                description = (
+                    "First retained paragraph.\n\nSecond retained paragraph. " * 12
+                )
+                fields[0] = {
+                    **fields[0],
+                    "destination": "description",
+                    "current": {"kind": "synthetic", "value": description},
+                    "proposed_values": [
+                        {"kind": "synthetic", "value": description + "Alternative."}
+                    ],
+                    "choice_contexts": [
+                        fields[0]["choice_contexts"][0],
+                        fields[0]["choice_contexts"][1],
+                    ],
+                }
             route.fulfill(
                 status=200,
                 content_type="application/json",
-                body=json.dumps(rich_payload(route.request.url)),
+                body=json.dumps(payload),
             )
             return
         prefix = "/assets/review-app/"
@@ -1383,12 +1403,104 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "Fresh checks requested. Manual handling remains until they complete.", exact=True
         ).wait_for()
         assert return_automatic_requests == 1
+        page.keyboard.press("Escape")
+        expect(
+            page.get_by_role("button", name="Fresh checks requested")
+        ).to_be_focused()
+        expect(
+            page.get_by_role("button", name="Fresh checks requested")
+        ).to_have_attribute("aria-disabled", "true")
+        assert return_automatic_requests == 1
         page.set_viewport_size({"width": 390, "height": 844})
         assert page.get_by_role("heading", name="Evidence and source ledger").count() == 0
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
         for control in page.locator(".masthead nav a, .shell-actions button").all():
             assert control.bounding_box()["height"] >= 44
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
+
+        stage[0] = "library:description-choice"
+        description_mode = True
+        page.goto(
+            "https://react-platform.invalid/library?lens=all&preview=case-1&field=description"
+        )
+        summary = page.locator(
+            ".metadata-choice.is-current .choice-description summary"
+        )
+        summary.wait_for()
+        page.set_viewport_size({"width": 1440, "height": 900})
+        single_proposal = page.locator(
+            ".proposed-choice-list.has-one-choice .metadata-choice"
+        )
+        expect(single_proposal).to_have_count(1)
+        current_choice = page.locator(".metadata-choice.is-current")
+        assert (
+            abs(
+                (
+                    single_proposal.bounding_box()["y"]
+                    + single_proposal.bounding_box()["height"] / 2
+                )
+                - (
+                    current_choice.bounding_box()["y"]
+                    + current_choice.bounding_box()["height"] / 2
+                )
+            )
+            <= 1
+        )
+        for width, height in ((1440, 900), (900, 900), (390, 844)):
+            page.set_viewport_size({"width": width, "height": height})
+            assert page.evaluate("() => document.documentElement.scrollWidth") <= width
+        page.locator("html").evaluate("node => { node.style.fontSize = '200%' }")
+        assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
+        page.locator("html").evaluate("node => { node.style.fontSize = '' }")
+        before_description_choice = ambiguous_decisions
+        summary.click()
+        assert ambiguous_decisions == before_description_choice
+        capture_visual_proof("library-long-description")
+        full_description = page.locator(".metadata-choice.is-current").get_by_role(
+            "button", name="Choose current full description"
+        )
+        full_description.wait_for()
+        full_description.click()
+        assert ambiguous_decisions == before_description_choice + 1
+        page.goto(
+            "https://react-platform.invalid/library?lens=all&preview=case-1&field=description"
+        )
+        summary = page.locator(
+            ".metadata-choice.is-current .choice-description summary"
+        )
+        summary.wait_for()
+        summary.click()
+        full_description = page.locator(".metadata-choice.is-current").get_by_role(
+            "button", name="Choose current full description"
+        )
+        full_description.wait_for()
+        full_description.focus()
+        page.keyboard.press("Enter")
+        assert ambiguous_decisions == before_description_choice + 2
+        page.goto(
+            "https://react-platform.invalid/library?lens=all&preview=case-1&field=description"
+        )
+        summary = page.locator(
+            ".metadata-choice.is-current .choice-description summary"
+        )
+        summary.wait_for()
+        summary.click()
+        full_description = page.locator(".metadata-choice.is-current").get_by_role(
+            "button", name="Choose current full description"
+        )
+        full_description.wait_for()
+        full_description.focus()
+        page.keyboard.press(" ")
+        assert ambiguous_decisions == before_description_choice + 3
+        description_mode = False
+        page.goto(
+            "https://react-platform.invalid/library?lens=all&preview=case-1&field=title"
+        )
+        stacked = page.locator(
+            ".proposed-choice-list:not(.has-one-choice) .metadata-choice"
+        )
+        expect(stacked).to_have_count(3)
+        assert stacked.nth(0).bounding_box()["y"] < stacked.nth(1).bounding_box()["y"]
 
         assert activity_failures == 1
         assert consent_payloads == [
