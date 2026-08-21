@@ -63,7 +63,9 @@ from mechanical_librarian.domain.field_effect import (
 from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
 )
+from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_report import TargetDestination
 
 
 class SQLiteFieldEffectRepository(ConnectionScoped):
@@ -107,10 +109,16 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         try:
             transaction.begin()
             source = self.field_effect_authority_source(decision)
-            desired = project_decision_value(
-                decision.destination, source["decision_value"]
+            desired = (
+                source["pre_value"]
+                if decision.outcome == "keep_current"
+                else project_decision_value(
+                    decision.destination, source["decision_value"]
+                )
             )
-            if desired != source["pre_value"]:
+            if not values_match(
+                TargetDestination(decision.destination), source["pre_value"], desired
+            ):
                 transaction.commit()
                 return False
             record = FieldEffectNoChange.create(

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Treat an automatic decision that preserves the current value as a durable
+  no-change outcome. Canonically equal title, identifier, creator, and nullable
+  values now bypass write authority, consent, backup, and target mutation, stay
+  out of Attention, and remain visible in Activity as `No change required`
+  after restart. (#599)
+
 - Keep the medium Library Attention drawer clear of a wrapped masthead. Its
   fixed position now follows the shell's measured height with deliberate
   clearance, while preserving the drawer's existing scroll and focus behavior.

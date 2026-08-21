@@ -61,7 +61,7 @@ def _automatic_decision_value(
     """Project one persisted automatic decision to its exact target envelope."""
     target = case.target
     if (
-        decision.outcome != "candidate"
+        decision.outcome not in {"candidate", "keep_current"}
         or decision.review_case_id != case.review_case_id
         or decision.report_id != case.report_id
         or decision.proposal_set_id != case.proposal_set_id
@@ -86,19 +86,6 @@ def _automatic_decision_value(
     )
     # Every ReviewCase proposal carries a "result" object, and TargetFacts
     # always serialises "fields" as a list of field objects.
-    alternatives = (
-        None
-        if proposal is None
-        else cast("dict[str, object]", proposal["result"]).get("alternatives")
-    )
-    selected = next(
-        (
-            item
-            for item in cast("list[dict[str, object]] | None", alternatives) or ()
-            if item.get("alternative_id") == decision.candidate_id
-        ),
-        None,
-    )
     target_field = next(
         (
             item
@@ -108,10 +95,25 @@ def _automatic_decision_value(
         None,
     )
     if (
-        selected is None
+        type(proposal) is not dict
         or type(target_field) is not dict
         or target_field.get("state") not in {"value", "null", "empty", "missing"}
     ):
+        raise FieldEffectError("authority_binding")
+    if decision.outcome == "keep_current":
+        if decision.candidate_id is not None:
+            raise FieldEffectError("authority_binding")
+        return None
+    alternatives = cast("dict[str, object]", proposal["result"]).get("alternatives")
+    selected = next(
+        (
+            item
+            for item in cast("list[dict[str, object]] | None", alternatives) or ()
+            if item.get("alternative_id") == decision.candidate_id
+        ),
+        None,
+    )
+    if selected is None:
         raise FieldEffectError("authority_binding")
     value = selected["value"]
     if decision.policy_category == "isbn_form":
@@ -227,26 +229,30 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             )
             result = proposal.get("result") if type(proposal) is dict else None
             alternatives = result.get("alternatives") if type(result) is dict else None
-            selected = next(
-                (
-                    value
-                    for value in alternatives or ()
-                    if type(value) is dict
-                    and value.get("alternative_id") == decision.candidate_id
-                ),
-                None,
-            )
             if (
                 type(target) is not dict
                 or target.get("state") not in {"value", "null", "empty", "missing"}
-                or type(selected) is not dict
             ):
                 raise FieldEffectError("persistence")
             pre_value = target.get("value") if target["state"] == "value" else None
-            desired = project_decision_value(
-                record.destination,
-                _automatic_decision_value(decision, case, report, proposal_set),
-            )
+            value = _automatic_decision_value(decision, case, report, proposal_set)
+            if decision.outcome == "keep_current":
+                if value is not None:
+                    raise FieldEffectError("persistence")
+                desired = pre_value
+            else:
+                selected = next(
+                    (
+                        value
+                        for value in alternatives or ()
+                        if type(value) is dict
+                        and value.get("alternative_id") == decision.candidate_id
+                    ),
+                    None,
+                )
+                if type(selected) is not dict:
+                    raise FieldEffectError("persistence")
+                desired = project_decision_value(record.destination, value)
             if desired != pre_value or record.target_version != field_value_version(
                 record.destination, pre_value
             ):

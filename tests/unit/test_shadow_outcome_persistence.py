@@ -938,7 +938,7 @@ def test_manual_cover_predecessor_drift_rolls_back_and_releases_the_writer_lock(
         repository.close()
 
 
-def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards() -> None:
+def test_automatic_keep_current_is_a_single_no_change_fact_without_guards() -> None:
     isbn10 = LocalClaim.create(
         kind=ClaimKind.ISBN,
         observed="0306406152",
@@ -1013,7 +1013,6 @@ def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards() -> Non
         proposal = next(
             value for value in case.proposals if value["destination"] == "isbn"
         )
-        alternative = proposal["result"]["alternatives"][0]
         decision = AutomaticDecision.create(
             review_case_id=case.review_case_id,
             report_id=case.report_id,
@@ -1021,8 +1020,8 @@ def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards() -> Non
             proposal_id=proposal["proposal_id"],
             target_fingerprint=case.target_fingerprint,
             destination="isbn",
-            outcome="candidate",
-            candidate_id=alternative["alternative_id"],
+            outcome="keep_current",
+            candidate_id=None,
             resolved_policy_id=resolved.resolved_id,
             policy_generation=2,
             rule_id="shadow_rule_" + "1" * 64,
@@ -1046,8 +1045,22 @@ def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards() -> Non
             ),
         )
         repository._connection.commit()
+        assert repository.count_current_attention_fields(None) == 0
 
-        assert repository.record_current_field_effect_no_change(decision, 5)
+        class UnexpectedAuthority:
+            def resolve(self, _decision):
+                raise AssertionError("keep-current decision reached authority")
+
+        scheduler = ContinuousGuardedApplication(
+            repository,
+            {("primary", "ebooks"): cast(GuardedFieldApplication, SimpleNamespace())},
+            {("primary", "ebooks"): SimpleNamespace()},
+            UnexpectedAuthority(),
+            (("primary", "ebooks"),),
+            lambda: 10,
+            lambda *_: None,
+        )
+        assert scheduler.schedule() == 0
         assert repository.record_current_field_effect_no_change(decision, 9)
         assert repository._connection.execute(
             "SELECT count(*) FROM field_effect_no_changes"
@@ -1061,21 +1074,6 @@ def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards() -> Non
         assert repository._connection.execute(
             "SELECT count(*) FROM field_effect_consents"
         ).fetchone() == (0,)
-
-        class UnexpectedAuthority:
-            def resolve(self, _decision):
-                raise AssertionError("equal decision reached authority")
-
-        scheduler = ContinuousGuardedApplication(
-            repository,
-            {("primary", "ebooks"): cast(GuardedFieldApplication, SimpleNamespace())},
-            {("primary", "ebooks"): SimpleNamespace()},
-            UnexpectedAuthority(),
-            (("primary", "ebooks"),),
-            lambda: 10,
-            lambda *_: None,
-        )
-        assert scheduler.schedule() == 0
         assert repository.pending_field_effect_decision_documents(100) == ()
         page = repository.field_effect_activity_page(
             search="item-1",

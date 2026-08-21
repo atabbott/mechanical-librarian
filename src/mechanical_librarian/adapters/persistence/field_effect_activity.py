@@ -495,7 +495,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
                 "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint "
                 "WHERE lineage.review_case_id=automatic.review_case_id) AND "
-                "json_extract(automatic.document,'$.outcome')='candidate' AND NOT EXISTS ("
+                "json_extract(automatic.document,'$.outcome') IN ('candidate','keep_current') AND NOT EXISTS ("
                 "SELECT 1 FROM human_decisions human WHERE "
                 "human.review_case_id=automatic.review_case_id AND "
                 "human.destination=automatic.destination AND NOT EXISTS ("
