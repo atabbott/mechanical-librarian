@@ -23,6 +23,7 @@ from mechanical_librarian.application.review_pipeline import (
 from mechanical_librarian.application.review_web import (
     InspectCurrentReviewCase,
     ReviewWebError,
+    _attention_item,
     _case_and_report,
     _choice_contexts,
     _choice_limitations,
@@ -33,6 +34,7 @@ from mechanical_librarian.application.review_web import (
     _decode_cursor,
     _encode_cursor,
     _evidence_by_reference,
+    _field_inventory_role,
     _library_item,
     _provider_comparison_notices,
     _provider_label,
@@ -1608,6 +1610,21 @@ def test_attention_reads_the_automatic_outcome_and_cause_columns(
     # The third row carries neither column, so the two above prove the
     # reader read them rather than a constant the double always emits.
     assert reasons["subtitle"] == "This field needs your review."
+
+
+def test_epub_inventory_and_attention_omit_narrator_and_explicit() -> None:
+    report = _proposal_report()
+    case = ReviewCase.create(evaluate_report(report), report)
+    assert {
+        destination: _field_inventory_role(
+            "needs_attention", destination, report.file.format, [], False
+        )
+        for destination in ("narrators", "explicit")
+    } == {"narrators": "omitted", "explicit": "omitted"}
+    assert all(
+        _attention_item(case.to_json(), report.to_json(), destination, 1) is None
+        for destination in ("narrators", "explicit")
+    )
 
 
 def test_cursor_encoder_never_emits_an_unreachable_offset() -> None:

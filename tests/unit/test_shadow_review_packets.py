@@ -429,6 +429,53 @@ def test_year_current_projects_as_the_canonical_publication_date_through_replay(
     assert [("publishedDate", "recommend_keep_current")] == [
         (value.destination, value.recommendation) for value in decisions
     ]
+
+
+def test_conflicting_retained_year_keeps_publication_manual() -> None:
+    report = _proposal_report(
+        fields=_proposal_fields(
+            published_year=TargetField(
+                TargetDestination.PUBLISHED_YEAR, TargetFieldState.VALUE, "2002"
+            ),
+            published_date=TargetField(
+                TargetDestination.PUBLISHED_DATE, TargetFieldState.MISSING
+            ),
+        ),
+        local_claims=(
+            _publication_local_isbn(),
+            _publication_local_date("2001", DatePrecision.YEAR),
+        ),
+        providers=(
+            _publication_provider(
+                "alpha", "alpha-edition", ("2001",), authority="hardcover"
+            ),
+            _publication_provider(
+                "beta", "beta-edition", ("2001",), authority="open_library"
+            ),
+        ),
+    )
+    proposal = evaluate_report(report)
+    date = next(
+        value
+        for value in proposal.results
+        if value.destination is TargetDestination.PUBLISHED_DATE
+    )
+    assert (
+        ProposalOutcome.UNRESOLVED_CHOICE,
+        ("date_year_conflict", "unique_typed_candidate"),
+    ) == (date.outcome, date.reasons)
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    decision = next(
+        value
+        for value in decide_shadow_packet(packet).decisions
+        if value.destination == "publishedDate"
+    )
+    assert ("manual", "no_eligible_action") == (
+        decision.recommendation,
+        decision.reason_code,
+    )
     forged = json.loads(packet.to_json())
     forged_published = next(
         (
@@ -439,7 +486,7 @@ def test_year_current_projects_as_the_canonical_publication_date_through_replay(
     )
     forged_published["candidates"][0]["decision_summary"]["publication"][
         "paired_destination_consistency"
-    ] = "conflicting"
+    ] = "consistent"
     with pytest.raises(ShadowReviewValueError):
         ShadowReviewPacket.from_json(canonical_json(forged), report)
 

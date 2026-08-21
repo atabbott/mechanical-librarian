@@ -1692,11 +1692,16 @@ def _field_inventory_role(
     """Project one canonical field into the owner's finite field inventory."""
     if destination == "publishedYear" and publication_date_present:
         return "omitted"
-    if media_kind == "ebook" and destination in {"narrators", "explicit"}:
+    if _omitted_for_epub(destination, media_kind):
         return "omitted"
     if classification == "unsupported" and not alternatives:
         return "contextual"
     return "primary"
+
+
+def _omitted_for_epub(destination: str, media_kind: str) -> bool:
+    """Keep EPUB-inapplicable fields out of every owner-facing projection."""
+    return media_kind == "epub" and destination in {"narrators", "explicit"}
 
 
 def _attention_item(
@@ -1708,6 +1713,8 @@ def _attention_item(
     cause: ReviewFieldCause | None = None,
 ) -> dict[str, object] | None:
     case, report = _case_and_report(case_document, report_document)
+    if _omitted_for_epub(destination, report.file.format):
+        return None
     if destination == "publishedYear" and any(
         value["destination"] == "publishedDate" for value in case.proposals
     ):

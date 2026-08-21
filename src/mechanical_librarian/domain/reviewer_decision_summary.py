@@ -410,8 +410,16 @@ def _paired_publication_consistency(
     results: dict[str, dict[str, object]],
 ) -> str:
     if destination == TargetDestination.PUBLISHED_DATE.value:
+        result = results.get(destination)
+        reasons = None if result is None else result.get("reasons")
+        if (
+            result is None
+            or result.get("outcome") == "unresolved_choice"
+            and type(reasons) is list
+            and "date_year_conflict" in reasons
+        ):
+            return "conflicting"
         # Published year is a derived display context, not a second proposal.
-        # The canonical date candidate is therefore self-consistent.
         return "consistent"
     paired_destination = (
         TargetDestination.PUBLISHED_YEAR.value
