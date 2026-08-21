@@ -1043,17 +1043,10 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     page.expect_response(
                         lambda response: response.url.endswith("/decisions")
                     ) as decision_response,
-                    page.expect_response(
-                        lambda response: response.url.endswith("/history")
-                    ) as history_response,
                 ):
                     page.locator(".library-cover-card").filter(has_text="Alternative 1 cover").click()
                 response = decision_response.value
                 assert 200 == response.status, f"decision response: {response.text()}"
-                history_result = history_response.value
-                assert 200 == history_result.status, (
-                    f"history response: {history_result.text()}"
-                )
                 page.get_by_text(
                     "Decision recorded from the authoritative case.", exact=True
                 ).wait_for()

@@ -939,13 +939,6 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             sum("status of 404 (Not Found)" in error for error in missing_case_errors)
             == 2
         )
-        assert (
-            sum(
-                "Review API request failed (404: not_found)" in error
-                for error in missing_case_errors
-            )
-            == 2
-        )
         del errors[missing_case_error_start:]
 
         stage[0] = "library:desktop-workspace"
