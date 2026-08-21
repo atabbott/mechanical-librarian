@@ -817,13 +817,13 @@ def test_identity_replay_and_document_validation_are_canonical() -> None:
         )
 
 
-def test_v8_policy_identity_rejects_v7_replay() -> None:
+def test_v8_policy_identity_rejects_public_base_v5_replay() -> None:
     assert "deterministic-shadow-decision-policy-v8" == DECISION_POLICY_VERSION
     packet = _packet()
     document = json.loads(decide_shadow_packet(packet).to_json())
-    document["policy_version"] = "deterministic-shadow-decision-policy-v6"
+    document["policy_version"] = "deterministic-shadow-decision-policy-v5"
     document["policy_sha256"] = (
-        "a86201443a027971fdb8943763c1911300a586ecc3fe732b01622a7596649a99"
+        "d7e765d71a6b52259a8c8e54961afe63d54344a19785b288f0ddb59b7db5e5f8"
     )
     core = {key: value for key, value in document.items() if key != "decision_set_id"}
     document["decision_set_id"] = (
