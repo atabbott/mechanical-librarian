@@ -24,6 +24,9 @@ from mechanical_librarian.adapters.field_effect_fakes import (
 )
 from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.field_effect_validation import (
+    _automatic_decision_value,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     open_repository,
@@ -1166,6 +1169,33 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
             value for value in decisions if value.destination == destination
         )
         assert "keep_current" == decision.outcome
+        if scenario == "exact_title":
+            corrupt_case = SimpleNamespace(
+                proposal_set_id=case.proposal_set_id,
+                report_id=case.report_id,
+                review_case_id=case.review_case_id,
+                target=case.target,
+                target_fingerprint=case.target_fingerprint,
+                proposals=json.loads(json.dumps(case.proposals)),
+            )
+            proposal = next(
+                value
+                for value in corrupt_case.proposals
+                if value["proposal_id"] == decision.proposal_id
+            )
+            alternatives = proposal["result"]["alternatives"]
+            preservation = [
+                value
+                for value in alternatives
+                if value["assessment"] == "preserves_target"
+            ]
+            assert 1 == len(preservation)
+            preservation[0]["assessment"] = "replaces_target"
+            with pytest.raises(FieldEffectError, match="authority_binding"):
+                _automatic_decision_value(
+                    decision, corrupt_case, report, proposal_set, persisted
+                )
+            preservation[0]["assessment"] = "preserves_target"
         assert repository.persist_shadow_outcome(case_id, 5) == persisted.to_json()
         assert repository.count_current_attention_fields(None) == 0
 
@@ -1231,7 +1261,45 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
         assert reopened._connection.execute(
             "SELECT count(*) FROM field_effect_no_changes"
         ).fetchone() == (len(expected_decisions),)
+        if scenario == "exact_title":
+            corrupted = persisted.to_data()
+            field = next(
+                value
+                for value in corrupted["outcomes"]
+                if value["outcome_id"] == decision.source_outcome_id
+            )
+            field["disposition"] = "abstention"
+            field["reason_code"] = "no_eligible_action"
+            identity = dict(field)
+            del identity["outcome_id"]
+            field["outcome_id"] = "shadow_outcome_" + _digest(identity)
+            outcome_identity = dict(corrupted)
+            del outcome_identity["outcome_set_id"]
+            corrupted["outcome_set_id"] = "shadow_outcome_set_" + _digest(
+                outcome_identity
+            )
+            trigger = reopened._connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='trigger' "
+                "AND name='shadow_decision_outcomes_no_update'"
+            ).fetchone()
+            assert trigger is not None and type(trigger[0]) is str
+            reopened._connection.execute(
+                "DROP TRIGGER shadow_decision_outcomes_no_update"
+            )
+            reopened._connection.execute(
+                "UPDATE shadow_decision_outcomes SET document=?",
+                (json.dumps(corrupted, separators=(",", ":"), sort_keys=True),),
+            )
+            reopened._connection.execute(trigger[0])
+            reopened._connection.commit()
         reopened.close()
+        if scenario == "exact_title":
+            with pytest.raises(
+                MetadataReportError, match="database is unavailable or incompatible"
+            ) as raised:
+                open_repository(path, create=False)
+            assert isinstance(raised.value.__cause__, FieldEffectError)
+            assert "authority_binding" == raised.value.__cause__.code
 
 
 def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None:

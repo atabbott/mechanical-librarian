@@ -44,6 +44,7 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     project_f20_automatic_decision_value,
     select_isbn_representation,
 )
+from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.domain.validation import (
     boolean,
     bounded_integer,
@@ -61,6 +62,7 @@ def _automatic_decision_value(
     case: ReviewCase,
     report: MetadataReport,
     proposal_set: ProposalSet,
+    source_outcome: ShadowOutcomeSet,
 ) -> object:
     """Project one persisted automatic decision to its exact target envelope."""
     target = case.target
@@ -104,11 +106,64 @@ def _automatic_decision_value(
         or target_field.get("state") not in {"value", "null", "empty", "missing"}
     ):
         raise FieldEffectError("authority_binding")
+    result = proposal.get("result")
+    alternatives = result.get("alternatives") if type(result) is dict else None
+    pre_value = target_field.get("value") if target_field["state"] == "value" else None
     if decision.outcome == "keep_current":
-        if decision.candidate_id is not None:
+        source = next(
+            (
+                field
+                for field in source_outcome.outcomes
+                if field.outcome_id == decision.source_outcome_id
+            ),
+            None,
+        )
+        preservation = tuple(
+            value
+            for value in alternatives or ()
+            if type(value) is dict and value.get("assessment") == "preserves_target"
+        )
+        identifier_preservation = False
+        if decision.policy_category == "isbn_form":
+            try:
+                result = next(
+                    item
+                    for item in proposal_set.results
+                    if item.destination.value == decision.destination
+                )
+                candidate = next(iter(result.alternatives))
+                exact_value = select_isbn_representation(
+                    report, candidate, decision.policy_option
+                )
+                identifier_preservation = exact_value is not None and values_match(
+                    TargetDestination(decision.destination), pre_value, exact_value
+                )
+            except (StopIteration, RichMetadataPreviewError):
+                identifier_preservation = False
+        if (
+            decision.candidate_id is not None
+            or (len(preservation) != 1 and not identifier_preservation)
+            or source is None
+            or any(
+                (
+                    source.proposal_id != decision.proposal_id,
+                    source.destination != decision.destination,
+                    source.disposition != "keep_current",
+                    source.candidate_id is not None,
+                    source.reason_code != "unique_supported_preservation",
+                    source.rule_id != decision.rule_id,
+                    source.policy_category != decision.policy_category,
+                    source.policy_option != decision.policy_option,
+                    not (
+                        source.citation_ids
+                        or source.combination_ids
+                        or decision.policy_category == "isbn_form"
+                    ),
+                )
+            )
+        ):
             raise FieldEffectError("authority_binding")
         return None
-    alternatives = cast("dict[str, object]", proposal["result"]).get("alternatives")
     selected = next(
         (
             item
@@ -140,7 +195,6 @@ def _automatic_decision_value(
         if exact_value is None:
             raise FieldEffectError("authority_binding")
         value = {"kind": "text", "value": exact_value}
-    pre_value = target_field.get("value") if target_field["state"] == "value" else None
     if decision.policy_category in {
         "series",
         "genres",
@@ -201,9 +255,20 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
                 (decision.proposal_set_id,),
             ).fetchone()
-            if proposal_row is None:
+            outcome_row = connection.execute(
+                "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
+                "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=?",
+                (
+                    decision.review_case_id,
+                    decision.report_id,
+                    decision.proposal_set_id,
+                    decision.resolved_policy_id,
+                ),
+            ).fetchone()
+            if proposal_row is None or outcome_row is None:
                 raise FieldEffectError("persistence")
             proposal_set = ProposalSet.from_json(proposal_row[0])
+            source_outcome = ShadowOutcomeSet.from_json(outcome_row[0])
             if (
                 decision.destination != record.destination
                 or decision.target_fingerprint != record.target_fingerprint
@@ -241,7 +306,9 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             }:
                 raise FieldEffectError("persistence")
             pre_value = target.get("value") if target["state"] == "value" else None
-            value = _automatic_decision_value(decision, case, report, proposal_set)
+            value = _automatic_decision_value(
+                decision, case, report, proposal_set, source_outcome
+            )
             if decision.outcome == "keep_current":
                 if value is not None:
                     raise FieldEffectError("persistence")
