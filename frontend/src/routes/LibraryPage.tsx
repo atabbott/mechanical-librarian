@@ -417,6 +417,8 @@ function LibraryCoverChoices(props: {
   field: ReviewField
   disabled: boolean
   progress: ChoiceProgress
+  expandedEvidence: { has: (key: string) => boolean }
+  revealEvidence: (key: string) => void
   choose: (
     outcome: DecisionCommand['outcome'],
     selectedValue?: DecisionCommand['selectedValue'],
@@ -429,13 +431,17 @@ function LibraryCoverChoicesContent({
   reviewCaseId,
   field,
   disabled,
+  expandedEvidence,
   progress,
+  revealEvidence,
   choose,
 }: {
   reviewCaseId: string
   field: ReviewField
   disabled: boolean
   progress: ChoiceProgress
+  expandedEvidence: { has: (key: string) => boolean }
+  revealEvidence: (key: string) => void
   choose: (
     outcome: DecisionCommand['outcome'],
     selectedValue?: DecisionCommand['selectedValue'],
@@ -443,17 +449,6 @@ function LibraryCoverChoicesContent({
 }) {
   const cover = useCoverChoiceData(reviewCaseId)
   const consideration = field.coverConsideration
-  const [coverEvidenceState, setCoverEvidenceState] = useState<{
-    work: string
-    keys: ReadonlySet<string>
-  }>({ work: reviewCaseId, keys: new Set() })
-  const expandedEvidence =
-    coverEvidenceState.work === reviewCaseId ? coverEvidenceState.keys : new Set<string>()
-  const setExpandedEvidence = (update: (items: ReadonlySet<string>) => ReadonlySet<string>) =>
-    setCoverEvidenceState((current) => ({
-      work: reviewCaseId,
-      keys: update(current.work === reviewCaseId ? current.keys : new Set()),
-    }))
   if (!consideration)
     return (
       <section aria-label="Prepare cover comparison">
@@ -540,7 +535,8 @@ function LibraryCoverChoicesContent({
     const key = `${candidate.incumbent ? 'current' : 'alternative'}-${String(index)}`
     const evidenceId = `cover-evidence-${String(candidate.ordinal)}-${key}`
     const label = candidate.incumbent ? 'Current cover' : `Alternative ${String(alternative)} cover`
-    const open = expandedEvidence.has(key)
+    const evidenceKey = `cover:${key}`
+    const open = expandedEvidence.has(evidenceKey)
     return (
       <article
         className={`cover-choice${open ? ' is-evidence-open' : ''}`}
@@ -591,13 +587,7 @@ function LibraryCoverChoicesContent({
             aria-controls={evidenceId}
             aria-expanded={open}
             aria-label={`Evidence for ${label}`}
-            onClick={() =>
-              setExpandedEvidence((items) => {
-                const next = new Set(items)
-                next.add(key)
-                return next
-              })
-            }
+            onClick={() => revealEvidence(evidenceKey)}
           >
             Evidence
           </button>
@@ -703,25 +693,19 @@ function LibraryCoverChoicesContent({
           </button>
           {currentContext &&
           (currentContext.evidence.length || currentContext.limitations.length) &&
-          !expandedEvidence.has('current-unavailable') ? (
+          !expandedEvidence.has('cover:current-unavailable') ? (
             <button
               type="button"
               className="choice-evidence-toggle"
               aria-controls="cover-evidence-current-unavailable"
-              aria-expanded={expandedEvidence.has('current-unavailable')}
+              aria-expanded={expandedEvidence.has('cover:current-unavailable')}
               aria-label="Evidence for Current cover"
-              onClick={() =>
-                setExpandedEvidence((items) => {
-                  const next = new Set(items)
-                  next.add('current-unavailable')
-                  return next
-                })
-              }
+              onClick={() => revealEvidence('cover:current-unavailable')}
             >
               Evidence
             </button>
           ) : null}
-          {expandedEvidence.has('current-unavailable') ? (
+          {expandedEvidence.has('cover:current-unavailable') ? (
             <ChoiceEvidencePanel
               context={currentContext}
               evidenceId="cover-evidence-current-unavailable"
@@ -1593,8 +1577,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         reviewCaseId={selectedReviewCaseId}
                         field={selected}
                         disabled={false}
+                        expandedEvidence={expandedChoices}
                         progress={selectedProgress}
                         choose={(outcome, value) => choose(selected, outcome, value)}
+                        revealEvidence={toggleChoiceEvidence}
                       />
                     ) : (
                       <section

@@ -451,7 +451,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         routes = (
             ("/library?lens=all", "Every work, with exceptions first"),
             ("/attention", "Needs your attention"),
-            ("/review/case-1?field=title&subview=review", "Every work, with exceptions first"),
+            ("/review/case-1?field=title&subview=review", None),
             ("/policy?section=identity", "Library policy"),
             ("/policy?section=publication", "Library policy"),
             ("/policy?section=curation", "Library policy"),
@@ -465,7 +465,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             response = page.goto(f"https://react-platform.invalid{path}")
             assert response is not None
             assert response.status == 200
-            page.get_by_role("heading", name=heading).wait_for()
+            if heading is None:
+                page.locator(".workspace-detail").wait_for()
+                assert "/library?lens=all&preview=case-1&field=title" in page.url
+                assert page.get_by_role("heading", name="Current review case").count() == 0
+            else:
+                page.get_by_role("heading", name=heading).wait_for()
             if path in {
                 "/library?lens=all",
                 "/review/case-1?field=title&subview=review",
@@ -826,34 +831,6 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             stage[0] = f"direct-route:{path}:document-count"
             assert documents == (before_entry + (2 if path == "/activity" else 1))
 
-        for case_id, status, retry in (
-            ("case-1", "Advisory visual review complete", False),
-            ("case-2", "Manual comparison available", True),
-            ("case-3", "Manual comparison available", True),
-        ):
-            stage[0] = f"cover-detail:{case_id}"
-            page.goto(
-                f"https://react-platform.invalid/review/{case_id}"
-                "?field=cover&subview=review"
-            )
-            page.get_by_text(status, exact=True).wait_for()
-            expect(
-                page.get_by_role("button", name="Keep current cover")
-            ).to_have_attribute("aria-pressed", "false")
-            expect(
-                page.get_by_role("button", name="Choose this cover")
-            ).to_have_attribute("aria-pressed", "false")
-            expect(page.get_by_role("button", name="Take no action")).to_have_attribute(
-                "aria-pressed", "false"
-            )
-            assert (1 if retry else 0) == page.get_by_role(
-                "button", name="Retry advisory review"
-            ).count()
-            if case_id in {"case-1", "case-2"}:
-                capture_visual_proof(
-                    "detail-completed" if case_id == "case-1" else "detail-failed"
-                )
-
         for case_id, label, retry in (
             ("case-1", "Advisory visual review complete", False),
             ("case-2", "Manual comparison available", True),
@@ -889,7 +866,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     "button", name="Evidence for Current cover"
                 )
                 current_evidence.click()
-                expect(current_evidence).to_have_attribute("aria-expanded", "true")
+                expect(current_evidence).to_have_count(0)
                 comparison.get_by_text("Local library record", exact=True).wait_for()
                 expect(
                     comparison.locator(".library-cover-card.is-current")
@@ -899,8 +876,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 )
                 alternative_evidence.focus()
                 page.keyboard.press("Enter")
-                expect(alternative_evidence).to_be_focused()
-                expect(alternative_evidence).to_have_attribute("aria-expanded", "true")
+                expect(alternative_evidence).to_have_count(0)
                 comparison.get_by_text("Open Library", exact=True).wait_for()
                 comparison.get_by_text("External corroboration", exact=True).wait_for()
                 expect(
@@ -912,7 +888,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 )
                 unavailable_evidence.focus()
                 page.keyboard.press("Enter")
-                expect(unavailable_evidence).to_have_attribute("aria-expanded", "true")
+                expect(unavailable_evidence).to_have_count(0)
                 comparison.get_by_text("Local presence", exact=True).wait_for()
                 comparison.get_by_text("Preview unavailable", exact=True).wait_for()
 
@@ -952,12 +928,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             )
             assert response is not None
             assert response.status == 200
-            page.get_by_role(
-                "heading", name="This workspace could not be loaded."
+            page.get_by_text(
+                "This work is not available in the current Library result.", exact=True
             ).wait_for()
-            page.get_by_role("button", name="Try again").wait_for()
+            assert page.get_by_role("button", name="Try again").count() == 0
+            assert page.get_by_role("heading", name="Current review case").count() == 0
         missing_case_errors = errors[missing_case_error_start:]
-        assert len(missing_case_errors) == 4
+        assert len(missing_case_errors) == 2
         assert (
             sum("status of 404 (Not Found)" in error for error in missing_case_errors)
             == 2

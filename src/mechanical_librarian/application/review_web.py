@@ -1233,6 +1233,8 @@ def _evidence_by_reference(
         assert type(provider) is dict
         provider_name = provider["provider"]
         assert type(provider_name) is str
+        authority = provider.get("authority")
+        public_authority = authority if type(authority) is str else None
         for candidate in provider["candidates"]:
             assert type(candidate) is dict
             candidate_identity = candidate["identity"]
@@ -1241,7 +1243,7 @@ def _evidence_by_reference(
                 add(
                     "provider_claim",
                     fact,
-                    provider=provider_name,
+                    provider=public_authority or provider_name,
                     candidate=candidate_identity,
                 )
             for fact in candidate["evidence"]:
@@ -1266,7 +1268,7 @@ def _evidence_by_reference(
                 add(
                     "provider_evidence",
                     rich_fact,
-                    provider=provider_name,
+                    provider=public_authority or provider_name,
                     candidate=candidate_identity,
                 )
     for fact in cast("list[object]", data["identifier_evidence"]):
