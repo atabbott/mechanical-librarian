@@ -822,7 +822,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                     "Decision recorded from the authoritative case.", exact=True
                 ).wait_for()
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
-                page.get_by_role("heading", name="Which title should this work use?").wait_for()
+                page.get_by_role(
+                    "heading", name="Which title should this work use?"
+                ).wait_for()
                 # #635: revisiting a recorded field restores the whole choice
                 # composition and marks the recorded answer, rather than
                 # replacing it with prose.
@@ -1031,18 +1033,27 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 )
                 page.reload()
                 expect(
-                    page.locator(".library-cover-card").filter(has_text="Alternative 1 cover")
+                    page.locator(".library-cover-card").filter(
+                        has_text="Alternative 1 cover"
+                    )
                 ).to_have_attribute("aria-pressed", "true")
-                assert page.locator(".library-cover-card").filter(has_text="Alternative 1 cover").evaluate(
-                    "node => node.classList.contains('is-selected')"
+                assert (
+                    page.locator(".library-cover-card")
+                    .filter(has_text="Alternative 1 cover")
+                    .evaluate("node => node.classList.contains('is-selected')")
                 )
-                assert "Automatic handling recorded this field" in page.locator("body").inner_text()
+                assert (
+                    "Automatic handling recorded this field"
+                    in page.locator("body").inner_text()
+                )
                 with (
                     page.expect_response(
                         lambda response: response.url.endswith("/decisions")
                     ) as decision_response,
                 ):
-                    page.locator(".library-cover-card").filter(has_text="Alternative 1 cover").click()
+                    page.locator(".library-cover-card").filter(
+                        has_text="Alternative 1 cover"
+                    ).click()
                 response = decision_response.value
                 assert 200 == response.status, f"decision response: {response.text()}"
                 page.get_by_role("heading", name="Review complete").wait_for()

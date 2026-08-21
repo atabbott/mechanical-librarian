@@ -1044,11 +1044,13 @@ def test_choice_contexts_classifies_local_identifier_evidence_as_local_presence(
     )
 
     evidence = contexts[1]["evidence"]
-    assert [{
-        "observation": "ISBN: 9780000000000",
-        "role": "local_presence",
-        "source": "Local library record",
-    }] == evidence
+    assert [
+        {
+            "observation": "ISBN: 9780000000000",
+            "role": "local_presence",
+            "source": "Local library record",
+        }
+    ] == evidence
 
 
 @pytest.mark.parametrize(
@@ -1102,7 +1104,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
                 {
                     "candidate": "candidate-1",
                     "evidence": provider_evidence,
-                                "provider": "hardcover-main",
+                    "provider": "hardcover-main",
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),

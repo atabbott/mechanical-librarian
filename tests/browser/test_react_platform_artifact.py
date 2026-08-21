@@ -471,7 +471,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         routes = (
             ("/library?lens=all", "Every work, with exceptions first"),
             ("/attention", "Needs your attention"),
-            ("/review/case-1?field=title&subview=evidence", "Evidence and source ledger"),
+            (
+                "/review/case-1?field=title&subview=evidence",
+                "Evidence and source ledger",
+            ),
             ("/policy?section=identity", "Library policy"),
             ("/policy?section=publication", "Library policy"),
             ("/policy?section=curation", "Library policy"),
@@ -995,7 +998,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "Series" not in automatic_context
         page.locator(".field-filmstrip button", has_text="Publication date").click()
         expect(
-            page.get_by_role("heading", name="Which publishedDate should this work use?")
+            page.get_by_role(
+                "heading", name="Which publishedDate should this work use?"
+            )
         ).to_be_visible()
         capture_visual_proof("canonical-field-inventory")
         page.locator(".field-filmstrip button", has_text="Title").click()
@@ -1386,21 +1391,28 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.locator(".workspace-detail .decision-canvas").wait_for()
 
         stage[0] = "library:return-to-automatic"
-        page.goto("https://react-platform.invalid/library?lens=all&preview=case-4&field=title")
+        page.goto(
+            "https://react-platform.invalid/library?lens=all&preview=case-4&field=title"
+        )
         page.get_by_role("button", name="Resume automatic handling").wait_for()
         capture_visual_proof("library-manual-handling-collapsed")
         page.get_by_role("button", name="Resume automatic handling").click()
-        page.get_by_role("heading", name="Automatic handling is paused for this field").wait_for()
+        page.get_by_role(
+            "heading", name="Automatic handling is paused for this field"
+        ).wait_for()
         expect(page.get_by_role("button", name="Keep manual handling")).to_be_focused()
         capture_visual_proof("library-manual-handling-confirmation")
         page.get_by_role("button", name="Keep manual handling").focus()
         page.keyboard.press("Escape")
-        expect(page.get_by_role("button", name="Resume automatic handling")).to_be_focused()
+        expect(
+            page.get_by_role("button", name="Resume automatic handling")
+        ).to_be_focused()
         assert return_automatic_requests == 0
         page.get_by_role("button", name="Resume automatic handling").click()
         page.get_by_role("button", name="Resume after fresh checks").click()
         page.get_by_text(
-            "Fresh checks requested. Manual handling remains until they complete.", exact=True
+            "Fresh checks requested. Manual handling remains until they complete.",
+            exact=True,
         ).wait_for()
         assert return_automatic_requests == 1
         page.keyboard.press("Escape")
@@ -1412,7 +1424,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         ).to_have_attribute("aria-disabled", "true")
         assert return_automatic_requests == 1
         page.set_viewport_size({"width": 390, "height": 844})
-        assert page.get_by_role("heading", name="Evidence and source ledger").count() == 0
+        assert (
+            page.get_by_role("heading", name="Evidence and source ledger").count() == 0
+        )
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
         for control in page.locator(".masthead nav a, .shell-actions button").all():
             assert control.bounding_box()["height"] >= 44

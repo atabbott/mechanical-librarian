@@ -1307,7 +1307,9 @@ def _evidence_by_reference(
             "cover",
             fact,
             reference_key="source_id",
-            provider=public_provider(provenance.get("provider")) if type(provenance) is dict else None,
+            provider=public_provider(provenance.get("provider"))
+            if type(provenance) is dict
+            else None,
         )
     return values
 
