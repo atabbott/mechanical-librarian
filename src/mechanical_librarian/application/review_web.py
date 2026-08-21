@@ -1229,12 +1229,29 @@ def _evidence_by_reference(
     assert type(local) is dict
     for fact in local["claims"]:
         add("local", fact)
+    public_authority_by_provider = {
+        provider["provider"]: authority
+        for provider in cast("list[object]", data["providers"])
+        if type(provider) is dict
+        and type(provider.get("provider")) is str
+        and type(provider.get("authority")) is str
+        and provider["authority"] in {"google_books", "hardcover", "open_library"}
+        for authority in [cast(str, provider["authority"])]
+    }
+
+    def public_provider(value: object) -> str | None:
+        if type(value) is not str:
+            return None
+        if value in {"google_books", "hardcover", "open_library"}:
+            return value
+        return public_authority_by_provider.get(value)
+
     for provider in cast("list[object]", data["providers"]):
         assert type(provider) is dict
         provider_name = provider["provider"]
         assert type(provider_name) is str
         authority = provider.get("authority")
-        public_authority = authority if type(authority) is str else None
+        public_authority = public_provider(authority)
         for candidate in provider["candidates"]:
             assert type(candidate) is dict
             candidate_identity = candidate["identity"]
@@ -1276,9 +1293,7 @@ def _evidence_by_reference(
         add(
             "identifier",
             fact,
-            provider=(
-                fact.get("provider") if type(fact.get("provider")) is str else None
-            ),
+            provider=public_provider(fact.get("provider")),
             candidate=(
                 fact.get("candidate_identity")
                 if type(fact.get("candidate_identity")) is str
@@ -1292,11 +1307,7 @@ def _evidence_by_reference(
             "cover",
             fact,
             reference_key="source_id",
-            provider=(
-                provenance.get("provider")
-                if type(provenance) is dict and type(provenance.get("provider")) is str
-                else None
-            ),
+            provider=public_provider(provenance.get("provider")) if type(provenance) is dict else None,
         )
     return values
 

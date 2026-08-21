@@ -21,25 +21,29 @@ describe('Application shell', () => {
           active: true,
           actionable: false,
           paused: false,
-          libraries: [{
-            blocked: 0,
-            checked: checked++,
-            connection: 'primary',
-            library: 'Books',
-            library_id: 'books',
-            ready: 0,
-            rescan_requested: false,
-            scan_id: 'scan-1',
-            state: 'discovering',
-            total: 2,
-          }],
+          libraries: [
+            {
+              blocked: 0,
+              checked: checked++,
+              connection: 'primary',
+              library: 'Books',
+              library_id: 'books',
+              ready: 0,
+              rescan_requested: false,
+              scan_id: 'scan-1',
+              state: 'discovering',
+              total: 2,
+            },
+          ],
         })),
       }
       const { queryClient } = renderRoute('/library?lens=all', http)
       const invalidations = vi.spyOn(queryClient, 'invalidateQueries')
       await vi.waitFor(() => expect(http.getPreparation).toHaveBeenCalledOnce())
 
-      await act(async () => { await vi.advanceTimersByTimeAsync(1_600) })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_600)
+      })
 
       await vi.waitFor(() => expect(invalidations).toHaveBeenCalledWith({ queryKey: ['library'] }))
       expect(invalidations).toHaveBeenCalledWith({ queryKey: ['attention'] })
@@ -50,7 +54,29 @@ describe('Application shell', () => {
 
   it('returns focus to the preparation trigger when its activity panel closes', async () => {
     const user = userEvent.setup()
-    const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async (): Promise<PreparationView> => ({ schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [{ blocked: 0, checked: 1, connection: 'primary', library: 'Books', library_id: 'books', ready: 0, rescan_requested: false, scan_id: 'scan-1', state: 'scanning', total: 2 }] })) }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        schema_version: 'review-preparation-v1',
+        active: true,
+        actionable: false,
+        paused: false,
+        libraries: [
+          {
+            blocked: 0,
+            checked: 1,
+            connection: 'primary',
+            library: 'Books',
+            library_id: 'books',
+            ready: 0,
+            rescan_requested: false,
+            scan_id: 'scan-1',
+            state: 'scanning',
+            total: 2,
+          },
+        ],
+      })),
+    }
     renderRoute('/library?lens=all', http)
 
     const trigger = await screen.findByRole('button', { name: 'Preparing libraries' })
@@ -63,38 +89,104 @@ describe('Application shell', () => {
     ['paused', 'Library connection needs attention', 'Check connection again', false],
     ['checking', 'Checking library connection', 'Checking connection…', true],
     ['recovered', 'Library connection recovered', 'Recovered', true],
-  ] as const)('renders %s connection recovery through Library, full Detail, and Activity without replacing route state', async (state, title, action, disabled) => {
-    const preparation: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [{ blocked: 1, checked: 2, connection: 'primary', library: 'Books', library_id: 'books', ready: 1, rescan_requested: false, scan_id: 'scan-1', state: 'processing', total: 3 }], connections: [{ connection: 'primary', code: 'unavailable', state, affected: state === 'recovered' ? 0 : 2, updated_at: 1 }] }
-    const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => preparation) }
-    const { router } = renderRoute('/library?lens=needs_attention&q=A%20Book', http)
-    expect((await screen.findAllByText(title)).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
-    expect(screen.getByText('Ready')).toBeVisible()
-    expect(screen.getByRole('button', { name: action })).toHaveAttribute('aria-disabled', String(disabled))
-    expect(screen.getByDisplayValue('A Book')).toBeVisible()
-    await router.navigate({ to: '/review/$reviewCaseId', params: { reviewCaseId: 'case-1' }, search: { field: 'title', subview: 'review' } })
-    expect((await screen.findAllByText(title)).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
-    expect(await screen.findByRole('heading', { name: 'Current review case' })).toBeVisible()
-    await router.navigate({ to: '/activity', search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 } })
-    await screen.findByRole('heading', { name: 'Activity and recovery' })
-    expect((await screen.findAllByText(title)).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
-    const activityTitle = state === 'paused' ? 'Library connection is paused' : title
-    expect(screen.getByRole('heading', { name: activityTitle })).toBeVisible()
-    expect(screen.getByText('Recovery needed').parentElement).toHaveTextContent(state === 'recovered' ? '0' : '2')
-    if (state !== 'recovered') {
-      expect(screen.queryByRole('heading', { name: 'No intervention needed' })).toBeNull()
-      expect(screen.queryByText('No action required')).toBeNull()
-    }
-  })
+  ] as const)(
+    'renders %s connection recovery through Library, full Detail, and Activity without replacing route state',
+    async (state, title, action, disabled) => {
+      const preparation: PreparationView = {
+        schema_version: 'review-preparation-v1',
+        active: true,
+        actionable: false,
+        paused: false,
+        libraries: [
+          {
+            blocked: 1,
+            checked: 2,
+            connection: 'primary',
+            library: 'Books',
+            library_id: 'books',
+            ready: 1,
+            rescan_requested: false,
+            scan_id: 'scan-1',
+            state: 'processing',
+            total: 3,
+          },
+        ],
+        connections: [
+          {
+            connection: 'primary',
+            code: 'unavailable',
+            state,
+            affected: state === 'recovered' ? 0 : 2,
+            updated_at: 1,
+          },
+        ],
+      }
+      const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => preparation) }
+      const { router } = renderRoute('/library?lens=needs_attention&q=A%20Book', http)
+      expect(
+        (await screen.findAllByText(title)).some(
+          (element) => getComputedStyle(element).display !== 'none',
+        ),
+      ).toBe(true)
+      expect(screen.getByText('Ready')).toBeVisible()
+      expect(screen.getByRole('button', { name: action })).toHaveAttribute(
+        'aria-disabled',
+        String(disabled),
+      )
+      expect(screen.getByDisplayValue('A Book')).toBeVisible()
+      await router.navigate({
+        to: '/review/$reviewCaseId',
+        params: { reviewCaseId: 'case-1' },
+        search: { field: 'title', subview: 'evidence' },
+      })
+      expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+      expect(router.state.location.pathname).toBe('/review/case-1')
+      await router.navigate({
+        to: '/activity',
+        search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
+      })
+      await screen.findByRole('heading', { name: 'Activity and recovery' })
+      expect(
+        (await screen.findAllByText(title)).some(
+          (element) => getComputedStyle(element).display !== 'none',
+        ),
+      ).toBe(true)
+      const activityTitle = state === 'paused' ? 'Library connection is paused' : title
+      expect(screen.getByRole('heading', { name: activityTitle })).toBeVisible()
+      expect(screen.getByText('Recovery needed').parentElement).toHaveTextContent(
+        state === 'recovered' ? '0' : '2',
+      )
+      if (state !== 'recovered') {
+        expect(screen.queryByRole('heading', { name: 'No intervention needed' })).toBeNull()
+        expect(screen.queryByText('No action required')).toBeNull()
+      }
+    },
+  )
 
   it('sums simultaneous connection holds while keeping one focused recovery control', async () => {
-    const preparation: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [], connections: [
-      { connection: 'primary', code: 'unavailable', state: 'paused', affected: 2, updated_at: 1 },
-      { connection: 'secondary', code: 'authorization', state: 'checking', affected: 3, updated_at: 2 },
-    ] }
+    const preparation: PreparationView = {
+      schema_version: 'review-preparation-v1',
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+      connections: [
+        { connection: 'primary', code: 'unavailable', state: 'paused', affected: 2, updated_at: 1 },
+        {
+          connection: 'secondary',
+          code: 'authorization',
+          state: 'checking',
+          affected: 3,
+          updated_at: 2,
+        },
+      ],
+    }
     const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => preparation) }
     renderRoute('/activity', http)
 
-    expect(await screen.findByRole('heading', { name: 'Library connection is paused' })).toBeVisible()
+    expect(
+      await screen.findByRole('heading', { name: 'Library connection is paused' }),
+    ).toBeVisible()
     expect(screen.getByText('Recovery needed').parentElement).toHaveTextContent('5')
   })
 
@@ -103,25 +195,61 @@ describe('Application shell', () => {
     ['authentication', 'sign-in settings'],
     ['authorization', 'access permission'],
     ['unavailable', 'connection is unavailable'],
-  ] as const)('uses safe owner-readable %s connection copy without raw connection values', async (code, expected) => {
-    const preparation: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [], connections: [{ connection: 'https://private.example/token', code, state: 'paused', affected: 1, updated_at: 1 }] }
-    const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => preparation) }
-    renderRoute('/library?lens=all', http)
+  ] as const)(
+    'uses safe owner-readable %s connection copy without raw connection values',
+    async (code, expected) => {
+      const preparation: PreparationView = {
+        schema_version: 'review-preparation-v1',
+        active: true,
+        actionable: false,
+        paused: false,
+        libraries: [],
+        connections: [
+          {
+            connection: 'https://private.example/token',
+            code,
+            state: 'paused',
+            affected: 1,
+            updated_at: 1,
+          },
+        ],
+      }
+      const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => preparation) }
+      renderRoute('/library?lens=all', http)
 
-    const notice = await screen.findByLabelText('Shared library connection status')
-    expect(notice).toHaveTextContent(expected)
-    expect(notice).not.toHaveTextContent('private.example')
-    expect(notice).not.toHaveTextContent('token')
-  })
+      const notice = await screen.findByLabelText('Shared library connection status')
+      expect(notice).toHaveTextContent(expected)
+      expect(notice).not.toHaveTextContent('private.example')
+      expect(notice).not.toHaveTextContent('token')
+    },
+  )
 
   it('announces checking immediately and settles the retained route authoritatively', async () => {
     const user = userEvent.setup()
-    const connection = { connection: 'primary', code: 'unavailable' as const, state: 'paused' as const, affected: 2, updated_at: 1 }
-    const paused: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [], connections: [connection] }
-    const recovered: PreparationView = { ...paused, connections: [{ ...connection, state: 'recovered', affected: 0, updated_at: 2 }] }
+    const connection = {
+      connection: 'primary',
+      code: 'unavailable' as const,
+      state: 'paused' as const,
+      affected: 2,
+      updated_at: 1,
+    }
+    const paused: PreparationView = {
+      schema_version: 'review-preparation-v1',
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+      connections: [connection],
+    }
+    const recovered: PreparationView = {
+      ...paused,
+      connections: [{ ...connection, state: 'recovered', affected: 0, updated_at: 2 }],
+    }
     let current = paused
     let settle: ((value: PreparationView) => void) | undefined
-    const pending = new Promise<PreparationView>((resolve) => { settle = resolve })
+    const pending = new Promise<PreparationView>((resolve) => {
+      settle = resolve
+    })
     const http: ReviewHttp = {
       ...createHttp(),
       getPreparation: vi.fn(async () => current),
@@ -131,71 +259,141 @@ describe('Application shell', () => {
 
     const check = await screen.findByRole('button', { name: 'Check connection again' })
     await user.click(check)
-    expect((await screen.findAllByText('Checking library connection')).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
+    expect(
+      (await screen.findAllByText('Checking library connection')).some(
+        (element) => getComputedStyle(element).display !== 'none',
+      ),
+    ).toBe(true)
     expect(check).toHaveFocus()
     expect(screen.getByRole('button', { name: 'Checking connection…' })).toHaveFocus()
     expect(screen.getByDisplayValue('A Book')).toBeVisible()
 
-    await router.navigate({ to: '/review/$reviewCaseId', params: { reviewCaseId: 'case-1' }, search: { field: 'title', subview: 'review' } })
-    expect(await screen.findByRole('heading', { name: 'Current review case' })).toBeVisible()
+    await router.navigate({
+      to: '/review/$reviewCaseId',
+      params: { reviewCaseId: 'case-1' },
+      search: { field: 'title', subview: 'evidence' },
+    })
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+    expect(router.state.location.pathname).toBe('/review/case-1')
     current = recovered
     settle?.(recovered)
-    expect((await screen.findAllByText('Library connection recovered')).some((element) => getComputedStyle(element).display !== 'none')).toBe(true)
-    expect(await screen.findByRole('heading', { name: 'Current review case' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
   })
 
-  it.each(['pointer', 'keyboard'] as const)('keeps the focused connection control stable for %s activation', async (activation) => {
-    const user = userEvent.setup()
-    const connection = { connection: 'primary', code: 'unavailable' as const, state: 'paused' as const, affected: 2, updated_at: 1 }
-    const paused: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [], connections: [connection] }
-    let settle: ((value: PreparationView) => void) | undefined
-    const http: ReviewHttp = {
-      ...createHttp(), getPreparation: vi.fn(async () => paused),
-      preparationAction: vi.fn(() => new Promise<PreparationView>((resolve) => { settle = resolve })),
-    }
-    renderRoute('/library?lens=all', http)
+  it.each(['pointer', 'keyboard'] as const)(
+    'keeps the focused connection control stable for %s activation',
+    async (activation) => {
+      const user = userEvent.setup()
+      const connection = {
+        connection: 'primary',
+        code: 'unavailable' as const,
+        state: 'paused' as const,
+        affected: 2,
+        updated_at: 1,
+      }
+      const paused: PreparationView = {
+        schema_version: 'review-preparation-v1',
+        active: true,
+        actionable: false,
+        paused: false,
+        libraries: [],
+        connections: [connection],
+      }
+      let settle: ((value: PreparationView) => void) | undefined
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getPreparation: vi.fn(async () => paused),
+        preparationAction: vi.fn(
+          () =>
+            new Promise<PreparationView>((resolve) => {
+              settle = resolve
+            }),
+        ),
+      }
+      renderRoute('/library?lens=all', http)
 
-    const heading = await screen.findByRole('heading', { name: 'Every work, with exceptions first' })
-    await waitFor(() => expect(heading.parentElement?.parentElement).toHaveFocus())
-    const check = await screen.findByRole('button', { name: 'Check connection again' })
-    check.focus()
-    expect(check).toHaveFocus()
-    if (activation === 'pointer') await user.click(check)
-    else await user.keyboard('{Enter}')
+      const heading = await screen.findByRole('heading', {
+        name: 'Every work, with exceptions first',
+      })
+      await waitFor(() => expect(heading.parentElement?.parentElement).toHaveFocus())
+      const check = await screen.findByRole('button', { name: 'Check connection again' })
+      check.focus()
+      expect(check).toHaveFocus()
+      if (activation === 'pointer') await user.click(check)
+      else await user.keyboard('{Enter}')
 
-    expect(http.preparationAction).toHaveBeenCalledOnce()
-    expect(document.getElementById('main-content')).toHaveAttribute('data-route-focus-identity', '/:all::::::')
-    const checking = screen.getByRole('button', { name: 'Checking connection…' })
-    expect(checking).toBe(check)
-    expect(checking).toHaveFocus()
-    expect(checking).toHaveAttribute('aria-disabled', 'true')
-    expect(checking).toHaveAttribute('aria-busy', 'true')
-    settle?.(paused)
-  })
+      expect(http.preparationAction).toHaveBeenCalledOnce()
+      expect(document.getElementById('main-content')).toHaveAttribute(
+        'data-route-focus-identity',
+        '/:all::::::',
+      )
+      const checking = screen.getByRole('button', { name: 'Checking connection…' })
+      expect(checking).toBe(check)
+      expect(checking).toHaveFocus()
+      expect(checking).toHaveAttribute('aria-disabled', 'true')
+      expect(checking).toHaveAttribute('aria-busy', 'true')
+      settle?.(paused)
+    },
+  )
 
   it('restores the actionable paused connection notice when mutation and refetch fail', async () => {
     const user = userEvent.setup()
-    const connection = { connection: 'primary', code: 'unavailable' as const, state: 'paused' as const, affected: 2, updated_at: 1 }
-    const paused: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [], connections: [connection] }
+    const connection = {
+      connection: 'primary',
+      code: 'unavailable' as const,
+      state: 'paused' as const,
+      affected: 2,
+      updated_at: 1,
+    }
+    const paused: PreparationView = {
+      schema_version: 'review-preparation-v1',
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+      connections: [connection],
+    }
     let calls = 0
     const http: ReviewHttp = {
       ...createHttp(),
-      getPreparation: vi.fn(async () => { calls += 1; if (calls > 1) throw new Error('refetch failed'); return paused }),
-      preparationAction: vi.fn(async () => { throw new Error('mutation failed') }),
+      getPreparation: vi.fn(async () => {
+        calls += 1
+        if (calls > 1) throw new Error('refetch failed')
+        return paused
+      }),
+      preparationAction: vi.fn(async () => {
+        throw new Error('mutation failed')
+      }),
     }
     renderRoute('/library?lens=all', http)
     const check = await screen.findByRole('button', { name: 'Check connection again' })
     await user.click(check)
 
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Check connection again' })).toHaveFocus())
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Check connection again' })).toHaveFocus(),
+    )
     expect(screen.getByText('Safely paused').parentElement).toHaveTextContent('2')
-    expect(screen.getByRole('alert')).toHaveTextContent('Connection checking could not be completed')
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Connection checking could not be completed',
+    )
   })
 
   it('moves focus to the persistent main landmark when polling removes preparation activity', async () => {
     const user = userEvent.setup()
-    const active: PreparationView = { schema_version: 'review-preparation-v1', active: true, actionable: false, paused: false, libraries: [] }
-    const inactive: PreparationView = { schema_version: 'review-preparation-v1', active: false, actionable: false, paused: false, libraries: [] }
+    const active: PreparationView = {
+      schema_version: 'review-preparation-v1',
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+    }
+    const inactive: PreparationView = {
+      schema_version: 'review-preparation-v1',
+      active: false,
+      actionable: false,
+      paused: false,
+      libraries: [],
+    }
     let current = active
     const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => current) }
     const { queryClient } = renderRoute('/library?lens=all', http)
@@ -204,15 +402,22 @@ describe('Application shell', () => {
     current = inactive
     await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
 
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Preparing libraries' })).toBeNull())
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Preparing libraries' })).toBeNull(),
+    )
     expect(document.getElementById('main-content')).toHaveFocus()
   })
 
   it('keeps an unknown direct entry inside a safe shell fallback', async () => {
     renderRoute('/not-a-review-route')
 
-    expect(await screen.findByRole('heading', { name: 'This review route does not exist.' })).toBeVisible()
-    expect(screen.getByRole('link', { name: 'Open review library' })).toHaveAttribute('href', '/library?lens=all')
+    expect(
+      await screen.findByRole('heading', { name: 'This review route does not exist.' }),
+    ).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Open review library' })).toHaveAttribute(
+      'href',
+      '/library?lens=all',
+    )
   })
 
   it('looks again where an event points, without rebuilding the page or reloading it', async () => {
@@ -300,11 +505,15 @@ describe('Application shell', () => {
           <RouterProvider router={router} />
         </QueryClientProvider>,
       )
-      await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(200)
+      })
 
       // A momentary reconnect is not news, so the first second is silent.
       expect(screen.queryByText('Reconnecting · checking for updates')).toBeNull()
-      await act(async () => { await vi.advanceTimersByTimeAsync(1_200) })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_200)
+      })
       expect(screen.getByText('Reconnecting · checking for updates')).toBeVisible()
 
       await act(async () => {

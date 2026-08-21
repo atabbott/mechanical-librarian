@@ -6,7 +6,7 @@ type AttentionDto = Schema<'_AttentionResponse'>
 type CaseDetailDto = Schema<'_CaseDetailResponse'>
 
 export type LibraryLens = 'needs_attention' | 'all' | 'no_attention_needed'
-export type DetailSubview = 'review' | 'evidence' | 'history'
+export type DetailSubview = 'evidence' | 'history'
 export type PolicySection = 'identity' | 'publication' | 'curation' | 'unsupported'
 export type DecisionOutcome = 'accept' | 'keep_current' | 'reject'
 

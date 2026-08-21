@@ -1047,41 +1047,10 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     page.locator(".library-cover-card").filter(has_text="Alternative 1 cover").click()
                 response = decision_response.value
                 assert 200 == response.status, f"decision response: {response.text()}"
-                page.get_by_text(
-                    "Decision recorded from the authoritative case.", exact=True
-                ).wait_for()
-                page.get_by_text(
-                    "Human decision: accept by owner", exact=False
-                ).wait_for()
-                # #635: a recorded field keeps its full choice composition and
-                # marks the recorded answer, so the owner can change it. The
-                # previous expectation -- that recording removes the choices --
-                # is the defect that ticket names.
-                recorded_cover = page.get_by_role("button", name="Choose this cover")
-                expect(recorded_cover).to_have_attribute("aria-pressed", "true")
-                assert recorded_cover.evaluate(
-                    "node => node.classList.contains('is-selected')"
-                )
-                expect(
-                    page.get_by_role("button", name="Keep current cover")
-                ).to_have_attribute("aria-pressed", "false")
-                history_button = page.get_by_role("button", name="History", exact=True)
-                history_button.focus()
-                page.keyboard.press("Enter")
-                selected_history = page.get_by_role(
-                    "heading", name="Cover selected"
-                ).locator("..")
-                selected_history.get_by_text(
-                    "Historical; it grants no current authority.", exact=False
-                ).wait_for()
-                selected_history.get_by_text(
-                    "Owner outcome: accept", exact=False
-                ).wait_for()
-                expect(
-                    selected_history.get_by_role(
-                        "list", name="Historical cover candidates"
-                    )
-                ).to_be_visible()
+                page.get_by_role("heading", name="Review complete").wait_for()
+                page.goto(f"{origin}/review/{case_id}?field=cover&subview=history")
+                page.get_by_role("heading", name="Activity and recovery").wait_for()
+                assert "/activity?" in page.url
                 assert (
                     page.evaluate("() => document.documentElement.scrollWidth") <= 390
                 )

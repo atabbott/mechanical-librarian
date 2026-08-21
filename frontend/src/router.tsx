@@ -12,7 +12,6 @@ import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { createMemoryHistory } from '@tanstack/react-router'
 import { BuildMismatchError } from './api/http'
-import { labelWords } from './labels'
 import type {
   ActivitySearch,
   AttentionSearch,
@@ -33,6 +32,7 @@ import type { LiveUpdateStream } from './liveUpdates'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
 const AttentionPage = recoverableLazy(() => import('./routes/AttentionPage'))
+const DetailPage = recoverableLazy(() => import('./routes/DetailPage'))
 const PolicyPage = recoverableLazy(() => import('./routes/PolicyPage'))
 const ActivityPage = recoverableLazy(() => import('./routes/ActivityPage'))
 
@@ -78,8 +78,7 @@ export const normalizeAttentionSearch = (search: Record<string, unknown>): Atten
 }
 export const normalizeDetailSearch = (search: Record<string, unknown>): DetailSearch => {
   const field = bounded(search.field)
-  const subview =
-    search.subview === 'evidence' || search.subview === 'history' ? search.subview : 'review'
+  const subview = search.subview === 'history' ? 'history' : 'evidence'
   return { ...(field ? { field } : {}), subview }
 }
 export const normalizePolicySearch = (search: Record<string, unknown>): PolicySearch => ({
@@ -720,20 +719,14 @@ const AttentionRouteComponent = () => {
   const query = useQuery({ ...attentionQuery(http, search), initialData: initial })
   return <AttentionPage data={query.data} />
 }
-const LegacyReviewRouteComponent = () => {
+const DiagnosticRouteComponent = () => {
   const { reviewCaseId } = detailRoute.useParams()
-  const search = detailRoute.useSearch()
-  return (
-    <Navigate
-      to="/library"
-      search={{
-        lens: 'all',
-        preview: reviewCaseId,
-        ...(search.field ? { field: search.field } : {}),
-      }}
-      replace
-    />
-  )
+  const { http } = rootRoute.useRouteContext()
+  const detail = useQuery(detailQuery(http, reviewCaseId))
+  if (detail.isPending) return <RoutePending />
+  if (detail.isError)
+    return <RouteFailure error={detail.error} reset={() => void detail.refetch()} />
+  return <DetailPage data={detail.data} />
 }
 export const libraryRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -763,7 +756,7 @@ export const detailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/review/$reviewCaseId',
   validateSearch: normalizeDetailSearch,
-  component: LegacyReviewRouteComponent,
+  component: DiagnosticRouteComponent,
 })
 export interface PolicyCritical {
   state: PolicyStateView
@@ -823,38 +816,6 @@ const routeTree = rootRoute.addChildren([
   activityRoute,
 ])
 
-type WorkIdentity = Pick<LibraryWorkView, 'title' | 'authors' | 'library' | 'mediaKind'>
-export const ProgressiveCasePanel = ({ id, identity }: { id: string; identity?: WorkIdentity }) => {
-  const { http } = rootRoute.useRouteContext()
-  const result = useQuery(detailQuery(http, id))
-  if (result.isPending)
-    return (
-      <aside aria-busy="true">
-        <h2>Loading preview…</h2>
-      </aside>
-    )
-  if (result.isError)
-    return (
-      <aside>
-        <h2>Preview unavailable</h2>
-        <button onClick={() => void result.refetch()}>Try again</button>
-      </aside>
-    )
-  return (
-    <aside>
-      <p className="eyebrow">Progressive detail</p>
-      <h2>{identity?.title ?? 'Selected work'}</h2>
-      <p>
-        {identity
-          ? `${identity.authors.join(', ') || 'Author details unavailable'} · ${identity.library} · ${labelWords(identity.mediaKind)}`
-          : 'Readable work identity is not available on this Library page.'}
-      </p>
-      <Link to="/review/$reviewCaseId" params={{ reviewCaseId: id }} search={{ subview: 'review' }}>
-        Open full review
-      </Link>
-    </aside>
-  )
-}
 export const useReviewContext = () => rootRoute.useRouteContext()
 
 export const createApplicationRouter = (

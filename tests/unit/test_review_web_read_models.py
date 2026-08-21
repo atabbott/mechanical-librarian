@@ -1102,7 +1102,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
                 {
                     "candidate": "candidate-1",
                     "evidence": provider_evidence,
-                    "provider": "catalogue",
+                                "provider": "hardcover-main",
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -1118,7 +1118,8 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
         "local": {"claims": local},
         "providers": [
             {
-                "provider": "catalogue",
+                "provider": "hardcover-main",
+                "authority": "hardcover",
                 "candidates": [
                     {
                         "identity": "candidate-1",
@@ -1134,7 +1135,8 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
                 ],
             },
             {
-                "provider": "other_catalogue",
+                "provider": "open-library-main",
+                "authority": "open_library",
                 "candidates": [
                     {
                         "identity": "candidate-2",
@@ -1154,14 +1156,14 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
             {
                 "candidate_identity": "candidate-2",
                 "kind": "identifier_relation",
-                "provider": "other_catalogue",
+                "provider": "open-library-main",
                 "reference": identifier_reference,
             }
         ],
         "covers": [
             {
                 "kind": "provider",
-                "provenance": {"provider": "catalogue"},
+                "provenance": {"provider": "hardcover-main"},
                 "source_id": cover_reference,
                 "state": "retrieved",
             }
@@ -1221,16 +1223,16 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
     items = cast(list[Any], first["items"]) + cast(list[Any], second["items"])
     assert {item["reference"] for item in items} == references
     rich = next(item for item in items if item["reference"] == rich_reference)
-    assert rich["provider"] == "catalogue"
+    assert rich["provider"] == "hardcover"
     assert rich["candidate"] == "candidate-1"
     cover = next(item for item in items if item["reference"] == cover_reference)
     assert cover["source"] == "cover"
-    assert cover["provider"] == "catalogue"
+    assert cover["provider"] == "hardcover"
     identifier = next(
         item for item in items if item["reference"] == identifier_reference
     )
     assert identifier["source"] == "identifier"
-    assert identifier["provider"] == "other_catalogue"
+    assert identifier["provider"] == "open_library"
     assert identifier["candidate"] == "candidate-2"
     hostile = next(item for item in items if item["source"] == "local")
     assert "</pre><script>" in hostile["fact"]

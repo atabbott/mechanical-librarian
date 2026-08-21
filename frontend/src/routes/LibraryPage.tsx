@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, SyntheticEvent } from 'react'
@@ -765,6 +765,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
+  const automaticTrigger = useRef<HTMLButtonElement>(null)
   const attentionRail = useRef<HTMLElement>(null)
   const selectedIdentityRef = useRef<{
     id: string
@@ -783,6 +784,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     identity: { title: string; authors: readonly string[]; library: string; mediaKind: string }
   } | null>(null)
   const [completionInspection, setCompletionInspection] = useState<string | null>(null)
+  const [automaticPanel, setAutomaticPanel] = useState<string | null>(null)
+  const [automaticResult, setAutomaticResult] = useState<'success' | 'error' | null>(null)
   const [openedWork, setOpenedWork] = useState<LibraryWorkView | null>(null)
   const [expandedChoiceState, setExpandedChoiceState] = useState<{
     work: string
@@ -940,6 +943,12 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       await navigate({ search: { lens: 'needs_attention' } })
     },
   })
+  const returnAutomatic = useMutation({
+    mutationFn: (destination: string) => http.returnToAutomatic(selectedReviewCaseId, destination),
+    retry: false,
+    onSuccess: () => setAutomaticResult('success'),
+    onError: () => setAutomaticResult('error'),
+  })
 
   const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.field ?? ''}:${search.attention ?? ''}`
   useRouteReadyFocus(routeIdentity)
@@ -963,6 +972,12 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       behavior: reducedMotion ? 'auto' : 'smooth',
     })
   }, [selected?.destination])
+  useEffect(() => {
+    if (automaticPanel === null) return
+    if (selected?.destination === automaticPanel && selected.manualHold) return
+    setAutomaticPanel(null)
+    setAutomaticResult(null)
+  }, [automaticPanel, selected])
   useEffect(() => {
     if (search.attention !== 'open') return
     let focusFrame = 0
@@ -1124,6 +1139,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       idempotencyKey: requestKey(),
       ...(field.coverConsideration ? { considerationId: field.coverConsideration.id } : {}),
     })
+  }
+  const closeAutomaticPanel = () => {
+    setAutomaticPanel(null)
+    setAutomaticResult(null)
+    requestAnimationFrame(() => automaticTrigger.current?.focus())
   }
   const retryNextWork = () => {
     if (attention.isFetchNextPageError) void attention.fetchNextPage()
@@ -1697,6 +1717,66 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         : ''}
                     </p>
                   )}
+                  {selected.manualHold ? (
+                    <section
+                      className="automatic-handling-panel"
+                      aria-label="Automatic handling"
+                      onKeyDown={(event) => {
+                        if (event.key === 'Escape' && !returnAutomatic.isPending) {
+                          event.preventDefault()
+                          closeAutomaticPanel()
+                        }
+                      }}
+                    >
+                      {automaticPanel === selected.destination ? (
+                        <>
+                          <h3>Automatic handling is paused for this field</h3>
+                          <p>
+                            The recorded value remains. Fresh checks are requested first; automatic
+                            policy may manage later qualified changes.
+                          </p>
+                          {automaticResult === 'success' ? (
+                            <p role="status">
+                              Fresh checks requested. Manual handling remains until they complete.
+                            </p>
+                          ) : automaticResult === 'error' ? (
+                            <p role="alert">
+                              Fresh checks could not be requested. Manual handling is unchanged.
+                            </p>
+                          ) : null}
+                          <div className="automatic-handling-actions">
+                            <button
+                              type="button"
+                              disabled={returnAutomatic.isPending}
+                              onClick={closeAutomaticPanel}
+                            >
+                              Keep manual handling
+                            </button>
+                            <button
+                              type="button"
+                              disabled={returnAutomatic.isPending || automaticResult === 'success'}
+                              onClick={() => returnAutomatic.mutate(selected.destination)}
+                            >
+                              {returnAutomatic.isPending
+                                ? 'Requesting fresh checks…'
+                                : 'Resume after fresh checks'}
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <button
+                          ref={automaticTrigger}
+                          type="button"
+                          onClick={() => {
+                            setAutomaticResult(null)
+                            setAutomaticPanel(selected.destination)
+                          }}
+                        >
+                          Resume automatic handling
+                        </button>
+                      )}
+                    </section>
+                  ) : null}
                   {comparisonNotices(selected).length ? (
                     <aside className="comparison-notice" aria-label="Comparison condition">
                       {comparisonNotices(selected).map((notice) => (

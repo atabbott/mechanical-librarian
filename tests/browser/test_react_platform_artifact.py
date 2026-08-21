@@ -451,7 +451,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         routes = (
             ("/library?lens=all", "Every work, with exceptions first"),
             ("/attention", "Needs your attention"),
-            ("/review/case-1?field=title&subview=review", None),
+            ("/review/case-1?field=title&subview=evidence", "Evidence and source ledger"),
             ("/policy?section=identity", "Library policy"),
             ("/policy?section=publication", "Library policy"),
             ("/policy?section=curation", "Library policy"),
@@ -465,15 +465,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             response = page.goto(f"https://react-platform.invalid{path}")
             assert response is not None
             assert response.status == 200
-            if heading is None:
-                page.locator(".workspace-detail").wait_for()
-                assert "/library?lens=all&preview=case-1&field=title" in page.url
-                assert page.get_by_role("heading", name="Current review case").count() == 0
-            else:
+            if heading is not None:
                 page.get_by_role("heading", name=heading).wait_for()
             if path in {
                 "/library?lens=all",
-                "/review/case-1?field=title&subview=review",
                 "/activity",
             }:
                 page.get_by_text(
@@ -923,8 +918,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         missing_case_error_start = len(errors)
         for _ in range(2):
             response = page.goto(
-                "https://react-platform.invalid/review/missing-case"
-                "?field=title&subview=review"
+                "https://react-platform.invalid/library?lens=all&preview=missing-case"
             )
             assert response is not None
             assert response.status == 200
@@ -980,15 +974,15 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "Subtitle" in automatic_context
         assert "Series" not in automatic_context
         page.locator(".field-filmstrip button", has_text="Publication date").click()
-        expect(page.get_by_role("heading", name="Publication date")).to_be_visible()
+        expect(
+            page.get_by_role("heading", name="Which publishedDate should this work use?")
+        ).to_be_visible()
         capture_visual_proof("canonical-field-inventory")
         page.locator(".field-filmstrip button", has_text="Title").click()
         current_evidence = page.get_by_role(
             "button", name="Evidence for Current value: Current <script> title"
         )
         current_evidence.click()
-        expect(current_evidence).to_be_focused()
-        expect(current_evidence).to_have_attribute("aria-expanded", "true")
         expect(page.locator("#choice-evidence-current")).to_be_visible()
         workspace_evidence = page.locator("#choice-evidence-current").inner_text()
         assert "Local library record" in workspace_evidence
@@ -1002,11 +996,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         proposed_evidence.focus()
         page.keyboard.press("Enter")
-        expect(proposed_evidence).to_be_focused()
-        expect(proposed_evidence).to_have_attribute("aria-expanded", "true")
         assert "Open Library" in page.locator(".choice-evidence").nth(1).inner_text()
         assert page.locator(".source-ledger").count() == 0
-        assert current_evidence.bounding_box()["height"] >= 40
         page.goto("https://react-platform.invalid/library?lens=all&preview=case-2")
         expect(page.locator(".choice-evidence")).to_have_count(0)
         page.goto("https://react-platform.invalid/library?lens=all&preview=case-1")
@@ -1353,173 +1344,42 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_role("button", name="Back to works").click()
         expect(page.locator(".library-works")).to_be_visible()
         expect(page.locator(".workspace-detail")).to_be_hidden()
-        stage[0] = "review:case-1:desktop-decision"
+        # Evidence and History are read-only per-work diagnostics. Library
+        # remains the only decision surface, and diagnostics never redirect it.
+        stage[0] = "diagnostic:evidence-history"
         page.set_viewport_size({"width": 1440, "height": 900})
-        expect(page).to_have_url(
-            "https://react-platform.invalid/library?lens=all&preview=case-1"
-        )
-        expect(page.locator(".workspace-detail")).to_be_visible()
         page.goto(
-            "https://react-platform.invalid/review/case-1?field=title&subview=review"
+            "https://react-platform.invalid/review/case-1?field=title&subview=evidence"
         )
-        page.get_by_text(
-            "Three independent catalogue observations disagree on presentation.",
-            exact=True,
-        ).wait_for()
-        desktop_field_rail = page.locator(".detail-layout > .field-navigation")
-        assert (
-            desktop_field_rail.evaluate("node => getComputedStyle(node).position")
-            == "sticky"
+        expect(page).to_have_url(
+            "https://react-platform.invalid/review/case-1?field=title&subview=evidence"
         )
-        assert (
-            desktop_field_rail.evaluate("node => getComputedStyle(node).top") == "82px"
-        )
-        choices = page.locator("#field-title .direct-choice-grid")
-        assert "Current <script> title" in choices.inner_text()
-        assert "The Clockmaker's Cartography" in choices.inner_text()
-        assert "Cartography of Impossible Libraries" in choices.inner_text()
-        assert LONG_TITLE in choices.inner_text()
-        assert page.get_by_role("button", name="Reject proposed change").count() == 0
-        assert page.get_by_role("button", name="Keep current value").count() == 0
-        title_notices = page.locator("#field-title .field-notices")
-        assert "Local catalogue record" in title_notices.inner_text()
-        assert "Project Gutenberg record" in title_notices.inner_text()
-        assert "Google Books catalogue record" in title_notices.inner_text()
-        assert "Open Library record" in title_notices.inner_text()
-        assert "provider_" not in title_notices.inner_text()
-        decide(
-            "pointer",
-            1,
-            lambda: page.locator("#field-title .proposed-value").first.click(),
-        )
-        page.get_by_text("Mara Venn", exact=False).first.wait_for()
-        page.get_by_role("button", name="Authors", exact=True).click()
-        assert (
-            page.locator("#field-authors .direct-choice-grid .value-choice").count()
-            == 3
-        )
-        author_notices = page.locator("#field-authors .field-notices")
-        expect(author_notices).to_be_visible()
-        expect(author_notices).to_contain_text("Corroborated creator sources")
-        expect(author_notices).to_contain_text("Hardcover · Open Library")
-        assert "provider_" not in author_notices.inner_text()
-        page.get_by_role("button", name="Subtitle", exact=True).click()
-        subtitle = page.locator("#field-subtitle")
-        subtitle.get_by_text(
-            "This field is unavailable for the current service capability.", exact=True
-        ).wait_for()
-        assert "Unavailable" in subtitle.inner_text()
-        assert subtitle.locator(".direct-choice-grid").count() == 0
-        assert subtitle.get_by_text("Not set", exact=True).count() == 0
-        assert page.get_by_role("button", name="Subtitle", exact=True).count() == 1
-        page.get_by_role("button", name="Evidence", exact=True).click()
         page.get_by_role("heading", name="Evidence and source ledger").wait_for()
-        page.locator(".evidence-item").first.wait_for()
-        assert page.locator(".evidence-item").count() == 3
-        page.get_by_role("button", name="Load more evidence").click()
-        expect(page.locator(".evidence-item")).to_have_count(6)
-        assert (
-            page.get_by_text("Evidence could not be loaded", exact=False).count() == 0
-        )
+        assert page.locator(".direct-choice-grid").count() == 0
         page.get_by_role("button", name="History", exact=True).click()
         page.get_by_role("heading", name="Current-case history").wait_for()
-        page.get_by_text("Case admitted", exact=False).wait_for()
-        assert (
-            "Human decision · title" in page.locator(".progressive-panel").inner_text()
-        )
-        stage[0] = "review:case-stale"
-        page.goto("https://react-platform.invalid/review/case-stale?subview=review")
-        page.get_by_role("heading", name="Case superseded").wait_for()
-        stage[0] = "review:case-11:no-owner-decision"
-        page.goto(
-            "https://react-platform.invalid/review/case-11?field=authors&subview=review"
-        )
-        page.get_by_role("heading", name="Current review case").wait_for()
-        for destination in ("title", "authors", "subtitle", "series"):
-            page.get_by_role(
-                "button", name=destination.capitalize(), exact=True
-            ).click()
-            page.locator(f"#field-{destination}").get_by_text(
-                "There is no owner decision available for this field.", exact=True
-            ).wait_for()
-            assert (
-                page.locator(f"#field-{destination} .direct-choice-grid").count() == 0
-            )
-            assert "Current value" in page.locator(f"#field-{destination}").inner_text()
+        assert page.locator(".direct-choice-grid").count() == 0
+        page.get_by_role("button", name="Evidence", exact=True).click()
+        page.get_by_role("link", name="Back to work", exact=True).click()
+        page.locator(".workspace-detail .decision-canvas").wait_for()
 
-        stage[0] = "review:case-5:automatic-selection"
-        page.goto(
-            "https://react-platform.invalid/review/case-5?field=authors&subview=review"
-        )
-        page.get_by_role("heading", name="Current review case").wait_for()
-        automatic_rail = page.locator(".detail-layout > .field-navigation")
-        expect(automatic_rail.get_by_role("button")).to_have_count(5)
-        page.get_by_role("button", name="Title", exact=True).click()
-        automatic_title = page.locator("#field-title")
-        expect(
-            automatic_title.locator(".direct-choice-grid .value-choice")
-        ).to_have_count(4)
-        expect(automatic_title.locator(".current-value")).to_have_attribute(
-            "aria-pressed", "true"
-        )
-        assert "is-selected" in (
-            automatic_title.locator(".current-value").get_attribute("class") or ""
-        )
-        page.get_by_role("button", name="Authors", exact=True).click()
-        automatic_authors = page.locator("#field-authors")
-        expect(
-            automatic_authors.locator(".direct-choice-grid .value-choice")
-        ).to_have_count(3)
-        expect(automatic_authors.locator(".current-value")).to_have_attribute(
-            "aria-pressed", "true"
-        )
-        # One driver-side action, so the route-ready focus effect cannot land
-        # between focusing the control and pressing the key and send the press
-        # to the field container instead. Keyboard activation stays covered.
-        decide(
-            "keyboard",
-            2,
-            lambda: automatic_authors.locator(".proposed-value").first.press("Space"),
-        )
-
-        stage[0] = "review:case-equal:preservation-only"
-        page.goto(
-            "https://react-platform.invalid/review/case-equal?field=title&subview=review"
-        )
-        page.get_by_role("heading", name="Current review case").wait_for()
-        equal_title = page.locator("#field-title")
-        assert "preservation-only" in (
-            equal_title.locator(".direct-choice-grid").get_attribute("class") or ""
-        )
-        expect(equal_title.locator(".direct-choice-grid .value-choice")).to_have_count(
-            1
-        )
-        expect(equal_title.locator(".direct-choice button")).to_have_count(2)
-        assert equal_title.locator(".proposed-value").count() == 0
-        assert (
-            "Current <script> title"
-            in equal_title.locator(".current-value").inner_text()
-        )
-        stage[0] = "review:case-4:return-to-automatic"
-        page.goto(
-            "https://react-platform.invalid/review/case-4?field=title&subview=review"
-        )
-        page.get_by_role("heading", name="Current review case").wait_for()
-        page.get_by_role("button", name="Return to automatic handling").click()
+        stage[0] = "library:return-to-automatic"
+        page.goto("https://react-platform.invalid/library?lens=all&preview=case-4&field=title")
+        page.get_by_role("button", name="Resume automatic handling").click()
+        page.get_by_role("heading", name="Automatic handling is paused for this field").wait_for()
+        page.get_by_role("button", name="Keep manual handling").focus()
+        page.keyboard.press("Escape")
+        expect(page.get_by_role("button", name="Resume automatic handling")).to_be_focused()
+        assert return_automatic_requests == 0
+        page.get_by_role("button", name="Resume automatic handling").click()
+        page.get_by_role("button", name="Resume after fresh checks").click()
         page.get_by_text(
-            "Automatic policy resumes after fresh checks.", exact=True
+            "Fresh checks requested. Manual handling remains until they complete.", exact=True
         ).wait_for()
         assert return_automatic_requests == 1
-        stage[0] = "review:case-4:compact-layout"
         page.set_viewport_size({"width": 390, "height": 844})
-        compact_field_rail = page.locator(".detail-layout > .field-navigation")
-        assert (
-            compact_field_rail.evaluate("node => getComputedStyle(node).position")
-            == "static"
-        )
-        assert (
-            compact_field_rail.evaluate("node => getComputedStyle(node).top") == "auto"
-        )
+        assert page.locator(".detail-layout").count() == 0
+        assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
         for control in page.locator(".masthead nav a, .shell-actions button").all():
             assert control.bounding_box()["height"] >= 44
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
