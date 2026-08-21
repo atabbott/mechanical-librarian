@@ -1019,6 +1019,38 @@ def test_choice_contexts_build_the_evidence_index_once(
     )
 
 
+def test_choice_contexts_classifies_local_identifier_evidence_as_local_presence(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    proposal = web.case.proposals[0]
+    result = cast(dict[str, Any], proposal["result"])
+    alternatives = json.loads(json.dumps(result["alternatives"]))
+    alternatives[0]["evidence_references"] = ["local_isbn_9780000000000"]
+    contexts = _choice_contexts(
+        alternatives,
+        {**result, "alternatives": alternatives},
+        web.repository.report,
+        {"state": "value", "value": "Title"},
+        evidence={
+            "local_isbn_9780000000000": {
+                "candidate": None,
+                "fact": json.dumps({"kind": "isbn", "value": "9780000000000"}),
+                "kind": "evidence",
+                "provider": None,
+                "reference": "local_isbn_9780000000000",
+                "source": "identifier",
+            }
+        },
+    )
+
+    evidence = contexts[1]["evidence"]
+    assert [{
+        "observation": "ISBN: 9780000000000",
+        "role": "local_presence",
+        "source": "Local library record",
+    }] == evidence
+
+
 @pytest.mark.parametrize(
     ("path", "payload"),
     (

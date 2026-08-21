@@ -1127,7 +1127,7 @@ def _choice_evidence(evidence: dict[str, str | None]) -> dict[str, str]:
     return {
         "observation": _choice_observation(evidence),
         "role": "local_presence"
-        if evidence["source"] == "local"
+        if _choice_is_local(evidence)
         else "external_corroboration",
         "source": _choice_source_label(evidence),
     }
@@ -1142,9 +1142,18 @@ def _choice_source_label(evidence: dict[str, str | None]) -> str:
     provider = evidence["provider"]
     if provider in labels:
         return labels[provider]
-    if evidence["source"] == "local":
+    if _choice_is_local(evidence):
         return "Local library record"
     return "Retained observation (provider name unavailable)"
+
+
+def _choice_is_local(evidence: dict[str, str | None]) -> bool:
+    """Retain local identifier observations as local presence, not provider claims."""
+    return evidence["source"] == "local" or (
+        evidence["source"] == "identifier"
+        and type(evidence.get("reference")) is str
+        and cast(str, evidence["reference"]).startswith("local_")
+    )
 
 
 def _choice_observation(evidence: dict[str, str | None]) -> str:

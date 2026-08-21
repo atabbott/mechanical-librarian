@@ -259,15 +259,12 @@ describe('Library route', () => {
     expect(currentEvidence).toHaveAccessibleName('Evidence for Current value: Old title')
     expect(proposedEvidence).toHaveAccessibleName('Evidence for Alternative 1: New title')
     await user.click(currentEvidence)
-    expect(currentEvidence).toHaveFocus()
-    expect(currentEvidence).toHaveAttribute('aria-controls', 'choice-evidence-current')
+    expect(screen.queryByRole('button', { name: 'Evidence for Current value: Old title' })).toBeNull()
     expect(await screen.findByText('Local library record')).toBeVisible()
     expect(screen.getByText('Title: Old title')).toBeVisible()
     expect(screen.getByText('Local presence')).toBeVisible()
     expect(screen.getAllByText('No recommendation retained').length).toBeGreaterThan(0)
     expect(screen.queryByText('Source ledger')).not.toBeInTheDocument()
-    await user.click(currentEvidence)
-    expect(currentEvidence).toHaveFocus()
     await user.click(proposedEvidence)
     expect(await screen.findByText('Open Library')).toBeVisible()
     expect(screen.getByText('Title: New title')).toBeVisible()
@@ -275,6 +272,23 @@ describe('Library route', () => {
     expect(screen.getAllByText('Competing evidence').length).toBeGreaterThan(0)
     const fieldRail = screen.getByRole('navigation', { name: 'Review fields' })
     expect(within(fieldRail).getByRole('button', { name: /Series.*Resolved automatically/u })).toBeVisible()
+  })
+
+  it('opens a long description without recording a choice', async () => {
+    const user = userEvent.setup()
+    const description = 'A complete retained paragraph. '.repeat(20)
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('description fixture requires a field')
+    const field = { ...titleField, destination: 'description', currentValue: description }
+    const http = { ...createHttp(), getCaseDetail: vi.fn(async () => ({ ...detail, fields: [field] })) }
+    renderRoute('/library?lens=all&preview=case-1&field=description', http)
+
+    const disclosure = await screen.findByText('Read full description')
+    await user.click(disclosure)
+    expect(screen.getAllByText((_, node) => node?.textContent === description)).toHaveLength(1)
+    disclosure.focus()
+    await user.keyboard('{Enter}')
+    expect(http.recordDecision).not.toHaveBeenCalled()
   })
 
   it('keeps the current cover pinned beside a complete eligible gallery and retains advisory reasons', async () => {
@@ -351,7 +365,7 @@ describe('Library route', () => {
     expect(await screen.findByRole('button', { name: /Current cover.*Unavailable/u })).toBeVisible()
     const evidence = screen.getByRole('button', { name: 'Evidence for Current cover' })
     await user.click(evidence)
-    expect(evidence).toHaveFocus()
+    expect(screen.queryByRole('button', { name: 'Evidence for Current cover' })).toBeNull()
     expect(screen.getByText('Local presence')).toBeVisible()
     expect(screen.getByText('Preview unavailable')).toBeVisible()
     expect(screen.getByRole('button', { name: /Current cover.*Unavailable/u })).toHaveAttribute('aria-pressed', 'false')

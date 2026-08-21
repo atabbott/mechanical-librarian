@@ -325,6 +325,9 @@ function ChoiceEvidencePanel({
 const isLongDescription = (destination: string, value: string) =>
   destination === 'description' && value.length > 280
 
+const decisionQuestion = (destination: string) =>
+  `Which ${labelWords(destination)} should this work use?`
+
 function MetadataChoice({
   context,
   current,
@@ -369,17 +372,7 @@ function MetadataChoice({
           {label}
           {context?.recommendation === 'recommended' ? ' · Recommended' : ''}
         </small>
-        {longDescription ? (
-          <details className="choice-description">
-            <summary>
-              {value.slice(0, 240)}
-              {value.length > 240 ? '…' : ''}
-            </summary>
-            <p>{value}</p>
-          </details>
-        ) : (
-          <strong>{value}</strong>
-        )}
+        <strong>{longDescription ? `${value.slice(0, 240)}…` : value}</strong>
         <span>{context?.rationale ?? 'Retained for this owner comparison.'}</span>
         <span className="choice-recommendation">
           {recording
@@ -389,7 +382,13 @@ function MetadataChoice({
               : 'No recommendation retained'}
         </span>
       </button>
-      {hasEvidence ? (
+      {longDescription ? (
+        <details className="choice-description">
+          <summary>Read full description</summary>
+          <p>{value}</p>
+        </details>
+      ) : null}
+      {hasEvidence && !expanded ? (
         <button
           type="button"
           className="choice-evidence-toggle"
@@ -585,25 +584,31 @@ function LibraryCoverChoicesContent({
             {selected && progress?.phase === 'recording' ? <b>Recording…</b> : null}
           </span>
         </button>
-        <button
-          type="button"
-          className="choice-evidence-toggle"
-          aria-controls={evidenceId}
-          aria-expanded={open}
-          aria-label={`Evidence for ${label}`}
-          onClick={() =>
-            setExpandedEvidence((items) => {
-              const next = new Set(items)
-              if (next.has(key)) next.delete(key)
-              else next.add(key)
-              return next
-            })
-          }
-        >
-          Evidence
-        </button>
+        {context && (context.evidence.length || context.limitations.length) && !open ? (
+          <button
+            type="button"
+            className="choice-evidence-toggle"
+            aria-controls={evidenceId}
+            aria-expanded={open}
+            aria-label={`Evidence for ${label}`}
+            onClick={() =>
+              setExpandedEvidence((items) => {
+                const next = new Set(items)
+                next.add(key)
+                return next
+              })
+            }
+          >
+            Evidence
+          </button>
+        ) : null}
         {open ? (
-          <ChoiceEvidencePanel context={context} evidenceId={evidenceId} label={label} />
+          <ChoiceEvidencePanel
+            context={context}
+            evidenceId={evidenceId}
+            label={label}
+            {...(disabled ? {} : { onChoose: () => choose(outcome, value) })}
+          />
         ) : null}
       </article>
     )
@@ -696,28 +701,32 @@ function LibraryCoverChoicesContent({
               ) : null}
             </span>
           </button>
-          <button
-            type="button"
-            className="choice-evidence-toggle"
-            aria-controls="cover-evidence-current-unavailable"
-            aria-expanded={expandedEvidence.has('current-unavailable')}
-            aria-label="Evidence for Current cover"
-            onClick={() =>
-              setExpandedEvidence((items) => {
-                const next = new Set(items)
-                if (next.has('current-unavailable')) next.delete('current-unavailable')
-                else next.add('current-unavailable')
-                return next
-              })
-            }
-          >
-            Evidence
-          </button>
+          {currentContext &&
+          (currentContext.evidence.length || currentContext.limitations.length) &&
+          !expandedEvidence.has('current-unavailable') ? (
+            <button
+              type="button"
+              className="choice-evidence-toggle"
+              aria-controls="cover-evidence-current-unavailable"
+              aria-expanded={expandedEvidence.has('current-unavailable')}
+              aria-label="Evidence for Current cover"
+              onClick={() =>
+                setExpandedEvidence((items) => {
+                  const next = new Set(items)
+                  next.add('current-unavailable')
+                  return next
+                })
+              }
+            >
+              Evidence
+            </button>
+          ) : null}
           {expandedEvidence.has('current-unavailable') ? (
             <ChoiceEvidencePanel
               context={currentContext}
               evidenceId="cover-evidence-current-unavailable"
               label="Current cover"
+              {...(disabled ? {} : { onChoose: () => choose('keep_current') })}
             />
           ) : null}
         </article>
@@ -1173,8 +1182,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const toggleChoiceEvidence = (key: string) =>
     setExpandedChoiceState((current) => {
       const next = current.work === selectedReviewCaseId ? new Set(current.keys) : new Set<string>()
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
+      next.add(key)
       return { work: selectedReviewCaseId, keys: next }
     })
 
@@ -1559,8 +1567,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   ) : null}
                   <header>
                     <div>
-                      <h2>{fieldLabel(selected.destination)}</h2>
-                      <p>{fieldReason(selected)}</p>
+                      <h2>{decisionQuestion(selected.destination)}</h2>
+                      <p>
+                        {fieldLabel(selected.destination)} · {fieldReason(selected)}
+                      </p>
                     </div>
                     <dl>
                       <div>
@@ -1589,7 +1599,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                     ) : (
                       <section
                         className="direct-choice protected-choice"
-                        aria-label={`Choose a ${labelWords(selected.destination)} value`}
+                        aria-label={decisionQuestion(selected.destination)}
                       >
                         {/*
                           What a tap will do, said before the tap and in the
