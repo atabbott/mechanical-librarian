@@ -33,6 +33,7 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     FieldState,
+    IdentifierEvidence,
     IdentifierRelation,
     LocalClaim,
     MetadataReport,
@@ -61,7 +62,7 @@ if TYPE_CHECKING:
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
 PROPOSAL_SCHEMA = "proposal-set-v4"
-POLICY_VERSION = "fixed-conservative-v8"
+POLICY_VERSION = "fixed-conservative-v9"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -244,7 +245,12 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
         }
     ),
     ProposalOutcome.INELIGIBLE: frozenset(
-        {("no_supported_evidence",), ("policy_ignored",), ("target_state_unusable",)}
+        {
+            ("identifier_validity_invalid",),
+            ("no_supported_evidence",),
+            ("policy_ignored",),
+            ("target_state_unusable",),
+        }
     ),
 }
 
@@ -971,17 +977,21 @@ def evaluate_report(
         if (
             destination is TargetDestination.ISBN
             and not observations
-            and any(
-                evidence.relation is IdentifierRelation.UNRESOLVED
-                for evidence in report.identifier_evidence
-            )
+            and result.outcome is ProposalOutcome.INELIGIBLE
+            and result.reasons == ("no_supported_evidence",)
+            and (reason := _isbn_rejection_reason(report.identifier_evidence))
+            is not None
         ):
             result = ProposalResult(
                 destination,
-                ProposalOutcome.DEFER,
+                (
+                    ProposalOutcome.DEFER
+                    if reason == "identifier_applicability_unresolved"
+                    else ProposalOutcome.INELIGIBLE
+                ),
                 (),
                 None,
-                ("identifier_applicability_unresolved",),
+                (reason,),
                 _dependencies(destination),
             )
         results[destination] = _apply_policy_destination(result, ignored)
@@ -2551,6 +2561,18 @@ def _eligible_identifier_reference(
         and evidence.relation is IdentifierRelation.ACCEPTED
         for evidence in report.identifier_evidence
     )
+
+
+def _isbn_rejection_reason(
+    evidence: tuple[IdentifierEvidence, ...],
+) -> str | None:
+    """Keep a retained ISBN eligibility rejection distinct from missing evidence."""
+    relations = {item.relation for item in evidence}
+    if IdentifierRelation.UNRESOLVED in relations:
+        return "identifier_applicability_unresolved"
+    if relations == {IdentifierRelation.INVALID}:
+        return "identifier_validity_invalid"
+    return None
 
 
 def _accepted_provider_manifestation_anchor(

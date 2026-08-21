@@ -7,12 +7,17 @@ rebuild or delivers one explicit exact-predecessor adoption limited to
 reconstructible derived objects. This is not a general migration, import,
 conversion, compatibility, downgrade, or repair facility.
 
+The `fixed-conservative-v8` proposal contract is not an exact predecessor of
+the installed v9 contract: its persisted decisions can disagree. It is rejected
+at bootstrap and requires a clean rebuild; `review-field-facts-v1` cannot adopt
+it.
+
 ## Offline derived-schema adoption
 
 Stop the container before adoption and retain the original volume as rollback.
 Run a delivered plan only against a complete clone, with the database and new
-backup in the same owner-only directory. To adopt #802 from its exact #805
-predecessor:
+backup in the same owner-only directory. The `review-field-facts-v1` command
+accepts only its frozen v9 predecessor; it is not a v8 upgrade path:
 
 ```console
 mechanical-librarian schema-adopt review-field-facts-v1 \

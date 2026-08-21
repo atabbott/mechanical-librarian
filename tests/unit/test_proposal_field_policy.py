@@ -20,6 +20,7 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     FieldState,
+    IdentifierRelation,
     LocalClaim,
     ProviderCandidate,
     ProviderClaim,
@@ -809,12 +810,14 @@ def test_identifier_and_explicit_rules_do_not_manufacture_evidence() -> None:
             False,
         ),
     )
-    proposal_set = evaluate_report(
-        _report(
-            fields=fields,
-            providers=(_provider("catalogue", "edition-1", (isbn,)),),
-        )
+    report = _report(
+        fields=fields,
+        providers=(_provider("catalogue", "edition-1", (isbn,)),),
     )
+    assert {IdentifierRelation.UNRESOLVED} == {
+        evidence.relation for evidence in report.identifier_evidence
+    }
+    proposal_set = evaluate_report(report)
     isbn_result = _result(proposal_set, TargetDestination.ISBN)
     assert ProposalOutcome.DEFER == isbn_result.outcome
     assert () == isbn_result.alternatives
@@ -823,6 +826,107 @@ def test_identifier_and_explicit_rules_do_not_manufacture_evidence() -> None:
         ProposalOutcome.DEFER
         == _result(proposal_set, TargetDestination.EXPLICIT).outcome
     )
+
+
+def test_invalid_isbn_lineage_is_specific_when_empty_target_has_no_alternative() -> (
+    None
+):
+    invalid = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="not-an-isbn",
+        canonical=None,
+        excerpt="not-an-isbn",
+        applicability="unknown",
+        checksum="invalid",
+        applicability_basis="unlabelled",
+        scope=ClaimScope.EDITION,
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    isbn=TargetField(
+                        TargetDestination.ISBN,
+                        TargetFieldState.MISSING,
+                    ),
+                ),
+                local_claims=(invalid,),
+            )
+        ),
+        TargetDestination.ISBN,
+    )
+
+    assert ProposalOutcome.INELIGIBLE == result.outcome
+    assert () == result.alternatives
+    assert ("identifier_validity_invalid",) == result.reasons
+
+
+@pytest.mark.parametrize(
+    "state",
+    (
+        TargetFieldState.MALFORMED,
+        TargetFieldState.UNLOADED,
+        TargetFieldState.OVERSIZED,
+    ),
+)
+def test_isbn_lineage_does_not_override_unusable_target_state(
+    state: TargetFieldState,
+) -> None:
+    invalid = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="not-an-isbn",
+        canonical=None,
+        excerpt="not-an-isbn",
+        applicability="unknown",
+        checksum="invalid",
+        applicability_basis="unlabelled",
+        scope=ClaimScope.EDITION,
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    isbn=TargetField(TargetDestination.ISBN, state),
+                ),
+                local_claims=(invalid,),
+            )
+        ),
+        TargetDestination.ISBN,
+    )
+
+    assert ProposalOutcome.INELIGIBLE == result.outcome
+    assert ("target_state_unusable",) == result.reasons
+
+
+def test_isbn_lineage_does_not_override_populated_target_preservation() -> None:
+    invalid = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="not-an-isbn",
+        canonical=None,
+        excerpt="not-an-isbn",
+        applicability="unknown",
+        checksum="invalid",
+        applicability_basis="unlabelled",
+        scope=ClaimScope.EDITION,
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    isbn=TargetField(
+                        TargetDestination.ISBN,
+                        TargetFieldState.VALUE,
+                        "9780306406157",
+                    ),
+                ),
+                local_claims=(invalid,),
+            )
+        ),
+        TargetDestination.ISBN,
+    )
+
+    assert ProposalOutcome.DEFER == result.outcome
+    assert ("no_positive_preservation_evidence",) == result.reasons
 
 
 def test_explicit_local_ebook_isbn_remains_eligible() -> None:

@@ -139,6 +139,45 @@ def test_prior_policy_store_schema_is_rejected_without_mutation() -> None:
         assert before == path.read_bytes()
 
 
+def test_persisted_v8_proposal_state_is_rejected_during_bootstrap() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        repository = open_repository(path)
+        report = _report("Title", "b" * 64)
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(evaluate_report(report))
+        repository.close()
+
+        connection = sqlite3.connect(path)
+        connection.execute("PRAGMA writable_schema=ON")
+        connection.execute(
+            "UPDATE sqlite_master SET sql=replace(sql, ?, ?) WHERE name='proposal_sets'",
+            (POLICY_VERSION, "fixed-conservative-v8"),
+        )
+        connection.commit()
+        connection.close()
+
+        connection = sqlite3.connect(path)
+        connection.execute("DROP TRIGGER proposal_sets_no_update")
+        connection.execute(
+            "UPDATE proposal_sets SET policy_version=?,document=replace(document, ?, ?)",
+            ("fixed-conservative-v8", POLICY_VERSION, "fixed-conservative-v8"),
+        )
+        connection.execute(
+            "CREATE TRIGGER proposal_sets_no_update BEFORE UPDATE ON proposal_sets "
+            "BEGIN SELECT RAISE(ABORT, 'proposal sets are append-only'); END"
+        )
+        connection.commit()
+        connection.execute("PRAGMA writable_schema=OFF")
+        connection.close()
+        before = path.read_bytes()
+
+        with pytest.raises(MetadataReportError):
+            open_repository(path)
+
+        assert before == path.read_bytes()
+
+
 def test_transaction_rechecks_current_report_before_insert() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
