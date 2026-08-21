@@ -552,7 +552,7 @@ describe('Library route', () => {
     expect(screen.queryByRole('button', { name: /Specific proposed value/ })).toBeNull()
   })
 
-  it('preserves the selected field in full review and clears it when another work is selected', async () => {
+  it('preserves the selected field in Library and clears it when another work is selected', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]
     const firstWork = library.works[0]
@@ -566,8 +566,8 @@ describe('Library route', () => {
     }
     const { router } = renderRoute('/library?lens=all&preview=case-1&field=authors', http)
 
-    expect(await screen.findByRole('link', { name: 'Open full review' })).toHaveAttribute('href', '/review/case-1?subview=review&field=authors')
-    await user.click(screen.getByRole('button', { name: /^Second work\./u }))
+    expect(screen.queryByRole('link', { name: /Open full review|Open all evidence/u })).toBeNull()
+    await user.click(await screen.findByRole('button', { name: /^Second work\./u }))
     await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-2' }))
   })
 
@@ -1455,7 +1455,16 @@ describe('Library route', () => {
     expect(screen.getByText('Readable work identity is not available on this Library page.')).toBeVisible()
     expect(screen.queryByText('item-1')).toBeNull()
     expect(screen.queryByText('internal identity')).toBeNull()
-    expect(screen.getByRole('link', { name: 'Open full review' })).toHaveAttribute('href', '/review/case-1?subview=review')
+    expect(screen.queryByRole('link', { name: /Open full review|Open all evidence/u })).toBeNull()
+  })
+
+  it('returns legacy review links to the selected Library work and field', async () => {
+    const { router } = renderRoute('/review/case-1?subview=evidence&field=title', createHttp())
+
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+    expect(router.state.location.pathname).toBe('/library')
+    expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', field: 'title' })
+    expect(screen.queryByRole('heading', { name: /Evidence and source ledger/u })).toBeNull()
   })
 
   it('aborts a superseded critical load and renders only the current route result', async () => {

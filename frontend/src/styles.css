@@ -617,6 +617,10 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .choice-evidence li p { grid-column:1 / -1; color:var(--soft); }
 .choice-evidence aside { padding-top:9px; border-top:1px solid var(--line); color:var(--notice); }
 .choice-evidence aside strong { font-size:.66rem; letter-spacing:.06em; text-transform:uppercase; }
+.choice-evidence[role='button']:focus-visible { outline:2px solid var(--accent-strong); outline-offset:-2px; }
+.choice-description { margin:0; font:inherit; }
+.choice-description summary { color:var(--ink); cursor:pointer; font:600 1rem/1.55 Georgia, 'Times New Roman', serif; }
+.choice-description p { max-width:68ch; margin:12px 0 0; color:var(--ink); font:400 .93rem/1.6 Georgia, 'Times New Roman', serif; white-space:pre-wrap; overflow-wrap:anywhere; }
 .comparison-notice { margin-top:14px; padding:12px 14px; border:1px solid var(--notice); border-radius:8px; background:var(--notice-soft); color:var(--ink); }
 .comparison-notice p { margin:0; overflow-wrap:anywhere; font-size:.75rem; line-height:1.45; }
 .comparison-notice p + p { margin-top:5px; }

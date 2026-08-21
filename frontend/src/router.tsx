@@ -33,7 +33,6 @@ import type { LiveUpdateStream } from './liveUpdates'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
 const AttentionPage = recoverableLazy(() => import('./routes/AttentionPage'))
-const DetailPage = recoverableLazy(() => import('./routes/DetailPage'))
 const PolicyPage = recoverableLazy(() => import('./routes/PolicyPage'))
 const ActivityPage = recoverableLazy(() => import('./routes/ActivityPage'))
 
@@ -721,12 +720,20 @@ const AttentionRouteComponent = () => {
   const query = useQuery({ ...attentionQuery(http, search), initialData: initial })
   return <AttentionPage data={query.data} />
 }
-const DetailRouteComponent = () => {
-  const initial = detailRoute.useLoaderData()
-  const { http } = rootRoute.useRouteContext()
+const LegacyReviewRouteComponent = () => {
   const { reviewCaseId } = detailRoute.useParams()
-  const query = useQuery({ ...detailQuery(http, reviewCaseId), initialData: initial })
-  return <DetailPage data={query.data} />
+  const search = detailRoute.useSearch()
+  return (
+    <Navigate
+      to="/library"
+      search={{
+        lens: 'all',
+        preview: reviewCaseId,
+        ...(search.field ? { field: search.field } : {}),
+      }}
+      replace
+    />
+  )
 }
 export const libraryRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -756,12 +763,7 @@ export const detailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/review/$reviewCaseId',
   validateSearch: normalizeDetailSearch,
-  loader: ({ context, params, abortController }) =>
-    context.queryClient.ensureQueryData({
-      ...detailQuery(context.http, params.reviewCaseId),
-      queryFn: () => context.http.getCaseDetail(params.reviewCaseId, abortController.signal),
-    }),
-  component: DetailRouteComponent,
+  component: LegacyReviewRouteComponent,
 })
 export interface PolicyCritical {
   state: PolicyStateView

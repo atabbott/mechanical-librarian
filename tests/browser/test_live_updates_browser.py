@@ -290,7 +290,10 @@ def test_a_change_in_one_tab_reaches_another_without_a_reload() -> None:
 
                 actor = context.new_page()
                 actor.goto(f"{origin}/review/{case_id}?field=title&subview=review")
-                actor.get_by_role("heading", name="Current review case").wait_for()
+                actor.get_by_role(
+                    "heading", name="Every work, with exceptions first"
+                ).wait_for()
+                assert "/library?lens=all&preview=" in actor.url
                 actor.get_by_role(
                     "button", name="Choose current value:", exact=False
                 ).first.click()

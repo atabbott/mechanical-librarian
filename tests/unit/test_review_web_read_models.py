@@ -1229,7 +1229,7 @@ def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -
                 "source": "provider_claim",
             }
         )
-        == "Provider evidence (name unavailable)"
+        == "Retained observation (provider name unavailable)"
     )
     replacing = {
         "assessment": "replaces_target",
@@ -1248,7 +1248,7 @@ def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -
     assert not _current_value_present([])
 
 
-def test_provider_comparison_notices_keep_only_safe_material_failures(
+def test_provider_comparison_notices_never_create_a_permanent_case_banner(
     web: ReviewWebContext[_CloseRecordingRepository],
 ) -> None:
     source = _report()
@@ -1267,12 +1267,9 @@ def test_provider_comparison_notices_keep_only_safe_material_failures(
             ProviderObservation("private-connection", ProviderStatus.UNAVAILABLE),
         ),
     )
-    # A disabled source limited nothing, and each remaining status now names the
-    # consequence the owner can act on rather than one anonymous sentence.
-    assert _provider_comparison_notices(report) == [
-        "Provider limitation: Open Library — Returned no matching metadata, so nothing was retained.",
-        "Provider limitation: Provider (name unavailable) — Could not be reached; a bounded retry is scheduled.",
-    ]
+    # Provider outcomes remain in the source/choice disclosure. They do not
+    # turn a terminal outcome into a permanent case-level warning.
+    assert _provider_comparison_notices(report) == []
     affected_case = ReviewCase.create(evaluate_report(report), report)
     projected = InspectCurrentReviewCase(
         FakeReviewRepository(affected_case, report)
@@ -1298,9 +1295,7 @@ def test_provider_comparison_notices_keep_only_safe_material_failures(
                 ),
             ),
         )
-        assert [
-            "Provider limitation: Provider (name unavailable) — Could not be reached; a bounded retry is scheduled.",
-        ] == _provider_comparison_notices(spoofed)
+        assert _provider_comparison_notices(spoofed) == []
 
 
 def test_choice_limitations_leave_multi_alternative_global_reasons_field_scoped() -> (

@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { SyntheticEvent } from 'react'
+import type { KeyboardEvent, SyntheticEvent } from 'react'
 
 import { displayValue } from '../api/http'
 import type {
@@ -268,13 +268,32 @@ function ChoiceEvidencePanel({
   context,
   evidenceId,
   label,
+  onChoose,
 }: {
   context: ChoiceContextView | undefined
   evidenceId: string
   label: string
+  onChoose?: () => void
 }) {
   return (
-    <section className="choice-evidence" id={evidenceId} aria-label={`${label} evidence`}>
+    <section
+      className="choice-evidence"
+      id={evidenceId}
+      aria-label={`${label} evidence`}
+      {...(onChoose
+        ? {
+            role: 'button' as const,
+            tabIndex: 0,
+            onClick: onChoose,
+            onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onChoose()
+              }
+            },
+          }
+        : {})}
+    >
       <p>{context?.rationale ?? 'Retained evidence is unavailable for this choice.'}</p>
       {context?.evidence.length ? (
         <ul>
@@ -303,12 +322,16 @@ function ChoiceEvidencePanel({
   )
 }
 
+const isLongDescription = (destination: string, value: string) =>
+  destination === 'description' && value.length > 280
+
 function MetadataChoice({
   context,
   current,
   disabled,
   expanded,
   label,
+  longDescription,
   onChoose,
   recording,
   selected,
@@ -320,15 +343,16 @@ function MetadataChoice({
   disabled: boolean
   expanded: boolean
   label: string
+  longDescription: boolean
   onChoose: () => void
   recording: boolean
   selected: boolean
   toggle: () => void
   value: string
 }) {
-  const limitations = context?.limitations ?? []
   const evidenceId = `choice-evidence-${current ? 'current' : (context?.alternativeId ?? 'alternative')}`
   const evidenceLabel = `Evidence for ${label}: ${value}`
+  const hasEvidence = Boolean(context && (context.evidence.length || context.limitations.length))
   return (
     <article
       className={`metadata-choice${current ? ' is-current' : ''}${context?.recommendation === 'recommended' ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}${expanded ? ' is-evidence-open' : ''}`}
@@ -345,7 +369,17 @@ function MetadataChoice({
           {label}
           {context?.recommendation === 'recommended' ? ' · Recommended' : ''}
         </small>
-        <strong>{value}</strong>
+        {longDescription ? (
+          <details className="choice-description">
+            <summary>
+              {value.slice(0, 240)}
+              {value.length > 240 ? '…' : ''}
+            </summary>
+            <p>{value}</p>
+          </details>
+        ) : (
+          <strong>{value}</strong>
+        )}
         <span>{context?.rationale ?? 'Retained for this owner comparison.'}</span>
         <span className="choice-recommendation">
           {recording
@@ -355,43 +389,25 @@ function MetadataChoice({
               : 'No recommendation retained'}
         </span>
       </button>
-      <button
-        type="button"
-        className="choice-evidence-toggle"
-        aria-controls={evidenceId}
-        aria-expanded={expanded}
-        aria-label={evidenceLabel}
-        onClick={toggle}
-      >
-        Evidence
-      </button>
+      {hasEvidence ? (
+        <button
+          type="button"
+          className="choice-evidence-toggle"
+          aria-controls={evidenceId}
+          aria-expanded={expanded}
+          aria-label={evidenceLabel}
+          onClick={toggle}
+        >
+          Evidence
+        </button>
+      ) : null}
       {expanded ? (
-        <section className="choice-evidence" id={evidenceId} aria-label={`${label} evidence`}>
-          <p>{context?.rationale ?? 'Retained evidence is unavailable for this choice.'}</p>
-          {context?.evidence.length ? (
-            <ul>
-              {context.evidence.map((row, index) => (
-                <li key={`${row.source}:${row.observation}:${String(index)}`}>
-                  <strong>{row.source}</strong>
-                  <span>
-                    {row.role === 'local_presence' ? 'Local presence' : 'External corroboration'}
-                  </span>
-                  <p>{row.observation}</p>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No owner-readable source observation is retained for this choice.</p>
-          )}
-          {limitations.length ? (
-            <aside>
-              <strong>Limitation</strong>
-              {limitations.map((limitation) => (
-                <p key={limitation}>{fieldLabel(limitation)}</p>
-              ))}
-            </aside>
-          ) : null}
-        </section>
+        <ChoiceEvidencePanel
+          context={context}
+          evidenceId={evidenceId}
+          label={label}
+          onChoose={onChoose}
+        />
       ) : null}
     </article>
   )
@@ -891,10 +907,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         (item) => item.id === search.preview && item.destination === selected.destination,
       )
     : -1
-  const fullReviewSearch = {
-    subview: 'review' as const,
-    ...(selected ? { field: selected.destination } : {}),
-  }
   const nextWork = complete
     ? (attentionItems.find(
         (item) =>
@@ -1367,13 +1379,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             <div className="library-selection">
               <h2>Selected work</h2>
               <p>Readable work identity is not available on this Library page.</p>
-              <Link
-                to="/review/$reviewCaseId"
-                params={{ reviewCaseId: search.preview }}
-                search={fullReviewSearch}
-              >
-                Open full review
-              </Link>
+              <p role="status">This work is not available in the current Library result.</p>
             </div>
           ) : detail.isPending ? (
             <p role="status">Loading selected work…</p>
@@ -1381,14 +1387,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             <p role="alert">
               Selected work could not be loaded.{' '}
               <button onClick={() => void detail.refetch()}>Try again</button>{' '}
-              <Link
-                className="full-review-link"
-                to="/review/$reviewCaseId"
-                params={{ reviewCaseId: search.preview }}
-                search={fullReviewSearch}
-              >
-                Open full review
-              </Link>
             </p>
           ) : !detail.data.current ? (
             <div className="library-selection">
@@ -1614,6 +1612,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                             disabled={false}
                             expanded={expandedChoices.has(`${selected.destination}:current`)}
                             label="Current value"
+                            longDescription={isLongDescription(
+                              selected.destination,
+                              selected.currentValue,
+                            )}
                             onChoose={() => choose(selected, 'keep_current')}
                             recording={
                               commandSelected(
@@ -1652,6 +1654,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                                     disabled={false}
                                     expanded={expandedChoices.has(key)}
                                     label={`Alternative ${String(index + 1)}`}
+                                    longDescription={isLongDescription(
+                                      selected.destination,
+                                      displayValue(value.value),
+                                    )}
                                     onChoose={() => choose(selected, 'accept', value)}
                                     recording={
                                       commandSelected(
@@ -1765,27 +1771,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 </details>
               ) : null}
               <WorkSources comparison outcomes={selectedLibraryWork?.preparationOutcomes ?? []} />
-              <div className="workspace-utilities">
-                <Link
-                  className="full-review-link"
-                  to="/review/$reviewCaseId"
-                  params={{ reviewCaseId: search.preview }}
-                  search={fullReviewSearch}
-                >
-                  Open full review
-                </Link>
-                <Link
-                  className="full-review-link"
-                  to="/review/$reviewCaseId"
-                  params={{ reviewCaseId: search.preview }}
-                  search={{
-                    subview: 'evidence',
-                    ...(selected ? { field: selected.destination } : {}),
-                  }}
-                >
-                  Open all evidence
-                </Link>
-              </div>
               <div className="compact-workspace-controls">
                 <button type="button" onClick={clearSelection}>
                   Back to works

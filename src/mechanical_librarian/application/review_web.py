@@ -1144,7 +1144,7 @@ def _choice_source_label(evidence: dict[str, str | None]) -> str:
         return labels[provider]
     if evidence["source"] == "local":
         return "Local library record"
-    return "Provider evidence (name unavailable)"
+    return "Retained observation (provider name unavailable)"
 
 
 def _choice_observation(evidence: dict[str, str | None]) -> str:
@@ -1482,18 +1482,9 @@ def _provider_label(authority: str | None) -> str:
 
 
 def _provider_comparison_notices(report: MetadataReport) -> list[str]:
-    """Name only the lanes that limited this comparison.
-
-    The source ledger reports every lane, a match and a source that was never
-    asked included. A limitation notice is the narrower claim, so it keeps the
-    same three non-limiting statuses it always excluded.
-    """
-    notices = {
-        f"Provider limitation: {outcome['provider']} — {outcome['reason']}"
-        for outcome in _provider_outcomes(report)
-        if outcome["status"] not in _NON_LIMITING_PROVIDER_STATUSES
-    }
-    return sorted(notices)[:3]
+    """Keep provider limitations with affected choices, never as case banners."""
+    del report
+    return []
 
 
 def _library_item(

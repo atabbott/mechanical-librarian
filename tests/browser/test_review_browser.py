@@ -792,8 +792,11 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.unroute("**/api/v1/activity?*", activity_poll)
                 assert documents == initial_documents
                 page.goto(f"{origin}/review/{case_id}?field=title&subview=review")
-                page.get_by_role("heading", name="Current review case").wait_for()
-                assert page.locator("#field-title").evaluate(
+                page.get_by_role(
+                    "heading", name="Every work, with exceptions first"
+                ).wait_for()
+                assert "/library?lens=all&preview=" in page.url
+                assert page.locator(".selected-work-header").evaluate(
                     "node => node === document.activeElement"
                 )
                 assert page.locator("img,script:not([src])").count() == 0
@@ -977,18 +980,18 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     "button", name="Choose proposed value", exact=False
                 )
                 expect(title_candidate).to_have_attribute("aria-pressed", "true")
-                assert title_candidate.evaluate(
+                assert title_candidate.locator("xpath=..").evaluate(
                     "node => node.classList.contains('is-selected')"
                 )
                 expect(title_current).to_have_attribute("aria-pressed", "false")
                 assert not (
-                    title_current.evaluate(
+                    title_current.locator("xpath=..").evaluate(
                         "node => node.classList.contains('is-selected')"
                     )
                 )
                 page.reload()
                 expect(title_candidate).to_have_attribute("aria-pressed", "true")
-                assert title_candidate.evaluate(
+                assert title_candidate.locator("xpath=..").evaluate(
                     "node => node.classList.contains('is-selected')"
                 )
                 with page.expect_response(
@@ -1033,7 +1036,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 )
                 page.goto(f"{origin}/review/{case_id}?field=cover&subview=review")
                 page.get_by_role("button", name="Prepare cover comparison").click()
-                page.get_by_role("heading", name="Available").first.wait_for()
+                page.get_by_text("Eligible alternatives", exact=True).wait_for()
                 expect(page.get_by_alt_text("Current library cover")).to_be_visible()
                 expect(page.get_by_alt_text("Alternative 1 cover")).to_be_visible()
                 current_cover = page.get_by_role("button", name="Keep current cover")
@@ -1243,7 +1246,7 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                 _login(page, origin)
                 page.goto(f"{origin}/review/{case_id}?field=cover&subview=review")
                 page.get_by_role("button", name="Prepare cover comparison").click()
-                page.get_by_role("heading", name="Available").first.wait_for()
+                page.get_by_text("Eligible alternatives", exact=True).wait_for()
 
                 def measured(selector: str) -> list[dict[str, Any]]:
                     page.wait_for_function(

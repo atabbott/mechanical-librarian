@@ -451,7 +451,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         routes = (
             ("/library?lens=all", "Every work, with exceptions first"),
             ("/attention", "Needs your attention"),
-            ("/review/case-1?field=title&subview=review", "Current review case"),
+            ("/review/case-1?field=title&subview=review", "Every work, with exceptions first"),
             ("/policy?section=identity", "Library policy"),
             ("/policy?section=publication", "Library policy"),
             ("/policy?section=curation", "Library policy"),

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep per-choice provenance and bounded Evidence inside Library. Long
+  descriptions now offer a readable preview and full inspection, and legacy
+  review links return to the selected Library work rather than opening a second
+  decision workspace. (#640)
+
 - Present the strongest qualified publication fact once in Library, while
   keeping a month-level fact automatic only when its existing independent,
   manifestation-bound evidence remains intact. Automatic, recorded, actionable,
