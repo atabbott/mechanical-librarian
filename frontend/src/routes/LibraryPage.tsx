@@ -766,6 +766,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
   const automaticTrigger = useRef<HTMLButtonElement>(null)
+  const keepManualHandling = useRef<HTMLButtonElement>(null)
+  const restoreAutomaticTrigger = useRef(false)
   const attentionRail = useRef<HTMLElement>(null)
   const selectedIdentityRef = useRef<{
     id: string
@@ -786,6 +788,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const [completionInspection, setCompletionInspection] = useState<string | null>(null)
   const [automaticPanel, setAutomaticPanel] = useState<string | null>(null)
   const [automaticResult, setAutomaticResult] = useState<'success' | 'error' | null>(null)
+  const [automaticCompleted, setAutomaticCompleted] = useState<string | null>(null)
   const [openedWork, setOpenedWork] = useState<LibraryWorkView | null>(null)
   const [expandedChoiceState, setExpandedChoiceState] = useState<{
     work: string
@@ -943,10 +946,19 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       await navigate({ search: { lens: 'needs_attention' } })
     },
   })
+  const selectedAutomaticKey = selected
+    ? `${selected.destination}:${selected.targetFingerprint}`
+    : null
+  const automaticPanelVisible = automaticPanel === selectedAutomaticKey && selected?.manualHold
+  const automaticCompletedForSelected = automaticCompleted === selectedAutomaticKey
   const returnAutomatic = useMutation({
-    mutationFn: (destination: string) => http.returnToAutomatic(selectedReviewCaseId, destination),
+    mutationFn: ({ destination }: { destination: string; key: string }) =>
+      http.returnToAutomatic(selectedReviewCaseId, destination),
     retry: false,
-    onSuccess: () => setAutomaticResult('success'),
+    onSuccess: (_value, request) => {
+      setAutomaticResult('success')
+      setAutomaticCompleted(request.key)
+    },
     onError: () => setAutomaticResult('error'),
   })
 
@@ -973,11 +985,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     })
   }, [selected?.destination])
   useEffect(() => {
-    if (automaticPanel === null) return
-    if (selected?.destination === automaticPanel && selected.manualHold) return
-    setAutomaticPanel(null)
-    setAutomaticResult(null)
-  }, [automaticPanel, selected])
+    if (automaticPanelVisible) keepManualHandling.current?.focus()
+  }, [automaticPanelVisible])
+  useEffect(() => {
+    if (automaticPanel !== null || !restoreAutomaticTrigger.current) return
+    restoreAutomaticTrigger.current = false
+    automaticTrigger.current?.focus()
+  }, [automaticPanel])
   useEffect(() => {
     if (search.attention !== 'open') return
     let focusFrame = 0
@@ -1141,9 +1155,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     })
   }
   const closeAutomaticPanel = () => {
+    restoreAutomaticTrigger.current = true
     setAutomaticPanel(null)
-    setAutomaticResult(null)
-    requestAnimationFrame(() => automaticTrigger.current?.focus())
+    if (automaticResult !== 'success') setAutomaticResult(null)
   }
   const retryNextWork = () => {
     if (attention.isFetchNextPageError) void attention.fetchNextPage()
@@ -1728,7 +1742,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         }
                       }}
                     >
-                      {automaticPanel === selected.destination ? (
+                      {automaticPanelVisible ? (
                         <>
                           <h3>Automatic handling is paused for this field</h3>
                           <p>
@@ -1746,6 +1760,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           ) : null}
                           <div className="automatic-handling-actions">
                             <button
+                              ref={keepManualHandling}
                               type="button"
                               disabled={returnAutomatic.isPending}
                               onClick={closeAutomaticPanel}
@@ -1754,8 +1769,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                             </button>
                             <button
                               type="button"
-                              disabled={returnAutomatic.isPending || automaticResult === 'success'}
-                              onClick={() => returnAutomatic.mutate(selected.destination)}
+                              disabled={returnAutomatic.isPending || automaticCompletedForSelected}
+                              onClick={() =>
+                                returnAutomatic.mutate({
+                                  destination: selected.destination,
+                                  key: `${selected.destination}:${selected.targetFingerprint}`,
+                                })
+                              }
                             >
                               {returnAutomatic.isPending
                                 ? 'Requesting fresh checks…'
@@ -1767,12 +1787,15 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         <button
                           ref={automaticTrigger}
                           type="button"
+                          disabled={automaticCompletedForSelected}
                           onClick={() => {
                             setAutomaticResult(null)
-                            setAutomaticPanel(selected.destination)
+                            setAutomaticPanel(selectedAutomaticKey)
                           }}
                         >
-                          Resume automatic handling
+                          {automaticCompletedForSelected
+                            ? 'Fresh checks requested'
+                            : 'Resume automatic handling'}
                         </button>
                       )}
                     </section>

@@ -926,7 +926,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 "This work is not available in the current Library result.", exact=True
             ).wait_for()
             assert page.get_by_role("button", name="Try again").count() == 0
-            assert page.get_by_role("heading", name="Current review case").count() == 0
+            assert page.locator(".workspace-detail").count() == 1
         missing_case_errors = errors[missing_case_error_start:]
         assert len(missing_case_errors) == 2
         assert (
@@ -1356,17 +1356,22 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         page.get_by_role("heading", name="Evidence and source ledger").wait_for()
         assert page.locator(".direct-choice-grid").count() == 0
+        capture_visual_proof("case-diagnostics-evidence")
         page.get_by_role("button", name="History", exact=True).click()
         page.get_by_role("heading", name="Current-case history").wait_for()
         assert page.locator(".direct-choice-grid").count() == 0
+        capture_visual_proof("case-diagnostics-history")
         page.get_by_role("button", name="Evidence", exact=True).click()
         page.get_by_role("link", name="Back to work", exact=True).click()
         page.locator(".workspace-detail .decision-canvas").wait_for()
 
         stage[0] = "library:return-to-automatic"
         page.goto("https://react-platform.invalid/library?lens=all&preview=case-4&field=title")
+        capture_visual_proof("library-manual-handling-collapsed")
         page.get_by_role("button", name="Resume automatic handling").click()
         page.get_by_role("heading", name="Automatic handling is paused for this field").wait_for()
+        expect(page.get_by_role("button", name="Keep manual handling")).to_be_focused()
+        capture_visual_proof("library-manual-handling-confirmation")
         page.get_by_role("button", name="Keep manual handling").focus()
         page.keyboard.press("Escape")
         expect(page.get_by_role("button", name="Resume automatic handling")).to_be_focused()
@@ -1378,7 +1383,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         ).wait_for()
         assert return_automatic_requests == 1
         page.set_viewport_size({"width": 390, "height": 844})
-        assert page.locator(".detail-layout").count() == 0
+        assert page.get_by_role("heading", name="Evidence and source ledger").count() == 0
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 390
         for control in page.locator(".masthead nav a, .shell-actions button").all():
             assert control.bounding_box()["height"] >= 44

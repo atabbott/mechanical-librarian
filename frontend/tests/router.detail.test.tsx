@@ -200,6 +200,66 @@ describe('Library review ownership', () => {
     expect(screen.queryByText('Current review case')).toBeNull()
   })
 
+  it('requests fresh checks only after the Library manual-handling confirmation', async () => {
+    const user = userEvent.setup()
+    const field = detail.fields[0]
+    if (!field) throw new Error('title fixture required')
+    let settleRequest: (() => void) | undefined
+    const returnToAutomatic = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          settleRequest = resolve
+        }),
+    )
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [{ ...field, manualHold: true }] })),
+      returnToAutomatic,
+    })
+
+    await screen.findByRole('button', { name: 'Resume automatic handling' })
+    await user.click(screen.getByRole('button', { name: 'Resume automatic handling' }))
+    const cancel = await screen.findByRole('button', { name: 'Keep manual handling' })
+    expect(cancel).toHaveFocus()
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('button', { name: 'Resume automatic handling' })).toHaveFocus()
+    expect(returnToAutomatic).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Resume automatic handling' }))
+    await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
+    expect(screen.getByRole('button', { name: 'Requesting fresh checks…' })).toBeDisabled()
+    expect(returnToAutomatic).toHaveBeenCalledOnce()
+    settleRequest?.()
+    expect(
+      await screen.findByText(
+        'Fresh checks requested. Manual handling remains until they complete.',
+      ),
+    ).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Keep manual handling' }))
+    expect(screen.getByRole('button', { name: 'Fresh checks requested' })).toBeDisabled()
+    expect(returnToAutomatic).toHaveBeenCalledOnce()
+  })
+
+  it('keeps manual handling unchanged when fresh-check request fails', async () => {
+    const user = userEvent.setup()
+    const field = detail.fields[0]
+    if (!field) throw new Error('title fixture required')
+    const returnToAutomatic = vi.fn(async () => Promise.reject(new Error('offline')))
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [{ ...field, manualHold: true }] })),
+      returnToAutomatic,
+    })
+
+    await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
+    await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
+    expect(
+      await screen.findByText('Fresh checks could not be requested. Manual handling is unchanged.'),
+    ).toBeVisible()
+    expect(returnToAutomatic).toHaveBeenCalledOnce()
+    expect(screen.getByRole('button', { name: 'Keep manual handling' })).toBeEnabled()
+  })
+
   it('preserves a diagnostic direct entry through Back and Forward', async () => {
     const { router } = renderRoute('/library?lens=all')
     await router.navigate({
@@ -208,9 +268,9 @@ describe('Library review ownership', () => {
       search: { field: 'title', subview: 'evidence' },
     })
     await screen.findByRole('heading', { name: 'Evidence and source ledger' })
-    await router.history.back()
+    router.history.back()
     await waitFor(() => expect(router.state.location.pathname).toBe('/library'))
-    await router.history.forward()
+    router.history.forward()
     await waitFor(() =>
       expect(router.state.location.search).toEqual({ field: 'title', subview: 'evidence' }),
     )

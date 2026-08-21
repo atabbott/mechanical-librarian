@@ -791,10 +791,8 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 assert activity_requests == settled_activity_requests
                 page.unroute("**/api/v1/activity?*", activity_poll)
                 assert documents == initial_documents
-                page.goto(f"{origin}/review/{case_id}?field=title&subview=review")
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
                 page.locator(".workspace-detail").wait_for()
-                assert "/library?lens=all&preview=" in page.url
-                assert page.get_by_role("heading", name="Current review case").count() == 0
                 assert page.locator(".workspace-detail").evaluate(
                     "node => node === document.activeElement"
                 )
@@ -965,7 +963,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     route.fulfill(status=response.status, json=payload)
 
                 page.route(f"**/api/v1/review-cases/{case_id}", automatic_projection)
-                page.goto(f"{origin}/review/{case_id}?field=title&subview=review")
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
                 title_current = page.get_by_role(
                     "button", name="Choose current value:", exact=False
                 )
@@ -1049,8 +1047,21 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 assert 200 == response.status, f"decision response: {response.text()}"
                 page.get_by_role("heading", name="Review complete").wait_for()
                 page.goto(f"{origin}/review/{case_id}?field=cover&subview=history")
-                page.get_by_role("heading", name="Activity and recovery").wait_for()
-                assert "/activity?" in page.url
+                page.get_by_role("heading", name="Current-case history").wait_for()
+                selected_history = page.get_by_role(
+                    "heading", name="Cover selected"
+                ).locator("..")
+                selected_history.get_by_text(
+                    "Historical; it grants no current authority.", exact=False
+                ).wait_for()
+                selected_history.get_by_text(
+                    "Owner outcome: accept", exact=False
+                ).wait_for()
+                expect(
+                    selected_history.get_by_role(
+                        "list", name="Historical cover candidates"
+                    )
+                ).to_be_visible()
                 assert (
                     page.evaluate("() => document.documentElement.scrollWidth") <= 390
                 )
