@@ -402,12 +402,19 @@ def test_keep_current_requires_one_evidence_positive_preservation() -> None:
     assert "insufficient_support" == decision.reason_code
 
 
-def test_published_date_precision_refinement_abstains_safely() -> None:
+def test_published_date_precision_keeps_the_strongest_qualified_shared_value() -> None:
     month = json.loads(_packet("publishedDate").to_json())
     month_candidate = month["proposals"][0]["candidates"][0]
     month_candidate["date_precision"] = "month"
     month_candidate["value"] = {"kind": "text", "value": "2024-08"}
     month_candidate["decision_summary"]["publication"]["precision"] = "month"
+    assert (
+        "recommend_candidate"
+        == decide_shadow_packet(_rebuild(month)).decisions[0].recommendation
+    )
+    month["proposals"][0]["candidates"][0]["decision_summary"]["support"][
+        "independent_provider_correlations"
+    ] = 0
     assert "manual" == decide_shadow_packet(_rebuild(month)).decisions[0].recommendation
 
     timestamp = json.loads(_packet("publishedDate").to_json())
@@ -817,15 +824,15 @@ def test_identity_replay_and_document_validation_are_canonical() -> None:
         )
 
 
-def test_v5_policy_identity_rejects_v4_replay() -> None:
-    assert "deterministic-shadow-decision-policy-v5" == DECISION_POLICY_VERSION
+def test_v7_policy_identity_rejects_v6_replay() -> None:
+    assert "deterministic-shadow-decision-policy-v7" == DECISION_POLICY_VERSION
     assert (
-        "d7e765d71a6b52259a8c8e54961afe63d54344a19785b288f0ddb59b7db5e5f8"
+        "e21572fd818a431b6d6e5fbfc0171bf48e2787efa9f04f976dec3db7e5d2b321"
         == DECISION_POLICY_SHA256
     )
     packet = _packet()
     document = json.loads(decide_shadow_packet(packet).to_json())
-    document["policy_version"] = "deterministic-shadow-decision-policy-v4"
+    document["policy_version"] = "deterministic-shadow-decision-policy-v6"
     document["policy_sha256"] = (
         "a86201443a027971fdb8943763c1911300a586ecc3fe732b01622a7596649a99"
     )

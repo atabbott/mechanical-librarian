@@ -97,7 +97,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             # combination. Independently qualified series decisions use their
             # own category and preserve the proposal's combination evidence.
             "title_layout": ("title",),
-            "date_precision": ("publishedDate", "publishedYear"),
+            "date_precision": ("publishedDate",),
         }
         bundle_ids: dict[str, str] = {}
         for category, destinations in required_bundles.items():
@@ -153,6 +153,10 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 or (
                     field.policy_category in required_bundles
                     and field.policy_category not in bundle_ids
+                )
+                or (
+                    field.policy_category == "date_precision"
+                    and field.destination != "publishedDate"
                 )
             ):
                 continue
@@ -570,7 +574,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 required = (
                     ("title",)
                     if decision.policy_category == "title_layout"
-                    else ("publishedDate", "publishedYear")
+                    else ("publishedDate",)
                 )
                 members = tuple(
                     value

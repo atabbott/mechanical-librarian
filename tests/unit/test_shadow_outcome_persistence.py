@@ -3183,8 +3183,9 @@ def test_automatic_tuple_replay_is_exact_and_date_and_title_bundles_are_atomic()
             json.loads(value) for value in repository.get_review_case_decisions(case_id)
         )
         assert first == repository.get_review_case_decisions(case_id)[:1]
-        assert 3 == len(documents)
-        for destinations in (("title",), ("publishedDate", "publishedYear")):
+        assert 2 == len(documents)
+        assert "publishedYear" not in {value["destination"] for value in documents}
+        for destinations in (("title",), ("publishedDate",)):
             bundle = [
                 value for value in documents if value["destination"] in destinations
             ]

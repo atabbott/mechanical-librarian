@@ -280,6 +280,7 @@ class _ReviewField(_ClosedModel):
     editable: bool
     effect_capability: str
     human_decision: _DecisionProjection | None
+    inventory_role: Literal["primary", "contextual"]
     automatic_decision: _AutomaticDecisionProjection | None
     manual_hold: bool
     manual_required: bool

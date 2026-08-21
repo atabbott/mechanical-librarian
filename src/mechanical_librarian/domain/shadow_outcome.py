@@ -43,7 +43,6 @@ _POLICY_CATEGORY_BY_DESTINATION = {
     "narrators": "contributor_names",
     "language": "language_rendering",
     "publishedDate": "date_precision",
-    "publishedYear": "date_precision",
     "publisher": "publisher_preference",
     "title": "title_layout",
     "subtitle": "title_layout",
@@ -158,7 +157,7 @@ class ShadowFieldOutcome:
             or (
                 expected_category is None
                 and (
-                    self.destination != "series"
+                    self.destination not in {"publishedYear", "series"}
                     or self.policy_option is not None
                     or self.policy_destination != "unsupported"
                 )

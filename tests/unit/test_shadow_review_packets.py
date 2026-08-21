@@ -40,6 +40,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
 from mechanical_librarian.domain.reviewer_decision_summary import (
     MAX_CREATOR_ROLE_FACTS,
     MAX_DECISION_CORRELATIONS,
@@ -76,6 +77,49 @@ def _local_isbn() -> LocalClaim:
         checksum="valid_isbn_13",
         applicability_basis="unlabelled",
         scope=ClaimScope.EDITION,
+    )
+
+
+def _publication_local_date(value: str, precision: DatePrecision) -> LocalClaim:
+    return LocalClaim.create(
+        kind=ClaimKind.PUBLICATION_DATE,
+        observed=value,
+        canonical=value,
+        excerpt=value,
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.EDITION,
+        date_event=DateEvent.MANIFESTATION_PUBLICATION,
+        date_precision=precision,
+    )
+
+
+def _publication_decisions(
+    local_date: LocalClaim, providers: tuple[ProviderObservation, ...]
+) -> tuple[object, ...]:
+    """Exercise the only admitted report-to-decision publication path."""
+    report = _proposal_report(
+        fields=_proposal_fields(
+            published_year=TargetField(
+                TargetDestination.PUBLISHED_YEAR, TargetFieldState.MISSING
+            ),
+            published_date=TargetField(
+                TargetDestination.PUBLISHED_DATE, TargetFieldState.MISSING
+            ),
+        ),
+        local_claims=(_publication_local_isbn(), local_date),
+        providers=providers,
+    )
+    proposal = evaluate_report(report)
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    assert packet == ShadowReviewPacket.from_json(packet.to_json(), report)
+    return tuple(
+        value
+        for value in decide_shadow_packet(packet).decisions
+        if value.destination == "publishedDate"
     )
 
 
@@ -267,7 +311,10 @@ def test_shared_month_candidate_replays_in_shadow_packet() -> None:
                 TargetDestination.PUBLISHED_DATE, TargetFieldState.MISSING
             ),
         ),
-        local_claims=(_publication_local_isbn(),),
+        local_claims=(
+            _publication_local_isbn(),
+            _publication_local_date("2001-02-03", DatePrecision.DAY),
+        ),
         providers=(
             _publication_provider(
                 "alpha", "alpha-edition", ("2001-02-03",), authority="hardcover"
@@ -288,10 +335,10 @@ def test_shared_month_candidate_replays_in_shadow_packet() -> None:
     assert "2001-02" == candidate["value"]["value"]
     assert "manifestation_publication" == candidate["date_event"]
     assert "month" == candidate["date_precision"]
-    assert 2 == len(candidate["correlations"])
+    assert 3 == len(candidate["correlations"])
     assert {
         "independent_provider_correlations": 2,
-        "local_evidence": 0,
+        "local_evidence": 1,
         "target_only_preservation": 0,
     } == candidate["decision_summary"]["support"]
     assert {
@@ -304,6 +351,15 @@ def test_shared_month_candidate_replays_in_shadow_packet() -> None:
         "write_eligibility": "unsupported",
     } == candidate["decision_summary"]["publication"]
     assert packet == ShadowReviewPacket.from_json(packet.to_json(), report)
+    decision = next(
+        value
+        for value in decide_shadow_packet(packet).decisions
+        if value.destination == "publishedDate"
+    )
+    assert ("recommend_candidate", "unique_supported_candidate") == (
+        decision.recommendation,
+        decision.reason_code,
+    )
     mismatched = json.loads(packet.to_json())
     next(
         (
@@ -333,6 +389,107 @@ def test_shared_month_candidate_replays_in_shadow_packet() -> None:
     ] = "conflicting"
     with pytest.raises(ShadowReviewValueError):
         ShadowReviewPacket.from_json(canonical_json(forged), report)
+
+
+def test_duplicate_provider_authority_cannot_qualify_month_publication() -> None:
+    report = _proposal_report(
+        fields=_proposal_fields(
+            published_date=TargetField(
+                TargetDestination.PUBLISHED_DATE, TargetFieldState.MISSING
+            )
+        ),
+        local_claims=(
+            _publication_local_isbn(),
+            _publication_local_date("2001-02", DatePrecision.MONTH),
+        ),
+        providers=(
+            _publication_provider(
+                "alpha", "alpha-edition", ("2001-02-03",), authority="hardcover"
+            ),
+            _publication_provider(
+                "beta", "beta-edition", ("2001-02-09",), authority="hardcover"
+            ),
+        ),
+    )
+    proposal = evaluate_report(report)
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    decision = next(
+        value
+        for value in decide_shadow_packet(packet).decisions
+        if value.destination == "publishedDate"
+    )
+    assert ("manual", "no_eligible_action") == (
+        decision.recommendation,
+        decision.reason_code,
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "local_date", "providers", "expected"),
+    (
+        pytest.param(
+            "zero_independence",
+            _publication_local_date("2001-02", DatePrecision.MONTH),
+            (),
+            (),
+            id="zero_independence",
+        ),
+        pytest.param(
+            "duplicate_lineage",
+            _publication_local_date("2001-02", DatePrecision.MONTH),
+            (
+                _publication_provider(
+                    "alpha", "alpha-edition", ("2001-02-03",), authority="hardcover"
+                ),
+                _publication_provider(
+                    "beta", "beta-edition", ("2001-02-09",), authority="hardcover"
+                ),
+            ),
+            (("manual", "no_eligible_action"),),
+            id="duplicate_lineage",
+        ),
+        pytest.param(
+            "provider_failure",
+            _publication_local_date("2001-02", DatePrecision.MONTH),
+            (ProviderObservation("failed", ProviderStatus.UNAVAILABLE),),
+            (),
+            id="provider_failure",
+        ),
+        pytest.param(
+            "conflict",
+            _publication_local_date("2001-02-03", DatePrecision.DAY),
+            (
+                _publication_provider(
+                    "alpha", "alpha-edition", ("2001-02-03",), authority="hardcover"
+                ),
+                _publication_provider(
+                    "beta", "beta-edition", ("2002-03-09",), authority="open_library"
+                ),
+            ),
+            (),
+            id="conflict",
+        ),
+        pytest.param(
+            "incompatible_manifestation",
+            _publication_local_date("2001", DatePrecision.YEAR),
+            (_contradictory_publication_provider(),),
+            (),
+            id="incompatible_manifestation",
+        ),
+    ),
+)
+def test_report_pipeline_abstains_for_unqualified_publication_evidence(
+    name: str,
+    local_date: LocalClaim,
+    providers: tuple[ProviderObservation, ...],
+    expected: tuple[tuple[str, str], ...],
+) -> None:
+    decisions = _publication_decisions(local_date, providers)
+    assert expected == tuple(
+        (value.recommendation, value.reason_code) for value in decisions
+    ), name
 
 
 @pytest.fixture(scope="module")

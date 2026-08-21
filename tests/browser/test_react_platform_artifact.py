@@ -247,6 +247,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     control = "Use dark mode" if scheme == "dark" else "Use light mode"
                     if page.get_by_role("button", name=control).count():
                         page.get_by_role("button", name=control).click()
+                    expect(page.locator("html")).to_have_attribute("data-theme", scheme)
+                    page.evaluate(
+                        """() => new Promise(resolve => requestAnimationFrame(() =>
+                            requestAnimationFrame(resolve)))"""
+                    )
                     page.emulate_media(reduced_motion="reduce")
                     for width, height, size in (
                         (1440, 900, "desktop"),
@@ -254,6 +259,17 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         (390, 844, "compact"),
                     ):
                         page.set_viewport_size({"width": width, "height": height})
+                        assert page.evaluate(
+                            """() => {
+                                const probe = document.createElement('span')
+                                probe.style.color = 'var(--ink)'
+                                document.body.append(probe)
+                                const ink = getComputedStyle(probe).color
+                                probe.remove()
+                                return [...document.querySelectorAll('h1, h2')]
+                                  .every(heading => getComputedStyle(heading).color === ink)
+                            }"""
+                        )
                         page.screenshot(
                             path=str(output / f"{name}-{size}-{scheme}.png"),
                             full_page=True,
@@ -974,11 +990,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         expect(page.locator(".library-works")).to_be_visible()
         expect(page.locator(".workspace-detail")).to_be_visible()
-        # #598 keeps automatic, unsupported, and recorded siblings in the
-        # primary strip; only server-classified attention advances normally.
+        # #598 keeps recorded automatic fields primary, while applicable empty
+        # fields remain closed contextual evidence rather than false choices.
         expect(page.locator(".field-filmstrip button")).to_have_count(5)
         assert "Title" in page.locator(".field-filmstrip").inner_text()
         assert "Cover" in page.locator(".field-filmstrip").inner_text()
+        assert "Series" in page.locator(".field-filmstrip").inner_text()
+        assert "Publication date" in page.locator(".field-filmstrip").inner_text()
+        assert "Subtitle" not in page.locator(".field-filmstrip").inner_text()
         assert not (
             page.locator(".automatic-resolution-details").evaluate("node => node.open")
         )
@@ -989,9 +1008,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.locator(".automatic-resolution-details summary").click()
         automatic_context = page.locator(".automatic-resolution-details").inner_text()
         assert "Subtitle" in automatic_context
-        assert "Series" in automatic_context
-        assert "Resolved automatically" in automatic_context
-        assert "No eligible change" in automatic_context
+        assert "Series" not in automatic_context
+        page.locator(".field-filmstrip button", has_text="Publication date").click()
+        expect(page.get_by_role("heading", name="Publication date")).to_be_visible()
+        capture_visual_proof("canonical-field-inventory")
+        page.locator(".field-filmstrip button", has_text="Title").click()
         current_evidence = page.get_by_role(
             "button", name="Evidence for Current value: Current <script> title"
         )
@@ -1342,8 +1363,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         page.locator(".automatic-resolution-details summary").click()
         compact_context = page.locator(".automatic-resolution-details").inner_text()
-        assert "Resolved automatically" in compact_context
-        assert "No eligible change" in compact_context
+        assert "Subtitle" in compact_context
+        assert "Series" not in compact_context
         compact_evidence = page.get_by_role(
             "button", name="Evidence for Current value: Current <script> title"
         )
@@ -1462,7 +1483,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         page.get_by_role("heading", name="Current review case").wait_for()
         automatic_rail = page.locator(".detail-layout > .field-navigation")
-        expect(automatic_rail.get_by_role("button")).to_have_count(4)
+        expect(automatic_rail.get_by_role("button")).to_have_count(5)
         page.get_by_role("button", name="Title", exact=True).click()
         automatic_title = page.locator("#field-title")
         expect(

@@ -18,7 +18,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v5"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v7"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -79,7 +79,8 @@ _RULE_TABLE = {
         "event": "manifestation_publication",
         "paired_destination_consistency": "consistent",
         "published_date_precision": {
-            "candidate": "day",
+            "candidate": "month_or_day",
+            "month_independent_provider_correlation": "required",
             "local_day": "source_evidence_sufficient",
             "local_timestamp_normalized_to_day": "two_or_more_provider_correlations",
         },
@@ -506,9 +507,13 @@ def _candidate_is_eligible(
                 and "provider" not in citation["fact"]
             ]
             if (
-                candidate["date_precision"] != "day"
+                candidate["date_precision"] not in {"month", "day"}
                 or len(local_precisions) != 1
                 or local_precisions[0] not in {"day", "timestamp"}
+                or (
+                    candidate["date_precision"] == "month"
+                    and support["independent_provider_correlations"] < 1
+                )
                 or (
                     local_precisions[0] == "timestamp"
                     and support["independent_provider_correlations"] < 2

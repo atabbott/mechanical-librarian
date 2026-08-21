@@ -273,9 +273,8 @@ describe('Library route', () => {
     expect(screen.getByText('Title: New title')).toBeVisible()
     expect(screen.getByText('External corroboration')).toBeVisible()
     expect(screen.getAllByText('Competing evidence').length).toBeGreaterThan(0)
-    await user.click(screen.getByText('1 automatic or recorded field'))
-    expect(screen.getByText('Resolved automatically · Atlas Cycle 2.5')).toBeVisible()
-    expect(screen.getByText('Automatic handling recorded this field; you may inspect or override it.')).toBeVisible()
+    const fieldRail = screen.getByRole('navigation', { name: 'Review fields' })
+    expect(within(fieldRail).getByRole('button', { name: /Series.*Resolved automatically/u })).toBeVisible()
   })
 
   it('keeps the current cover pinned beside a complete eligible gallery and retains advisory reasons', async () => {
@@ -1166,6 +1165,65 @@ describe('Library route', () => {
     await userEvent.setup().click(within(rail).getByRole('button', { name: /^Authors/u }))
     expect(await screen.findByText('2 remaining · field 2 of 2')).toBeVisible()
     expect(screen.queryByText('One tap records and opens the next field')).toBeNull()
+  })
+
+  it('keeps applicable unavailable fields inspectable without making them actionable', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const unavailableField = {
+      ...titleField,
+      classification: 'unsupported' as const,
+      classificationReason: 'This field is unavailable for the current service capability.',
+      destination: 'subtitle',
+      editable: false,
+      inventoryRole: 'contextual' as const,
+      needsAttention: false,
+      navigationRole: 'inspect' as const,
+      proposalId: 'proposal-subtitle',
+      proposedValues: [],
+      targetFingerprint: 'fingerprint-subtitle',
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, unavailableField] })),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    const rail = await screen.findByRole('navigation', { name: 'Review fields' })
+    expect(within(rail).getByRole('button', { name: /^Title/u })).toBeVisible()
+    expect(within(rail).queryByRole('button', { name: /^Subtitle/u })).toBeNull()
+    expect(screen.getByText('1 field with context')).toBeVisible()
+    await userEvent.setup().click(screen.getByText('1 field with context'))
+    expect(
+      screen.getByText('This field is unavailable for the current service capability.'),
+    ).toBeVisible()
+  })
+
+  it('presents a date and year as one publication field', async () => {
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const publicationDate = {
+      ...titleField,
+      destination: 'publishedDate',
+      proposalId: 'proposal-publication-date',
+      targetFingerprint: 'fingerprint-publication-date',
+    }
+    const publicationYear = {
+      ...titleField,
+      destination: 'publishedYear',
+      inventoryRole: 'contextual' as const,
+      proposalId: 'proposal-publication-year',
+      targetFingerprint: 'fingerprint-publication-year',
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [publicationDate, publicationYear] })),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=publishedYear', http)
+
+    const rail = await screen.findByRole('navigation', { name: 'Review fields' })
+    expect(within(rail).getByRole('button', { name: /^Publication date/u })).toBeVisible()
+    expect(within(rail).queryByRole('button', { name: /^PublishedYear/u })).toBeNull()
   })
 
   it('uses non-animated rail movement when reduced motion is requested', async () => {

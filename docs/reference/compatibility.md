@@ -15,7 +15,7 @@ The current installed contract is intentionally narrow:
   `fixed-conservative-v10`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v6`,
   `shadow-decision-set-v1` under
-  `deterministic-shadow-decision-policy-v5`,
+  `deterministic-shadow-decision-policy-v7`,
   and the exact-current deterministic shadow decision/outcome schema;
 - `review-session-v1`, `review-case-detail-v1`, `human-decision-v1`,
   `human-decision-event-v1`, `human-decision-ack-v1`, bounded

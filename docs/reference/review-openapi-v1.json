@@ -3620,6 +3620,14 @@
               }
             ]
           },
+          "inventory_role": {
+            "enum": [
+              "primary",
+              "contextual"
+            ],
+            "title": "Inventory Role",
+            "type": "string"
+          },
           "manual_hold": {
             "title": "Manual Hold",
             "type": "boolean"
@@ -3690,6 +3698,7 @@
           "editable",
           "effect_capability",
           "human_decision",
+          "inventory_role",
           "automatic_decision",
           "manual_hold",
           "manual_required",

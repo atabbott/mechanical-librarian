@@ -129,6 +129,7 @@ export interface ReviewFieldView {
   proposalId: string
   targetFingerprint: string
   humanDecision: Schema<'_DecisionProjection'> | null
+  inventoryRole?: 'primary' | 'contextual'
   automaticDecision: Schema<'_AutomaticDecisionProjection'> | null
   notices: readonly string[]
   provenance: readonly string[]
@@ -769,6 +770,11 @@ const navigationRole = (value: unknown) => {
     throw new ApiError(502, 'invalid_navigation_role')
   return value
 }
+const inventoryRole = (value: unknown) => {
+  if (value !== 'primary' && value !== 'contextual')
+    throw new ApiError(502, 'invalid_inventory_role')
+  return value
+}
 export const displayValue = (value: unknown): string =>
   value === null
     ? 'Unavailable'
@@ -1268,6 +1274,7 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
         proposalId: stringValue(field.proposal_id, 'proposal_id'),
         targetFingerprint: stringValue(field.target_fingerprint, 'target_fingerprint'),
         humanDecision: field.human_decision,
+        inventoryRole: inventoryRole(field.inventory_role),
         automaticDecision: field.automatic_decision,
         notices: stringArray(field.notices, 'notices'),
         provenance: stringArray(field.provenance, 'provenance'),

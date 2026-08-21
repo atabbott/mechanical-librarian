@@ -24,6 +24,12 @@ table shape is incompatible
 and is rejected before mutation. A clean rebuild is required; there is no
 proposal migration, import, conversion, or compatibility parser.
 
+The paired publication projection retains one strongest shared fact: a day when
+independent observations agree exactly, otherwise their shared month. The
+deterministic decision policy admits that exact typed precision only with its
+already-bound local evidence and independent-correlations checks; it never pads
+a date or turns a separate year into a second publication decision.
+
 ## Fixed policy
 
 Every ProposalSet is bound to the exact report ID, derived target fingerprint,
