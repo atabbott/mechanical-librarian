@@ -80,9 +80,13 @@ export default function AttentionPage({ data }: { data: AttentionView }) {
                     <Link
                       className="attention-field-row"
                       key={`${item.id}:${item.destination}`}
-                      to="/review/$reviewCaseId"
-                      params={{ reviewCaseId: item.id }}
-                      search={{ field: item.destination, subview: 'review' }}
+                      to="/library"
+                      search={{
+                        lens: 'all',
+                        preview: item.id,
+                        field: item.destination,
+                        ...(search.cursor ? { attentionCursor: search.cursor } : {}),
+                      }}
                     >
                       <span className="attention-field-name">
                         <strong>{fieldLabel(item.destination)}</strong>

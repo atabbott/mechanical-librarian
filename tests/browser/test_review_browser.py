@@ -791,9 +791,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 assert activity_requests == settled_activity_requests
                 page.unroute("**/api/v1/activity?*", activity_poll)
                 assert documents == initial_documents
-                page.goto(f"{origin}/review/{case_id}?field=title&subview=review")
-                page.get_by_role("heading", name="Current review case").wait_for()
-                assert page.locator("#field-title").evaluate(
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+                page.locator(".workspace-detail").wait_for()
+                assert page.locator(".workspace-detail").evaluate(
                     "node => node === document.activeElement"
                 )
                 assert page.locator("img,script:not([src])").count() == 0
@@ -813,7 +813,6 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                     ).count()
                     == 0
                 )
-                page.get_by_role("button", name="Series", exact=True).click()
                 page.get_by_role("button", name="Use dark mode").click()
                 page.get_by_role("button", name="Use light mode").wait_for()
                 page.get_by_role(
@@ -822,30 +821,27 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.get_by_text(
                     "Decision recorded from the authoritative case.", exact=True
                 ).wait_for()
-                page.get_by_role("button", name="Series", exact=True).click()
-                page.get_by_text(
-                    "Human decision: keep current by owner. Recorded value:",
-                    exact=False,
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+                page.get_by_role(
+                    "heading", name="Which title should this work use?"
                 ).wait_for()
                 # #635: revisiting a recorded field restores the whole choice
                 # composition and marks the recorded answer, rather than
                 # replacing it with prose.
-                recorded_series = page.get_by_role(
+                recorded_title = page.get_by_role(
                     "button", name="Choose current value:", exact=False
                 )
-                assert recorded_series.count() == 1
-                expect(recorded_series).to_have_attribute("aria-pressed", "true")
-                page.get_by_role("button", name="Evidence").click()
-                page.get_by_role(
-                    "heading", name="Evidence and source ledger"
-                ).wait_for()
+                assert recorded_title.count() == 1
+                expect(recorded_title).to_have_attribute("aria-pressed", "true")
+                page.get_by_role("link", name="Activity", exact=True).click()
+                page.get_by_role("heading", name="Activity and recovery").wait_for()
                 page.go_back()
-                page.get_by_role("heading", name="Current review case").wait_for()
-                page.go_forward()
                 page.get_by_role(
-                    "heading", name="Evidence and source ledger"
+                    "heading", name="Which title should this work use?"
                 ).wait_for()
-                assert documents == (initial_documents + 1)
+                page.go_forward()
+                page.get_by_role("heading", name="Activity and recovery").wait_for()
+                assert documents == (initial_documents + 2)
                 assert errors == []
             browser.close()
 
@@ -969,7 +965,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     route.fulfill(status=response.status, json=payload)
 
                 page.route(f"**/api/v1/review-cases/{case_id}", automatic_projection)
-                page.goto(f"{origin}/review/{case_id}?field=title&subview=review")
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
                 title_current = page.get_by_role(
                     "button", name="Choose current value:", exact=False
                 )
@@ -977,18 +973,18 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     "button", name="Choose proposed value", exact=False
                 )
                 expect(title_candidate).to_have_attribute("aria-pressed", "true")
-                assert title_candidate.evaluate(
+                assert title_candidate.locator("xpath=..").evaluate(
                     "node => node.classList.contains('is-selected')"
                 )
                 expect(title_current).to_have_attribute("aria-pressed", "false")
                 assert not (
-                    title_current.evaluate(
+                    title_current.locator("xpath=..").evaluate(
                         "node => node.classList.contains('is-selected')"
                     )
                 )
                 page.reload()
                 expect(title_candidate).to_have_attribute("aria-pressed", "true")
-                assert title_candidate.evaluate(
+                assert title_candidate.locator("xpath=..").evaluate(
                     "node => node.classList.contains('is-selected')"
                 )
                 with page.expect_response(
@@ -1002,42 +998,29 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 page.get_by_text(
                     "Decision recorded from the authoritative case.", exact=True
                 ).wait_for()
-                page.goto(f"{origin}/review/{case_id}?field=title&subview=review")
-                page.get_by_text(
-                    "Human decision: keep current by owner", exact=False
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+                page.get_by_role(
+                    "heading", name="Which title should this work use?"
                 ).wait_for()
-                page.goto(f"{origin}/review/{case_id}?field=series&subview=review")
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=series")
                 series_current = page.get_by_role(
                     "button", name="Choose current value:", exact=False
                 )
                 expect(series_current).to_have_attribute("aria-pressed", "true")
-                assert series_current.evaluate(
+                assert series_current.locator("xpath=..").evaluate(
                     "node => node.classList.contains('is-selected')"
                 )
-                page.goto(f"{origin}/review/{case_id}?field=tags&subview=review")
-                ignored_current = page.get_by_role(
-                    "button", name="Choose current value:", exact=False
-                )
-                expect(ignored_current).to_have_attribute("aria-pressed", "false")
-                assert not (
-                    ignored_current.evaluate(
-                        "node => node.classList.contains('is-selected')"
-                    )
-                )
-                ignored_no_action = page.get_by_role(
-                    "button", name="Take no action", exact=True
-                )
-                expect(ignored_no_action).to_have_attribute("aria-pressed", "true")
-                assert ignored_no_action.evaluate(
-                    "node => node.classList.contains('is-selected')"
-                )
-                page.goto(f"{origin}/review/{case_id}?field=cover&subview=review")
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
                 page.get_by_role("button", name="Prepare cover comparison").click()
-                page.get_by_role("heading", name="Available").first.wait_for()
-                expect(page.get_by_alt_text("Current library cover")).to_be_visible()
+                page.get_by_role("region", name="Choose a cover").wait_for()
+                expect(page.get_by_alt_text("Current cover")).to_be_visible()
                 expect(page.get_by_alt_text("Alternative 1 cover")).to_be_visible()
-                current_cover = page.get_by_role("button", name="Keep current cover")
-                automatic_cover = page.get_by_role("button", name="Choose this cover")
+                current_cover = page.locator(".library-cover-card").filter(
+                    has_text="Current cover"
+                )
+                automatic_cover = page.locator(".library-cover-card").filter(
+                    has_text="Alternative 1 cover"
+                )
                 expect(automatic_cover).to_have_attribute("aria-pressed", "true")
                 assert automatic_cover.evaluate(
                     "node => node.classList.contains('is-selected')"
@@ -1048,57 +1031,34 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                         "node => node.classList.contains('is-selected')"
                     )
                 )
-                expect(
-                    page.get_by_role("button", name="Take no action", exact=True)
-                ).to_have_attribute("aria-pressed", "false")
                 page.reload()
                 expect(
-                    page.get_by_role("button", name="Choose this cover")
+                    page.locator(".library-cover-card").filter(
+                        has_text="Alternative 1 cover"
+                    )
                 ).to_have_attribute("aria-pressed", "true")
-                assert page.get_by_role("button", name="Choose this cover").evaluate(
-                    "node => node.classList.contains('is-selected')"
-                )
-                assert "Policy preferences" in page.locator("body").inner_text()
                 assert (
-                    "No optional visual preferences enabled"
+                    page.locator(".library-cover-card")
+                    .filter(has_text="Alternative 1 cover")
+                    .evaluate("node => node.classList.contains('is-selected')")
+                )
+                assert (
+                    "Automatic handling recorded this field"
                     in page.locator("body").inner_text()
                 )
                 with (
                     page.expect_response(
                         lambda response: response.url.endswith("/decisions")
                     ) as decision_response,
-                    page.expect_response(
-                        lambda response: response.url.endswith("/history")
-                    ) as history_response,
                 ):
-                    page.get_by_role("button", name="Choose this cover").click()
+                    page.locator(".library-cover-card").filter(
+                        has_text="Alternative 1 cover"
+                    ).click()
                 response = decision_response.value
                 assert 200 == response.status, f"decision response: {response.text()}"
-                history_result = history_response.value
-                assert 200 == history_result.status, (
-                    f"history response: {history_result.text()}"
-                )
-                page.get_by_text(
-                    "Decision recorded from the authoritative case.", exact=True
-                ).wait_for()
-                page.get_by_text(
-                    "Human decision: accept by owner", exact=False
-                ).wait_for()
-                # #635: a recorded field keeps its full choice composition and
-                # marks the recorded answer, so the owner can change it. The
-                # previous expectation -- that recording removes the choices --
-                # is the defect that ticket names.
-                recorded_cover = page.get_by_role("button", name="Choose this cover")
-                expect(recorded_cover).to_have_attribute("aria-pressed", "true")
-                assert recorded_cover.evaluate(
-                    "node => node.classList.contains('is-selected')"
-                )
-                expect(
-                    page.get_by_role("button", name="Keep current cover")
-                ).to_have_attribute("aria-pressed", "false")
-                history_button = page.get_by_role("button", name="History", exact=True)
-                history_button.focus()
-                page.keyboard.press("Enter")
+                page.get_by_role("heading", name="Review complete").wait_for()
+                page.goto(f"{origin}/review/{case_id}?field=cover&subview=history")
+                page.get_by_role("heading", name="Current-case history").wait_for()
                 selected_history = page.get_by_role(
                     "heading", name="Cover selected"
                 ).locator("..")
@@ -1241,9 +1201,9 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                 _closing_context(context),
             ):
                 _login(page, origin)
-                page.goto(f"{origin}/review/{case_id}?field=cover&subview=review")
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
                 page.get_by_role("button", name="Prepare cover comparison").click()
-                page.get_by_role("heading", name="Available").first.wait_for()
+                page.get_by_role("region", name="Choose a cover").wait_for()
 
                 def measured(selector: str) -> list[dict[str, Any]]:
                     page.wait_for_function(
@@ -1288,16 +1248,6 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     ), label
                     return frames
 
-                assert_contained(
-                    ".cover-image-frame",
-                    1440,
-                    label="detail:desktop",
-                    shapes=_COVER_SHAPES,
-                )
-                page.goto(f"{origin}/library?preview={case_id}&field=cover")
-                page.get_by_role("heading", name="Choose a cover").or_(
-                    page.locator("section[aria-label='Choose a cover']")
-                ).first.wait_for()
                 assert_contained(
                     ".library-cover-image",
                     1440,

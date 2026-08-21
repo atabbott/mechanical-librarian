@@ -84,8 +84,13 @@ proposed value: local presence, named external corroboration, eligibility
 rationale, recommendation status, and any material limitation stay attached to
 the choice. `Recommended` appears only for an authoritative deterministic
 selection; otherwise the canvas explicitly records that there is no
-recommendation. The full Review and Evidence views remain available for
-bounded diagnostics without displacing the choice workspace.
+recommendation. Library is the only per-work decision workspace and owns the
+comparison and its inline disclosure. Evidence and History remain read-only
+per-work diagnostic pages: they expose retained evidence and current-case
+history without decision controls, link to each other, and provide Back to work
+for the selected Library field. They have no legacy redirect or compatibility
+behavior; substantive diagnostic redesign remains deferred. Durable cross-work
+diagnostics and history remain in Activity.
 
 A `ReviewGroup` is a display/query projection for confirmed instances of the
 same work, such as an Audiobookshelf ebook and audiobook or a future target in

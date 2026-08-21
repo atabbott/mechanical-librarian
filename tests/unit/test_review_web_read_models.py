@@ -1019,6 +1019,40 @@ def test_choice_contexts_build_the_evidence_index_once(
     )
 
 
+def test_choice_contexts_classifies_local_identifier_evidence_as_local_presence(
+    web: ReviewWebContext[_CloseRecordingRepository],
+) -> None:
+    proposal = web.case.proposals[0]
+    result = cast(dict[str, Any], proposal["result"])
+    alternatives = json.loads(json.dumps(result["alternatives"]))
+    alternatives[0]["evidence_references"] = ["local_isbn_9780000000000"]
+    contexts = _choice_contexts(
+        alternatives,
+        {**result, "alternatives": alternatives},
+        web.repository.report,
+        {"state": "value", "value": "Title"},
+        evidence={
+            "local_isbn_9780000000000": {
+                "candidate": None,
+                "fact": json.dumps({"kind": "isbn", "value": "9780000000000"}),
+                "kind": "evidence",
+                "provider": None,
+                "reference": "local_isbn_9780000000000",
+                "source": "identifier",
+            }
+        },
+    )
+
+    evidence = contexts[1]["evidence"]
+    assert [
+        {
+            "observation": "ISBN: 9780000000000",
+            "role": "local_presence",
+            "source": "Local library record",
+        }
+    ] == evidence
+
+
 @pytest.mark.parametrize(
     ("path", "payload"),
     (
@@ -1070,7 +1104,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
                 {
                     "candidate": "candidate-1",
                     "evidence": provider_evidence,
-                    "provider": "catalogue",
+                    "provider": "hardcover-main",
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -1086,7 +1120,8 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
         "local": {"claims": local},
         "providers": [
             {
-                "provider": "catalogue",
+                "provider": "hardcover-main",
+                "authority": "hardcover",
                 "candidates": [
                     {
                         "identity": "candidate-1",
@@ -1102,7 +1137,8 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
                 ],
             },
             {
-                "provider": "other_catalogue",
+                "provider": "open-library-main",
+                "authority": "open_library",
                 "candidates": [
                     {
                         "identity": "candidate-2",
@@ -1122,14 +1158,14 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
             {
                 "candidate_identity": "candidate-2",
                 "kind": "identifier_relation",
-                "provider": "other_catalogue",
+                "provider": "open-library-main",
                 "reference": identifier_reference,
             }
         ],
         "covers": [
             {
                 "kind": "provider",
-                "provenance": {"provider": "catalogue"},
+                "provenance": {"provider": "hardcover-main"},
                 "source_id": cover_reference,
                 "state": "retrieved",
             }
@@ -1189,16 +1225,16 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
     items = cast(list[Any], first["items"]) + cast(list[Any], second["items"])
     assert {item["reference"] for item in items} == references
     rich = next(item for item in items if item["reference"] == rich_reference)
-    assert rich["provider"] == "catalogue"
+    assert rich["provider"] == "hardcover"
     assert rich["candidate"] == "candidate-1"
     cover = next(item for item in items if item["reference"] == cover_reference)
     assert cover["source"] == "cover"
-    assert cover["provider"] == "catalogue"
+    assert cover["provider"] == "hardcover"
     identifier = next(
         item for item in items if item["reference"] == identifier_reference
     )
     assert identifier["source"] == "identifier"
-    assert identifier["provider"] == "other_catalogue"
+    assert identifier["provider"] == "open_library"
     assert identifier["candidate"] == "candidate-2"
     hostile = next(item for item in items if item["source"] == "local")
     assert "</pre><script>" in hostile["fact"]
@@ -1229,7 +1265,7 @@ def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -
                 "source": "provider_claim",
             }
         )
-        == "Provider evidence (name unavailable)"
+        == "Retained observation (provider name unavailable)"
     )
     replacing = {
         "assessment": "replaces_target",
@@ -1248,7 +1284,7 @@ def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -
     assert not _current_value_present([])
 
 
-def test_provider_comparison_notices_keep_only_safe_material_failures(
+def test_provider_comparison_notices_never_create_a_permanent_case_banner(
     web: ReviewWebContext[_CloseRecordingRepository],
 ) -> None:
     source = _report()
@@ -1267,12 +1303,9 @@ def test_provider_comparison_notices_keep_only_safe_material_failures(
             ProviderObservation("private-connection", ProviderStatus.UNAVAILABLE),
         ),
     )
-    # A disabled source limited nothing, and each remaining status now names the
-    # consequence the owner can act on rather than one anonymous sentence.
-    assert _provider_comparison_notices(report) == [
-        "Provider limitation: Open Library — Returned no matching metadata, so nothing was retained.",
-        "Provider limitation: Provider (name unavailable) — Could not be reached; a bounded retry is scheduled.",
-    ]
+    # Provider outcomes remain in the source/choice disclosure. They do not
+    # turn a terminal outcome into a permanent case-level warning.
+    assert _provider_comparison_notices(report) == []
     affected_case = ReviewCase.create(evaluate_report(report), report)
     projected = InspectCurrentReviewCase(
         FakeReviewRepository(affected_case, report)
@@ -1298,9 +1331,7 @@ def test_provider_comparison_notices_keep_only_safe_material_failures(
                 ),
             ),
         )
-        assert [
-            "Provider limitation: Provider (name unavailable) — Could not be reached; a bounded retry is scheduled.",
-        ] == _provider_comparison_notices(spoofed)
+        assert _provider_comparison_notices(spoofed) == []
 
 
 def test_choice_limitations_leave_multi_alternative_global_reasons_field_scoped() -> (

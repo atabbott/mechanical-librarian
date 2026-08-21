@@ -118,10 +118,9 @@ def test_terminal_provider_taxonomy_projects_closed_safe_outcomes() -> None:
 def test_every_lane_is_reported_but_only_limiting_ones_become_notices() -> None:
     """The source ledger and the comparison notices read the same lanes.
 
-    Both surfaces call `_provider_outcomes`. Reporting every lane so an owner
-    can tell a match from a source that was never asked is only safe while the
-    notices keep filtering: without that filter a match and a disabled source
-    were both announced as limitations of the comparison.
+    The source disclosure reports every lane so an owner can distinguish a
+    match from a source that was never asked. No terminal lane becomes a
+    permanent case-level comparison banner.
     """
 
     source = _report()
@@ -153,9 +152,7 @@ def test_every_lane_is_reported_but_only_limiting_ones_become_notices() -> None:
         "insufficient_input",
         "no_match",
     ]
-    assert _provider_comparison_notices(report) == [
-        "Provider limitation: Hardcover — Returned no matching metadata, so nothing was retained.",
-    ]
+    assert _provider_comparison_notices(report) == []
 
 
 def test_a_work_with_no_review_case_projects_its_current_values_and_reason() -> None:

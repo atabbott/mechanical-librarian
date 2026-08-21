@@ -1,7 +1,7 @@
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { SyntheticEvent } from 'react'
+import type { KeyboardEvent, SyntheticEvent } from 'react'
 
 import { displayValue } from '../api/http'
 import type {
@@ -268,13 +268,32 @@ function ChoiceEvidencePanel({
   context,
   evidenceId,
   label,
+  onChoose,
 }: {
   context: ChoiceContextView | undefined
   evidenceId: string
   label: string
+  onChoose?: () => void
 }) {
   return (
-    <section className="choice-evidence" id={evidenceId} aria-label={`${label} evidence`}>
+    <section
+      className="choice-evidence"
+      id={evidenceId}
+      aria-label={`${label} evidence`}
+      {...(onChoose
+        ? {
+            role: 'button' as const,
+            tabIndex: 0,
+            onClick: onChoose,
+            onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault()
+                onChoose()
+              }
+            },
+          }
+        : {})}
+    >
       <p>{context?.rationale ?? 'Retained evidence is unavailable for this choice.'}</p>
       {context?.evidence.length ? (
         <ul>
@@ -303,12 +322,19 @@ function ChoiceEvidencePanel({
   )
 }
 
+const isLongDescription = (destination: string, value: string) =>
+  destination === 'description' && value.length > 280
+
+const decisionQuestion = (destination: string) =>
+  `Which ${labelWords(destination)} should this work use?`
+
 function MetadataChoice({
   context,
   current,
   disabled,
   expanded,
   label,
+  longDescription,
   onChoose,
   recording,
   selected,
@@ -320,15 +346,16 @@ function MetadataChoice({
   disabled: boolean
   expanded: boolean
   label: string
+  longDescription: boolean
   onChoose: () => void
   recording: boolean
   selected: boolean
   toggle: () => void
   value: string
 }) {
-  const limitations = context?.limitations ?? []
   const evidenceId = `choice-evidence-${current ? 'current' : (context?.alternativeId ?? 'alternative')}`
   const evidenceLabel = `Evidence for ${label}: ${value}`
+  const hasEvidence = Boolean(context && (context.evidence.length || context.limitations.length))
   return (
     <article
       className={`metadata-choice${current ? ' is-current' : ''}${context?.recommendation === 'recommended' ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}${expanded ? ' is-evidence-open' : ''}`}
@@ -345,7 +372,7 @@ function MetadataChoice({
           {label}
           {context?.recommendation === 'recommended' ? ' · Recommended' : ''}
         </small>
-        <strong>{value}</strong>
+        <strong>{longDescription ? `${value.slice(0, 240)}…` : value}</strong>
         <span>{context?.rationale ?? 'Retained for this owner comparison.'}</span>
         <span className="choice-recommendation">
           {recording
@@ -355,43 +382,44 @@ function MetadataChoice({
               : 'No recommendation retained'}
         </span>
       </button>
-      <button
-        type="button"
-        className="choice-evidence-toggle"
-        aria-controls={evidenceId}
-        aria-expanded={expanded}
-        aria-label={evidenceLabel}
-        onClick={toggle}
-      >
-        Evidence
-      </button>
+      {longDescription ? (
+        <details className="choice-description">
+          <summary>Read full description</summary>
+          <p
+            aria-label={`Choose ${current ? 'current' : 'proposed'} full description`}
+            className="choice-description-value"
+            role="button"
+            tabIndex={0}
+            onClick={onChoose}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return
+              event.preventDefault()
+              onChoose()
+            }}
+          >
+            {value}
+          </p>
+        </details>
+      ) : null}
+      {hasEvidence && !expanded ? (
+        <button
+          type="button"
+          className="choice-evidence-toggle"
+          aria-controls={evidenceId}
+          aria-expanded={expanded}
+          aria-label={evidenceLabel}
+          onClick={toggle}
+        >
+          Evidence
+        </button>
+      ) : null}
       {expanded ? (
-        <section className="choice-evidence" id={evidenceId} aria-label={`${label} evidence`}>
-          <p>{context?.rationale ?? 'Retained evidence is unavailable for this choice.'}</p>
-          {context?.evidence.length ? (
-            <ul>
-              {context.evidence.map((row, index) => (
-                <li key={`${row.source}:${row.observation}:${String(index)}`}>
-                  <strong>{row.source}</strong>
-                  <span>
-                    {row.role === 'local_presence' ? 'Local presence' : 'External corroboration'}
-                  </span>
-                  <p>{row.observation}</p>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No owner-readable source observation is retained for this choice.</p>
-          )}
-          {limitations.length ? (
-            <aside>
-              <strong>Limitation</strong>
-              {limitations.map((limitation) => (
-                <p key={limitation}>{fieldLabel(limitation)}</p>
-              ))}
-            </aside>
-          ) : null}
-        </section>
+        <ChoiceEvidencePanel
+          context={context}
+          evidenceId={evidenceId}
+          label={label}
+          onChoose={onChoose}
+        />
       ) : null}
     </article>
   )
@@ -402,6 +430,8 @@ function LibraryCoverChoices(props: {
   field: ReviewField
   disabled: boolean
   progress: ChoiceProgress
+  expandedEvidence: { has: (key: string) => boolean }
+  revealEvidence: (key: string) => void
   choose: (
     outcome: DecisionCommand['outcome'],
     selectedValue?: DecisionCommand['selectedValue'],
@@ -414,13 +444,17 @@ function LibraryCoverChoicesContent({
   reviewCaseId,
   field,
   disabled,
+  expandedEvidence,
   progress,
+  revealEvidence,
   choose,
 }: {
   reviewCaseId: string
   field: ReviewField
   disabled: boolean
   progress: ChoiceProgress
+  expandedEvidence: { has: (key: string) => boolean }
+  revealEvidence: (key: string) => void
   choose: (
     outcome: DecisionCommand['outcome'],
     selectedValue?: DecisionCommand['selectedValue'],
@@ -428,17 +462,6 @@ function LibraryCoverChoicesContent({
 }) {
   const cover = useCoverChoiceData(reviewCaseId)
   const consideration = field.coverConsideration
-  const [coverEvidenceState, setCoverEvidenceState] = useState<{
-    work: string
-    keys: ReadonlySet<string>
-  }>({ work: reviewCaseId, keys: new Set() })
-  const expandedEvidence =
-    coverEvidenceState.work === reviewCaseId ? coverEvidenceState.keys : new Set<string>()
-  const setExpandedEvidence = (update: (items: ReadonlySet<string>) => ReadonlySet<string>) =>
-    setCoverEvidenceState((current) => ({
-      work: reviewCaseId,
-      keys: update(current.work === reviewCaseId ? current.keys : new Set()),
-    }))
   if (!consideration)
     return (
       <section aria-label="Prepare cover comparison">
@@ -525,7 +548,8 @@ function LibraryCoverChoicesContent({
     const key = `${candidate.incumbent ? 'current' : 'alternative'}-${String(index)}`
     const evidenceId = `cover-evidence-${String(candidate.ordinal)}-${key}`
     const label = candidate.incumbent ? 'Current cover' : `Alternative ${String(alternative)} cover`
-    const open = expandedEvidence.has(key)
+    const evidenceKey = `cover:${key}`
+    const open = expandedEvidence.has(evidenceKey)
     return (
       <article
         className={`cover-choice${open ? ' is-evidence-open' : ''}`}
@@ -569,25 +593,25 @@ function LibraryCoverChoicesContent({
             {selected && progress?.phase === 'recording' ? <b>Recording…</b> : null}
           </span>
         </button>
-        <button
-          type="button"
-          className="choice-evidence-toggle"
-          aria-controls={evidenceId}
-          aria-expanded={open}
-          aria-label={`Evidence for ${label}`}
-          onClick={() =>
-            setExpandedEvidence((items) => {
-              const next = new Set(items)
-              if (next.has(key)) next.delete(key)
-              else next.add(key)
-              return next
-            })
-          }
-        >
-          Evidence
-        </button>
+        {context && (context.evidence.length || context.limitations.length) && !open ? (
+          <button
+            type="button"
+            className="choice-evidence-toggle"
+            aria-controls={evidenceId}
+            aria-expanded={open}
+            aria-label={`Evidence for ${label}`}
+            onClick={() => revealEvidence(evidenceKey)}
+          >
+            Evidence
+          </button>
+        ) : null}
         {open ? (
-          <ChoiceEvidencePanel context={context} evidenceId={evidenceId} label={label} />
+          <ChoiceEvidencePanel
+            context={context}
+            evidenceId={evidenceId}
+            label={label}
+            {...(disabled ? {} : { onChoose: () => choose(outcome, value) })}
+          />
         ) : null}
       </article>
     )
@@ -680,28 +704,26 @@ function LibraryCoverChoicesContent({
               ) : null}
             </span>
           </button>
-          <button
-            type="button"
-            className="choice-evidence-toggle"
-            aria-controls="cover-evidence-current-unavailable"
-            aria-expanded={expandedEvidence.has('current-unavailable')}
-            aria-label="Evidence for Current cover"
-            onClick={() =>
-              setExpandedEvidence((items) => {
-                const next = new Set(items)
-                if (next.has('current-unavailable')) next.delete('current-unavailable')
-                else next.add('current-unavailable')
-                return next
-              })
-            }
-          >
-            Evidence
-          </button>
-          {expandedEvidence.has('current-unavailable') ? (
+          {currentContext &&
+          (currentContext.evidence.length || currentContext.limitations.length) &&
+          !expandedEvidence.has('cover:current-unavailable') ? (
+            <button
+              type="button"
+              className="choice-evidence-toggle"
+              aria-controls="cover-evidence-current-unavailable"
+              aria-expanded={expandedEvidence.has('cover:current-unavailable')}
+              aria-label="Evidence for Current cover"
+              onClick={() => revealEvidence('cover:current-unavailable')}
+            >
+              Evidence
+            </button>
+          ) : null}
+          {expandedEvidence.has('cover:current-unavailable') ? (
             <ChoiceEvidencePanel
               context={currentContext}
               evidenceId="cover-evidence-current-unavailable"
               label="Current cover"
+              {...(disabled ? {} : { onChoose: () => choose('keep_current') })}
             />
           ) : null}
         </article>
@@ -756,6 +778,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
+  const automaticTrigger = useRef<HTMLButtonElement>(null)
+  const keepManualHandling = useRef<HTMLButtonElement>(null)
+  const restoreAutomaticTrigger = useRef(false)
   const attentionRail = useRef<HTMLElement>(null)
   const selectedIdentityRef = useRef<{
     id: string
@@ -774,6 +799,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     identity: { title: string; authors: readonly string[]; library: string; mediaKind: string }
   } | null>(null)
   const [completionInspection, setCompletionInspection] = useState<string | null>(null)
+  const [automaticPanel, setAutomaticPanel] = useState<string | null>(null)
+  const [automaticResults, setAutomaticResults] = useState<
+    Readonly<Record<string, 'success' | 'error'>>
+  >({})
   const [openedWork, setOpenedWork] = useState<LibraryWorkView | null>(null)
   const [expandedChoiceState, setExpandedChoiceState] = useState<{
     work: string
@@ -846,8 +875,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     enabled: Boolean(search.preview),
   })
   const attention = useInfiniteQuery({
-    queryKey: ['attention', 'workspace'],
-    initialPageParam: undefined as string | undefined,
+    queryKey: ['attention', 'workspace', search.attentionCursor ?? null],
+    initialPageParam: search.attentionCursor,
     queryFn: ({ pageParam, signal }) =>
       http.getAttention(pageParam ? { cursor: pageParam } : {}, signal),
     getNextPageParam: (page) => page.nextCursor ?? undefined,
@@ -891,10 +920,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         (item) => item.id === search.preview && item.destination === selected.destination,
       )
     : -1
-  const fullReviewSearch = {
-    subview: 'review' as const,
-    ...(selected ? { field: selected.destination } : {}),
-  }
   const nextWork = complete
     ? (attentionItems.find(
         (item) =>
@@ -935,8 +960,26 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       await navigate({ search: { lens: 'needs_attention' } })
     },
   })
+  const selectedAutomaticKey = selected
+    ? `${selectedReviewCaseId}:${selected.destination}:${selected.targetFingerprint}`
+    : null
+  const automaticPanelVisible = automaticPanel === selectedAutomaticKey && selected?.manualHold
+  const automaticResult = selectedAutomaticKey
+    ? (automaticResults[selectedAutomaticKey] ?? null)
+    : null
+  const automaticCompletedForSelected = automaticResult === 'success'
+  const returnAutomatic = useMutation({
+    mutationFn: ({ destination }: { destination: string; key: string }) =>
+      http.returnToAutomatic(selectedReviewCaseId, destination),
+    retry: false,
+    onSuccess: (_value, request) => {
+      setAutomaticResults((current) => ({ ...current, [request.key]: 'success' }))
+    },
+    onError: (_error, request) =>
+      setAutomaticResults((current) => ({ ...current, [request.key]: 'error' })),
+  })
 
-  const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.field ?? ''}:${search.attention ?? ''}`
+  const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.field ?? ''}:${search.attention ?? ''}`
   useRouteReadyFocus(routeIdentity)
   useEffect(() => {
     currentSearch.current = search
@@ -958,6 +1001,14 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       behavior: reducedMotion ? 'auto' : 'smooth',
     })
   }, [selected?.destination])
+  useEffect(() => {
+    if (automaticPanelVisible) keepManualHandling.current?.focus()
+  }, [automaticPanelVisible, automaticResult])
+  useEffect(() => {
+    if (automaticPanel !== null || !restoreAutomaticTrigger.current) return
+    restoreAutomaticTrigger.current = false
+    automaticTrigger.current?.focus()
+  }, [automaticPanel])
   useEffect(() => {
     if (search.attention !== 'open') return
     let focusFrame = 0
@@ -1120,6 +1171,15 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       ...(field.coverConsideration ? { considerationId: field.coverConsideration.id } : {}),
     })
   }
+  const closeAutomaticPanel = () => {
+    const closingKey = automaticPanel
+    restoreAutomaticTrigger.current = true
+    setAutomaticPanel(null)
+    if (closingKey && automaticResults[closingKey] === 'error')
+      setAutomaticResults((current) => {
+        return Object.fromEntries(Object.entries(current).filter(([key]) => key !== closingKey))
+      })
+  }
   const retryNextWork = () => {
     if (attention.isFetchNextPageError) void attention.fetchNextPage()
     else void attention.refetch()
@@ -1161,8 +1221,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const toggleChoiceEvidence = (key: string) =>
     setExpandedChoiceState((current) => {
       const next = current.work === selectedReviewCaseId ? new Set(current.keys) : new Set<string>()
-      if (next.has(key)) next.delete(key)
-      else next.add(key)
+      next.add(key)
       return { work: selectedReviewCaseId, keys: next }
     })
 
@@ -1367,13 +1426,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             <div className="library-selection">
               <h2>Selected work</h2>
               <p>Readable work identity is not available on this Library page.</p>
-              <Link
-                to="/review/$reviewCaseId"
-                params={{ reviewCaseId: search.preview }}
-                search={fullReviewSearch}
-              >
-                Open full review
-              </Link>
+              <p role="status">This work is not available in the current Library result.</p>
             </div>
           ) : detail.isPending ? (
             <p role="status">Loading selected work…</p>
@@ -1381,14 +1434,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             <p role="alert">
               Selected work could not be loaded.{' '}
               <button onClick={() => void detail.refetch()}>Try again</button>{' '}
-              <Link
-                className="full-review-link"
-                to="/review/$reviewCaseId"
-                params={{ reviewCaseId: search.preview }}
-                search={fullReviewSearch}
-              >
-                Open full review
-              </Link>
             </p>
           ) : !detail.data.current ? (
             <div className="library-selection">
@@ -1561,8 +1606,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   ) : null}
                   <header>
                     <div>
-                      <h2>{fieldLabel(selected.destination)}</h2>
-                      <p>{fieldReason(selected)}</p>
+                      <h2>{decisionQuestion(selected.destination)}</h2>
+                      <p>
+                        {fieldLabel(selected.destination)} · {fieldReason(selected)}
+                      </p>
                     </div>
                     <dl>
                       <div>
@@ -1585,13 +1632,15 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         reviewCaseId={selectedReviewCaseId}
                         field={selected}
                         disabled={false}
+                        expandedEvidence={expandedChoices}
                         progress={selectedProgress}
                         choose={(outcome, value) => choose(selected, outcome, value)}
+                        revealEvidence={toggleChoiceEvidence}
                       />
                     ) : (
                       <section
                         className="direct-choice protected-choice"
-                        aria-label={`Choose a ${labelWords(selected.destination)} value`}
+                        aria-label={decisionQuestion(selected.destination)}
                       >
                         {/*
                           What a tap will do, said before the tap and in the
@@ -1614,6 +1663,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                             disabled={false}
                             expanded={expandedChoices.has(`${selected.destination}:current`)}
                             label="Current value"
+                            longDescription={isLongDescription(
+                              selected.destination,
+                              selected.currentValue,
+                            )}
                             onChoose={() => choose(selected, 'keep_current')}
                             recording={
                               commandSelected(
@@ -1627,7 +1680,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                             value={selected.currentValue}
                           />
                           {selected.preservationOnly ? null : (
-                            <div className="proposed-choice-list">
+                            <div
+                              className={`proposed-choice-list${selected.proposedValues.length === 1 ? ' has-one-choice' : ''}`}
+                            >
                               <header>
                                 <strong>Choose a new value</strong>
                                 <small
@@ -1652,6 +1707,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                                     disabled={false}
                                     expanded={expandedChoices.has(key)}
                                     label={`Alternative ${String(index + 1)}`}
+                                    longDescription={isLongDescription(
+                                      selected.destination,
+                                      displayValue(value.value),
+                                    )}
                                     onChoose={() => choose(selected, 'accept', value)}
                                     recording={
                                       commandSelected(
@@ -1695,6 +1754,77 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         : ''}
                     </p>
                   )}
+                  {selected.manualHold ? (
+                    <section
+                      className="automatic-handling-panel"
+                      aria-label="Automatic handling"
+                      onKeyDown={(event) => {
+                        if (event.key === 'Escape' && !returnAutomatic.isPending) {
+                          event.preventDefault()
+                          closeAutomaticPanel()
+                        }
+                      }}
+                    >
+                      {automaticPanelVisible ? (
+                        <>
+                          <h3>Automatic handling is paused for this field</h3>
+                          <p>
+                            The recorded value remains. Fresh checks are requested first; automatic
+                            policy may manage later qualified changes.
+                          </p>
+                          {automaticResult === 'success' ? (
+                            <p role="status">
+                              Fresh checks requested. Manual handling remains until they complete.
+                            </p>
+                          ) : automaticResult === 'error' ? (
+                            <p role="alert">
+                              Fresh checks could not be requested. Manual handling is unchanged.
+                            </p>
+                          ) : null}
+                          <div className="automatic-handling-actions">
+                            <button
+                              ref={keepManualHandling}
+                              type="button"
+                              disabled={returnAutomatic.isPending}
+                              onClick={closeAutomaticPanel}
+                            >
+                              Keep manual handling
+                            </button>
+                            <button
+                              type="button"
+                              disabled={returnAutomatic.isPending || automaticCompletedForSelected}
+                              onClick={() => {
+                                if (!selectedAutomaticKey) return
+                                returnAutomatic.mutate({
+                                  destination: selected.destination,
+                                  key: selectedAutomaticKey,
+                                })
+                              }}
+                            >
+                              {returnAutomatic.isPending
+                                ? 'Requesting fresh checks…'
+                                : 'Resume after fresh checks'}
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        <button
+                          ref={automaticTrigger}
+                          type="button"
+                          aria-disabled={automaticCompletedForSelected}
+                          onClick={
+                            automaticCompletedForSelected
+                              ? undefined
+                              : () => setAutomaticPanel(selectedAutomaticKey)
+                          }
+                        >
+                          {automaticCompletedForSelected
+                            ? 'Fresh checks requested'
+                            : 'Resume automatic handling'}
+                        </button>
+                      )}
+                    </section>
+                  ) : null}
                   {comparisonNotices(selected).length ? (
                     <aside className="comparison-notice" aria-label="Comparison condition">
                       {comparisonNotices(selected).map((notice) => (
@@ -1765,27 +1895,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 </details>
               ) : null}
               <WorkSources comparison outcomes={selectedLibraryWork?.preparationOutcomes ?? []} />
-              <div className="workspace-utilities">
-                <Link
-                  className="full-review-link"
-                  to="/review/$reviewCaseId"
-                  params={{ reviewCaseId: search.preview }}
-                  search={fullReviewSearch}
-                >
-                  Open full review
-                </Link>
-                <Link
-                  className="full-review-link"
-                  to="/review/$reviewCaseId"
-                  params={{ reviewCaseId: search.preview }}
-                  search={{
-                    subview: 'evidence',
-                    ...(selected ? { field: selected.destination } : {}),
-                  }}
-                >
-                  Open all evidence
-                </Link>
-              </div>
               <div className="compact-workspace-controls">
                 <button type="button" onClick={clearSelection}>
                   Back to works

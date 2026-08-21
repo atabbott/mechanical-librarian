@@ -12,14 +12,12 @@ import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { createMemoryHistory } from '@tanstack/react-router'
 import { BuildMismatchError } from './api/http'
-import { labelWords } from './labels'
 import type {
   ActivitySearch,
   AttentionSearch,
   AutomaticSafetyView,
   DetailSearch,
   LibrarySearch,
-  LibraryWorkView,
   PolicySearch,
   PolicyStateView,
   PreparationView,
@@ -57,6 +55,7 @@ export const normalizeLibrarySearch = (search: Record<string, unknown>): Library
     search.lens === 'needs_attention' || search.lens === 'no_attention_needed' ? search.lens : 'all'
   const q = bounded(search.q)
   const cursor = bounded(search.cursor)
+  const attentionCursor = bounded(search.attentionCursor)
   const preview = bounded(search.preview)
   // A work with no current review case has no case identity to preview, so its
   // selection is owned by its own key rather than by borrowing ``preview``.
@@ -66,6 +65,7 @@ export const normalizeLibrarySearch = (search: Record<string, unknown>): Library
     lens,
     ...(q ? { q } : {}),
     ...(cursor ? { cursor } : {}),
+    ...(attentionCursor ? { attentionCursor } : {}),
     ...(preview ? { preview } : {}),
     ...(preview ? {} : work ? { work } : {}),
     ...(field ? { field } : {}),
@@ -79,8 +79,7 @@ export const normalizeAttentionSearch = (search: Record<string, unknown>): Atten
 }
 export const normalizeDetailSearch = (search: Record<string, unknown>): DetailSearch => {
   const field = bounded(search.field)
-  const subview =
-    search.subview === 'evidence' || search.subview === 'history' ? search.subview : 'review'
+  const subview = search.subview === 'history' ? 'history' : 'evidence'
   return { ...(field ? { field } : {}), subview }
 }
 export const normalizePolicySearch = (search: Record<string, unknown>): PolicySearch => ({
@@ -721,12 +720,14 @@ const AttentionRouteComponent = () => {
   const query = useQuery({ ...attentionQuery(http, search), initialData: initial })
   return <AttentionPage data={query.data} />
 }
-const DetailRouteComponent = () => {
-  const initial = detailRoute.useLoaderData()
-  const { http } = rootRoute.useRouteContext()
+const DiagnosticRouteComponent = () => {
   const { reviewCaseId } = detailRoute.useParams()
-  const query = useQuery({ ...detailQuery(http, reviewCaseId), initialData: initial })
-  return <DetailPage data={query.data} />
+  const { http } = rootRoute.useRouteContext()
+  const detail = useQuery(detailQuery(http, reviewCaseId))
+  if (detail.isPending) return <RoutePending />
+  if (detail.isError)
+    return <RouteFailure error={detail.error} reset={() => void detail.refetch()} />
+  return <DetailPage data={detail.data} />
 }
 export const libraryRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -756,12 +757,7 @@ export const detailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/review/$reviewCaseId',
   validateSearch: normalizeDetailSearch,
-  loader: ({ context, params, abortController }) =>
-    context.queryClient.ensureQueryData({
-      ...detailQuery(context.http, params.reviewCaseId),
-      queryFn: () => context.http.getCaseDetail(params.reviewCaseId, abortController.signal),
-    }),
-  component: DetailRouteComponent,
+  component: DiagnosticRouteComponent,
 })
 export interface PolicyCritical {
   state: PolicyStateView
@@ -821,38 +817,6 @@ const routeTree = rootRoute.addChildren([
   activityRoute,
 ])
 
-type WorkIdentity = Pick<LibraryWorkView, 'title' | 'authors' | 'library' | 'mediaKind'>
-export const ProgressiveCasePanel = ({ id, identity }: { id: string; identity?: WorkIdentity }) => {
-  const { http } = rootRoute.useRouteContext()
-  const result = useQuery(detailQuery(http, id))
-  if (result.isPending)
-    return (
-      <aside aria-busy="true">
-        <h2>Loading preview…</h2>
-      </aside>
-    )
-  if (result.isError)
-    return (
-      <aside>
-        <h2>Preview unavailable</h2>
-        <button onClick={() => void result.refetch()}>Try again</button>
-      </aside>
-    )
-  return (
-    <aside>
-      <p className="eyebrow">Progressive detail</p>
-      <h2>{identity?.title ?? 'Selected work'}</h2>
-      <p>
-        {identity
-          ? `${identity.authors.join(', ') || 'Author details unavailable'} · ${identity.library} · ${labelWords(identity.mediaKind)}`
-          : 'Readable work identity is not available on this Library page.'}
-      </p>
-      <Link to="/review/$reviewCaseId" params={{ reviewCaseId: id }} search={{ subview: 'review' }}>
-        Open full review
-      </Link>
-    </aside>
-  )
-}
 export const useReviewContext = () => rootRoute.useRouteContext()
 
 export const createApplicationRouter = (

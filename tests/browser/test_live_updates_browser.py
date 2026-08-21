@@ -289,8 +289,10 @@ def test_a_change_in_one_tab_reaches_another_without_a_reload() -> None:
                 documents_before = len(documents)
 
                 actor = context.new_page()
-                actor.goto(f"{origin}/review/{case_id}?field=title&subview=review")
-                actor.get_by_role("heading", name="Current review case").wait_for()
+                actor.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+                actor.get_by_role(
+                    "heading", name="Every work, with exceptions first"
+                ).wait_for()
                 actor.get_by_role(
                     "button", name="Choose current value:", exact=False
                 ).first.click()
