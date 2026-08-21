@@ -1252,6 +1252,14 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             + 8
         )
         capture_visual_proof("library-attention-rail")
+        page.set_viewport_size({"width": 900, "height": 900})
+        expect(page.locator(".attention-rail")).to_be_visible()
+        assert (
+            page.locator(".attention-rail").evaluate(
+                "node => getComputedStyle(node).position"
+            )
+            == "fixed"
+        )
         page.locator(".masthead").evaluate("node => { node.style.minHeight = '220px' }")
         page.wait_for_function(
             """() => {
