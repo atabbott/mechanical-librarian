@@ -7,8 +7,8 @@ rebuild or delivers one explicit exact-predecessor adoption limited to
 reconstructible derived objects. This is not a general migration, import,
 conversion, compatibility, downgrade, or repair facility.
 
-The `fixed-conservative-v8` proposal contract is not an exact predecessor of
-the installed v9 contract: its persisted decisions can disagree. It is rejected
+The `fixed-conservative-v9` proposal contract is not an exact predecessor of
+the installed v10 contract: its persisted decisions can disagree. It is rejected
 at bootstrap and requires a clean rebuild; `review-field-facts-v1` cannot adopt
 it.
 

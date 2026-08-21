@@ -29,7 +29,7 @@ LONG_DESCRIPTION = (
     "so a wrap that is allowed to happen has somewhere to happen."
 )
 _F20_CANDIDATE_SHA256 = (
-    "aba7b436d88bb4e884cda0c4b247aa871063dce459e0f5fbea298227a1e9b06c"
+    "2628f9f02706e3e0e6afe244231e3fcab387b866007e016b8003f0978bd0780d"
 )
 _RICH_QUALIFICATION: tuple[dict[str, object], ...] = tuple(
     {

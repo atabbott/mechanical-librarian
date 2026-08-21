@@ -56,6 +56,13 @@ provider count is not a safe substitute. A future subtitle candidate must bind
 the selected ebook manifestation, remain distinct from the title, and exclude
 marketing or status text. Both subtitle policies therefore remain
 `not_qualified`.
+
+The current policy separately treats the exact provider-edition label `A Novel`
+as a generic marketing subtitle. It preserves a blank target without creating
+a subtitle proposal. The vocabulary is provider-only and deliberately limited
+to that exact normalized label; local package evidence and any longer subtitle
+remain ordinary evidence. This is a proposal-policy rule, not F20 automatic
+authority, so both subtitle options remain `not_qualified`.
 Genre add and replace each made 3 exact predictions. Genre fill-empty was
 evaluated with only the target genre field varied across the supported
 `missing`, `null`, and `empty` states while preserving the observed provider

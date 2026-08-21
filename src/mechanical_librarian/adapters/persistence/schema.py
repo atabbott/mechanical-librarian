@@ -1022,7 +1022,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
 
 
 _REVIEW_FIELD_FACTS_PREDECESSOR_OBJECTS_SHA256 = (
-    "a70f53019d05c345a55bf6f44f9e8021640161b60dc8732d141d1beb1c5a5643"
+    "887d38de1aaddd9643762f4e19803fd4f32bd0ee049bb573914f2d8a8bd831be"
 )
 
 
