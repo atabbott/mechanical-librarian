@@ -325,7 +325,7 @@ describe('Application shell', () => {
       expect(http.preparationAction).toHaveBeenCalledOnce()
       expect(document.getElementById('main-content')).toHaveAttribute(
         'data-route-focus-identity',
-        '/:all::::::',
+        '/:all:::::::',
       )
       const checking = screen.getByRole('button', { name: 'Checking connection…' })
       expect(checking).toBe(check)
