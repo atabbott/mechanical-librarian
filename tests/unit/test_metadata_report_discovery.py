@@ -803,10 +803,9 @@ def _assert_timestamp_voting_report(
         *(value.reference for value in provider_dates),
         *((retained_local[0].reference,) if local_present else ()),
     }
-    if voting:
-        assert source_references <= publication_references
-    else:
-        assert source_references.isdisjoint(publication_references)
+    # Generated-report providers do not declare independent provider authority;
+    # timestamp parsing alone must never manufacture publication authority.
+    assert source_references.isdisjoint(publication_references)
 
 
 def test_generate_report_uses_source_lexical_timestamp_voting_matrix() -> None:

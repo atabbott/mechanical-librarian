@@ -61,8 +61,8 @@ from mechanical_librarian.domain.metadata_report import (
 if TYPE_CHECKING:
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
-PROPOSAL_SCHEMA = "proposal-set-v4"
-POLICY_VERSION = "fixed-conservative-v10"
+PROPOSAL_SCHEMA = "proposal-set-v5"
+POLICY_VERSION = "fixed-conservative-v11"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -147,12 +147,9 @@ _DESTINATION_VALUE_SCOPES: dict[
         {(ProposalValueKind.SERIES, ProposalScope.WORK)}
     ),
     TargetDestination.GENRES: frozenset({(ProposalValueKind.LIST, ProposalScope.WORK)}),
-    TargetDestination.PUBLISHED_YEAR: frozenset(
-        {
-            (ProposalValueKind.TEXT, ProposalScope.WORK),
-            (ProposalValueKind.TEXT, ProposalScope.EDITION),
-        }
-    ),
+    # Published year is retained target context for the single canonical
+    # publication-date result.  It must never carry an independent candidate.
+    TargetDestination.PUBLISHED_YEAR: frozenset(),
     TargetDestination.PUBLISHED_DATE: frozenset(
         {
             (ProposalValueKind.TEXT, ProposalScope.WORK),
@@ -188,10 +185,9 @@ _DESTINATION_DATE_SEMANTICS: dict[
     frozenset[tuple[DateEvent | None, DatePrecision | None]],
 ] = {
     destination: (
-        frozenset({(DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.YEAR)})
-        if destination is TargetDestination.PUBLISHED_YEAR
-        else frozenset(
+        frozenset(
             {
+                (DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.YEAR),
                 (DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.MONTH),
                 (DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.DAY),
             }
@@ -251,6 +247,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("identifier_validity_invalid",),
             ("no_supported_evidence",),
             ("policy_ignored",),
+            ("redundant_publication_context",),
             ("target_state_unusable",),
         }
     ),
@@ -258,9 +255,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
 
 _POLICY_DESTINATIONS: dict[str, frozenset[TargetDestination]] = {
     "title_layout": frozenset({TargetDestination.TITLE, TargetDestination.SUBTITLE}),
-    "date_precision": frozenset(
-        {TargetDestination.PUBLISHED_YEAR, TargetDestination.PUBLISHED_DATE}
-    ),
+    "date_precision": frozenset({TargetDestination.PUBLISHED_DATE}),
     "language_rendering": frozenset({TargetDestination.LANGUAGE}),
     "contributor_names": frozenset(
         {TargetDestination.AUTHORS, TargetDestination.NARRATORS}
@@ -964,6 +959,32 @@ def _apply_policy_destination(
     )
 
 
+def canonical_target_fields(
+    fields: tuple[TargetField, ...],
+) -> dict[TargetDestination, TargetField]:
+    """Project the one canonical publication current without changing its source.
+
+    ``publishedYear`` remains a retained compatibility field in the report, but
+    the review contract has one publication fact. Consumers use this view for
+    current-value comparison while report fingerprints still bind the exact
+    provider snapshot.
+    """
+    targets = {value.destination: value for value in fields}
+    date_target = targets[TargetDestination.PUBLISHED_DATE]
+    year_target = targets[TargetDestination.PUBLISHED_YEAR]
+    if (
+        date_target.state is not TargetFieldState.VALUE
+        and year_target.state is TargetFieldState.VALUE
+        and type(year_target.value) is str
+    ):
+        targets[TargetDestination.PUBLISHED_DATE] = TargetField(
+            TargetDestination.PUBLISHED_DATE,
+            TargetFieldState.VALUE,
+            year_target.value,
+        )
+    return targets
+
+
 def evaluate_report(
     report: MetadataReport,
     resolved_policy_id: str | None = None,
@@ -973,7 +994,7 @@ def evaluate_report(
     if type(report) is not MetadataReport:
         raise ProposalValueError("proposal report is invalid")
     ignored = _ignored_policy_targets(policy_destinations)
-    targets = {value.destination: value for value in report.target.fields}
+    targets = canonical_target_fields(report.target.fields)
     results: dict[TargetDestination, ProposalResult] = {}
     observed_by_destination: dict[TargetDestination, tuple[_Observed, ...]] = {}
     for destination in TargetDestination:
@@ -1994,11 +2015,6 @@ def _publication_results(
             }
         )
     )
-    dates = _strongest_shared_date(
-        publication_values,
-        direct_dates,
-        month_dates,
-    )
     years = tuple(
         _Observed(
             ProposalValue(ProposalValueKind.TEXT, str(value.value.value)[:4]),
@@ -2011,17 +2027,28 @@ def _publication_results(
         )
         for value in publication_values
     )
+    dates = _strongest_independently_corroborated_date(
+        publication_values,
+        direct_dates,
+        month_dates,
+        years,
+        frozenset(
+            _provider_correlation(provider)
+            for provider in report.providers
+            if provider.authority is not None
+        ),
+    )
     date_result = _evaluate(
         TargetDestination.PUBLISHED_DATE,
         date_target,
         dates,
-        (TargetDestination.PUBLISHED_YEAR,),
     )
-    year_result = _evaluate(
+    year_result = ProposalResult(
         TargetDestination.PUBLISHED_YEAR,
-        year_target,
-        years,
-        (TargetDestination.PUBLISHED_DATE,),
+        ProposalOutcome.INELIGIBLE,
+        (),
+        None,
+        ("redundant_publication_context",),
     )
     if (
         date_result.selected_alternative_id is not None
@@ -2035,44 +2062,24 @@ def _publication_results(
         )
         if str(selected.value.value)[:4] != year_target.value:
             date_result = _unresolved(date_result, "date_year_conflict")
-    if (
-        year_result.selected_alternative_id is not None
-        and date_target.state is TargetFieldState.VALUE
-        and type(date_target.value) is str
-    ):
-        selected = next(
-            value
-            for value in year_result.alternatives
-            if value.alternative_id == year_result.selected_alternative_id
-        )
-        if str(selected.value.value) != date_target.value[:4]:
-            year_result = _unresolved(year_result, "date_year_conflict")
-    if date_result.selected_alternative_id is not None:
-        selected = next(
-            value
-            for value in date_result.alternatives
-            if value.alternative_id == date_result.selected_alternative_id
-        )
-        if len(selected.correlations) < 2:
-            date_result = _unresolved(
-                date_result,
-                "date_refinement_requires_corroboration",
-            )
     return {
         TargetDestination.PUBLISHED_DATE: date_result,
         TargetDestination.PUBLISHED_YEAR: year_result,
     }
 
 
-def _strongest_shared_date(
+def _strongest_independently_corroborated_date(
     source: tuple[_Observed, ...],
     days: tuple[_Observed, ...],
     months: tuple[_Observed, ...],
+    years: tuple[_Observed, ...],
+    provider_authorities: frozenset[str],
 ) -> tuple[_Observed, ...]:
     possible: list[tuple[_Observed, ...]] = []
     for precision, observations, length in (
         (DatePrecision.DAY, days, 10),
         (DatePrecision.MONTH, months, 7),
+        (DatePrecision.YEAR, years, 4),
     ):
         projected = {str(value.value.value)[:length] for value in observations}
         if len(projected) != 1:
@@ -2083,18 +2090,13 @@ def _strongest_shared_date(
             for value in source
         ):
             continue
-        possible.append(observations)
-    for observations in possible:
-        if len({value.correlation for value in observations}) >= 2:
-            return observations
-    return next(
-        (
-            observations
-            for observations in possible
-            if observations[0].date_precision is DatePrecision.DAY
-        ),
-        (),
-    )
+        correlations = {value.correlation for value in observations}
+        if (
+            _correlation("local:selected_epub") in correlations
+            and len(correlations.intersection(provider_authorities)) >= 2
+        ):
+            possible.append(observations)
+    return possible[0] if possible else ()
 
 
 def _date_compatible_with_projection(
@@ -2115,6 +2117,7 @@ def _date_compatible_with_projection(
             DatePrecision.TIMESTAMP: 10,
         }[observation.date_precision],
         {
+            DatePrecision.YEAR: 4,
             DatePrecision.MONTH: 7,
             DatePrecision.DAY: 10,
         }[precision],

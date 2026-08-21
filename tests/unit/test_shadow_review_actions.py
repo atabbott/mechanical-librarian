@@ -57,9 +57,11 @@ def _packet(data: dict[str, object]) -> ShadowReviewPacket:
 
 
 def test_destination_policy_is_exhaustive() -> None:
-    assert {destination.value for destination in TargetDestination} == set(
-        _DESTINATION_POLICIES
-    )
+    assert {
+        destination.value
+        for destination in TargetDestination
+        if destination is not TargetDestination.PUBLISHED_YEAR
+    } == set(_DESTINATION_POLICIES)
 
 
 @settings(max_examples=30, deadline=None)

@@ -25,6 +25,7 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
     TargetDestination,
 )
+from mechanical_librarian.domain.proposal_set import canonical_target_fields
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
@@ -323,10 +324,10 @@ class InspectCurrentReviewCase:
             # chained.
             raise ReviewWebError("unavailable") from error
         target_fields = {
-            value["destination"]: value
-            for value in cast(
-                "list[dict[str, object]]", report.target.to_data()["fields"]
-            )
+            destination.value: value.to_data()
+            for destination, value in canonical_target_fields(
+                report.target.fields
+            ).items()
         }
         current_cover_consideration = (
             None
@@ -346,6 +347,9 @@ class InspectCurrentReviewCase:
         # of the report, so rebuilding it inside the loop multiplied the only
         # cost on that path by the number of fields under review.
         evidence = _evidence_by_reference(report)
+        publication_date_present = any(
+            value["destination"] == "publishedDate" for value in case.proposals
+        )
         for proposal in case.proposals:
             result = proposal["result"]
             assert type(result) is dict
@@ -414,6 +418,15 @@ class InspectCurrentReviewCase:
                     alternative["value"] for alternative in alternatives
                 ),
             )
+            inventory_role = _field_inventory_role(
+                classification.state,
+                destination,
+                report.file.format,
+                alternatives,
+                publication_date_present,
+            )
+            if inventory_role == "omitted":
+                continue
             field = {
                 "current": target_fields[destination],
                 "deterministic_disposition": result["outcome"],
@@ -429,6 +442,7 @@ class InspectCurrentReviewCase:
                 "editable": classification.editable,
                 "navigation_role": classification.navigation_role,
                 "needs_attention": classification.needs_attention,
+                "inventory_role": inventory_role,
                 "preservation_only": classification.preservation_only,
                 "notices": reasons,
                 "proposed_values": [
@@ -1592,7 +1606,10 @@ def _library_item(
             value
             for value in case.proposals
             if (
-                value["destination"] not in decisions
+                not _omitted_for_epub(
+                    cast(str, value["destination"]), report.file.format
+                )
+                and value["destination"] not in decisions
                 and value["destination"] not in suspended_destinations
                 and classify_review_field(
                     attention_candidate=_needs_attention(
@@ -1668,6 +1685,28 @@ def _library_item(
     return value
 
 
+def _field_inventory_role(
+    classification: str,
+    destination: str,
+    media_kind: str,
+    alternatives: list[object],
+    publication_date_present: bool,
+) -> str:
+    """Project one canonical field into the owner's finite field inventory."""
+    if destination == "publishedYear" and publication_date_present:
+        return "omitted"
+    if _omitted_for_epub(destination, media_kind):
+        return "omitted"
+    if classification == "unsupported" and not alternatives:
+        return "contextual"
+    return "primary"
+
+
+def _omitted_for_epub(destination: str, media_kind: str) -> bool:
+    """Keep EPUB-inapplicable fields out of every owner-facing projection."""
+    return media_kind == "epub" and destination in {"narrators", "explicit"}
+
+
 def _attention_item(
     case_document: str,
     report_document: str,
@@ -1677,6 +1716,12 @@ def _attention_item(
     cause: ReviewFieldCause | None = None,
 ) -> dict[str, object] | None:
     case, report = _case_and_report(case_document, report_document)
+    if _omitted_for_epub(destination, report.file.format):
+        return None
+    if destination == "publishedYear" and any(
+        value["destination"] == "publishedDate" for value in case.proposals
+    ):
+        return None
     proposal = next(
         (value for value in case.proposals if value["destination"] == destination),
         None,

@@ -65,7 +65,7 @@ describe('ReviewApiClient', () => {
       schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true, comparison_notices: [], writes_consented: false,
       target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
       fields: [{
-        classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, navigation_role: 'attention', preservation_only: false,
+        classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, inventory_role: 'primary', navigation_role: 'attention', preservation_only: false,
         destination: 'series', deterministic_disposition: 'review', effect_capability: 'manual',
         needs_attention: true, manual_hold: false, current: { value: series },
         proposed_values: [], choice_contexts: choiceContexts, proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',
@@ -84,7 +84,7 @@ describe('ReviewApiClient', () => {
       schema_version: 'review-case-detail-v1', review_case_id: 'case-1', current: true, comparison_notices: [], writes_consented: false,
       target: { item: 'A Book', library: 'Books', connection: 'primary', media_kind: 'ebook', authors: ['Ada Example'] },
       fields: [{
-        classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, navigation_role: 'attention', preservation_only: false,
+        classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, inventory_role: 'primary', navigation_role: 'attention', preservation_only: false,
         destination: 'authors', deterministic_disposition: 'review', effect_capability: 'manual',
         needs_attention: true, manual_hold: false, current: { value: ['Ada Example'] },
         proposed_values: [], choice_contexts: [{ alternative_id: null, evidence: [], limitations: [], rationale: 'The local library has no retained value for this field.', recommendation: 'no_recommendation', recommendation_reason: 'No deterministic recommendation is retained for the current value.', selection: 'current' }], proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',
@@ -101,7 +101,7 @@ describe('ReviewApiClient', () => {
 
   it('rejects case-detail fields that omit the objects the view dereferences', () => {
     const field = (overrides: Record<string, unknown> = {}) => ({
-      classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, navigation_role: 'attention', preservation_only: false,
+      classification: 'needs_attention', classification_reason: 'This field needs your review.', editable: true, inventory_role: 'primary', navigation_role: 'attention', preservation_only: false,
       destination: 'title', deterministic_disposition: 'review', effect_capability: 'manual',
       needs_attention: true, manual_hold: false, current: { value: 'A Book' },
       proposed_values: [], choice_contexts: [{ alternative_id: null, evidence: [], limitations: [], rationale: 'The local library has no retained value for this field.', recommendation: 'no_recommendation', recommendation_reason: 'No deterministic recommendation is retained for the current value.', selection: 'current' }], proposal_id: 'proposal-1', target_fingerprint: 'fingerprint-1',

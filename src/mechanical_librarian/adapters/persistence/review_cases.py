@@ -52,13 +52,12 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_LIBRARY_FROM_SQL,
     _CURRENT_REVIEW_CASE_COUNT_SQL,
     _CURRENT_REVIEW_FROM_SQL,
+    _EPUB_INAPPLICABLE_ATTENTION_SQL,
     _REVIEW_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
     _REVIEW_SEARCH_SQL,
 )
-from mechanical_librarian.adapters.persistence.schema import (
-    _validate_report_row,
-)
+from mechanical_librarian.adapters.persistence.schema import _validate_report_row
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_policy import (
@@ -618,6 +617,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "(SELECT count(*) FROM review_case_field_facts result "
                 "WHERE result.review_case_id=rc.review_case_id AND "
                 + _REVIEW_FIELD_ATTENTION_SQL
+                + _EPUB_INAPPLICABLE_ATTENTION_SQL
                 + "),"
                 "(SELECT outcome.disposition FROM shadow_decision_outcomes shadow "
                 "JOIN shadow_outcome_field_facts outcome "
@@ -632,6 +632,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 + " JOIN review_case_field_facts result "
                 "ON result.review_case_id=rc.review_case_id WHERE "
                 + _REVIEW_FIELD_ATTENTION_SQL
+                + _EPUB_INAPPLICABLE_ATTENTION_SQL
                 + _REVIEW_SEARCH_SQL
                 + " ORDER BY "
                 "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')),"
@@ -686,6 +687,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 + " JOIN review_case_field_facts result "
                 "ON result.review_case_id=rc.review_case_id WHERE "
                 + _REVIEW_FIELD_ATTENTION_SQL
+                + _EPUB_INAPPLICABLE_ATTENTION_SQL
                 + _REVIEW_SEARCH_SQL,
                 (query, pattern, pattern, pattern, pattern, pattern),
             ).fetchone()

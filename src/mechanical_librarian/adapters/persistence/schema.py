@@ -474,7 +474,7 @@ _SHADOW_DECISION_OUTCOMES_SQL = (
     "resolved_policy_id TEXT NOT NULL CHECK(resolved_policy_id GLOB 'resolved_policy_[0-9a-f]*' AND length(resolved_policy_id)=80), "
     "source_decision_set_id TEXT NOT NULL, evaluated_at INTEGER NOT NULL CHECK(evaluated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 1048576 "
-    "AND json_extract(document,'$.schema_version')='shadow-outcome-set-v3'))"
+    "AND json_extract(document,'$.schema_version')='shadow-outcome-set-v4'))"
 )
 _SHADOW_OUTCOME_FIELD_FACTS_SQL = (
     "CREATE TABLE shadow_outcome_field_facts ("
@@ -1022,7 +1022,7 @@ def _validate_schema(connection: sqlite3.Connection) -> None:
 
 
 _REVIEW_FIELD_FACTS_PREDECESSOR_OBJECTS_SHA256 = (
-    "887d38de1aaddd9643762f4e19803fd4f32bd0ee049bb573914f2d8a8bd831be"
+    "3394552b57feed912c96d40809acfd5447d743b8e51360f9b65701341619b2ab"
 )
 
 

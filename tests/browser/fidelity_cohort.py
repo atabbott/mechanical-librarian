@@ -373,6 +373,7 @@ def _field(
     classification_reason: str | None = None,
     editable: bool | None = None,
     navigation_role: str | None = None,
+    inventory_role: str | None = None,
     preservation_only: bool | None = None,
 ) -> dict[str, object]:
     inferred_classification = (
@@ -409,6 +410,12 @@ def _field(
         "manual_required": needs_attention,
         "navigation_role": navigation_role
         or ("attention" if needs_attention else "inspect"),
+        "inventory_role": inventory_role
+        or (
+            "contextual"
+            if resolved_classification == "unsupported" and not proposed
+            else "primary"
+        ),
         "current": {"kind": "synthetic", "value": current},
         "proposed_values": [
             {"kind": "synthetic", "value": value} for value in proposed
@@ -606,6 +613,23 @@ def _case(case_id: str) -> dict[str, object]:
                     "origin": "automatic_policy",
                     "selected_value": None,
                 }
+            ),
+        ),
+        _field(
+            "publishedDate",
+            "2024-08",
+            [] if current_only else ["2024-08"],
+            disposition="ineligible" if current_only else "automatic",
+            needs_attention=False,
+            automatic_decision=(
+                {
+                    "decision_id": "automatic-publication",
+                    "outcome": "candidate",
+                    "origin": "automatic_policy",
+                    "selected_value": {"kind": "synthetic", "value": "2024-08"},
+                }
+                if not current_only
+                else None
             ),
         ),
     ]

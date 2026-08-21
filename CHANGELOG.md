@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Present the strongest qualified publication fact once in Library, while
+  keeping a month-level fact automatic only when its existing independent,
+  manifestation-bound evidence remains intact. Automatic, recorded, actionable,
+  and unavailable fields now retain their truthful owner-facing context. (#598, #810)
+
 - Preserve an empty subtitle when eligible provider evidence contains only the
   exact generic marketing label `A Novel`. Legitimate and local subtitles stay
   reviewable; the v10 proposal policy requires a clean rebuild of v9 state.

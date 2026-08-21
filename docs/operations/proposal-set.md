@@ -6,16 +6,16 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v10` policy. It does not construct or contact a metadata or
+`fixed-conservative-v11` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
 or typed source-only inspector.
 
-Success is exactly one canonical `proposal-set-v4` JSON document plus a
+Success is exactly one canonical `proposal-set-v5` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v4` documents under `fixed-conservative-v10` and the exact current
+Only `proposal-set-v5` documents under `fixed-conservative-v11` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,
@@ -23,6 +23,11 @@ Only `proposal-set-v4` documents under `fixed-conservative-v10` and the exact cu
 table shape is incompatible
 and is rejected before mutation. A clean rebuild is required; there is no
 proposal migration, import, conversion, or compatibility parser.
+
+The publication projection retains one independently corroborated canonical
+fact at the strongest shared year, month, or day precision. It never pads a
+date, accepts local-only precision, or turns the derived Published year context
+into a second proposal, decision, outcome, or activity event.
 
 ## Fixed policy
 
@@ -46,10 +51,10 @@ the ID is derived from those canonical bytes and remains the exact-get input.
 Alternatives retain only their bounded candidate value, work/edition/cover
 scope, assessment, stable evidence references, hashed correlation groups, and,
 for publication candidates, the closed event and target precision.
-`publishedYear` alternatives always carry target semantics
-`manifestation_publication` plus `year`; `publishedDate` alternatives carry
-`manifestation_publication` plus their represented `month` or `day` precision;
-every other destination carries neither. The exact source event and precision
+`publishedDate` alternatives carry target semantics
+`manifestation_publication` plus their represented `year`, `month`, or `day`
+precision. `publishedYear` is the fixed redundant context result and has no
+alternatives. Every other destination carries neither. The exact source event and precision
 remain separately available through the evidence reference in the immutable
 report.
 They do not copy report excerpts, raw provider evidence, responses, URLs,
@@ -126,17 +131,17 @@ The policy is deliberately conservative:
   unchanged; real creators in the same report keep their source order, while
   `Anonymous`, nonexact names, provider creators, and explicit opening-matter
   creators remain eligible under the ordinary rules;
-- selecting a full-day `publishedDate` always requires two materially
-  independent correlation groups, whether or not a year is populated;
+- selecting a `publishedDate` at year, month, or full-day precision always
+  requires two materially independent correlation groups;
 - two independent month-capable observations that agree through `YYYY-MM`
   produce one month candidate. Differing exact days in that month are
   complementary month evidence, not competing month candidates. The candidate
   carries the union of their evidence references and correlation groups;
 - work first-publication, copyright, modification, and unknown-event evidence
   never vote for manifestation date or year fields;
-- direct year-only edition evidence can fill `publishedYear` but is not
-  promoted into a full `publishedDate`;
-- one month observation alone derives only its stated year. A month candidate
+- independent direct year-only edition evidence becomes a year-precision
+  `publishedDate` candidate and is not padded into a month or day;
+- one month observation alone has no candidate. A month candidate
   requires independent month-capable support; day evidence may become a
   `publishedDate` candidate, while a signed-offset timestamp may reduce to that
   exact stated day without offset conversion. Source precision remains in the

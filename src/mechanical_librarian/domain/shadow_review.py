@@ -35,6 +35,7 @@ from mechanical_librarian.domain.proposal_set import (
     BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA,
     ProposalOutcome,
     ProposalSet,
+    canonical_target_fields,
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -220,7 +221,6 @@ class ShadowReviewPacket:
             self.schema_version != PACKET_SCHEMA
             or _CASE_ID.fullmatch(self.review_case_id) is None
             or type(self.proposals) is not tuple
-            or not self.proposals
             or type(self.citations) is not tuple
             or type(self.correlations) is not tuple
             or self.bibliographic_relationship_schema_version
@@ -265,9 +265,8 @@ class ShadowReviewPacket:
                 raise ShadowReviewValueError("shadow-review packet is invalid")
             candidate_ids: list[object] = []
             expected_dates = (
-                {("manifestation_publication", "year")}
-                if destination == TargetDestination.PUBLISHED_YEAR.value
-                else {
+                {
+                    ("manifestation_publication", "year"),
                     ("manifestation_publication", "month"),
                     ("manifestation_publication", "day"),
                 }
@@ -450,7 +449,10 @@ class ShadowReviewPacket:
         ):
             raise ShadowReviewValueError("shadow-review packet binding is invalid")
         current = {
-            value.destination.value: value.to_data() for value in report.target.fields
+            destination.value: value.to_data()
+            for destination, value in canonical_target_fields(
+                report.target.fields
+            ).items()
         }
         proposals: list[dict[str, object]] = []
         references: set[str] = set()

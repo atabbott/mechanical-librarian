@@ -871,18 +871,21 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   }, [search.preview, selectedIdentity])
   const completionIdentity = complete?.id === selectedReviewCaseId ? complete.identity : undefined
   const displayedIdentity = selectedIdentity ?? completionIdentity
+  const primaryField = (field: ReviewField) => (field.inventoryRole ?? 'primary') === 'primary'
+  const visibleFields = detail.data?.fields.filter(primaryField) ?? []
   const selected =
-    detail.data?.fields.find((field) => field.destination === search.field) ??
-    detail.data?.fields.find(actionable) ??
-    detail.data?.fields[0]
+    visibleFields.find((field) => field.destination === search.field) ??
+    visibleFields.find(actionable) ??
+    visibleFields[0]
   const currentActionableDestinations = detail.data?.fields.map((field) => field.destination) ?? []
   const frozenDestinations =
     frozenFieldOrders[selectedReviewCaseId] ?? currentActionableDestinations
   const railFields = frozenDestinations
-    .map((destination) => detail.data?.fields.find((field) => field.destination === destination))
+    .map((destination) => visibleFields.find((field) => field.destination === destination))
     .filter((field): field is ReviewField => field !== undefined)
   const actionableFields = railFields.filter(actionable)
-  const contextualFields = detail.data?.fields.filter((field) => !actionable(field)) ?? []
+  const contextualFields =
+    detail.data?.fields.filter((field) => field.inventoryRole === 'contextual') ?? []
   const activeQueueIndex = selected
     ? attentionItems.findIndex(
         (item) => item.id === search.preview && item.destination === selected.destination,
@@ -1738,7 +1741,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 <details className="automatic-resolution-details">
                   <summary>
                     <span>
-                      {String(contextualFields.length)} automatic or recorded field
+                      {String(contextualFields.length)} field with context
                       {contextualFields.length === 1 ? '' : 's'}
                     </span>
                     <small>Inspect context</small>

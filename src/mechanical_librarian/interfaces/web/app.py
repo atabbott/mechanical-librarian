@@ -280,6 +280,7 @@ class _ReviewField(_ClosedModel):
     editable: bool
     effect_capability: str
     human_decision: _DecisionProjection | None
+    inventory_role: Literal["primary", "contextual"]
     automatic_decision: _AutomaticDecisionProjection | None
     manual_hold: bool
     manual_required: bool
@@ -987,7 +988,7 @@ class _ShadowOutcomeSetResponse(_ClosedModel):
     report_id: str
     resolved_policy_id: str
     review_case_id: str
-    schema_version: Literal["shadow-outcome-set-v3"]
+    schema_version: Literal["shadow-outcome-set-v4"]
     source_decision_set_id: str
     target_fingerprint: str
 

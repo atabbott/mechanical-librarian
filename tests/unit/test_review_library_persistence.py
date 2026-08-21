@@ -54,6 +54,9 @@ from tests.support.proposal_evidence import (
     _claim as _proposal_claim,
 )
 from tests.support.proposal_evidence import (
+    _fields as _proposal_fields,
+)
+from tests.support.proposal_evidence import (
     _provider as _proposal_provider,
 )
 from tests.support.proposal_evidence import (
@@ -763,6 +766,172 @@ def test_sqlite_attention_keeps_manual_bibliographic_membership_field_local() ->
             reason="field_unavailable",
             observed_at=2,
         )
+        repository.close()
+
+
+def test_sqlite_attention_excludes_epub_inapplicable_destinations_from_membership() -> (
+    None
+):
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "application.sqlite3")
+        report = _bibliographic_report(
+            current_title="Mistborn Secret History",
+            providers=(
+                _bibliographic_source(
+                    "catalogue", "edition-1", titles=(), series="Mistborn"
+                ),
+            ),
+        )
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        review_case_id = json.loads(repository.admit_review_case(proposal))[
+            "review_case_id"
+        ]
+        repository._connection.execute(
+            "UPDATE review_case_field_facts SET unresolved_choice=1 "
+            "WHERE review_case_id=? AND destination IN ('narrators','explicit')",
+            (review_case_id,),
+        )
+
+        assert report.file.format == "epub"
+        assert repository._connection.execute(
+            "SELECT destination,unresolved_choice FROM review_case_field_facts "
+            "WHERE review_case_id=? AND destination IN ('narrators','explicit') "
+            "ORDER BY destination",
+            (review_case_id,),
+        ).fetchall() == [("explicit", 1), ("narrators", 1)]
+        assert [
+            row[2] for row in repository.list_current_attention_documents(None, 10, 0)
+        ] == ["series"]
+        assert repository.count_current_attention_fields(None) == 1
+        attention = BrowseReviewLibrary(repository).attention(
+            search=None, limit=1, cursor=None
+        )
+        assert attention["total"] == 1
+        assert attention["next_cursor"] is None
+        assert [
+            (item["destination"], item["work_attention_count"])
+            for item in attention["items"]
+        ] == [("series", 1)]
+        repository.close()
+
+
+def test_sqlite_library_excludes_epub_conflicting_narrators_from_attention() -> None:
+    def with_item(source: MetadataReport, item: str) -> MetadataReport:
+        return MetadataReport.create(
+            target=TargetFacts(
+                source.target.connection,
+                source.target.library,
+                item,
+                source.target.fields,
+            ),
+            file=source.file,
+            local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=source.providers,
+            cover_sources=source.cover_sources,
+        )
+
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "application.sqlite3")
+        narrator_report = with_item(
+            _proposal_report(
+                title="Narrator conflict",
+                fields=_proposal_fields(
+                    narrators=TargetField(
+                        TargetDestination.NARRATORS, TargetFieldState.MISSING
+                    )
+                ),
+                providers=(
+                    _proposal_provider(
+                        "catalogue-a",
+                        "edition-a",
+                        (
+                            _proposal_claim(
+                                "catalogue-a",
+                                "edition-a",
+                                ClaimKind.CONTRIBUTOR,
+                                "Nora Narrator",
+                                scope=ClaimScope.EDITION,
+                                role="narrator",
+                            ),
+                        ),
+                    ),
+                    _proposal_provider(
+                        "catalogue-b",
+                        "edition-b",
+                        (
+                            _proposal_claim(
+                                "catalogue-b",
+                                "edition-b",
+                                ClaimKind.CONTRIBUTOR,
+                                "Pia Narrator",
+                                scope=ClaimScope.EDITION,
+                                role="narrator",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            "narrator-conflict",
+        )
+        series_report = with_item(
+            _bibliographic_report(
+                current_title="Mistborn Secret History",
+                providers=(
+                    _bibliographic_source(
+                        "catalogue", "edition-1", titles=(), series="Mistborn"
+                    ),
+                ),
+            ),
+            "series-attention",
+        )
+        for report in (narrator_report, series_report):
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            repository.admit_review_case(proposal)
+
+        assert narrator_report.file.format == "epub"
+        assert repository.count_current_review_cases(None) == (2, 1)
+        assert repository.count_current_review_cases("narrator-conflict") == (1, 0)
+        assert (
+            repository.list_current_attention_documents("narrator-conflict", 10, 0)
+            == ()
+        )
+        browse = BrowseReviewLibrary(repository)
+        first = browse.library(lens="all", search=None, limit=1, cursor=None)
+        assert first["counts"] == {
+            "all": 2,
+            "needs_attention": 1,
+            "no_attention_needed": 1,
+        }
+        assert [item["title"] for item in first["items"]] == ["Mistborn Secret History"]
+        assert first["next_cursor"] is not None
+        second = browse.library(
+            lens="all", search=None, limit=1, cursor=first["next_cursor"]
+        )
+        assert [
+            (item["title"], item["attention_count"], item["attention_state"])
+            for item in second["items"]
+        ] == [("Current title", 0, "no_attention_needed")]
+        assert second["next_cursor"] is None
+        assert [
+            item["title"]
+            for item in browse.library(
+                lens="needs_attention", search=None, limit=1, cursor=None
+            )["items"]
+        ] == ["Mistborn Secret History"]
+        assert [
+            item["title"]
+            for item in browse.library(
+                lens="no_attention_needed",
+                search="narrator-conflict",
+                limit=1,
+                cursor=None,
+            )["items"]
+        ] == ["Current title"]
         repository.close()
 
 

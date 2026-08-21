@@ -60,6 +60,7 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecisionError,
     AutomaticSafetyState,
 )
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
@@ -86,6 +87,8 @@ from tests.support.proposal_evidence import (
     _claim,
     _fields,
     _provider,
+    _publication_local_isbn,
+    _publication_provider,
 )
 from tests.support.proposal_evidence import (
     _report as _proposal_report,
@@ -1095,6 +1098,164 @@ def _automatic_no_change_inputs(
             "isbn",
         )
     raise AssertionError(f"unknown automatic no-change scenario: {scenario}")
+
+
+def test_year_current_reaches_one_durable_publication_keep_and_read_models() -> None:
+    """One retained Year projects as Date through the real automatic pipeline."""
+    local_date = LocalClaim.create(
+        kind=ClaimKind.PUBLICATION_DATE,
+        observed="2001",
+        canonical="2001",
+        excerpt="2001",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.EDITION,
+        date_event=DateEvent.MANIFESTATION_PUBLICATION,
+        date_precision=DatePrecision.YEAR,
+    )
+    report = _proposal_report(
+        fields=_fields(
+            published_year=TargetField(
+                TargetDestination.PUBLISHED_YEAR, TargetFieldState.VALUE, "2001"
+            ),
+            published_date=TargetField(
+                TargetDestination.PUBLISHED_DATE, TargetFieldState.MISSING
+            ),
+        ),
+        local_claims=(_publication_local_isbn(), local_date),
+        providers=(
+            _provider(
+                "alpha",
+                "alpha-edition",
+                (
+                    _claim(
+                        "alpha",
+                        "alpha-edition",
+                        ClaimKind.ISBN,
+                        "9780306406157",
+                        scope=ClaimScope.EDITION,
+                        applicability="unknown",
+                    ),
+                    _claim(
+                        "alpha",
+                        "alpha-edition",
+                        ClaimKind.PUBLICATION_DATE,
+                        "2001",
+                        scope=ClaimScope.EDITION,
+                    ),
+                    _claim(
+                        "alpha",
+                        "alpha-edition",
+                        ClaimKind.SUBTITLE,
+                        "A retained manual field",
+                        scope=ClaimScope.EDITION,
+                    ),
+                ),
+                authority="hardcover",
+            ),
+            _publication_provider(
+                "beta", "beta-edition", ("2001",), authority="open_library"
+            ),
+            _source(
+                "catalogue",
+                "manual-edition",
+                titles=("Current title",),
+                subtitle="A retained manual field",
+            ),
+        ),
+    )
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "reports.sqlite"
+        repository = open_repository(path)
+        options = dict(DEFAULT_OPTIONS)
+        options["date_precision"] = "year"
+        destinations = {
+            name: "unsupported" if name == "explicit" else "ask"
+            for name in OPTION_CATALOGUE
+        }
+        destinations["date_precision"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "Publication keep", options, destinations
+        )
+        resolved = resolve_policy(profile, report.target.library)
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        assert type(case_id) is str
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        subtitle = next(
+            value for value in case.proposals if value["destination"] == "subtitle"
+        )
+        repository.record_human_decision(
+            HumanDecision.create(
+                case,
+                proposal_id=subtitle["proposal_id"],
+                target_fingerprint=case.target_fingerprint,
+                destination="subtitle",
+                actor="owner",
+                outcome="accept",
+                selected_value=subtitle["result"]["alternatives"][0]["value"],
+                idempotency_key="year-current-subtitle-0001",
+                occurred_at=4,
+            )
+        )
+        persisted = repository.persist_shadow_outcome(case_id, 4)
+        outcome = ShadowOutcomeSet.from_json(persisted)
+        assert [("publishedDate", "keep_current")] == [
+            (value.destination, value.disposition)
+            for value in outcome.outcomes
+            if value.destination == "publishedDate"
+        ]
+        assert ("publishedDate", "keep_current") == repository._connection.execute(
+            "SELECT destination,document ->> '$.outcome' FROM automatic_decisions"
+        ).fetchone()
+        assert (0,) == repository._connection.execute(
+            "SELECT COUNT(*) FROM automatic_decisions WHERE destination='publishedYear'"
+        ).fetchone()
+        assert 0 == repository.count_current_attention_fields(None)
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        publication = [
+            value
+            for value in detail["fields"]
+            if value["destination"] == "publishedDate"
+        ]
+        assert 1 == len(publication)
+        assert "2001" == publication[0]["current"]["value"]
+        assert not publication[0]["needs_attention"]
+        assert not [
+            value
+            for value in detail["fields"]
+            if value["destination"] == "publishedYear"
+        ]
+        assert 0 == repository.read_review_attention(None, 50, 0).total
+        activity = repository.field_effect_activity_page(
+            search=None, event_type="metadata", occurred_after=0, page=1, page_size=50
+        )
+        assert 1 == activity["total"]
+        assert "publishedDate" == activity["events"][0]["destination"]
+        repository.close()
+
+        reopened = open_repository(path, create=False)
+        assert persisted == reopened.persist_shadow_outcome(case_id, 5)
+        assert ("publishedDate", "keep_current") == reopened._connection.execute(
+            "SELECT destination,document ->> '$.outcome' FROM automatic_decisions"
+        ).fetchone()
+        reopened.close()
 
 
 @pytest.mark.parametrize(
@@ -3183,8 +3344,9 @@ def test_automatic_tuple_replay_is_exact_and_date_and_title_bundles_are_atomic()
             json.loads(value) for value in repository.get_review_case_decisions(case_id)
         )
         assert first == repository.get_review_case_decisions(case_id)[:1]
-        assert 3 == len(documents)
-        for destinations in (("title",), ("publishedDate", "publishedYear")):
+        assert 2 == len(documents)
+        assert "publishedYear" not in {value["destination"] for value in documents}
+        for destinations in (("title",), ("publishedDate",)):
             bundle = [
                 value for value in documents if value["destination"] in destinations
             ]
