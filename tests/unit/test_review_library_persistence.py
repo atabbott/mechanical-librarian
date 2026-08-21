@@ -766,6 +766,54 @@ def test_sqlite_attention_keeps_manual_bibliographic_membership_field_local() ->
         repository.close()
 
 
+def test_sqlite_attention_excludes_epub_inapplicable_destinations_from_membership() -> (
+    None
+):
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "application.sqlite3")
+        report = _bibliographic_report(
+            current_title="Mistborn Secret History",
+            providers=(
+                _bibliographic_source(
+                    "catalogue", "edition-1", titles=(), series="Mistborn"
+                ),
+            ),
+        )
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        review_case_id = json.loads(repository.admit_review_case(proposal))[
+            "review_case_id"
+        ]
+        repository._connection.execute(
+            "UPDATE review_case_field_facts SET unresolved_choice=1 "
+            "WHERE review_case_id=? AND destination IN ('narrators','explicit')",
+            (review_case_id,),
+        )
+
+        assert report.file.format == "epub"
+        assert repository._connection.execute(
+            "SELECT destination,unresolved_choice FROM review_case_field_facts "
+            "WHERE review_case_id=? AND destination IN ('narrators','explicit') "
+            "ORDER BY destination",
+            (review_case_id,),
+        ).fetchall() == [("explicit", 1), ("narrators", 1)]
+        assert [
+            row[2] for row in repository.list_current_attention_documents(None, 10, 0)
+        ] == ["series"]
+        assert repository.count_current_attention_fields(None) == 1
+        attention = BrowseReviewLibrary(repository).attention(
+            search=None, limit=1, cursor=None
+        )
+        assert attention["total"] == 1
+        assert attention["next_cursor"] is None
+        assert [
+            (item["destination"], item["work_attention_count"])
+            for item in attention["items"]
+        ] == [("series", 1)]
+        repository.close()
+
+
 def test_sqlite_complete_library_keeps_current_no_case_and_retired_work() -> None:
     def for_item(source: MetadataReport, item: str) -> MetadataReport:
         return MetadataReport.create(
