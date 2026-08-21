@@ -2,10 +2,10 @@
 
 ## Unreleased
 
-- Keep per-choice provenance and bounded Evidence inside Library. Long
-  descriptions now offer a readable preview and full inspection, and legacy
-  review links return to the selected Library work rather than opening a second
-  decision workspace. (#640)
+- Keep Library as the per-work decision workspace, with provenance and bounded
+  Evidence inline. Evidence and History remain read-only direct diagnostic pages
+  with Back to work and no decision controls; no legacy redirect is provided.
+  Long descriptions retain readable preview and full inspection. (#640)
 
 - Present the strongest qualified publication fact once in Library, while
   keeping a month-level fact automatic only when its existing independent,
