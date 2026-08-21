@@ -1010,41 +1010,19 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards() -> N
         case = ReviewCase.create_from_data(
             json.loads(repository.get_review_case(case_id))["case"]
         )
-        proposal = next(
-            value for value in case.proposals if value["destination"] == "isbn"
+        persisted = ShadowOutcomeSet.from_json(
+            repository.persist_shadow_outcome(case_id, 4)
         )
-        decision = AutomaticDecision.create(
-            review_case_id=case.review_case_id,
-            report_id=case.report_id,
-            proposal_set_id=case.proposal_set_id,
-            proposal_id=proposal["proposal_id"],
-            target_fingerprint=case.target_fingerprint,
-            destination="isbn",
-            outcome="keep_current",
-            candidate_id=None,
-            resolved_policy_id=resolved.resolved_id,
-            policy_generation=2,
-            rule_id="shadow_rule_" + "1" * 64,
-            policy_category="isbn_form",
-            policy_option="preserve_exact",
-            qualification_manifest_sha256="aba7b436d88bb4e884cda0c4b247aa871063dce459e0f5fbea298227a1e9b06c",
-            source_outcome_id="shadow_outcome_" + "2" * 64,
-            bundle_id=None,
-            occurred_at=4,
+        outcome = next(
+            value for value in persisted.outcomes if value.destination == "isbn"
         )
-        repository._connection.execute(
-            "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
-            "idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
-            (
-                decision.decision_id,
-                decision.review_case_id,
-                decision.destination,
-                decision.idempotency_digest,
-                decision.occurred_at,
-                decision.to_json(),
-            ),
+        assert "keep_current" == outcome.disposition
+        decisions = tuple(
+            AutomaticDecision.from_json(value)
+            for value in repository.get_review_case_decisions(case.review_case_id)
         )
-        repository._connection.commit()
+        decision = next(value for value in decisions if value.destination == "isbn")
+        assert "keep_current" == decision.outcome
         assert repository.count_current_attention_fields(None) == 0
 
         class UnexpectedAuthority:
@@ -1061,7 +1039,6 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards() -> N
             lambda *_: None,
         )
         assert scheduler.schedule() == 0
-        assert repository.record_current_field_effect_no_change(decision, 9)
         assert repository._connection.execute(
             "SELECT count(*) FROM field_effect_no_changes"
         ).fetchone() == (1,)
@@ -1074,7 +1051,11 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards() -> N
         assert repository._connection.execute(
             "SELECT count(*) FROM field_effect_consents"
         ).fetchone() == (0,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_actions"
+        ).fetchone() == (0,)
         assert repository.pending_field_effect_decision_documents(100) == ()
+        assert repository.count_current_attention_fields(None) == 0
         page = repository.field_effect_activity_page(
             search="item-1",
             event_type="metadata",
@@ -1098,6 +1079,7 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards() -> N
             )["events"][0]["state"]
             == "no_change_required"
         )
+        assert reopened.pending_field_effect_decision_documents(100) == ()
         reopened.close()
 
 

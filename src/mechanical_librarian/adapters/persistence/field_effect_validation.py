@@ -32,7 +32,11 @@ from mechanical_librarian.domain.field_effect import (
 from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport
+from mechanical_librarian.domain.field_value_comparison import values_match
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+)
 from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_preview import (
@@ -229,10 +233,12 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             )
             result = proposal.get("result") if type(proposal) is dict else None
             alternatives = result.get("alternatives") if type(result) is dict else None
-            if (
-                type(target) is not dict
-                or target.get("state") not in {"value", "null", "empty", "missing"}
-            ):
+            if type(target) is not dict or target.get("state") not in {
+                "value",
+                "null",
+                "empty",
+                "missing",
+            }:
                 raise FieldEffectError("persistence")
             pre_value = target.get("value") if target["state"] == "value" else None
             value = _automatic_decision_value(decision, case, report, proposal_set)
@@ -253,7 +259,9 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 if type(selected) is not dict:
                     raise FieldEffectError("persistence")
                 desired = project_decision_value(record.destination, value)
-            if desired != pre_value or record.target_version != field_value_version(
+            if not values_match(
+                TargetDestination(record.destination), pre_value, desired
+            ) or record.target_version != field_value_version(
                 record.destination, pre_value
             ):
                 raise FieldEffectError("persistence")

@@ -12,6 +12,7 @@ from mechanical_librarian.domain.metadata_report import (
     MAX_DESCRIPTION_CHARACTERS,
     TargetDestination,
     TargetSeries,
+    isbn_family,
     normalize_title,
 )
 
@@ -42,15 +43,14 @@ def values_match(
         current_series = _series_values(current)
         candidate_series = _series_values(candidate)
         return current_series is not None and current_series == candidate_series
+    if destination is TargetDestination.ISBN:
+        return _isbn_values_match(current, candidate)
     current_sequence = _text_sequence(current)
     candidate_sequence = _text_sequence(candidate)
     if current_sequence is not None and candidate_sequence is not None:
         return tuple(
             canonical_text(destination, value) for value in current_sequence
-        ) == tuple(
-            canonical_text(destination, value)
-            for value in candidate_sequence
-        )
+        ) == tuple(canonical_text(destination, value) for value in candidate_sequence)
     if type(current) is str and type(candidate) is str:
         return (
             language_outcomes_compatible(current, candidate)
@@ -61,10 +61,28 @@ def values_match(
     return current == candidate
 
 
+def _isbn_values_match(current: object, candidate: object) -> bool:
+    if type(current) is not str or type(candidate) is not str:
+        return False
+    current_family = isbn_family(current)
+    candidate_family = isbn_family(candidate)
+    return (
+        current_family is not None
+        and candidate_family is not None
+        and current_family == candidate_family
+        and _isbn_representation(current) == _isbn_representation(candidate)
+    )
+
+
+def _isbn_representation(value: str) -> str:
+    return "".join(
+        character for character in value if character.isdigit() or character in "Xx"
+    ).upper()
+
+
 def _text_sequence(value: object) -> tuple[str, ...] | None:
-    if (
-        type(value) not in {list, tuple}
-        or any(type(item) is not str for item in cast(Sequence[object], value))
+    if type(value) not in {list, tuple} or any(
+        type(item) is not str for item in cast(Sequence[object], value)
     ):
         return None
     return tuple(cast(Sequence[str], value))
