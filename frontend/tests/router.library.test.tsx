@@ -956,10 +956,19 @@ describe('Library route', () => {
       proposalId: 'proposal-authors',
       targetFingerprint: 'fingerprint-authors',
     }
-    const initial = { ...detail, fields: [titleField, authorsField] }
+    const contextualField = {
+      ...titleField,
+      destination: 'publishedYear',
+      inventoryRole: 'contextual' as const,
+      navigationRole: 'inspect' as const,
+      needsAttention: false,
+    }
+    const initial = { ...detail, fields: [titleField, authorsField, contextualField] }
     const settled = {
       ...detail,
       fields: [
+        authorsField,
+        contextualField,
         {
           ...titleField,
           needsAttention: false,
@@ -975,7 +984,6 @@ describe('Library route', () => {
             target_fingerprint: titleField.targetFingerprint,
           },
         },
-        authorsField,
       ],
     }
     let current: CaseDetailView = initial
@@ -1009,7 +1017,16 @@ describe('Library route', () => {
         'true',
       ),
     )
+    // Advancement leaves the next field ready for the keyboard without moving
+    // the document to centre the rail cell.
+    expect(screen.getByRole('button', { name: 'Choose current value: Ada Example' })).toHaveFocus()
     expect(screen.getByRole('button', { name: /Title.*Decision recorded/u })).toBeVisible()
+    await screen.findByText('Decision recorded from the authoritative case.')
+    expect(
+      within(screen.getByRole('navigation', { name: 'Review fields' }))
+        .getAllByRole('button')
+        .map((button) => button.textContent),
+    ).toEqual(['Title✓', 'Authors•'])
   })
 
   it('retries the embedded Library decision with the exact preserved command and idempotency key', async () => {
@@ -2178,8 +2195,12 @@ describe('Library route', () => {
   })
 
   it('uses non-animated rail movement when reduced motion is requested', async () => {
-    const scrollIntoView = vi.mocked(Element.prototype.scrollIntoView)
-    scrollIntoView.mockClear()
+    const originalScrollTo = HTMLElement.prototype.scrollTo
+    const scrollTo = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+      configurable: true,
+      value: scrollTo,
+    })
     const original = window.matchMedia
     window.matchMedia = vi.fn((query: string) => ({
       matches: query === '(prefers-reduced-motion: reduce)',
@@ -2194,9 +2215,13 @@ describe('Library route', () => {
     try {
       renderRoute('/library?lens=all&preview=case-1&field=title')
       await screen.findByRole('button', { name: 'Choose current value: Old title' })
-      expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }))
+      expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }))
     } finally {
       window.matchMedia = original
+      Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+        configurable: true,
+        value: originalScrollTo,
+      })
     }
   })
 

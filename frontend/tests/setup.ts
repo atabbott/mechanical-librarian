@@ -4,4 +4,5 @@ import { afterEach, vi } from 'vitest'
 
 afterEach(cleanup)
 vi.stubGlobal('scrollTo', vi.fn())
+vi.stubGlobal('scrollBy', vi.fn())
 Element.prototype.scrollIntoView = vi.fn()
