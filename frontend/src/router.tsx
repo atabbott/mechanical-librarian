@@ -8,7 +8,7 @@ import {
   createRouter,
   useRouterState,
 } from '@tanstack/react-router'
-import { Suspense, useEffect, useRef, useState } from 'react'
+import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 import type { createMemoryHistory } from '@tanstack/react-router'
 import { BuildMismatchError } from './api/http'
@@ -514,6 +514,8 @@ const ThemeControl = () => {
 }
 
 const Shell = () => {
+  const shell = useRef<HTMLDivElement>(null)
+  const masthead = useRef<HTMLElement>(null)
   const main = useRef<HTMLElement>(null)
   const previousPath = useRef('')
   const popNavigation = useRef(false)
@@ -531,6 +533,25 @@ const Shell = () => {
     const listener = () => setMismatch(true)
     addEventListener('ml:build-mismatch', listener)
     return () => removeEventListener('ml:build-mismatch', listener)
+  }, [])
+  useLayoutEffect(() => {
+    const shellElement = shell.current
+    const mastheadElement = masthead.current
+    if (!shellElement || !mastheadElement) return
+    const updateMastheadClearance = () => {
+      const clearance = mastheadElement.getBoundingClientRect().height + 8
+      shellElement.style.setProperty('--masthead-clearance', `${clearance.toString()}px`)
+    }
+    updateMastheadClearance()
+    if (!('ResizeObserver' in window)) {
+      return () => shellElement.style.removeProperty('--masthead-clearance')
+    }
+    const observer = new ResizeObserver(updateMastheadClearance)
+    observer.observe(mastheadElement)
+    return () => {
+      observer.disconnect()
+      shellElement.style.removeProperty('--masthead-clearance')
+    }
   }, [])
   useEffect(() => {
     const listener = () => {
@@ -567,11 +588,11 @@ const Shell = () => {
     }
   }
   return (
-    <div className="app-shell">
+    <div ref={shell} className="app-shell">
       <a className="skip-link" href="#main-content">
         Skip to content
       </a>
-      <header className="masthead">
+      <header ref={masthead} className="masthead">
         <Link
           to="/library"
           search={{ lens: 'all' }}

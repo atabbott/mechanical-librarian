@@ -250,6 +250,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     page.emulate_media(reduced_motion="reduce")
                     for width, height, size in (
                         (1440, 900, "desktop"),
+                        (900, 900, "medium"),
                         (390, 844, "compact"),
                     ):
                         page.set_viewport_size({"width": width, "height": height})
@@ -1249,6 +1250,24 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             page.locator(".masthead").bounding_box()["y"]
             + page.locator(".masthead").bounding_box()["height"]
             + 8
+        )
+        capture_visual_proof("library-attention-rail")
+        page.set_viewport_size({"width": 900, "height": 900})
+        expect(page.locator(".attention-rail")).to_be_visible()
+        assert (
+            page.locator(".attention-rail").evaluate(
+                "node => getComputedStyle(node).position"
+            )
+            == "fixed"
+        )
+        page.locator(".masthead").evaluate("node => { node.style.minHeight = '220px' }")
+        page.wait_for_function(
+            """() => {
+              const masthead = document.querySelector('.masthead')
+              const rail = document.querySelector('.attention-rail')
+              return masthead !== null && rail !== null
+                && rail.getBoundingClientRect().y >= masthead.getBoundingClientRect().bottom + 8
+            }"""
         )
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 900
         page.locator(".attention-rail header button").click()
