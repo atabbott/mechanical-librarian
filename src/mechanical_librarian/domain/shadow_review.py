@@ -35,6 +35,7 @@ from mechanical_librarian.domain.proposal_set import (
     BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA,
     ProposalOutcome,
     ProposalSet,
+    canonical_target_fields,
     evaluate_report,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
@@ -448,7 +449,10 @@ class ShadowReviewPacket:
         ):
             raise ShadowReviewValueError("shadow-review packet binding is invalid")
         current = {
-            value.destination.value: value.to_data() for value in report.target.fields
+            destination.value: value.to_data()
+            for destination, value in canonical_target_fields(
+                report.target.fields
+            ).items()
         }
         proposals: list[dict[str, object]] = []
         references: set[str] = set()

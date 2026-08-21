@@ -959,6 +959,32 @@ def _apply_policy_destination(
     )
 
 
+def canonical_target_fields(
+    fields: tuple[TargetField, ...],
+) -> dict[TargetDestination, TargetField]:
+    """Project the one canonical publication current without changing its source.
+
+    ``publishedYear`` remains a retained compatibility field in the report, but
+    the review contract has one publication fact. Consumers use this view for
+    current-value comparison while report fingerprints still bind the exact
+    provider snapshot.
+    """
+    targets = {value.destination: value for value in fields}
+    date_target = targets[TargetDestination.PUBLISHED_DATE]
+    year_target = targets[TargetDestination.PUBLISHED_YEAR]
+    if (
+        date_target.state is not TargetFieldState.VALUE
+        and year_target.state is TargetFieldState.VALUE
+        and type(year_target.value) is str
+    ):
+        targets[TargetDestination.PUBLISHED_DATE] = TargetField(
+            TargetDestination.PUBLISHED_DATE,
+            TargetFieldState.VALUE,
+            year_target.value,
+        )
+    return targets
+
+
 def evaluate_report(
     report: MetadataReport,
     resolved_policy_id: str | None = None,
@@ -968,7 +994,7 @@ def evaluate_report(
     if type(report) is not MetadataReport:
         raise ProposalValueError("proposal report is invalid")
     ignored = _ignored_policy_targets(policy_destinations)
-    targets = {value.destination: value for value in report.target.fields}
+    targets = canonical_target_fields(report.target.fields)
     results: dict[TargetDestination, ProposalResult] = {}
     observed_by_destination: dict[TargetDestination, tuple[_Observed, ...]] = {}
     for destination in TargetDestination:
@@ -1941,16 +1967,6 @@ def _publication_results(
 ) -> dict[TargetDestination, ProposalResult]:
     date_target = targets[TargetDestination.PUBLISHED_DATE]
     year_target = targets[TargetDestination.PUBLISHED_YEAR]
-    if (
-        date_target.state is not TargetFieldState.VALUE
-        and year_target.state is TargetFieldState.VALUE
-        and type(year_target.value) is str
-    ):
-        date_target = TargetField(
-            TargetDestination.PUBLISHED_DATE,
-            TargetFieldState.VALUE,
-            year_target.value,
-        )
     publication_values = _date_observations(report)
     direct_dates = tuple(
         _Observed(

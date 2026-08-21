@@ -25,6 +25,7 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
     TargetDestination,
 )
+from mechanical_librarian.domain.proposal_set import canonical_target_fields
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
@@ -323,10 +324,10 @@ class InspectCurrentReviewCase:
             # chained.
             raise ReviewWebError("unavailable") from error
         target_fields = {
-            value["destination"]: value
-            for value in cast(
-                "list[dict[str, object]]", report.target.to_data()["fields"]
-            )
+            destination.value: value.to_data()
+            for destination, value in canonical_target_fields(
+                report.target.fields
+            ).items()
         }
         current_cover_consideration = (
             None

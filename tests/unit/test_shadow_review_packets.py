@@ -38,7 +38,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     default_target_fields,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.reviewer_decision_summary import (
     MAX_CREATOR_ROLE_FACTS,
@@ -376,6 +376,59 @@ def test_shared_month_candidate_replays_in_shadow_packet() -> None:
             tuple(mismatched["correlations"]),
             mismatched["schema_version"],
         )
+
+
+def test_year_current_projects_as_the_canonical_publication_date_through_replay() -> (
+    None
+):
+    report = _proposal_report(
+        fields=_proposal_fields(
+            published_year=TargetField(
+                TargetDestination.PUBLISHED_YEAR, TargetFieldState.VALUE, "2001"
+            ),
+            published_date=TargetField(
+                TargetDestination.PUBLISHED_DATE, TargetFieldState.MISSING
+            ),
+        ),
+        local_claims=(
+            _publication_local_isbn(),
+            _publication_local_date("2001", DatePrecision.YEAR),
+        ),
+        providers=(
+            _publication_provider(
+                "alpha", "alpha-edition", ("2001",), authority="hardcover"
+            ),
+            _publication_provider(
+                "beta", "beta-edition", ("2001",), authority="open_library"
+            ),
+        ),
+    )
+    proposal = evaluate_report(report)
+    date = next(
+        value
+        for value in proposal.results
+        if value.destination is TargetDestination.PUBLISHED_DATE
+    )
+    assert (ProposalOutcome.KEEP, "preserves_target") == (
+        date.outcome,
+        date.alternatives[0].assessment,
+    )
+    case = ReviewCase.create(proposal, report)
+    packet = ShadowReviewPacket.create(case, proposal, report)
+    publication = [
+        value for value in packet.proposals if value["destination"] == "publishedDate"
+    ]
+    assert [{"destination": "publishedDate", "state": "value", "value": "2001"}] == [
+        value["current"] for value in publication
+    ]
+    assert not [
+        value for value in packet.proposals if value["destination"] == "publishedYear"
+    ]
+    assert packet == ShadowReviewPacket.from_json(packet.to_json(), report)
+    decisions = decide_shadow_packet(packet).decisions
+    assert [("publishedDate", "recommend_keep_current")] == [
+        (value.destination, value.recommendation) for value in decisions
+    ]
     forged = json.loads(packet.to_json())
     forged_published = next(
         (
