@@ -31,6 +31,33 @@ describe('Library review ownership', () => {
     )
   })
 
+  it.each(['evidence', 'history'] as const)(
+    'guards a superseded %s diagnostic and returns to Library authority',
+    async (subview) => {
+      const evidence = vi.fn()
+      const history = vi.fn()
+      const user = userEvent.setup()
+      const { router } = renderRoute(`/review/case-1?field=title&subview=${subview}`, {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => ({ ...detail, current: false })),
+        getEvidence: evidence,
+        getHistory: history,
+      })
+
+      expect(
+        await screen.findByRole('heading', {
+          name: 'This diagnostic case is no longer current.',
+        }),
+      ).toBeVisible()
+      expect(screen.queryByRole('heading', { name: 'Evidence and source ledger' })).toBeNull()
+      expect(screen.queryByRole('heading', { name: 'Current-case history' })).toBeNull()
+      expect(evidence).not.toHaveBeenCalled()
+      expect(history).not.toHaveBeenCalled()
+      await user.click(screen.getByRole('link', { name: 'Back to work' }))
+      await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all' }))
+    },
+  )
+
   it('opens an Attention field directly in its selected Library preview', async () => {
     const attention: AttentionView = {
       total: 1,
@@ -58,6 +85,53 @@ describe('Library review ownership', () => {
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
     expect(router.state.location.pathname).toBe('/library')
     expect(router.state.location.search).toEqual({ lens: 'all', preview: 'case-1', field: 'title' })
+  })
+
+  it('keeps a later Attention page identity through its exact Library field', async () => {
+    const later: AttentionView = {
+      total: 2,
+      items: [
+        {
+          id: 'case-later',
+          destination: 'authors',
+          title: 'Later attention work',
+          authors: ['Later owner'],
+          library: 'Books',
+          mediaKind: 'ebook',
+          classificationReason: 'This later field needs your review.',
+          notices: [],
+          provenance: [],
+          workAttentionCount: 1,
+        },
+      ],
+    }
+    const field = detail.fields[0]
+    if (!field) throw new Error('detail field fixture required')
+    const user = userEvent.setup()
+    const http = {
+      ...createHttp(),
+      getAttention: vi.fn(async () => later),
+      getCaseDetail: vi.fn(async (id: string) => ({
+        ...detail,
+        id,
+        title: 'Later attention work',
+        fields: [{ ...field, destination: 'authors' }],
+      })),
+    }
+    const { router } = renderRoute('/attention?cursor=later-page', http)
+
+    await user.click(await screen.findByRole('link', { name: /Open exact field/u }))
+    expect(await screen.findByRole('heading', { name: 'Later attention work' })).toBeVisible()
+    expect(router.state.location.search).toEqual({
+      lens: 'all',
+      attentionCursor: 'later-page',
+      preview: 'case-later',
+      field: 'authors',
+    })
+    expect(http.getAttention).toHaveBeenLastCalledWith(
+      { cursor: 'later-page' },
+      expect.any(AbortSignal),
+    )
   })
 
   it('records the exact selected scalar choice and refreshes the Library read model', async () => {
@@ -263,6 +337,98 @@ describe('Library review ownership', () => {
     ).toBeVisible()
     expect(returnToAutomatic).toHaveBeenCalledOnce()
     expect(screen.getByRole('button', { name: 'Keep manual handling' })).toBeEnabled()
+  })
+
+  it('keeps a fresh-check success with the field that requested it after navigation', async () => {
+    const user = userEvent.setup()
+    const title = detail.fields[0]
+    if (!title) throw new Error('title fixture required')
+    const authors = {
+      ...title,
+      destination: 'authors',
+      targetFingerprint: 'fingerprint-authors',
+      manualHold: true,
+    }
+    let resolveRequest: (() => void) | undefined
+    const returnToAutomatic = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRequest = resolve
+        }),
+    )
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [{ ...title, manualHold: true }, authors],
+      })),
+      returnToAutomatic,
+    })
+
+    await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
+    await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
+    await user.click(screen.getByRole('button', { name: /^Authors/u }))
+    await screen.findByRole('heading', { name: 'Which authors should this work use?' })
+    await user.click(screen.getByRole('button', { name: 'Resume automatic handling' }))
+    expect(
+      screen.queryByText('Fresh checks requested. Manual handling remains until they complete.'),
+    ).toBeNull()
+    resolveRequest?.()
+    await waitFor(() => expect(returnToAutomatic).toHaveBeenCalledOnce())
+    expect(
+      screen.queryByText('Fresh checks requested. Manual handling remains until they complete.'),
+    ).toBeNull()
+    await user.click(screen.getByRole('button', { name: /^Title/u }))
+    await screen.findByRole('heading', { name: 'Which title should this work use?' })
+    expect(screen.getByRole('button', { name: 'Fresh checks requested' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    )
+  })
+
+  it('keeps a fresh-check failure with the field that requested it after navigation', async () => {
+    const user = userEvent.setup()
+    const title = detail.fields[0]
+    if (!title) throw new Error('title fixture required')
+    const authors = {
+      ...title,
+      destination: 'authors',
+      targetFingerprint: 'fingerprint-authors',
+      manualHold: true,
+    }
+    let rejectRequest: ((error: Error) => void) | undefined
+    const returnToAutomatic = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectRequest = reject
+        }),
+    )
+    renderRoute('/library?lens=all&preview=case-1&field=title', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [{ ...title, manualHold: true }, authors],
+      })),
+      returnToAutomatic,
+    })
+
+    await user.click(await screen.findByRole('button', { name: 'Resume automatic handling' }))
+    await user.click(screen.getByRole('button', { name: 'Resume after fresh checks' }))
+    await user.click(screen.getByRole('button', { name: /^Authors/u }))
+    await screen.findByRole('heading', { name: 'Which authors should this work use?' })
+    await user.click(screen.getByRole('button', { name: 'Resume automatic handling' }))
+    rejectRequest?.(new Error('offline'))
+    await waitFor(() => expect(returnToAutomatic).toHaveBeenCalledOnce())
+    expect(
+      screen.queryByText('Fresh checks could not be requested. Manual handling is unchanged.'),
+    ).toBeNull()
+    await user.click(screen.getByRole('button', { name: /^Title/u }))
+    await screen.findByRole('heading', { name: 'Which title should this work use?' })
+    await user.click(screen.getByRole('button', { name: 'Resume automatic handling' }))
+    expect(
+      await screen.findByText('Fresh checks could not be requested. Manual handling is unchanged.'),
+    ).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Keep manual handling' })).toHaveFocus()
   })
 
   it('preserves a diagnostic direct entry through Back and Forward', async () => {

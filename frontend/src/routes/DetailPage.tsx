@@ -67,21 +67,35 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
     getNextPageParam: (page: EvidenceView) => page.next_cursor ?? undefined,
     staleTime: 30_000,
     retry: false,
-    enabled: search.subview === 'evidence',
+    enabled: data.current && search.subview === 'evidence',
   })
   const history = useQuery({
     queryKey: ['review-case', reviewCaseId, 'history'],
     queryFn: ({ signal }) => http.getHistory(reviewCaseId, signal),
     staleTime: 30_000,
     retry: false,
-    enabled: search.subview === 'history',
+    enabled: data.current && search.subview === 'history',
   })
   const backSearch = {
     lens: 'all' as const,
-    preview: reviewCaseId,
-    ...(search.field ? { field: search.field } : {}),
+    ...(data.current
+      ? { preview: reviewCaseId, ...(search.field ? { field: search.field } : {}) }
+      : {}),
   }
   const pages = evidence.data?.pages.flatMap((page) => page.items) ?? []
+  if (!data.current)
+    return (
+      <header className="page-heading" data-route-focus tabIndex={-1}>
+        <div>
+          <p className="eyebrow">Case superseded</p>
+          <h1>This diagnostic case is no longer current.</h1>
+          <p>Return to Library to open the current work and its available diagnostics.</p>
+        </div>
+        <Link className="diagnostic-back-to-work" to="/library" search={backSearch}>
+          Back to work
+        </Link>
+      </header>
+    )
   return (
     <>
       <header className="page-heading" data-route-focus tabIndex={-1}>

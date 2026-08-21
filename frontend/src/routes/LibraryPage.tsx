@@ -800,8 +800,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   } | null>(null)
   const [completionInspection, setCompletionInspection] = useState<string | null>(null)
   const [automaticPanel, setAutomaticPanel] = useState<string | null>(null)
-  const [automaticResult, setAutomaticResult] = useState<'success' | 'error' | null>(null)
-  const [automaticCompleted, setAutomaticCompleted] = useState<string | null>(null)
+  const [automaticResults, setAutomaticResults] = useState<
+    Readonly<Record<string, 'success' | 'error'>>
+  >({})
   const [openedWork, setOpenedWork] = useState<LibraryWorkView | null>(null)
   const [expandedChoiceState, setExpandedChoiceState] = useState<{
     work: string
@@ -874,8 +875,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     enabled: Boolean(search.preview),
   })
   const attention = useInfiniteQuery({
-    queryKey: ['attention', 'workspace'],
-    initialPageParam: undefined as string | undefined,
+    queryKey: ['attention', 'workspace', search.attentionCursor ?? null],
+    initialPageParam: search.attentionCursor,
     queryFn: ({ pageParam, signal }) =>
       http.getAttention(pageParam ? { cursor: pageParam } : {}, signal),
     getNextPageParam: (page) => page.nextCursor ?? undefined,
@@ -960,22 +961,25 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     },
   })
   const selectedAutomaticKey = selected
-    ? `${selected.destination}:${selected.targetFingerprint}`
+    ? `${selectedReviewCaseId}:${selected.destination}:${selected.targetFingerprint}`
     : null
   const automaticPanelVisible = automaticPanel === selectedAutomaticKey && selected?.manualHold
-  const automaticCompletedForSelected = automaticCompleted === selectedAutomaticKey
+  const automaticResult = selectedAutomaticKey
+    ? (automaticResults[selectedAutomaticKey] ?? null)
+    : null
+  const automaticCompletedForSelected = automaticResult === 'success'
   const returnAutomatic = useMutation({
     mutationFn: ({ destination }: { destination: string; key: string }) =>
       http.returnToAutomatic(selectedReviewCaseId, destination),
     retry: false,
     onSuccess: (_value, request) => {
-      setAutomaticResult('success')
-      setAutomaticCompleted(request.key)
+      setAutomaticResults((current) => ({ ...current, [request.key]: 'success' }))
     },
-    onError: () => setAutomaticResult('error'),
+    onError: (_error, request) =>
+      setAutomaticResults((current) => ({ ...current, [request.key]: 'error' })),
   })
 
-  const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.field ?? ''}:${search.attention ?? ''}`
+  const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.field ?? ''}:${search.attention ?? ''}`
   useRouteReadyFocus(routeIdentity)
   useEffect(() => {
     currentSearch.current = search
@@ -1168,9 +1172,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     })
   }
   const closeAutomaticPanel = () => {
+    const closingKey = automaticPanel
     restoreAutomaticTrigger.current = true
     setAutomaticPanel(null)
-    if (automaticResult !== 'success') setAutomaticResult(null)
+    if (closingKey && automaticResults[closingKey] === 'error')
+      setAutomaticResults((current) => {
+        return Object.fromEntries(Object.entries(current).filter(([key]) => key !== closingKey))
+      })
   }
   const retryNextWork = () => {
     if (attention.isFetchNextPageError) void attention.fetchNextPage()
@@ -1785,12 +1793,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                             <button
                               type="button"
                               disabled={returnAutomatic.isPending || automaticCompletedForSelected}
-                              onClick={() =>
+                              onClick={() => {
+                                if (!selectedAutomaticKey) return
                                 returnAutomatic.mutate({
                                   destination: selected.destination,
-                                  key: `${selected.destination}:${selected.targetFingerprint}`,
+                                  key: selectedAutomaticKey,
                                 })
-                              }
+                              }}
                             >
                               {returnAutomatic.isPending
                                 ? 'Requesting fresh checks…'
@@ -1806,10 +1815,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           onClick={
                             automaticCompletedForSelected
                               ? undefined
-                              : () => {
-                                  setAutomaticResult(null)
-                                  setAutomaticPanel(selectedAutomaticKey)
-                                }
+                              : () => setAutomaticPanel(selectedAutomaticKey)
                           }
                         >
                           {automaticCompletedForSelected

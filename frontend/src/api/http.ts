@@ -14,6 +14,7 @@ export interface LibrarySearch {
   lens: LibraryLens
   q?: string
   cursor?: string
+  attentionCursor?: string
   preview?: string
   work?: string
   field?: string
