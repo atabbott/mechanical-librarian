@@ -8,7 +8,8 @@ const ownerFieldLabels: Record<string, string> = {
 // surface. Three of the four route formatters this replaces already used it;
 // title case made a server enum look like a proper noun, and leaving the first
 // letter alone made a heading look unfinished.
-export const fieldLabel = (value: string) => ownerFieldLabels[value] ??
+export const fieldLabel = (value: string) =>
+  ownerFieldLabels[value] ??
   `${labelWords(value).slice(0, 1).toUpperCase()}${labelWords(value).slice(1)}`
 // The same words without the capital, for a label set inside a sentence
 // (`Choose a media kind value`) rather than standing on its own.
