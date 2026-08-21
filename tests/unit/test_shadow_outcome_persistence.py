@@ -1196,6 +1196,76 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
                     decision, corrupt_case, report, proposal_set, persisted
                 )
             preservation[0]["assessment"] = "preserves_target"
+            preservation[0]["value"] = {"kind": "text", "value": "Different Title"}
+            with pytest.raises(FieldEffectError, match="authority_binding"):
+                _automatic_decision_value(
+                    decision, corrupt_case, report, proposal_set, persisted
+                )
+            preservation[0]["value"] = {"kind": "text", "value": "Secret History"}
+            preservation[0]["evidence_references"] = []
+            with pytest.raises(FieldEffectError, match="authority_binding"):
+                _automatic_decision_value(
+                    decision, corrupt_case, report, proposal_set, persisted
+                )
+            preservation[0]["evidence_references"] = list(
+                next(
+                    value
+                    for value in proposal_set.results
+                    if value.destination.value == destination
+                )
+                .alternatives[0]
+                .evidence_references
+            )
+
+            def source_with(**changes: object) -> ShadowOutcomeSet:
+                corrupted = persisted.to_data()
+                field = next(
+                    value
+                    for value in corrupted["outcomes"]
+                    if value["outcome_id"] == decision.source_outcome_id
+                )
+                field.update(changes)
+                field["qualification_candidate_id"] = (
+                    "qualification_candidate_"
+                    + _digest(
+                        {
+                            "action_id": field["action_id"],
+                            "candidate_id": field["candidate_id"],
+                            "catalogue_sha256": corrupted["catalogue_sha256"],
+                            "citation_ids": field["citation_ids"],
+                            "combination_ids": field["combination_ids"],
+                            "rule_id": field["rule_id"],
+                        }
+                    )
+                )
+                identity = dict(field)
+                del identity["outcome_id"]
+                field["outcome_id"] = "shadow_outcome_" + _digest(identity)
+                outcome_identity = dict(corrupted)
+                del outcome_identity["outcome_set_id"]
+                corrupted["outcome_set_id"] = "shadow_outcome_set_" + _digest(
+                    outcome_identity
+                )
+                return ShadowOutcomeSet.from_json(
+                    json.dumps(corrupted, separators=(",", ":"), sort_keys=True)
+                )
+
+            with pytest.raises(FieldEffectError, match="authority_binding"):
+                _automatic_decision_value(
+                    decision,
+                    case,
+                    report,
+                    proposal_set,
+                    source_with(citation_ids=[]),
+                )
+            with pytest.raises(FieldEffectError, match="authority_binding"):
+                _automatic_decision_value(
+                    decision,
+                    case,
+                    report,
+                    proposal_set,
+                    source_with(combination_ids=[]),
+                )
         assert repository.persist_shadow_outcome(case_id, 5) == persisted.to_json()
         assert repository.count_current_attention_fields(None) == 0
 

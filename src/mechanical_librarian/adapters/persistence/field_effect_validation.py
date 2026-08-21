@@ -37,7 +37,12 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
 )
-from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.proposal_set import (
+    BibliographicSelectionKind,
+    ProposalAlternative,
+    ProposalAssessment,
+    ProposalSet,
+)
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
@@ -123,15 +128,50 @@ def _automatic_decision_value(
             for value in alternatives or ()
             if type(value) is dict and value.get("assessment") == "preserves_target"
         )
+        typed_preservation: tuple[ProposalAlternative, ...] = ()
+        preservation_combinations: tuple[str, ...] = ()
+        combination_citations: set[str] = set()
         identifier_preservation = False
-        if decision.policy_category == "isbn_form":
-            try:
-                result = next(
-                    item
-                    for item in proposal_set.results
-                    if item.destination.value == decision.destination
+        try:
+            proposal_result = next(
+                item
+                for item in proposal_set.results
+                if item.destination.value == decision.destination
+            )
+        except StopIteration:
+            proposal_result = None
+        if proposal_result is not None:
+            typed_preservation = tuple(
+                value
+                for value in proposal_result.alternatives
+                if value.assessment is ProposalAssessment.PRESERVES_TARGET
+            )
+            preservation_combinations = tuple(
+                combination.combination_id
+                for combination in proposal_set.bibliographic_combinations
+                if any(
+                    selection.destination.value == decision.destination
+                    and selection.kind is BibliographicSelectionKind.PRESERVE_TARGET
+                    for selection in combination.selections
                 )
-                candidate = next(iter(result.alternatives))
+            )
+            alternative_citations = {
+                alternative.alternative_id: alternative.evidence_references
+                for result in proposal_set.results
+                for alternative in result.alternatives
+            }
+            combination_citations = {
+                citation
+                for combination in proposal_set.bibliographic_combinations
+                if combination.combination_id in preservation_combinations
+                for selection in combination.selections
+                for citation in alternative_citations.get(
+                    selection.alternative_id or "", ()
+                )
+            }
+        if decision.policy_category == "isbn_form" and proposal_result is not None:
+            try:
+                candidate = next(iter(proposal_result.alternatives))
                 exact_value = select_isbn_representation(
                     report, candidate, decision.policy_option
                 )
@@ -140,9 +180,35 @@ def _automatic_decision_value(
                 )
             except (StopIteration, RichMetadataPreviewError):
                 identifier_preservation = False
+        typed_preservation_matches = False
+        if len(preservation) == len(typed_preservation) == 1:
+            try:
+                preserved_value = project_decision_value(
+                    decision.destination, typed_preservation[0].value.to_data()
+                )
+            except FieldEffectError:
+                pass
+            else:
+                typed_preservation_matches = (
+                    preservation[0] == typed_preservation[0].to_data()
+                    and values_match(
+                        TargetDestination(decision.destination),
+                        pre_value,
+                        preserved_value,
+                    )
+                    and source is not None
+                    and source.citation_ids
+                    == tuple(
+                        sorted(
+                            set(typed_preservation[0].evidence_references)
+                            | combination_citations
+                        )
+                    )
+                    and source.combination_ids == preservation_combinations
+                )
         if (
             decision.candidate_id is not None
-            or (len(preservation) != 1 and not identifier_preservation)
+            or (not typed_preservation_matches and not identifier_preservation)
             or source is None
             or any(
                 (
@@ -154,10 +220,11 @@ def _automatic_decision_value(
                     source.rule_id != decision.rule_id,
                     source.policy_category != decision.policy_category,
                     source.policy_option != decision.policy_option,
-                    not (
-                        source.citation_ids
-                        or source.combination_ids
-                        or decision.policy_category == "isbn_form"
+                    not typed_preservation_matches
+                    and not (
+                        decision.policy_category == "isbn_form"
+                        and not source.citation_ids
+                        and not source.combination_ids
                     ),
                 )
             )
