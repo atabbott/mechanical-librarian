@@ -33,6 +33,7 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     FieldState,
+    IdentifierEvidence,
     IdentifierRelation,
     LocalClaim,
     MetadataReport,
@@ -244,7 +245,14 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
         }
     ),
     ProposalOutcome.INELIGIBLE: frozenset(
-        {("no_supported_evidence",), ("policy_ignored",), ("target_state_unusable",)}
+        {
+            ("identifier_manifestation_incompatible",),
+            ("identifier_manifestation_unestablished",),
+            ("identifier_validity_invalid",),
+            ("no_supported_evidence",),
+            ("policy_ignored",),
+            ("target_state_unusable",),
+        }
     ),
 }
 
@@ -971,17 +979,19 @@ def evaluate_report(
         if (
             destination is TargetDestination.ISBN
             and not observations
-            and any(
-                evidence.relation is IdentifierRelation.UNRESOLVED
-                for evidence in report.identifier_evidence
-            )
+            and (reason := _isbn_rejection_reason(report.identifier_evidence))
+            is not None
         ):
             result = ProposalResult(
                 destination,
-                ProposalOutcome.DEFER,
+                (
+                    ProposalOutcome.DEFER
+                    if reason == "identifier_applicability_unresolved"
+                    else ProposalOutcome.INELIGIBLE
+                ),
                 (),
                 None,
-                ("identifier_applicability_unresolved",),
+                (reason,),
                 _dependencies(destination),
             )
         results[destination] = _apply_policy_destination(result, ignored)
@@ -2551,6 +2561,22 @@ def _eligible_identifier_reference(
         and evidence.relation is IdentifierRelation.ACCEPTED
         for evidence in report.identifier_evidence
     )
+
+
+def _isbn_rejection_reason(
+    evidence: tuple[IdentifierEvidence, ...],
+) -> str | None:
+    """Keep a retained ISBN eligibility rejection distinct from missing evidence."""
+    relations = {item.relation for item in evidence}
+    if IdentifierRelation.UNRESOLVED in relations:
+        return "identifier_applicability_unresolved"
+    if IdentifierRelation.UNRELATED in relations:
+        return "identifier_manifestation_incompatible"
+    if IdentifierRelation.ASSOCIATED in relations:
+        return "identifier_manifestation_unestablished"
+    if relations == {IdentifierRelation.INVALID}:
+        return "identifier_validity_invalid"
+    return None
 
 
 def _accepted_provider_manifestation_anchor(

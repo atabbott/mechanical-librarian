@@ -20,6 +20,9 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     FieldState,
+    IdentifierEvidence,
+    IdentifierEvidenceBasis,
+    IdentifierRelation,
     LocalClaim,
     ProviderCandidate,
     ProviderClaim,
@@ -37,6 +40,7 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalAssessment,
     ProposalOutcome,
     ProposalScope,
+    _isbn_rejection_reason,
     evaluate_report,
 )
 from tests.support.proposal_evidence import (
@@ -823,6 +827,84 @@ def test_identifier_and_explicit_rules_do_not_manufacture_evidence() -> None:
         ProposalOutcome.DEFER
         == _result(proposal_set, TargetDestination.EXPLICIT).outcome
     )
+
+
+def test_invalid_isbn_lineage_is_specific_when_empty_target_has_no_alternative() -> (
+    None
+):
+    invalid = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="not-an-isbn",
+        canonical=None,
+        excerpt="not-an-isbn",
+        applicability="unknown",
+        checksum="invalid",
+        applicability_basis="unlabelled",
+        scope=ClaimScope.EDITION,
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    isbn=TargetField(
+                        TargetDestination.ISBN,
+                        TargetFieldState.MISSING,
+                    ),
+                ),
+                local_claims=(invalid,),
+            )
+        ),
+        TargetDestination.ISBN,
+    )
+
+    assert ProposalOutcome.INELIGIBLE == result.outcome
+    assert () == result.alternatives
+    assert ("identifier_validity_invalid",) == result.reasons
+
+
+@pytest.mark.parametrize(
+    ("relation", "basis", "expected"),
+    (
+        (
+            IdentifierRelation.INVALID,
+            IdentifierEvidenceBasis.INVALID_IDENTIFIER,
+            "identifier_validity_invalid",
+        ),
+        (
+            IdentifierRelation.UNRESOLVED,
+            IdentifierEvidenceBasis.INSUFFICIENT_CONTEXT,
+            "identifier_applicability_unresolved",
+        ),
+        (
+            IdentifierRelation.ASSOCIATED,
+            IdentifierEvidenceBasis.PROVIDER_WORK_IDENTITY,
+            "identifier_manifestation_unestablished",
+        ),
+        (
+            IdentifierRelation.UNRELATED,
+            IdentifierEvidenceBasis.PROVIDER_OTHER_WORK,
+            "identifier_manifestation_incompatible",
+        ),
+    ),
+)
+def test_isbn_rejection_reason_preserves_retained_lineage(
+    relation: IdentifierRelation,
+    basis: IdentifierEvidenceBasis,
+    expected: str,
+) -> None:
+    if relation in {IdentifierRelation.ASSOCIATED, IdentifierRelation.UNRELATED}:
+        evidence = IdentifierEvidence(
+            "provider_" + "a" * 64,
+            relation,
+            basis,
+            provider="catalogue",
+            candidate_identity="edition-1",
+            work_identity="work-1",
+        )
+    else:
+        evidence = IdentifierEvidence("local_" + "a" * 64, relation, basis)
+
+    assert expected == _isbn_rejection_reason((evidence,))
 
 
 def test_explicit_local_ebook_isbn_remains_eligible() -> None:
