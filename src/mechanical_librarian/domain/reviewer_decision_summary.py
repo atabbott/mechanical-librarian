@@ -409,6 +409,10 @@ def _paired_publication_consistency(
     alternative: dict[str, object],
     results: dict[str, dict[str, object]],
 ) -> str:
+    if destination == TargetDestination.PUBLISHED_DATE.value:
+        # Published year is a derived display context, not a second proposal.
+        # The canonical date candidate is therefore self-consistent.
+        return "consistent"
     paired_destination = (
         TargetDestination.PUBLISHED_YEAR.value
         if destination == TargetDestination.PUBLISHED_DATE.value
@@ -465,10 +469,7 @@ def candidate_decision_summary(
         alternative,
     )
     publication = None
-    if destination in {
-        TargetDestination.PUBLISHED_DATE.value,
-        TargetDestination.PUBLISHED_YEAR.value,
-    }:
+    if destination == TargetDestination.PUBLISHED_DATE.value:
         publication = {
             "destination": destination,
             "event": alternative["date_event"],

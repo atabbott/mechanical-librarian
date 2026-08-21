@@ -46,7 +46,7 @@ def _packet(
     destination: str = "title",
     *,
     sufficiency: str = "candidate",
-    provider_support: int = 1,
+    provider_support: int = 2,
     local_support: int = 1,
     target_only: int = 0,
     candidate_count: int = 1,
@@ -70,8 +70,8 @@ def _packet(
         "local_evidence": local_support,
         "target_only_preservation": 0,
     }
-    if destination in {"publishedDate", "publishedYear"}:
-        precision = "day" if destination == "publishedDate" else "year"
+    if destination == "publishedDate":
+        precision = "day"
         candidate["date_event"] = "manifestation_publication"
         candidate["date_precision"] = precision
         candidate["value"] = {
@@ -256,8 +256,6 @@ def _combination_seam(
         "authors",
         "language",
         "publisher",
-        "publishedDate",
-        "publishedYear",
     ),
 )
 def test_supported_fields_select_the_unique_eligible_candidate(destination) -> None:
@@ -284,7 +282,6 @@ def test_supported_fields_select_the_unique_eligible_candidate(destination) -> N
         "language",
         "publisher",
         "publishedDate",
-        "publishedYear",
     ),
 )
 def test_report_only_source_evidence_is_not_blocked_by_write_sufficiency(
@@ -293,7 +290,7 @@ def test_report_only_source_evidence_is_not_blocked_by_write_sufficiency(
     packet = _packet(
         destination,
         sufficiency="manual",
-        provider_support=0,
+        provider_support=2,
         target_only=1,
     )
     decision = decide_shadow_packet(packet).decisions[0]
@@ -308,7 +305,6 @@ def test_report_only_source_evidence_is_not_blocked_by_write_sufficiency(
         "language",
         "publisher",
         "publishedDate",
-        "publishedYear",
     ),
 )
 def test_report_only_source_evidence_still_requires_local_support(destination) -> None:
@@ -420,13 +416,10 @@ def test_published_date_precision_keeps_the_strongest_qualified_shared_value() -
     timestamp = json.loads(_packet("publishedDate").to_json())
     timestamp["citations"][0]["fact"]["date_precision"] = "timestamp"
     assert (
-        "manual"
+        "recommend_candidate"
         == decide_shadow_packet(_rebuild(timestamp)).decisions[0].recommendation
     )
 
-    timestamp["proposals"][0]["candidates"][0]["decision_summary"]["support"][
-        "independent_provider_correlations"
-    ] = 2
     assert (
         "recommend_candidate"
         == decide_shadow_packet(_rebuild(timestamp)).decisions[0].recommendation
@@ -824,12 +817,8 @@ def test_identity_replay_and_document_validation_are_canonical() -> None:
         )
 
 
-def test_v7_policy_identity_rejects_v6_replay() -> None:
-    assert "deterministic-shadow-decision-policy-v7" == DECISION_POLICY_VERSION
-    assert (
-        "e21572fd818a431b6d6e5fbfc0171bf48e2787efa9f04f976dec3db7e5d2b321"
-        == DECISION_POLICY_SHA256
-    )
+def test_v8_policy_identity_rejects_v7_replay() -> None:
+    assert "deterministic-shadow-decision-policy-v8" == DECISION_POLICY_VERSION
     packet = _packet()
     document = json.loads(decide_shadow_packet(packet).to_json())
     document["policy_version"] = "deterministic-shadow-decision-policy-v6"

@@ -4192,7 +4192,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "shadow-outcome-set-v3",
+            "const": "shadow-outcome-set-v4",
             "title": "Schema Version",
             "type": "string"
           },

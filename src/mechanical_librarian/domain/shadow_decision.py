@@ -18,17 +18,17 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v7"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v8"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
-    {"title", "authors", "language", "publisher", "publishedDate", "publishedYear"}
+    {"title", "authors", "language", "publisher", "publishedDate"}
 )
 _REPORT_ONLY_SOURCE_DESTINATIONS = frozenset(
-    {"authors", "language", "publisher", "publishedDate", "publishedYear"}
+    {"authors", "language", "publisher", "publishedDate"}
 )
 _WORK_DESTINATIONS = frozenset({"title", "authors"})
-_PUBLICATION_DESTINATIONS = frozenset({"publishedDate", "publishedYear"})
+_PUBLICATION_DESTINATIONS = frozenset({"publishedDate"})
 _COMBINATION_DESTINATIONS = ("title", "subtitle", "series")
 _COMBINATION_SELECTED_DESTINATION = "title"
 _COMBINATION_WITNESS_DESTINATIONS = ("subtitle", "series")
@@ -65,7 +65,7 @@ _RULE_TABLE = {
         "unanimous_full_policy_action_required": True,
     },
     "edition_fields": {
-        "destinations": ["language", "publisher", "publishedDate", "publishedYear"],
+        "destinations": ["language", "publisher", "publishedDate"],
         "evidence_scope": "edition",
         "selected_manifestation_binding": "established",
     },
@@ -75,14 +75,11 @@ _RULE_TABLE = {
         "unique_preservation_required": True,
     },
     "publication": {
-        "destinations": ["publishedDate", "publishedYear"],
+        "destinations": ["publishedDate"],
         "event": "manifestation_publication",
-        "paired_destination_consistency": "consistent",
         "published_date_precision": {
-            "candidate": "month_or_day",
-            "month_independent_provider_correlation": "required",
-            "local_day": "source_evidence_sufficient",
-            "local_timestamp_normalized_to_day": "two_or_more_provider_correlations",
+            "candidate": "year_month_or_day",
+            "independent_correlation": "required",
         },
     },
     "supported_destinations": sorted(_SUPPORTED_DESTINATIONS),
@@ -314,7 +311,6 @@ class ShadowDecisionSet:
             or self.compiler_policy_version != ACTION_POLICY_VERSION
             or re.fullmatch(r"[0-9a-f]{64}", self.catalogue_sha256) is None
             or type(self.decisions) is not tuple
-            or not self.decisions
             or any(type(value) is not ShadowDecision for value in self.decisions)
             or len({value.proposal_id for value in self.decisions})
             != len(self.decisions)
@@ -475,7 +471,7 @@ def _candidate_is_eligible(
             != 0
         )
         or support["target_only_preservation"] != 0
-        or support["local_evidence"] != 1
+        or (destination != "publishedDate" and support["local_evidence"] != 1)
         or (
             not source_evidence_report_only
             and support["independent_provider_correlations"] < 1
@@ -497,29 +493,12 @@ def _candidate_is_eligible(
             or publication["paired_destination_consistency"] != "consistent"
         ):
             return False
-        if destination == "publishedDate":
-            local_precisions = [
-                citation["fact"].get("date_precision")
-                for citation in packet.citations
-                if citation["citation_id"] in action.citation_ids
-                and type(citation["fact"]) is dict
-                and citation["fact"].get("date_event") == "manifestation_publication"
-                and "provider" not in citation["fact"]
-            ]
-            if (
-                candidate["date_precision"] not in {"month", "day"}
-                or len(local_precisions) != 1
-                or local_precisions[0] not in {"day", "timestamp"}
-                or (
-                    candidate["date_precision"] == "month"
-                    and support["independent_provider_correlations"] < 1
-                )
-                or (
-                    local_precisions[0] == "timestamp"
-                    and support["independent_provider_correlations"] < 2
-                )
-            ):
-                return False
+        if (
+            candidate["date_precision"] not in {"year", "month", "day"}
+            or support["local_evidence"] != 1
+            or support["independent_provider_correlations"] < 2
+        ):
+            return False
     return True
 
 

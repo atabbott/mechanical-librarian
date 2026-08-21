@@ -28,7 +28,6 @@ _DESTINATION_POLICIES = {
     TargetDestination.NARRATORS.value: "scoped",
     TargetDestination.SERIES.value: "bibliographic",
     TargetDestination.GENRES.value: "scoped",
-    TargetDestination.PUBLISHED_YEAR.value: "publication",
     TargetDestination.PUBLISHED_DATE.value: "publication",
     TargetDestination.PUBLISHER.value: "scoped",
     TargetDestination.DESCRIPTION.value: "scoped",
@@ -162,7 +161,6 @@ class PolicyActionCatalogue:
     def __post_init__(self) -> None:
         if (
             type(self.actions) is not tuple
-            or not self.actions
             or any(type(value) is not PolicyAction for value in self.actions)
             or type(self.exclusions) is not tuple
             or any(
@@ -374,15 +372,13 @@ def _publication_reasons(
     summary: dict[str, object],
 ) -> tuple[set[str], bool]:
     destination = proposal["destination"]
-    if destination not in {"publishedDate", "publishedYear"}:
+    if destination != "publishedDate":
         return set(), False
     reasons: set[str] = set()
     publication = summary.get("publication")
     if type(publication) is not dict:
         return {"publication_obligation_missing"}, False
-    expected_precision = (
-        "year" if destination == "publishedYear" else candidate.get("date_precision")
-    )
+    expected_precision = candidate.get("date_precision")
     if publication.get("destination") != destination:
         reasons.add("publication_destination_incompatible")
     if (

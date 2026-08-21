@@ -89,7 +89,7 @@ def test_exact_sixteen_results_are_deterministic_and_round_trip() -> None:
         proposal_set.proposal_set_id
         == ProposalSet.from_json(proposal_set.to_json()).proposal_set_id
     )
-    assert "fixed-conservative-v10" == POLICY_VERSION
+    assert "fixed-conservative-v11" == POLICY_VERSION
     assert POLICY_VERSION == proposal_set.policy_version
     assert (
         re.search(r"^resolved_policy_[0-9a-f]{64}$", proposal_set.resolved_policy_id)
@@ -144,12 +144,8 @@ def test_linked_destinations_retain_fixed_dependencies() -> None:
     ]
     assert (TargetDestination.TITLE,) == dependencies[TargetDestination.SUBTITLE]
     assert (TargetDestination.TITLE,) == dependencies[TargetDestination.SERIES]
-    assert (TargetDestination.PUBLISHED_YEAR,) == dependencies[
-        TargetDestination.PUBLISHED_DATE
-    ]
-    assert (TargetDestination.PUBLISHED_DATE,) == dependencies[
-        TargetDestination.PUBLISHED_YEAR
-    ]
+    assert () == dependencies[TargetDestination.PUBLISHED_DATE]
+    assert () == dependencies[TargetDestination.PUBLISHED_YEAR]
     assert proposal_set == ProposalSet.from_json(proposal_set.to_json())
     assert proposal_set == evaluate_report(_report())
     assert "excerpt" not in proposal_set.to_json()
@@ -423,10 +419,7 @@ def test_destination_value_scope_contract_is_exhaustive(
         TargetDestination.NARRATORS: {(ProposalValueKind.LIST, ProposalScope.EDITION)},
         TargetDestination.SERIES: {(ProposalValueKind.SERIES, ProposalScope.WORK)},
         TargetDestination.GENRES: {(ProposalValueKind.LIST, ProposalScope.WORK)},
-        TargetDestination.PUBLISHED_YEAR: {
-            (ProposalValueKind.TEXT, ProposalScope.WORK),
-            (ProposalValueKind.TEXT, ProposalScope.EDITION),
-        },
+        TargetDestination.PUBLISHED_YEAR: set(),
         TargetDestination.PUBLISHED_DATE: {
             (ProposalValueKind.TEXT, ProposalScope.WORK),
             (ProposalValueKind.TEXT, ProposalScope.EDITION),
@@ -569,12 +562,6 @@ def test_canonical_parse_rejects_forged_destination_payload_and_reasons() -> Non
             DateEvent.WORK_FIRST_PUBLICATION,
             DatePrecision.YEAR,
             id="published_year_wrong_event",
-        ),
-        pytest.param(
-            TargetDestination.PUBLISHED_DATE,
-            DateEvent.MANIFESTATION_PUBLICATION,
-            DatePrecision.YEAR,
-            id="published_date_year_precision",
         ),
         pytest.param(
             TargetDestination.PUBLISHED_DATE,
