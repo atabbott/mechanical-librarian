@@ -1460,8 +1460,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "button", name="Choose current full description"
         )
         full_description.wait_for()
-        full_description.click()
-        assert ambiguous_decisions == before_description_choice + 1
+        decide(
+            "library long-description pointer",
+            before_description_choice + 1,
+            full_description.click,
+        )
         page.goto(
             "https://react-platform.invalid/library?lens=all&preview=case-1&field=description"
         )
@@ -1475,8 +1478,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         full_description.wait_for()
         full_description.focus()
-        page.keyboard.press("Enter")
-        assert ambiguous_decisions == before_description_choice + 2
+        decide(
+            "library long-description Enter",
+            before_description_choice + 2,
+            lambda: page.keyboard.press("Enter"),
+        )
         page.goto(
             "https://react-platform.invalid/library?lens=all&preview=case-1&field=description"
         )
@@ -1490,8 +1496,11 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         full_description.wait_for()
         full_description.focus()
-        page.keyboard.press(" ")
-        assert ambiguous_decisions == before_description_choice + 3
+        decide(
+            "library long-description Space",
+            before_description_choice + 3,
+            lambda: page.keyboard.press(" "),
+        )
         description_mode = False
         page.goto(
             "https://react-platform.invalid/library?lens=all&preview=case-1&field=title"
