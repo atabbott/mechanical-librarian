@@ -95,6 +95,10 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
 )
+from mechanical_librarian.domain.shadow_outcome import (
+    ShadowOutcomeError,
+    ShadowOutcomeSet,
+)
 
 
 def _operational_signal(
@@ -266,7 +270,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
                 (automatic.proposal_set_id,),
             ).fetchone()
-            if report_row is None or proposal_row is None:
+            outcome_row = self._connection.execute(
+                "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
+                "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=?",
+                (
+                    automatic.review_case_id,
+                    automatic.report_id,
+                    automatic.proposal_set_id,
+                    automatic.resolved_policy_id,
+                ),
+            ).fetchone()
+            if report_row is None or proposal_row is None or outcome_row is None:
                 raise FieldEffectError("authority_binding")
             try:
                 value = _automatic_decision_value(
@@ -274,11 +288,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     case,
                     MetadataReport.from_json(report_row[0]),
                     ProposalSet.from_json(proposal_row[0]),
+                    ShadowOutcomeSet.from_json(outcome_row[0]),
                 )
             except (
                 ReportValueError,
                 ProposalValueError,
                 RichMetadataPreviewError,
+                ShadowOutcomeError,
             ) as error:
                 raise FieldEffectError("authority_binding") from error
         lineage = self._connection.execute(
@@ -495,7 +511,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
                 "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint "
                 "WHERE lineage.review_case_id=automatic.review_case_id) AND "
-                "json_extract(automatic.document,'$.outcome')='candidate' AND NOT EXISTS ("
+                "json_extract(automatic.document,'$.outcome') IN ('candidate','keep_current') AND NOT EXISTS ("
                 "SELECT 1 FROM human_decisions human WHERE "
                 "human.review_case_id=automatic.review_case_id AND "
                 "human.destination=automatic.destination AND NOT EXISTS ("

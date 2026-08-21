@@ -637,6 +637,17 @@ def _combination_selections(
         selected_title: PolicyAction | None = None
         for selection in cast("list[dict[str, object]]", combination["selections"]):
             destination = cast("str", selection["destination"])
+            # A retained title is terminal evidence, not authority to alter its
+            # subtitle or series witnesses.  Once the selected title's
+            # preservation action binds this source combination, those
+            # witnesses need no independently executable action: their source
+            # representation has already proved the title remains current.
+            if (
+                destination != _COMBINATION_SELECTED_DESTINATION
+                and selected_title is not None
+                and selected_title.recommendation == "recommend_keep_current"
+            ):
+                continue
             proposals = proposals_by_destination.get(destination, [])
             if len(proposals) != 1:
                 break

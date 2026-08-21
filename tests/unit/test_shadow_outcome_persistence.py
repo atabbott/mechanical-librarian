@@ -24,6 +24,9 @@ from mechanical_librarian.adapters.field_effect_fakes import (
 )
 from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.field_effect_validation import (
+    _automatic_decision_value,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     open_repository,
@@ -938,54 +941,191 @@ def test_manual_cover_predecessor_drift_rolls_back_and_releases_the_writer_lock(
         repository.close()
 
 
-def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards() -> None:
-    isbn10 = LocalClaim.create(
-        kind=ClaimKind.ISBN,
-        observed="0306406152",
-        canonical="0306406152",
-        excerpt="0306406152",
-        applicability="ebook",
-        checksum="valid_isbn_10",
-        applicability_basis="ebook",
-        scope=ClaimScope.EDITION,
-    )
-    report = _proposal_report(
-        fields=_fields(
-            isbn=TargetField(
-                TargetDestination.ISBN,
-                TargetFieldState.VALUE,
-                "0306406152",
-            )
-        ),
-        local_claims=(isbn10,),
-        providers=(
-            _provider(
-                "catalogue",
-                "edition-1",
-                (
-                    _claim(
+def _automatic_no_change_inputs(
+    scenario: str,
+) -> tuple[MetadataReport, str, str, str]:
+    """Build one naturally qualified, equal automatic policy outcome."""
+    if scenario in {"exact_title", "canonical_title"}:
+        current_title = (
+            "Secret History" if scenario == "exact_title" else "secret history"
+        )
+        local_title = LocalClaim.create(
+            kind=ClaimKind.TITLE,
+            observed="Secret History",
+            canonical="Secret History",
+            excerpt="Secret History",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+        )
+        return (
+            _proposal_report(
+                fields=_fields(
+                    current_title,
+                    subtitle=TargetField(
+                        TargetDestination.SUBTITLE, TargetFieldState.NULL
+                    ),
+                    series=TargetField(
+                        TargetDestination.SERIES, TargetFieldState.MISSING
+                    ),
+                ),
+                local_claims=(local_title,),
+                providers=(
+                    _source(
                         "catalogue",
                         "edition-1",
-                        ClaimKind.ISBN,
-                        "9780306406157",
-                        scope=ClaimScope.EDITION,
-                        applicability="ebook",
+                        titles=("Secret History",),
+                        subtitle="A Mistborn Novella",
                     ),
                 ),
             ),
-        ),
-    )
+            "title_layout",
+            "title_and_subtitle",
+            "title",
+        )
+    if scenario in {"exact_authors", "canonical_authors"}:
+        authors = ("Mick Herron",) if scenario == "exact_authors" else ("mick herron",)
+        local_creator = LocalClaim.create(
+            kind=ClaimKind.CREATOR,
+            observed="Mick Herron",
+            canonical="Mick Herron",
+            excerpt="Mick Herron",
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            scope=ClaimScope.WORK,
+            role="author",
+        )
+        return (
+            _proposal_report(
+                fields=_fields(
+                    authors=TargetField(
+                        TargetDestination.AUTHORS, TargetFieldState.VALUE, authors
+                    ),
+                    isbn=TargetField(
+                        TargetDestination.ISBN,
+                        TargetFieldState.VALUE,
+                        "0-306-40615-2",
+                    ),
+                ),
+                local_claims=(
+                    local_creator,
+                    LocalClaim.create(
+                        kind=ClaimKind.ISBN,
+                        observed="0-306-40615-2",
+                        canonical="0306406152",
+                        excerpt="0-306-40615-2",
+                        applicability="ebook",
+                        checksum="valid_isbn_10",
+                        applicability_basis="ebook",
+                        scope=ClaimScope.EDITION,
+                    ),
+                ),
+                providers=(
+                    _provider(
+                        "catalogue",
+                        "work-1",
+                        (
+                            _claim(
+                                "catalogue",
+                                "work-1",
+                                ClaimKind.CREATOR,
+                                "Mick Herron",
+                                scope=ClaimScope.WORK,
+                                role="author",
+                            ),
+                            _claim(
+                                "catalogue",
+                                "work-1",
+                                ClaimKind.ISBN,
+                                "9780306406157",
+                                scope=ClaimScope.EDITION,
+                                applicability="ebook",
+                                order=1,
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            "contributor_names",
+            "preserve",
+            "authors",
+        )
+    if scenario == "formatted_isbn":
+        isbn10 = LocalClaim.create(
+            kind=ClaimKind.ISBN,
+            observed="0-306-40615-2",
+            canonical="0306406152",
+            excerpt="0-306-40615-2",
+            applicability="ebook",
+            checksum="valid_isbn_10",
+            applicability_basis="ebook",
+            scope=ClaimScope.EDITION,
+        )
+        return (
+            _proposal_report(
+                fields=_fields(
+                    isbn=TargetField(
+                        TargetDestination.ISBN,
+                        TargetFieldState.VALUE,
+                        "0-306-40615-2",
+                    )
+                ),
+                local_claims=(isbn10,),
+                providers=(
+                    _provider(
+                        "catalogue",
+                        "edition-1",
+                        (
+                            _claim(
+                                "catalogue",
+                                "edition-1",
+                                ClaimKind.ISBN,
+                                "9780306406157",
+                                scope=ClaimScope.EDITION,
+                                applicability="ebook",
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+            "isbn_form",
+            "preserve_exact",
+            "isbn",
+        )
+    raise AssertionError(f"unknown automatic no-change scenario: {scenario}")
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    (
+        "exact_title",
+        "canonical_title",
+        "exact_authors",
+        "canonical_authors",
+        "formatted_isbn",
+    ),
+)
+def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
+    scenario: str,
+) -> None:
+    report, category, option, destination = _automatic_no_change_inputs(scenario)
     with tempfile.TemporaryDirectory() as temporary:
         path = Path(temporary) / "reports.sqlite"
         repository = open_repository(path)
         options = dict(DEFAULT_OPTIONS)
-        options["isbn_form"] = "preserve_exact"
+        options[category] = option
         destinations = {
             name: "unsupported" if name == "explicit" else "ask"
             for name in OPTION_CATALOGUE
         }
-        destinations["isbn_form"] = "automatic"
-        profile = MetadataPolicyProfile.create("No-change ISBN", options, destinations)
+        destinations[category] = "automatic"
+        if category == "contributor_names":
+            destinations["isbn_form"] = "automatic"
+        profile = MetadataPolicyProfile.create(
+            "No-change policy", options, destinations
+        )
         resolved = resolve_policy(profile, report.target.library)
         repository.enter_shadow_preview(1)
         repository.create_metadata_policy_draft(profile.canonical_json)
@@ -1010,61 +1150,128 @@ def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards() -> Non
         case = ReviewCase.create_from_data(
             json.loads(repository.get_review_case(case_id))["case"]
         )
-        proposal = next(
-            value for value in case.proposals if value["destination"] == "isbn"
+        persisted = ShadowOutcomeSet.from_json(
+            repository.persist_shadow_outcome(case_id, 4)
         )
-        alternative = proposal["result"]["alternatives"][0]
-        decision = AutomaticDecision.create(
-            review_case_id=case.review_case_id,
-            report_id=case.report_id,
-            proposal_set_id=case.proposal_set_id,
-            proposal_id=proposal["proposal_id"],
-            target_fingerprint=case.target_fingerprint,
-            destination="isbn",
-            outcome="candidate",
-            candidate_id=alternative["alternative_id"],
-            resolved_policy_id=resolved.resolved_id,
-            policy_generation=2,
-            rule_id="shadow_rule_" + "1" * 64,
-            policy_category="isbn_form",
-            policy_option="preserve_exact",
-            qualification_manifest_sha256="aba7b436d88bb4e884cda0c4b247aa871063dce459e0f5fbea298227a1e9b06c",
-            source_outcome_id="shadow_outcome_" + "2" * 64,
-            bundle_id=None,
-            occurred_at=4,
+        outcome = next(
+            value for value in persisted.outcomes if value.destination == destination
         )
-        repository._connection.execute(
-            "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
-            "idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
-            (
-                decision.decision_id,
-                decision.review_case_id,
-                decision.destination,
-                decision.idempotency_digest,
-                decision.occurred_at,
-                decision.to_json(),
-            ),
+        assert "keep_current" == outcome.disposition
+        decisions = tuple(
+            AutomaticDecision.from_json(value)
+            for value in repository.get_review_case_decisions(case.review_case_id)
         )
-        repository._connection.commit()
+        expected_decisions = (
+            ("authors", "isbn") if category == "contributor_names" else (destination,)
+        )
+        assert set(expected_decisions) == {value.destination for value in decisions}
+        decision = next(
+            value for value in decisions if value.destination == destination
+        )
+        assert "keep_current" == decision.outcome
+        if scenario == "exact_title":
+            corrupt_case = SimpleNamespace(
+                proposal_set_id=case.proposal_set_id,
+                report_id=case.report_id,
+                review_case_id=case.review_case_id,
+                target=case.target,
+                target_fingerprint=case.target_fingerprint,
+                proposals=json.loads(json.dumps(case.proposals)),
+            )
+            proposal = next(
+                value
+                for value in corrupt_case.proposals
+                if value["proposal_id"] == decision.proposal_id
+            )
+            alternatives = proposal["result"]["alternatives"]
+            preservation = [
+                value
+                for value in alternatives
+                if value["assessment"] == "preserves_target"
+            ]
+            assert 1 == len(preservation)
+            preservation[0]["assessment"] = "replaces_target"
+            with pytest.raises(FieldEffectError, match="authority_binding"):
+                _automatic_decision_value(
+                    decision, corrupt_case, report, proposal_set, persisted
+                )
+            preservation[0]["assessment"] = "preserves_target"
+            preservation[0]["value"] = {"kind": "text", "value": "Different Title"}
+            with pytest.raises(FieldEffectError, match="authority_binding"):
+                _automatic_decision_value(
+                    decision, corrupt_case, report, proposal_set, persisted
+                )
+            preservation[0]["value"] = {"kind": "text", "value": "Secret History"}
+            preservation[0]["evidence_references"] = []
+            with pytest.raises(FieldEffectError, match="authority_binding"):
+                _automatic_decision_value(
+                    decision, corrupt_case, report, proposal_set, persisted
+                )
+            preservation[0]["evidence_references"] = list(
+                next(
+                    value
+                    for value in proposal_set.results
+                    if value.destination.value == destination
+                )
+                .alternatives[0]
+                .evidence_references
+            )
 
-        assert repository.record_current_field_effect_no_change(decision, 5)
-        assert repository.record_current_field_effect_no_change(decision, 9)
-        assert repository._connection.execute(
-            "SELECT count(*) FROM field_effect_no_changes"
-        ).fetchone() == (1,)
-        assert repository._connection.execute(
-            "SELECT count(*) FROM field_effects"
-        ).fetchone() == (0,)
-        assert repository._connection.execute(
-            "SELECT count(*) FROM field_effect_authorities"
-        ).fetchone() == (0,)
-        assert repository._connection.execute(
-            "SELECT count(*) FROM field_effect_consents"
-        ).fetchone() == (0,)
+            def source_with(**changes: object) -> ShadowOutcomeSet:
+                corrupted = persisted.to_data()
+                field = next(
+                    value
+                    for value in corrupted["outcomes"]
+                    if value["outcome_id"] == decision.source_outcome_id
+                )
+                field.update(changes)
+                field["qualification_candidate_id"] = (
+                    "qualification_candidate_"
+                    + _digest(
+                        {
+                            "action_id": field["action_id"],
+                            "candidate_id": field["candidate_id"],
+                            "catalogue_sha256": corrupted["catalogue_sha256"],
+                            "citation_ids": field["citation_ids"],
+                            "combination_ids": field["combination_ids"],
+                            "rule_id": field["rule_id"],
+                        }
+                    )
+                )
+                identity = dict(field)
+                del identity["outcome_id"]
+                field["outcome_id"] = "shadow_outcome_" + _digest(identity)
+                outcome_identity = dict(corrupted)
+                del outcome_identity["outcome_set_id"]
+                corrupted["outcome_set_id"] = "shadow_outcome_set_" + _digest(
+                    outcome_identity
+                )
+                return ShadowOutcomeSet.from_json(
+                    json.dumps(corrupted, separators=(",", ":"), sort_keys=True)
+                )
+
+            with pytest.raises(FieldEffectError, match="authority_binding"):
+                _automatic_decision_value(
+                    decision,
+                    case,
+                    report,
+                    proposal_set,
+                    source_with(citation_ids=[]),
+                )
+            with pytest.raises(FieldEffectError, match="authority_binding"):
+                _automatic_decision_value(
+                    decision,
+                    case,
+                    report,
+                    proposal_set,
+                    source_with(combination_ids=[]),
+                )
+        assert repository.persist_shadow_outcome(case_id, 5) == persisted.to_json()
+        assert repository.count_current_attention_fields(None) == 0
 
         class UnexpectedAuthority:
             def resolve(self, _decision):
-                raise AssertionError("equal decision reached authority")
+                raise AssertionError("keep-current decision reached authority")
 
         scheduler = ContinuousGuardedApplication(
             repository,
@@ -1076,7 +1283,26 @@ def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards() -> Non
             lambda *_: None,
         )
         assert scheduler.schedule() == 0
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (len(expected_decisions),)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_authorities"
+        ).fetchone() == (0,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_consents"
+        ).fetchone() == (0,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effect_actions"
+        ).fetchone() == (0,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM automatic_decisions"
+        ).fetchone() == (len(expected_decisions),)
         assert repository.pending_field_effect_decision_documents(100) == ()
+        assert repository.count_current_attention_fields(None) == 0
         page = repository.field_effect_activity_page(
             search="item-1",
             event_type="metadata",
@@ -1090,6 +1316,7 @@ def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards() -> Non
         assert no_change["report_id"] == report.report_id
         repository.close()
         reopened = open_repository(path, create=False)
+        assert reopened.persist_shadow_outcome(case_id, 11) == persisted.to_json()
         assert (
             reopened.field_effect_activity_page(
                 search="item-1",
@@ -1100,7 +1327,49 @@ def test_equal_automatic_isbn_is_a_single_no_change_fact_without_guards() -> Non
             )["events"][0]["state"]
             == "no_change_required"
         )
+        assert reopened.pending_field_effect_decision_documents(100) == ()
+        assert reopened._connection.execute(
+            "SELECT count(*) FROM field_effect_no_changes"
+        ).fetchone() == (len(expected_decisions),)
+        if scenario == "exact_title":
+            corrupted = persisted.to_data()
+            field = next(
+                value
+                for value in corrupted["outcomes"]
+                if value["outcome_id"] == decision.source_outcome_id
+            )
+            field["disposition"] = "abstention"
+            field["reason_code"] = "no_eligible_action"
+            identity = dict(field)
+            del identity["outcome_id"]
+            field["outcome_id"] = "shadow_outcome_" + _digest(identity)
+            outcome_identity = dict(corrupted)
+            del outcome_identity["outcome_set_id"]
+            corrupted["outcome_set_id"] = "shadow_outcome_set_" + _digest(
+                outcome_identity
+            )
+            trigger = reopened._connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type='trigger' "
+                "AND name='shadow_decision_outcomes_no_update'"
+            ).fetchone()
+            assert trigger is not None and type(trigger[0]) is str
+            reopened._connection.execute(
+                "DROP TRIGGER shadow_decision_outcomes_no_update"
+            )
+            reopened._connection.execute(
+                "UPDATE shadow_decision_outcomes SET document=?",
+                (json.dumps(corrupted, separators=(",", ":"), sort_keys=True),),
+            )
+            reopened._connection.execute(trigger[0])
+            reopened._connection.commit()
         reopened.close()
+        if scenario == "exact_title":
+            with pytest.raises(
+                MetadataReportError, match="database is unavailable or incompatible"
+            ) as raised:
+                open_repository(path, create=False)
+            assert isinstance(raised.value.__cause__, FieldEffectError)
+            assert "authority_binding" == raised.value.__cause__.code
 
 
 def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None:

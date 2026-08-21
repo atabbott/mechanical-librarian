@@ -32,14 +32,24 @@ from mechanical_librarian.domain.field_effect import (
 from mechanical_librarian.domain.field_effect import (
     canonical_json as canonical_effect_json,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport
-from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.field_value_comparison import values_match
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+)
+from mechanical_librarian.domain.proposal_set import (
+    BibliographicSelectionKind,
+    ProposalAlternative,
+    ProposalAssessment,
+    ProposalSet,
+)
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
     project_f20_automatic_decision_value,
     select_isbn_representation,
 )
+from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 from mechanical_librarian.domain.validation import (
     boolean,
     bounded_integer,
@@ -57,11 +67,12 @@ def _automatic_decision_value(
     case: ReviewCase,
     report: MetadataReport,
     proposal_set: ProposalSet,
+    source_outcome: ShadowOutcomeSet,
 ) -> object:
     """Project one persisted automatic decision to its exact target envelope."""
     target = case.target
     if (
-        decision.outcome != "candidate"
+        decision.outcome not in {"candidate", "keep_current"}
         or decision.review_case_id != case.review_case_id
         or decision.report_id != case.report_id
         or decision.proposal_set_id != case.proposal_set_id
@@ -86,19 +97,6 @@ def _automatic_decision_value(
     )
     # Every ReviewCase proposal carries a "result" object, and TargetFacts
     # always serialises "fields" as a list of field objects.
-    alternatives = (
-        None
-        if proposal is None
-        else cast("dict[str, object]", proposal["result"]).get("alternatives")
-    )
-    selected = next(
-        (
-            item
-            for item in cast("list[dict[str, object]] | None", alternatives) or ()
-            if item.get("alternative_id") == decision.candidate_id
-        ),
-        None,
-    )
     target_field = next(
         (
             item
@@ -108,10 +106,140 @@ def _automatic_decision_value(
         None,
     )
     if (
-        selected is None
+        type(proposal) is not dict
         or type(target_field) is not dict
         or target_field.get("state") not in {"value", "null", "empty", "missing"}
     ):
+        raise FieldEffectError("authority_binding")
+    result = proposal.get("result")
+    alternatives = result.get("alternatives") if type(result) is dict else None
+    pre_value = target_field.get("value") if target_field["state"] == "value" else None
+    if decision.outcome == "keep_current":
+        source = next(
+            (
+                field
+                for field in source_outcome.outcomes
+                if field.outcome_id == decision.source_outcome_id
+            ),
+            None,
+        )
+        preservation = tuple(
+            value
+            for value in alternatives or ()
+            if type(value) is dict and value.get("assessment") == "preserves_target"
+        )
+        typed_preservation: tuple[ProposalAlternative, ...] = ()
+        preservation_combinations: tuple[str, ...] = ()
+        combination_citations: set[str] = set()
+        identifier_preservation = False
+        try:
+            proposal_result = next(
+                item
+                for item in proposal_set.results
+                if item.destination.value == decision.destination
+            )
+        except StopIteration:
+            proposal_result = None
+        if proposal_result is not None:
+            typed_preservation = tuple(
+                value
+                for value in proposal_result.alternatives
+                if value.assessment is ProposalAssessment.PRESERVES_TARGET
+            )
+            preservation_combinations = tuple(
+                combination.combination_id
+                for combination in proposal_set.bibliographic_combinations
+                if any(
+                    selection.destination.value == decision.destination
+                    and selection.kind is BibliographicSelectionKind.PRESERVE_TARGET
+                    for selection in combination.selections
+                )
+            )
+            alternative_citations = {
+                alternative.alternative_id: alternative.evidence_references
+                for result in proposal_set.results
+                for alternative in result.alternatives
+            }
+            combination_citations = {
+                citation
+                for combination in proposal_set.bibliographic_combinations
+                if combination.combination_id in preservation_combinations
+                for selection in combination.selections
+                for citation in alternative_citations.get(
+                    selection.alternative_id or "", ()
+                )
+            }
+        if decision.policy_category == "isbn_form" and proposal_result is not None:
+            try:
+                candidate = next(iter(proposal_result.alternatives))
+                exact_value = select_isbn_representation(
+                    report, candidate, decision.policy_option
+                )
+                identifier_preservation = exact_value is not None and values_match(
+                    TargetDestination(decision.destination), pre_value, exact_value
+                )
+            except (StopIteration, RichMetadataPreviewError):
+                identifier_preservation = False
+        typed_preservation_matches = False
+        if len(preservation) == len(typed_preservation) == 1:
+            try:
+                preserved_value = project_decision_value(
+                    decision.destination, typed_preservation[0].value.to_data()
+                )
+            except FieldEffectError:
+                pass
+            else:
+                typed_preservation_matches = (
+                    preservation[0] == typed_preservation[0].to_data()
+                    and values_match(
+                        TargetDestination(decision.destination),
+                        pre_value,
+                        preserved_value,
+                    )
+                    and source is not None
+                    and source.citation_ids
+                    == tuple(
+                        sorted(
+                            set(typed_preservation[0].evidence_references)
+                            | combination_citations
+                        )
+                    )
+                    and source.combination_ids == preservation_combinations
+                )
+        if (
+            decision.candidate_id is not None
+            or (not typed_preservation_matches and not identifier_preservation)
+            or source is None
+            or any(
+                (
+                    source.proposal_id != decision.proposal_id,
+                    source.destination != decision.destination,
+                    source.disposition != "keep_current",
+                    source.candidate_id is not None,
+                    source.reason_code != "unique_supported_preservation",
+                    source.rule_id != decision.rule_id,
+                    source.policy_category != decision.policy_category,
+                    source.policy_option != decision.policy_option,
+                    not typed_preservation_matches
+                    and not (
+                        decision.policy_category == "isbn_form"
+                        and not source.citation_ids
+                        and not source.combination_ids
+                    ),
+                )
+            )
+        ):
+            raise FieldEffectError("authority_binding")
+        return None
+    selected = next(
+        (
+            item
+            for item in cast("list[dict[str, object]] | None", alternatives) or ()
+            if item.get("alternative_id") == decision.candidate_id
+        ),
+        None,
+    )
+    if selected is None:
         raise FieldEffectError("authority_binding")
     value = selected["value"]
     if decision.policy_category == "isbn_form":
@@ -134,7 +262,6 @@ def _automatic_decision_value(
         if exact_value is None:
             raise FieldEffectError("authority_binding")
         value = {"kind": "text", "value": exact_value}
-    pre_value = target_field.get("value") if target_field["state"] == "value" else None
     if decision.policy_category in {
         "series",
         "genres",
@@ -195,9 +322,20 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
                 (decision.proposal_set_id,),
             ).fetchone()
-            if proposal_row is None:
+            outcome_row = connection.execute(
+                "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
+                "AND report_id=? AND proposal_set_id=? AND resolved_policy_id=?",
+                (
+                    decision.review_case_id,
+                    decision.report_id,
+                    decision.proposal_set_id,
+                    decision.resolved_policy_id,
+                ),
+            ).fetchone()
+            if proposal_row is None or outcome_row is None:
                 raise FieldEffectError("persistence")
             proposal_set = ProposalSet.from_json(proposal_row[0])
+            source_outcome = ShadowOutcomeSet.from_json(outcome_row[0])
             if (
                 decision.destination != record.destination
                 or decision.target_fingerprint != record.target_fingerprint
@@ -227,27 +365,37 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             )
             result = proposal.get("result") if type(proposal) is dict else None
             alternatives = result.get("alternatives") if type(result) is dict else None
-            selected = next(
-                (
-                    value
-                    for value in alternatives or ()
-                    if type(value) is dict
-                    and value.get("alternative_id") == decision.candidate_id
-                ),
-                None,
-            )
-            if (
-                type(target) is not dict
-                or target.get("state") not in {"value", "null", "empty", "missing"}
-                or type(selected) is not dict
-            ):
+            if type(target) is not dict or target.get("state") not in {
+                "value",
+                "null",
+                "empty",
+                "missing",
+            }:
                 raise FieldEffectError("persistence")
             pre_value = target.get("value") if target["state"] == "value" else None
-            desired = project_decision_value(
-                record.destination,
-                _automatic_decision_value(decision, case, report, proposal_set),
+            value = _automatic_decision_value(
+                decision, case, report, proposal_set, source_outcome
             )
-            if desired != pre_value or record.target_version != field_value_version(
+            if decision.outcome == "keep_current":
+                if value is not None:
+                    raise FieldEffectError("persistence")
+                desired = pre_value
+            else:
+                selected = next(
+                    (
+                        value
+                        for value in alternatives or ()
+                        if type(value) is dict
+                        and value.get("alternative_id") == decision.candidate_id
+                    ),
+                    None,
+                )
+                if type(selected) is not dict:
+                    raise FieldEffectError("persistence")
+                desired = project_decision_value(record.destination, value)
+            if not values_match(
+                TargetDestination(record.destination), pre_value, desired
+            ) or record.target_version != field_value_version(
                 record.destination, pre_value
             ):
                 raise FieldEffectError("persistence")

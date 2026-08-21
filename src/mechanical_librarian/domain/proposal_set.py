@@ -24,9 +24,12 @@ from mechanical_librarian.domain.field_outcomes import (
     language_outcomes_compatible,
     publisher_statement_valid,
 )
+from mechanical_librarian.domain.field_value_comparison import (
+    canonical_text,
+    values_match,
+)
 from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
 from mechanical_librarian.domain.metadata_report import (
-    MAX_DESCRIPTION_CHARACTERS,
     ClaimKind,
     ClaimScope,
     FieldState,
@@ -2475,43 +2478,11 @@ def _matches(
     target: object,
     candidate: ProposalValue,
 ) -> bool:
-    # `ProposalValue.__post_init__` binds each kind to its value shape: a tuple
-    # value is TargetSeries for the SERIES destination and str everywhere else.
-    if destination is TargetDestination.SERIES:
-        return (
-            type(target) is tuple
-            and type(candidate.value) is tuple
-            and tuple(
-                (_comparison(TargetDestination.SERIES, value.name), value.sequence)
-                for value in target
-            )
-            == tuple(
-                (_comparison(TargetDestination.SERIES, value.name), value.sequence)
-                for value in cast("tuple[TargetSeries, ...]", candidate.value)
-            )
-        )
-    if type(target) is tuple and type(candidate.value) is tuple:
-        return tuple(_comparison(destination, item) for item in target) == tuple(
-            _comparison(destination, item)
-            for item in cast("tuple[str, ...]", candidate.value)
-        )
-    if type(target) is str and type(candidate.value) is str:
-        if destination is TargetDestination.LANGUAGE:
-            return language_outcomes_compatible(target, candidate.value)
-        return _comparison(destination, target) == _comparison(
-            destination, candidate.value
-        )
-    return target == candidate.value
+    return values_match(destination, target, candidate.value)
 
 
 def _comparison(destination: TargetDestination, value: str) -> str:
-    if destination is TargetDestination.DESCRIPTION:
-        return " ".join(
-            unicodedata.normalize(
-                "NFC", _projection(value, MAX_DESCRIPTION_CHARACTERS)
-            ).split()
-        ).casefold()
-    return normalize_title(value).casefold()
+    return canonical_text(destination, value)
 
 
 def _observation_key(destination: TargetDestination, value: ProposalValue) -> str:

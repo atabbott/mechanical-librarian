@@ -478,6 +478,7 @@ class ShadowReviewPacket:
                 result["outcome"]
                 not in {
                     ProposalOutcome.ACCEPTABLE_CHOICE.value,
+                    ProposalOutcome.KEEP.value,
                     ProposalOutcome.PROPOSE_CHANGE.value,
                     ProposalOutcome.UNRESOLVED_CHOICE.value,
                 }

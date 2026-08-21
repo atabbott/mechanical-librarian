@@ -885,7 +885,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
         proposal_id=proposal["proposal_id"],
         target_fingerprint=case.target_fingerprint,
         destination="subtitle",
-        outcome="keep_current",
+        outcome="ignore",
         candidate_id=None,
         resolved_policy_id=effects.repository.current_resolved_policy_id("books"),
         policy_generation=1,
