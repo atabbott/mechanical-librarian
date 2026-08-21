@@ -42,11 +42,11 @@
     },
     "compiler": {
       "identity": "src/mechanical_librarian/domain/rich_metadata_preview.py",
-      "sha256": "9990b19072aa4b19145ae87a7035e8e7eb6a7c680266b9e006b49c3f223f6508"
+      "sha256": "cfaff9c7974256bbcb9f1c734dbe6fa32604fe7e119bdf8e1766d535f5beeafd"
     },
     "evaluator": {
-      "identity": "f20-field-local-evaluator-v7",
-      "sha256": "7cccb4ee7622da38c1e11de4fe721d6451eadcd3bfc21eeda0e7d766b1d6bd81"
+      "identity": "f20-field-local-evaluator-v13",
+      "sha256": "ec8b4d224abd279ab4b30a42ff90ad1811df17f083c4a9d787eae8491e163f94"
     },
     "evidence_execution": {
       "identity": "offline-current-adapter-and-guarded-effect-replay-v7",

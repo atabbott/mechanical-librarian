@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from mechanical_librarian.domain.metadata_policy import (
@@ -11,15 +13,23 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
+    FieldState,
     LocalClaim,
     MetadataReport,
+    ProviderClaim,
     ProviderEvidence,
     ProviderEvidenceKind,
+    ProviderLaneCandidate,
+    ProviderLaneObservation,
+    ProviderObservation,
+    ProviderQueryKind,
+    ProviderStatus,
     TargetDestination,
     TargetFacts,
     TargetField,
     TargetFieldState,
     TargetSeries,
+    provider_lane_candidate_reference,
 )
 from mechanical_librarian.domain.proposal_set import (
     BibliographicCombination,
@@ -73,6 +83,61 @@ def _preview_field(report, field, option):
         value
         for value in compile_rich_metadata_preview(policy, report, proposal).fields
         if value.field == field
+    )
+
+
+def _automatic_series_preview(report, option="source_order"):
+    options = dict(MetadataPolicyProfile.builtin().options)
+    options["series"] = option
+    destinations = dict(MetadataPolicyProfile.builtin().destinations)
+    destinations["series"] = "automatic"
+    policy = resolve_policy(
+        MetadataPolicyProfile.create("Automatic series", options, destinations),
+        report.target.library,
+    )
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    return next(
+        value
+        for value in compile_rich_metadata_preview(policy, report, proposal).fields
+        if value.field == "series"
+    )
+
+
+def _series_claims(provider, candidate, name="Reading Order", sequence="2"):
+    return (
+        _claim(
+            provider,
+            candidate,
+            ClaimKind.SERIES,
+            name,
+            scope=ClaimScope.WORK,
+        ),
+        _claim(
+            provider,
+            candidate,
+            ClaimKind.SERIES_SEQUENCE,
+            sequence,
+            scope=ClaimScope.WORK,
+            order=1,
+        ),
+    )
+
+
+def _automatic_series_report(*providers):
+    return _report(
+        fields=_fields(
+            series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING)
+        ),
+        providers=providers,
+    )
+
+
+def _series_provider(name, candidate, authority, claims=None):
+    return _provider(
+        name,
+        candidate,
+        _series_claims(name, candidate) if claims is None else claims,
+        authority=authority,
     )
 
 
@@ -633,11 +698,13 @@ def test_series_modes_use_one_admitted_tuple_and_never_synthesize(option: str) -
     )
     options = dict(MetadataPolicyProfile.builtin().options)
     options["series"] = option
+    destinations = dict(MetadataPolicyProfile.builtin().destinations)
+    destinations["series"] = "ask"
     policy = resolve_policy(
         MetadataPolicyProfile.create(
             "Series fixture",
             options,
-            dict(MetadataPolicyProfile.builtin().destinations),
+            destinations,
         ),
         report.target.library,
     )
@@ -735,10 +802,10 @@ def test_preserving_single_series_is_a_no_op_for_source_order_and_all_qualified(
     )
     options = dict(MetadataPolicyProfile.builtin().options)
     options["series"] = option
+    destinations = dict(MetadataPolicyProfile.builtin().destinations)
+    destinations["series"] = "ask"
     policy = resolve_policy(
-        MetadataPolicyProfile.create(
-            "Keep", options, dict(MetadataPolicyProfile.builtin().destinations)
-        ),
+        MetadataPolicyProfile.create("Keep", options, destinations),
         report.target.library,
     )
     proposal = ProposalSet.create(
@@ -781,6 +848,325 @@ def test_keep_series_requires_one_preserving_membership() -> None:
             None,
             ("positive_preservation_evidence",),
         )
+
+
+def test_automatic_series_records_two_independent_agreeing_provider_lineages() -> None:
+    report = _automatic_series_report(
+        _series_provider("catalogue", "edition-1", "hardcover"),
+        _series_provider("search", "edition-2", "open_library"),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert ("projected", None, ({"name": "Reading Order", "sequence": "2"},)) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
+def test_automatic_series_abstains_without_an_explicit_membership_position() -> None:
+    report = _automatic_series_report(
+        _series_provider(
+            "catalogue",
+            "edition-1",
+            "hardcover",
+            _series_claims("catalogue", "edition-1")[:1],
+        ),
+        _series_provider(
+            "search",
+            "edition-2",
+            "open_library",
+            _series_claims("search", "edition-2")[:1],
+        ),
+    )
+
+    manual = next(
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.SERIES
+    )
+    field = _automatic_series_preview(report)
+
+    assert ProposalOutcome.PROPOSE_CHANGE is manual.outcome
+    assert ("abstain", "series_membership_incomplete", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
+def test_automatic_series_abstains_for_one_unpositioned_matching_membership() -> None:
+    report = _automatic_series_report(
+        _series_provider("catalogue", "edition-1", "hardcover"),
+        _series_provider(
+            "search",
+            "edition-2",
+            "open_library",
+            _series_claims("search", "edition-2")[:1],
+        ),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert ("abstain", "series_membership_incomplete", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
+def test_automatic_series_keeps_different_name_missing_position_as_conflict() -> None:
+    report = _automatic_series_report(
+        _series_provider("catalogue", "edition-1", "hardcover"),
+        _series_provider(
+            "search",
+            "edition-2",
+            "open_library",
+            _series_claims("search", "edition-2", name="Other Order")[:1],
+        ),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert ("abstain", "series_conflicting_membership", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
+def test_automatic_series_pairs_absent_sequence_with_its_own_membership() -> None:
+    report = _automatic_series_report(
+        _series_provider("catalogue", "edition-1", "hardcover"),
+        _series_provider(
+            "search",
+            "edition-2",
+            "open_library",
+            (
+                *_series_claims(
+                    "search", "edition-2", name="Other Order", sequence="1"
+                ),
+                _claim(
+                    "search",
+                    "edition-2",
+                    ClaimKind.SERIES,
+                    "Reading Order",
+                    scope=ClaimScope.WORK,
+                    order=2,
+                ),
+                ProviderClaim.create(
+                    provider="search",
+                    candidate="edition-2",
+                    kind=ClaimKind.SERIES_SEQUENCE,
+                    value=None,
+                    state=FieldState.ABSENT,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                    raw_order=3,
+                ),
+            ),
+        ),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert ("abstain", "series_membership_incomplete", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
+def test_automatic_series_ignores_interleaved_nonseries_claims_when_pairing() -> None:
+    report = _automatic_series_report(
+        _series_provider(
+            "catalogue",
+            "edition-1",
+            "hardcover",
+            (
+                _series_claims("catalogue", "edition-1")[0],
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.TITLE,
+                    "Ignored",
+                    scope=ClaimScope.WORK,
+                    order=1,
+                ),
+                _series_claims("catalogue", "edition-1")[1],
+            ),
+        ),
+        _series_provider(
+            "search",
+            "edition-2",
+            "open_library",
+            (
+                _series_claims("search", "edition-2")[0],
+                _claim(
+                    "search",
+                    "edition-2",
+                    ClaimKind.TITLE,
+                    "Ignored",
+                    scope=ClaimScope.WORK,
+                    order=1,
+                ),
+                _series_claims("search", "edition-2")[1],
+            ),
+        ),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert "projected" == field.outcome
+
+
+def test_automatic_series_abstains_when_agreement_has_one_provider_lineage() -> None:
+    report = _automatic_series_report(
+        _series_provider("catalogue", "edition-1", "hardcover"),
+        _series_provider("mirror", "edition-2", "hardcover"),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert ("abstain", "series_independent_corroboration_required", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
+def test_automatic_series_abstains_with_a_stable_conflict_reason() -> None:
+    report = _automatic_series_report(
+        _series_provider("catalogue", "edition-1", "hardcover"),
+        _series_provider(
+            "search",
+            "edition-2",
+            "open_library",
+            _series_claims("search", "edition-2", sequence="3"),
+        ),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert ("abstain", "series_conflicting_membership", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
+def test_automatic_series_abstains_when_provider_observation_failed() -> None:
+    report = _automatic_series_report(
+        _series_provider("catalogue", "edition-1", "hardcover"),
+        _series_provider("search", "edition-2", "open_library"),
+        ProviderObservation("catalogue_backup", ProviderStatus.UNAVAILABLE),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert ("abstain", "series_provider_failure", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
+def test_automatic_series_abstains_when_a_candidate_provider_has_a_failed_lane() -> (
+    None
+):
+    base = _automatic_series_report(
+        _series_provider("catalogue", "edition-1", "hardcover"),
+        _series_provider("search", "edition-2", "open_library"),
+    )
+    local = LocalClaim.create(
+        kind=ClaimKind.TITLE,
+        observed="Current title",
+        canonical="Current title",
+        excerpt="Current title",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.WORK,
+    )
+    provider = base.providers[0]
+    candidate = provider.candidates[0]
+    successful_lane = ProviderLaneObservation(
+        "lane_" + "a" * 64,
+        ProviderQueryKind.WORK,
+        ProviderStatus.CANDIDATES,
+        (local.reference,),
+        candidates=(
+            ProviderLaneCandidate(
+                provider_lane_candidate_reference(
+                    provider.provider,
+                    "lane_" + "a" * 64,
+                    candidate.identity,
+                    candidate.work_identity,
+                ),
+                candidate.identity,
+                candidate.work_identity,
+            ),
+        ),
+    )
+    failed_lane = ProviderLaneObservation(
+        "lane_" + "c" * 64,
+        ProviderQueryKind.WORK,
+        ProviderStatus.UNAVAILABLE,
+        (local.reference,),
+    )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=(local,),
+        local_reasons=("no_opening_matter",),
+        providers=(
+            replace(
+                provider,
+                input_references=(local.reference,),
+                query_kind=ProviderQueryKind.DISCOVERY,
+                lanes=(successful_lane, failed_lane),
+            ),
+            base.providers[1],
+        ),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert ("abstain", "series_provider_failure", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
+
+
+def test_automatic_series_abstains_when_membership_is_materially_incomplete() -> None:
+    incomplete = ProviderClaim.create(
+        provider="catalogue",
+        candidate="edition-1",
+        kind=ClaimKind.SERIES_SEQUENCE,
+        value=None,
+        state=FieldState.MALFORMED,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+        raw_order=1,
+    )
+    report = _automatic_series_report(
+        _series_provider(
+            "catalogue",
+            "edition-1",
+            "hardcover",
+            (_series_claims("catalogue", "edition-1")[0], incomplete),
+        ),
+    )
+
+    field = _automatic_series_preview(report)
+
+    assert ("abstain", "series_membership_incomplete", None) == (
+        field.outcome,
+        field.reason,
+        field.desired_value,
+    )
 
 
 def test_description_options_use_exact_admitted_text_and_google_evidence() -> None:

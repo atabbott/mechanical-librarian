@@ -14,6 +14,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
 )
 from mechanical_librarian.domain.proposal_set import (
+    BibliographicSelectionKind,
     ProposalOutcome,
     ProposalSet,
     ProposalValueError,
@@ -628,6 +629,12 @@ def is_actionable(proposal_set: ProposalSet) -> bool:
             ProposalOutcome.UNRESOLVED_CHOICE,
         }
         for value in proposal_set.results
+    ) or any(
+        all(
+            selection.kind is BibliographicSelectionKind.PRESERVE_TARGET
+            for selection in combination.selections
+        )
+        for combination in proposal_set.bibliographic_combinations
     )
 
 

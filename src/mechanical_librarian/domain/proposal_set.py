@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
 PROPOSAL_SCHEMA = "proposal-set-v4"
-POLICY_VERSION = "fixed-conservative-v9"
+POLICY_VERSION = "fixed-conservative-v10"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -78,6 +78,7 @@ _EVIDENCE_REFERENCE = re.compile(
 _CORRELATION = re.compile(r"^correlation_[0-9a-f]{64}$")
 _REASON = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ASIN = re.compile(r"^B[0-9A-Z]{9}$")
+_GENERIC_PROVIDER_SUBTITLES = frozenset({"a novel"})
 
 
 class ProposalValueError(ValueError):
@@ -246,6 +247,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ),
     ProposalOutcome.INELIGIBLE: frozenset(
         {
+            ("generic_provider_subtitle",),
             ("identifier_validity_invalid",),
             ("no_supported_evidence",),
             ("policy_ignored",),
@@ -496,10 +498,6 @@ class BibliographicCombination:
             != _BIBLIOGRAPHIC_DESTINATIONS
             or any(
                 type(value) is not BibliographicSelection for value in self.selections
-            )
-            or not any(
-                value.kind is BibliographicSelectionKind.CANDIDATE
-                for value in self.selections
             )
             or type(self.source_representations) is not tuple
             or not self.source_representations
@@ -794,6 +792,26 @@ class ProposalSet:
             for selection in combination.selections
         ):
             raise ProposalValueError("bibliographic combination candidate is invalid")
+        results = {value.destination: value for value in self.results}
+        generic_subtitle_preservation = (
+            results[TargetDestination.SUBTITLE].outcome is ProposalOutcome.INELIGIBLE
+            and results[TargetDestination.SUBTITLE].reasons
+            == ("generic_provider_subtitle",)
+            and results[TargetDestination.TITLE].outcome is ProposalOutcome.KEEP
+            and any(
+                value.assessment is ProposalAssessment.PRESERVES_TARGET
+                for value in results[TargetDestination.TITLE].alternatives
+            )
+        )
+        if any(
+            not any(
+                selection.kind is BibliographicSelectionKind.CANDIDATE
+                for selection in combination.selections
+            )
+            and not generic_subtitle_preservation
+            for combination in self.bibliographic_combinations
+        ):
+            raise ProposalValueError("bibliographic combination is invalid")
         expected = (
             "proposal_set_"
             + hashlib.sha256(
@@ -994,6 +1012,21 @@ def evaluate_report(
                 (reason,),
                 _dependencies(destination),
             )
+        if (
+            destination is TargetDestination.SUBTITLE
+            and not observations
+            and result.outcome is ProposalOutcome.INELIGIBLE
+            and result.reasons == ("no_supported_evidence",)
+            and _has_generic_provider_subtitle(report)
+        ):
+            result = ProposalResult(
+                destination,
+                ProposalOutcome.INELIGIBLE,
+                (),
+                None,
+                ("generic_provider_subtitle",),
+                _dependencies(destination),
+            )
         results[destination] = _apply_policy_destination(result, ignored)
     publication = _publication_results(report, targets)
     results.update(
@@ -1115,6 +1148,7 @@ def _observations(
                     and _eligible_provider_description(
                         destination, claim.value, candidate
                     )
+                    and not _generic_provider_subtitle(report, destination, claim.value)
                     and _eligible_field_value(destination, claim.value)
                     and (
                         destination is not TargetDestination.TITLE
@@ -1146,6 +1180,39 @@ def _observations(
                         )
                     )
     return tuple(values)
+
+
+def _generic_provider_subtitle(
+    report: MetadataReport, destination: TargetDestination, value: str
+) -> bool:
+    return (
+        destination is TargetDestination.SUBTITLE
+        and next(
+            field.state
+            in {
+                TargetFieldState.MISSING,
+                TargetFieldState.NULL,
+                TargetFieldState.EMPTY,
+            }
+            for field in report.target.fields
+            if field.destination is destination
+        )
+        and _comparison(destination, value) in _GENERIC_PROVIDER_SUBTITLES
+    )
+
+
+def _has_generic_provider_subtitle(report: MetadataReport) -> bool:
+    return any(
+        claim.kind is ClaimKind.SUBTITLE
+        and claim.scope is ClaimScope.EDITION
+        and claim.state is FieldState.VALID
+        and claim.value is not None
+        and claim.applicability == "ebook"
+        and _generic_provider_subtitle(report, TargetDestination.SUBTITLE, claim.value)
+        for provider in report.providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+    )
 
 
 def _list_observations(
@@ -2787,11 +2854,22 @@ def _bibliographic_combinations(
         tuple[tuple[str, str, str | None, str | None], ...],
         tuple[tuple[BibliographicSelection, ...], set[str]],
     ] = {}
+    generic_subtitle_rejection = results[
+        TargetDestination.SUBTITLE
+    ].outcome is ProposalOutcome.INELIGIBLE and results[
+        TargetDestination.SUBTITLE
+    ].reasons == ("generic_provider_subtitle",)
     for representation, represented in sorted(members.items()):
-        if not represented.keys() & {
+        component_destinations = represented.keys() & {
             TargetDestination.SUBTITLE,
             TargetDestination.SERIES,
-        }:
+        }
+        generic_title_preservation = (
+            generic_subtitle_rejection
+            and not component_destinations
+            and set(represented) == {TargetDestination.TITLE}
+        )
+        if not component_destinations and not generic_title_preservation:
             continue
         if any(len(values) != 1 for values in represented.values()):
             attempted.update(represented)
@@ -2805,6 +2883,14 @@ def _bibliographic_combinations(
             value.kind is BibliographicSelectionKind.CANDIDATE for value in selections
         ):
             attempted.update(represented)
+            _retain_safe_combination(
+                combinations,
+                selections,
+                {representation},
+                targets,
+                results,
+            )
+        elif generic_title_preservation:
             _retain_safe_combination(
                 combinations,
                 selections,
