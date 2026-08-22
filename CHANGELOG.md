@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Make Activity one current row per immutable change while retaining its
+  ordered write lifecycle behind the row's bounded details disclosure. Search,
+  filters, date bounds, totals, and pagination now operate on those change rows
+  without a mutable audit projection or new persistence schema. (#788)
+
 - Let Activity search find a durable record by the value it changed from or
   to. The server searches only its existing bounded immutable documents using
   parameterised literals; it adds no index, duplicate audit document, or new
