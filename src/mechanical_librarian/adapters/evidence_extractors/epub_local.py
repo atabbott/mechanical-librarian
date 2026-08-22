@@ -709,6 +709,10 @@ def rear_facts(
             series = opening._series_indicia(value)
             if series is not None:
                 sequence, name = series
+                if len(facts) + (2 if sequence is not None else 1) > 16:
+                    raise opening._AggregateRejected(
+                        report.outcome.RESOURCE_LIMIT, tuple(facts)
+                    )
                 if sequence is not None:
                     facts.append(
                         EpubInspectionFact(

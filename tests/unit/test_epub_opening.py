@@ -1399,6 +1399,61 @@ def test_explicit_series_label_retains_an_unpositioned_membership() -> None:
     ] == [(OpeningField.SERIES, "Clockwork Archive")]
 
 
+@pytest.mark.parametrize("heading", ("Reading order", "Publication order"))
+def test_order_heading_excludes_its_forward_series_scope(heading: str) -> None:
+    report = _extract(
+        _single(_xhtml(f"<h2>{heading}</h2><p>Book 2 of Clockwork Archive</p>"))
+    )
+    assert not {claim.field for claim in report.claims} & {
+        OpeningField.SERIES,
+        OpeningField.SERIES_ORDER,
+    }
+
+
+@pytest.mark.parametrize(
+    "markup",
+    (
+        "<p>SERIES Clockwork Archive Part 2.5</p>",
+        "<p>Series: Clockwork Archive, The Mystery!</p>",
+    ),
+)
+def test_closed_series_forms_preserve_name_first_and_internal_punctuation(
+    markup: str,
+) -> None:
+    assert any(
+        claim.field is OpeningField.SERIES
+        for claim in _extract(_single(_xhtml(markup))).claims
+    )
+
+
+@pytest.mark.parametrize(
+    "markup",
+    (
+        "<p>Series: a series of historical mysteries</p>",
+        "<p>Book 2 of Clockwork Archive coming soon</p>",
+        "<p>Book 2 of Clockwork Archive today!</p>",
+    ),
+)
+def test_series_trailing_clauses_are_rejected(markup: str) -> None:
+    assert not {claim.field for claim in _extract(_single(_xhtml(markup))).claims} & {
+        OpeningField.SERIES,
+        OpeningField.SERIES_ORDER,
+    }
+
+
+def test_opening_fact_limit_keeps_a_series_pair_atomic() -> None:
+    report = _extract(
+        _single(
+            _xhtml("<p>Series: Earlier Archive</p><p>Book 2 of Clockwork Archive</p>")
+        ),
+        EpubOpeningLimits(facts=2),
+    )
+    assert [(claim.field, claim.normalized_value) for claim in report.claims] == [
+        (OpeningField.SERIES, "Earlier Archive"),
+    ]
+    assert "opening_fact_limit" in report.warnings
+
+
 @pytest.mark.parametrize(
     "markup",
     (

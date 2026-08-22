@@ -416,13 +416,22 @@ _CONTEXTUAL_CREDITS = (
     ),
     (re.compile(rf"\bworkflow\s*[:\-]\s*{_CREDIT_NAME_TEXT}", re.I), "workflow"),
 )
+_SERIES_NAME = r"[\w][\w &'’(),!?.-]*[\w)!?]"
 _SERIES_MEMBERSHIP = re.compile(
     r"(?:book|volume|part)\s+(?P<sequence>[0-9]+(?:\.[0-9]+)?)\s+"
-    r"(?:of|in)\s+(?:the\s+)?(?P<name>[^.;:|]+)",
+    rf"(?:of|in)\s+(?:the\s+)?(?P<name>{_SERIES_NAME})",
     re.I,
 )
-_SERIES_LABEL = re.compile(r"series\s*:\s*(?P<name>[^.;:|]+)", re.I)
-_SERIES_TRAILING_AMBIGUITY = frozenset({"available", "now", "revised", "today"})
+_SERIES_NAME_FIRST = re.compile(
+    rf"series\s+(?P<name>{_SERIES_NAME})\s+(?:book|volume|part)\s+"
+    r"(?P<sequence>[0-9]+(?:\.[0-9]+)?)",
+    re.I,
+)
+_SERIES_LABEL = re.compile(rf"series\s*:\s*(?P<name>{_SERIES_NAME})", re.I)
+_SERIES_TRAILING_AMBIGUITY = re.compile(
+    r"(?:^a\s+series\s+of\b.*|\b(?:available|coming\s+soon|now|revised|today)\b[!?.]*$)",
+    re.I,
+)
 _EBOOK_LABEL = re.compile(
     r"(?<![\w])(?:e[\s-]?book|epub|electronic|digital)(?![\w])",
     re.I,
@@ -439,7 +448,8 @@ _NON_ISBN_IDENTIFIER = re.compile(
 _INDICIA_PROMOTION_NOTICE = re.compile(
     r"^\s*(?:advertisement|preview(?:\s+of\b.*)?|"
     r"sample(?:\s+(?:chapter|excerpt|of)\b.*)?|"
-    r"also by(?:\b.*)?|other works? by(?:\b.*)?)\s*[:.!]?\s*$",
+    r"also by(?:\b.*)?|other works? by(?:\b.*)?|"
+    r"(?:reading|publication)\s+order)\s*[:.!]?\s*$",
     re.I,
 )
 _CHARSET_PARAMETER = re.compile(
@@ -2600,16 +2610,41 @@ def _series_indicia(value: str) -> tuple[str | None, str] | None:
     """
 
     text = _SPACE.sub(" ", value).strip()
-    membership = _SERIES_MEMBERSHIP.fullmatch(text)
+    membership = _SERIES_MEMBERSHIP.fullmatch(text) or _SERIES_NAME_FIRST.fullmatch(
+        text
+    )
     if membership is not None:
         name = membership.group("name").strip()
-        if name.rsplit(" ", 1)[-1].casefold() in _SERIES_TRAILING_AMBIGUITY:
+        if _SERIES_TRAILING_AMBIGUITY.search(name) is not None:
             return None
         return membership.group("sequence"), name
     labelled = _SERIES_LABEL.fullmatch(text)
     if labelled is not None:
-        return None, labelled.group("name").strip()
+        name = labelled.group("name").strip()
+        if _SERIES_TRAILING_AMBIGUITY.search(name) is None:
+            return None, name
     return None
+
+
+def _bounded_claims(
+    claims: list[OpeningClaim], maximum: int
+) -> tuple[list[OpeningClaim], bool]:
+    """Keep a correlated series pair whole at the public fact boundary."""
+
+    bounded: list[OpeningClaim] = []
+    index = 0
+    while index < len(claims):
+        pair = (
+            index + 1 < len(claims)
+            and claims[index].field is OpeningField.SERIES_ORDER
+            and claims[index + 1].field is OpeningField.SERIES
+        )
+        width = 2 if pair else 1
+        if len(bounded) + width > maximum:
+            return bounded, True
+        bounded.extend(claims[index : index + width])
+        index += width
+    return bounded, False
 
 
 def _credit_name(value: str) -> str:
@@ -3897,9 +3932,7 @@ class EpubOpeningExtractor:
                         )
                     )
                     warnings.append(code)
-            fact_limit_reached = len(claims) > limits.facts
-            if fact_limit_reached:
-                claims = claims[: limits.facts]
+            claims, fact_limit_reached = _bounded_claims(claims, limits.facts)
             unique_warning_values = sorted(set(warnings))
             if fact_limit_reached and len(unique_warning_values) <= limits.warnings:
                 marker = "opening_fact_limit"

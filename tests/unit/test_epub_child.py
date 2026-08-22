@@ -991,6 +991,59 @@ def test_rear_indicia_rejects_prose_catalogue_and_trailing_series_ambiguity(
     )
 
 
+@pytest.mark.parametrize("heading", ("Reading order", "Publication order"))
+def test_rear_order_heading_excludes_its_forward_series_scope(heading: str) -> None:
+    request, (package, opening, _) = _bundle(
+        _xhtml(
+            f"<p>All rights reserved</p><h2>{heading}</h2><p>Book 2 of Clockwork Archive</p>"
+        )
+    )
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        facts = child._rear_facts(request, package, opening, archive)
+    assert not any(
+        fact.field in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+        for fact in facts
+    )
+
+
+@pytest.mark.parametrize(
+    "markup",
+    (
+        "<p>Series: a series of historical mysteries</p>",
+        "<p>Book 2 of Clockwork Archive coming soon</p>",
+        "<p>Book 2 of Clockwork Archive today!</p>",
+    ),
+)
+def test_rear_series_trailing_clauses_are_rejected(markup: str) -> None:
+    request, (package, opening, _) = _bundle(
+        _xhtml("<p>All rights reserved</p>" + markup)
+    )
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        facts = child._rear_facts(request, package, opening, archive)
+    assert not any(
+        fact.field in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+        for fact in facts
+    )
+
+
+def test_rear_fact_limit_keeps_a_series_pair_atomic() -> None:
+    markup = "".join(f"<p>Subtitle: Earlier {index}</p>" for index in range(15))
+    request, (package, opening, _) = _bundle(
+        _xhtml(
+            "<p>All rights reserved</p>" + markup + "<p>Book 2 of Clockwork Archive</p>"
+        )
+    )
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        with pytest.raises(child.opening_parser._AggregateRejected) as raised:
+            child._rear_facts(request, package, opening, archive)
+    assert raised.value.outcome is EpubInspectionOutcome.RESOURCE_LIMIT
+    assert len(raised.value.partial_facts) == 15
+    assert not any(
+        fact.field in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+        for fact in raised.value.partial_facts
+    )
+
+
 def test_rear_series_indicia_aggregate_improves_recall_without_false_positives() -> (
     None
 ):
