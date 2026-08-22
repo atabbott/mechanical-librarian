@@ -9,6 +9,9 @@
   no-change, decision, and policy before/after wording. It streams immutable
   authority in order without an index, duplicate audit document, or new
   private output. (#787)
+- Set the first-run and in-app settings authority: file-managed deployments
+  remain unchanged, store-mode secrets are write-only and backup-protected, and
+  only an empty `/data` volume may enter setup. (#762)
 
 - Recover explicit EPUB package, front, and rear series memberships with their
   stated sequence while keeping advertisements, reading lists, prose, and
