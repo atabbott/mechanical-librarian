@@ -62,14 +62,17 @@ bootstrap verifier before staging settings. Final claim and completion are one
 SQLite transaction containing the exact staged settings, store-mode owner
 verifier, durable completion record, and restart request; an interruption leaves
 either that complete record or the still-bootstrap-authorized setup state, never
-a partial owner claim. It then enters a restart-requested, draining state. It
-returns that explicit instruction and a bounded setup-complete state while the
-setup listener remains reachable, so the owner can see that no normal service
-has started; the process then shuts down for the Compose restart policy. It
-starts no preparation or normal routes. Only that next boot composes the exact
-staged settings, closes setup endpoints permanently, and admits normal routes
-and preparation. Every state other than that empty-volume first boot retains the
-existing stop-rather-than-repair startup rule.
+a partial owner claim. A later boot may resume only the exact valid
+incomplete-setup state created under that bootstrap authority; arbitrary
+nonempty, malformed, or store-mode state still fails closed. It then enters a
+restart-requested, draining state. It returns that explicit instruction and a
+bounded setup-complete state while the setup listener remains reachable, so the
+owner can see that no normal service has started; the process then shuts down
+for the Compose restart policy. It starts no preparation or normal routes. Only
+that next boot composes the exact staged settings, closes setup endpoints
+permanently, and admits normal routes and preparation. Every state other than
+that empty-volume first boot or its exact incomplete-setup continuation retains
+the existing stop-rather-than-repair startup rule.
 
 Existing deployments stay file-managed. The supported move to in-app management
 is an authenticated, CSRF-protected **Import and retire file management** action:
