@@ -1799,7 +1799,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             rows = self._connection.execute(
                 "SELECT event_id,occurred_at,kind FROM field_effect_events WHERE plan_id=? "
                 "ORDER BY occurred_at ASC,event_id ASC LIMIT ?",
-                (row[0], limit + 1),
+                (row[0], limit),
             ).fetchall()
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error

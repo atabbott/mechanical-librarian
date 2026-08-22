@@ -1008,9 +1008,9 @@ class ContinuousGuardedApplication:
 
     def activity_transitions(self, event_id: str) -> dict[str, object]:
         transitions = self._repository.field_effect_activity_transitions(event_id)
-        if len(transitions) > 21:
+        if len(transitions) > 20:
             raise GuardedApplicationError("activity")
-        return {"events": list(transitions[:20]), "has_more": len(transitions) > 20}
+        return {"events": list(transitions)}
 
     def _capability_readiness(
         self,
