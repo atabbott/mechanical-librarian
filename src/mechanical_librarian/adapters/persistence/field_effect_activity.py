@@ -1616,8 +1616,36 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                                 projected_automatic, case, report, proposal, outcome
                             )
                             selected_value = None
+                    except FieldEffectError as error:
+                        # A retained decision can outlive the exact authority
+                        # aggregate it names. That is an event-local inability
+                        # to disclose its selected value, not a reason to hide
+                        # unrelated audit truth. Only the closed authority
+                        # binding refusal degrades; corrupt persistence still
+                        # reaches the outer fail-closed boundary.
+                        if error.code != "authority_binding":
+                            raise
+                        durable["source_kind"] = "degraded"
+                        durable["degraded_reason"] = "automatic_authority_unavailable"
+                        events.append(
+                            {
+                                "connection": connection,
+                                "destination": destination,
+                                "event_id": event_id,
+                                "event_type": projected_type,
+                                "failure": None,
+                                "library": library,
+                                "occurred_at": occurred_at,
+                                "origin": origin,
+                                "report_id": report_id,
+                                "state": state,
+                                "work_id": work_id,
+                                **({"work_label": event_title} if event_title else {}),
+                                "record": durable,
+                            }
+                        )
+                        continue
                     except (
-                        FieldEffectError,
                         ReportValueError,
                         ProposalValueError,
                         RichMetadataPreviewError,

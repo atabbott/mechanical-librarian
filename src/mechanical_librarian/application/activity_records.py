@@ -305,6 +305,9 @@ def readable_activity_event(
         ]
         event["policy_changes"] = changes
     elif source_kind == "degraded":
+        unavailable = {
+            "automatic_authority_unavailable": "The automatic authority is no longer available",
+        }.get(cast(str, record.get("degraded_reason", "")), "Details cannot be read")
         change = ReadableChange(
             "Details unavailable", "Recorded details are unavailable"
         )
@@ -312,7 +315,8 @@ def readable_activity_event(
             {
                 "label": "Record status",
                 "value": "This retained event cannot be fully projected",
-            }
+            },
+            {"label": "Disclosure", "value": unavailable},
         ]
     else:
         change = ReadableChange("Recorded", "Recorded")
