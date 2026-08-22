@@ -178,10 +178,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 and route.request.method == "POST"
             ):
                 connection_state = "recovered"
-                payload = cast(
+                recovered_payload = cast(
                     "dict[str, object]", rich_payload("/api/v1/review-preparation")
                 )
-                conditions = cast("list[dict[str, object]]", payload["connections"])
+                conditions = cast(
+                    "list[dict[str, object]]", recovered_payload["connections"]
+                )
                 conditions[0] = {
                     **conditions[0],
                     "state": "recovered",
@@ -191,7 +193,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 route.fulfill(
                     status=200,
                     content_type="application/json",
-                    body=json.dumps(payload),
+                    body=json.dumps(recovered_payload),
                 )
                 return
             if path == "/api/v1/activity/consent" and route.request.method == "POST":
