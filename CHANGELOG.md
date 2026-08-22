@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Let Activity search find a durable record by the value it changed from or
+  to. The server searches only its existing bounded immutable documents using
+  parameterised literals; it adds no index, duplicate audit document, or new
+  private output. (#787)
+
 - Recover explicit EPUB package, front, and rear series memberships with their
   stated sequence while keeping advertisements, reading lists, prose, and
   trailing ambiguity out of local evidence. (#375)

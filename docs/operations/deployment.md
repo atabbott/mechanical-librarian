@@ -143,6 +143,7 @@ remain outside this contract.
 The authenticated Activity ledger is a private read projection, not an
 operations console. It pages a deterministic newest-first union of durable
 review decisions, policy transitions, safeguards, guarded effects, and
-verification, with bounded search, type and date filters. It never offers
+verification, with bounded search over the existing immutable event documents,
+type and date filters. It never offers
 queue administration, blind retries, telemetry, exports, or extra write
 authority; recovery and consent remain the existing server-validated actions.

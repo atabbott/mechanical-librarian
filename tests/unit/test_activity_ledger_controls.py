@@ -159,26 +159,15 @@ def test_search_narrows_on_the_work_the_field_and_the_status(
     assert _all_rows(ledger, search="no such work anywhere in this ledger") == []
 
 
-def test_the_changed_value_itself_is_not_searchable(
+def test_the_changed_value_itself_is_searchable(
     ledger: ContinuousGuardedApplication,
 ) -> None:
-    """A row's own new value cannot be found by searching for it.
-
-    This is asserted as current behaviour rather than as a fault, so that the
-    limitation is visible and a later change to it is a deliberate one. The
-    ledger's search predicate covers ``work_id``, ``library``, ``destination``,
-    ``state`` and the report's title and detail; the durable before and after
-    are read out of each event's own document one layer further out, after the
-    row has already been selected, so they are not available to the query.
-
-    It is worth stating plainly: an owner who remembers the value but not the
-    work cannot find the record of it on this page.
-    """
+    """An owner can find an immutable row by its own changed value (#787)."""
     written = [
         row for row in _all_rows(ledger) if "9780060512750" in str(row["change"])
     ]
     assert written, "the seeded ledger should contain this exact new value"
-    assert _all_rows(ledger, search="9780060512750") == []
+    assert _all_rows(ledger, search="9780060512750") == written
 
 
 def test_the_date_range_excludes_what_falls_outside_it(

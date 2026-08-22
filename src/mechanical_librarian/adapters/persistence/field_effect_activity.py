@@ -1023,9 +1023,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             where.append(
                 "(ml_casefold(work_id) LIKE ? ESCAPE '\\' OR ml_casefold(library) LIKE ? ESCAPE '\\' "
                 "OR ml_casefold(destination) LIKE ? ESCAPE '\\' OR ml_casefold(state) LIKE ? ESCAPE '\\' "
-                "OR ml_casefold(coalesce(title,'')) LIKE ? ESCAPE '\\' OR ml_casefold(coalesce(detail,'')) LIKE ? ESCAPE '\\')"
+                "OR ml_casefold(coalesce(title,'')) LIKE ? ESCAPE '\\' OR ml_casefold(coalesce(detail,'')) LIKE ? ESCAPE '\\' "
+                "OR (source_valid=1 AND ml_casefold(document) LIKE ? ESCAPE '\\') "
+                "OR (source_valid=1 AND ml_casefold(coalesce(source_document,'')) LIKE ? ESCAPE '\\'))"
             )
-            parameters.extend((like, like, like, like, like, like))
+            # Values are retained only in each immutable source document. The
+            # predicate reads them without returning the document and stays
+            # parameterised; it deliberately does not create a duplicate
+            # search index or a mutable current-value projection (#787).
+            parameters.extend((like, like, like, like, like, like, like, like))
         predicate = " WHERE " + " AND ".join(where)
         projection = (
             "WITH activity_events(event_id,connection,destination,library,occurred_at,origin,report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,policy_from,policy_to,source_valid) AS ("
