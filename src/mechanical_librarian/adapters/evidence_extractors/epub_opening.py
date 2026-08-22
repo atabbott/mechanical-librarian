@@ -416,9 +416,13 @@ _CONTEXTUAL_CREDITS = (
     ),
     (re.compile(rf"\bworkflow\s*[:\-]\s*{_CREDIT_NAME_TEXT}", re.I), "workflow"),
 )
-_SERIES = re.compile(
-    r"\b(?:book|volume)\s+([0-9]+(?:\.[0-9]+)?)\s+(?:of|in)\s+(?:the\s+)?(.+)", re.I
+_SERIES_MEMBERSHIP = re.compile(
+    r"(?:book|volume|part)\s+(?P<sequence>[0-9]+(?:\.[0-9]+)?)\s+"
+    r"(?:of|in)\s+(?:the\s+)?(?P<name>[^.;:|]+)",
+    re.I,
 )
+_SERIES_LABEL = re.compile(r"series\s*:\s*(?P<name>[^.;:|]+)", re.I)
+_SERIES_TRAILING_AMBIGUITY = frozenset({"available", "now", "revised", "today"})
 _EBOOK_LABEL = re.compile(
     r"(?<![\w])(?:e[\s-]?book|epub|electronic|digital)(?![\w])",
     re.I,
@@ -2585,6 +2589,29 @@ def _indicia_credits(
     )
 
 
+def _series_indicia(value: str) -> tuple[str | None, str] | None:
+    """Recognize one complete, source-explicit series indicium.
+
+    This is deliberately a full-match vocabulary: opening and rear resource
+    selection establishes provenance, while this narrow grammar establishes
+    that the selected text describes this work rather than a catalogue entry
+    or ordinary prose.  The caller emits sequence then name, the existing
+    local-series correlation order.
+    """
+
+    text = _SPACE.sub(" ", value).strip()
+    membership = _SERIES_MEMBERSHIP.fullmatch(text)
+    if membership is not None:
+        name = membership.group("name").strip()
+        if name.rsplit(" ", 1)[-1].casefold() in _SERIES_TRAILING_AMBIGUITY:
+            return None
+        return membership.group("sequence"), name
+    labelled = _SERIES_LABEL.fullmatch(text)
+    if labelled is not None:
+        return None, labelled.group("name").strip()
+    return None
+
+
 def _credit_name(value: str) -> str:
     """Stop a credit at prose while preserving dotted personal initials."""
 
@@ -3332,14 +3359,16 @@ def _recognize(
                         element.start + date_span[1],
                     ),
                 )
-        series = _SERIES.search(text)
-        if series:
-            add(
-                OpeningField.SERIES_ORDER,
-                series.group(1),
-                EpubObservationApplicability.WORK,
-            )
-            add(OpeningField.SERIES, series.group(2), EpubObservationApplicability.WORK)
+        series = _series_indicia(text)
+        if series is not None:
+            sequence, name = series
+            if sequence is not None:
+                add(
+                    OpeningField.SERIES_ORDER,
+                    sequence,
+                    EpubObservationApplicability.WORK,
+                )
+            add(OpeningField.SERIES, name, EpubObservationApplicability.WORK)
         if "omnibus" in lowered:
             add(
                 OpeningField.OMNIBUS_MEMBERSHIP, text, EpubObservationApplicability.WORK

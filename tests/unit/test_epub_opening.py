@@ -1378,7 +1378,7 @@ def test_fact_limit_marker_is_reserved_inside_a_full_warning_budget() -> None:
     assert EpubOpeningReport.from_json(report.to_json()) == report
 
 
-def test_trailing_series_cue_without_positive_structure_is_rejected() -> None:
+def test_complete_series_membership_retains_decimal_sequence_and_name() -> None:
     report = _extract(_single(_xhtml("<p>Book 2.5 of the Clockwork Archive</p>")))
     assert [
         (claim.field, claim.normalized_value)
@@ -1388,6 +1388,15 @@ def test_trailing_series_cue_without_positive_structure_is_rejected() -> None:
         (OpeningField.SERIES_ORDER, "2.5"),
         (OpeningField.SERIES, "Clockwork Archive"),
     ]
+
+
+def test_explicit_series_label_retains_an_unpositioned_membership() -> None:
+    report = _extract(_single(_xhtml("<p>Series: Clockwork Archive</p>")))
+    assert [
+        (claim.field, claim.normalized_value)
+        for claim in report.claims
+        if claim.field in {OpeningField.SERIES, OpeningField.SERIES_ORDER}
+    ] == [(OpeningField.SERIES, "Clockwork Archive")]
 
 
 @pytest.mark.parametrize(

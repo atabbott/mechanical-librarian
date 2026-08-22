@@ -54,6 +54,9 @@ foreground and returns deterministic bounded evidence
 followed by one final summary. It reloads no configuration during the
 run, revalidates the current catalogue and exact item before each report, and
 binds every report to the file identity frozen in the manifest.
+Series evidence remains the isolated child's bounded explicit package or
+front/rear indicia projection; batch execution does not expand scan scope or
+make series ranking, proposal, decision, or write calls.
 
 Item-local extraction, format, content, or inspection failures emit a typed
 outcome and continue. Configuration, credential, catalogue-generation,

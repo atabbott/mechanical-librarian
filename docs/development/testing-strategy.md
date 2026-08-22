@@ -377,6 +377,9 @@ here, and this is the record. (2026-08-18)
   which no tier supplies and every test in the map substitutes. It is accepted
   as the largest unproved seam in the module, not as a proved one: closing it
   needs a real-file fixture and a child process, and that is a unit of its own.
+- EPUB series recovery is proved in the opening and child cohorts with generated
+  package/front/rear fixtures, decimal and multiple-membership positives, and
+  explicit advertisement, catalogue, prose, and trailing-ambiguity negatives.
 - `compose_continuous_guarded_application` (115) — composed unmocked by
   `run_review_server` on every started container, so the container lifecycle
   qualifier proves it end to end against a real SQLite store. This is the case

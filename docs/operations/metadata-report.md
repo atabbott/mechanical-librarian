@@ -102,6 +102,7 @@ byte snapshot, verifies its digest, and uses that same snapshot for all EPUB
  slots in reverse order, opens at most four XHTML/HTML resources, and never
  substitutes an excluded, missing, encrypted, image, unsupported, or duplicate
  slot. It admits only explicit title, target-work subtitle, publisher, imprint,
+ source-explicit series membership and sequence,
  creator, controlled contributor role, selected-manifestation publication
  date, distinct contextual date/production credit, or checksum-valid ISBN
  evidence when the same resource has a copyright marker; it is not whole-book
@@ -115,6 +116,10 @@ byte snapshot, verifies its digest, and uses that same snapshot for all EPUB
  split labels in the same ancestor remain assembled. Repeated equal spans
  remain separate, including complete and split siblings with the same value.
  Production/tool credits never become contributors.
+Series is retained only from an exact `Series: NAME` label or a complete
+`Book`, `Volume`, or `Part N of NAME` indicium. Decimal positions remain
+lexical values; advertisements, reading lists, prose, and trailing text are
+rejected rather than inferred.
  If that optional rear pass reaches its aggregate resource or fact limit, it
  records a bounded warning while retaining facts admitted before exhaustion as
  well as already validated package and opening-matter evidence; package and opening resource limits
