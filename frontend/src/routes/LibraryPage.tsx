@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, SyntheticEvent } from 'react'
 
 import { displayValue } from '../api/http'
@@ -778,6 +778,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
+  const fieldRail = useRef<HTMLElement>(null)
+  const advanceFocus = useRef(false)
+  const advanceScroll = useRef<number | null>(null)
   const automaticTrigger = useRef<HTMLButtonElement>(null)
   const keepManualHandling = useRef<HTMLButtonElement>(null)
   const restoreAutomaticTrigger = useRef(false)
@@ -906,7 +909,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     visibleFields.find((field) => field.destination === search.field) ??
     visibleFields.find(actionable) ??
     visibleFields[0]
-  const currentActionableDestinations = detail.data?.fields.map((field) => field.destination) ?? []
+  const currentActionableDestinations = visibleFields.map((field) => field.destination)
   const frozenDestinations =
     frozenFieldOrders[selectedReviewCaseId] ?? currentActionableDestinations
   const railFields = frozenDestinations
@@ -936,7 +939,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       search.preview !== undefined &&
       (currentSearch.current.field === undefined || currentSearch.current.field === destination),
     onAdvance: async (field) => {
+      const advancing = field !== selected?.destination
+      advanceFocus.current = advancing
+      advanceScroll.current = advancing ? window.scrollY : null
       await navigate({
+        resetScroll: false,
         search: (current) => (current.preview === search.preview ? { ...current, field } : current),
       })
     },
@@ -992,14 +999,47 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       completionRegion.current?.focus({ preventScroll: true })
   }, [complete, completionInspection, selectedReviewCaseId])
   useEffect(() => {
+    const rail = fieldRail.current
+    const active = activeFieldButton.current
+    if (!rail || !active) return
     const reducedMotion =
       typeof window.matchMedia === 'function' &&
       window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    activeFieldButton.current?.scrollIntoView({
-      block: 'nearest',
-      inline: 'center',
-      behavior: reducedMotion ? 'auto' : 'smooth',
-    })
+    // This is a horizontal rail adjustment, not a request to reposition the
+    // document. `scrollIntoView` can pull the selected work back to the top
+    // when the owner records a middle field.
+    const railBounds = rail.getBoundingClientRect()
+    const activeBounds = active.getBoundingClientRect()
+    const left = Math.max(
+      0,
+      rail.scrollLeft +
+        activeBounds.left -
+        railBounds.left -
+        (rail.clientWidth - activeBounds.width) / 2,
+    )
+    if (typeof rail.scrollTo === 'function')
+      rail.scrollTo({ left, behavior: reducedMotion ? 'auto' : 'smooth' })
+    if (!advanceFocus.current) return
+    advanceFocus.current = false
+    const action = document.querySelector<HTMLButtonElement>(
+      '.decision-canvas button:not(:disabled)',
+    )
+    action?.focus({ preventScroll: true })
+    if (!action) return
+    const bounds = action.getBoundingClientRect()
+    const masthead = document.querySelector<HTMLElement>('.masthead')
+    const visibleTop = (masthead?.getBoundingClientRect().bottom ?? 0) + 8
+    const reveal =
+      bounds.top < visibleTop
+        ? bounds.top - visibleTop
+        : Math.max(0, bounds.bottom - window.innerHeight)
+    if (reveal) window.scrollBy({ top: reveal })
+  }, [selected?.destination])
+  useLayoutEffect(() => {
+    if (advanceScroll.current === null) return
+    const top = advanceScroll.current
+    advanceScroll.current = null
+    window.scrollTo({ top })
   }, [selected?.destination])
   useEffect(() => {
     if (automaticPanelVisible) keepManualHandling.current?.focus()
@@ -1491,7 +1531,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 <header>
                   <strong>{railPosition}</strong>
                 </header>
-                <nav className="field-filmstrip" aria-label="Review fields">
+                <nav ref={fieldRail} className="field-filmstrip" aria-label="Review fields">
                   {railFields.map((field) => (
                     <button
                       key={field.destination}
@@ -1593,6 +1633,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 </article>
               ) : selected ? (
                 <article
+                  key={selected.destination}
                   className={`decision-canvas${controller.recording ? ' is-recording' : ''}`}
                 >
                   {complete?.id === selectedReviewCaseId ? (

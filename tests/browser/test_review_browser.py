@@ -1411,19 +1411,35 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 page.goto(f"{origin}/library{search}")
                 page.locator(".field-map").wait_for()
                 page.wait_for_load_state("networkidle")
+                # Exercise an actual middle-field advance after the owner has
+                # read down the page. The rail keeps its original visible order
+                # and may move horizontally, but must not pull the document up.
+                rail_order = [
+                    label.splitlines()[0]
+                    for label in page.locator(
+                        ".field-filmstrip button"
+                    ).all_inner_texts()
+                ]
+                page.locator(".field-filmstrip button").nth(1).click()
+                page.evaluate("window.scrollTo(0, 220)")
+                scroll_before = page.evaluate("() => window.scrollY")
+                page.emulate_media(reduced_motion="no-preference")
 
                 def current_field() -> str:
                     return page.locator(_CURRENT_FIELD_SELECTOR).first.inner_text()
 
-                def advance() -> tuple[float, int, str]:
+                def advance(*, pointer: bool = False) -> tuple[float, int, str]:
                     before = current_field()
                     settled = len(library_responses)
                     choice = page.get_by_role(
                         "button", name="Choose current value:", exact=False
                     ).first
-                    choice.focus()
                     started = time.monotonic()
-                    page.keyboard.press("Enter")
+                    if pointer:
+                        choice.click()
+                    else:
+                        choice.focus()
+                        page.keyboard.press("Enter")
                     page.wait_for_function(
                         _CURRENT_FIELD_CHANGED,
                         arg=before,
@@ -1435,7 +1451,7 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     )
 
                 issued = len(library_requests)
-                elapsed, projections, first_field = advance()
+                elapsed, projections, first_field = advance(pointer=True)
                 # The projection is invalidated, not awaited. Anything that
                 # completed inside this window was waited on.
                 assert projections == 0, (elapsed, projections)
@@ -1446,6 +1462,56 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 # The acknowledgement is local: the durable write has not even
                 # answered yet, which is what "immediate" has to mean.
                 assert decision_responses == [], decision_responses
+                assert page.evaluate("() => window.scrollY") == scroll_before
+                assert page.evaluate(
+                    "() => document.activeElement?.matches('.decision-canvas button:not(:disabled)')"
+                )
+                page.mouse.move(0, 0)
+                pointer_focus = page.evaluate(
+                    """() => {
+                      const card = document.activeElement?.closest('.metadata-choice')
+                      const probe = document.createElement('div')
+                      probe.style.background = 'var(--surface-strong)'
+                      document.body.append(probe)
+                      const result = {
+                        background: card && getComputedStyle(card).backgroundColor,
+                        base: getComputedStyle(probe).backgroundColor,
+                        hover: card?.matches(':hover'),
+                        keyboardFocus: card?.matches(':has(:focus-visible)'),
+                      }
+                      probe.remove()
+                      return result
+                    }"""
+                )
+                assert pointer_focus == {
+                    "background": pointer_focus["base"],
+                    "base": pointer_focus["base"],
+                    "hover": False,
+                    "keyboardFocus": False,
+                }
+                assert [
+                    label.splitlines()[0]
+                    for label in page.locator(
+                        ".field-filmstrip button"
+                    ).all_inner_texts()
+                ] == rail_order
+                assert (
+                    page.locator(".decision-canvas").first.evaluate(
+                        "node => getComputedStyle(node).animationName"
+                    )
+                    == "library-field-arrive"
+                )
+                page.emulate_media(reduced_motion="reduce")
+                # The same advanced state remains, but the live media-query
+                # change removes its spatial animation. Chromium serialises
+                # that removal as either an empty name or `none`.
+                reduced_animation = page.locator(".decision-canvas").first.evaluate(
+                    "node => ({ name: getComputedStyle(node).animationName, "
+                    "transform: getComputedStyle(node).transform })"
+                )
+                assert reduced_animation == {"name": "", "transform": "none"} or (
+                    reduced_animation == {"name": "none", "transform": "none"}
+                )
                 # It still lands, and the authoritative case replaces the
                 # local acknowledgement rather than standing in for it.
                 page.get_by_text(
@@ -1465,6 +1531,40 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 assert preserved["q"] == ["Mistborn"]
                 assert preserved["preview"] == [case_id]
                 assert preserved["field"] != []
+                advanced_field = preserved["field"][0]
+
+                # The recorded middle field is revisitable before the owner
+                # continues, and still shows every eligible option with the
+                # recorded one integrated into the choice treatment.
+                page.locator(".field-filmstrip button").filter(
+                    has_text=first_field.split("\n")[0]
+                ).first.click()
+                recorded = page.get_by_role(
+                    "button", name="Choose current value:", exact=False
+                ).first
+                expect(recorded).to_have_attribute("aria-pressed", "true")
+                assert (
+                    page.get_by_role(
+                        "button", name="Take no action", exact=True
+                    ).count()
+                    == 1
+                )
+                assert (
+                    "You can change it here"
+                    in page.locator(".decision-canvas").first.inner_text()
+                )
+
+                # Back and Forward keep the same Library position, then the
+                # owner returns to the exact field the first decision opened.
+                page.go_back()
+                page.wait_for_load_state("networkidle")
+                page.go_forward()
+                page.wait_for_load_state("networkidle")
+                assert page.url.startswith(f"{origin}/library")
+                assert "lens=needs_attention" in page.url
+                page.locator(".field-filmstrip button").filter(
+                    has_text=advanced_field.title()
+                ).first.click()
 
                 # A second choice is accepted while the first settlement is
                 # still converging, in order, without a reload.
@@ -1505,46 +1605,124 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     "a work finishing preparation never reached the Library"
                 )
 
-                # Reduced motion receives the same state change with no
-                # spatial animation.
-                assert (
-                    page.locator(".decision-canvas").first.evaluate(
-                        "node => getComputedStyle(node).animationName"
-                    )
-                    == "none"
-                )
-
-                # The recorded field is revisitable and still shows every
-                # eligible option, with the recorded one marked.
-                page.locator(".field-filmstrip button").filter(
-                    has_text=first_field.split("\n")[0]
-                ).first.click()
-                recorded = page.get_by_role(
-                    "button", name="Choose current value:", exact=False
-                ).first
-                expect(recorded).to_have_attribute("aria-pressed", "true")
-                # Every eligible option for this field is offered again. It is
-                # preservation-only, so those are keeping the current value and
-                # taking no action -- not a narrowed inspect-only view.
-                assert (
-                    page.get_by_role(
-                        "button", name="Take no action", exact=True
-                    ).count()
-                    == 1
-                )
-                assert (
-                    "You can change it here"
-                    in page.locator(".decision-canvas").first.inner_text()
-                )
-
-                # Back and Forward keep the same Library position.
-                page.go_back()
-                page.wait_for_load_state("networkidle")
-                page.go_forward()
-                page.wait_for_load_state("networkidle")
-                assert page.url.startswith(f"{origin}/library")
-                assert "lens=needs_attention" in page.url
                 assert errors == []
+            browser.close()
+
+
+def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
+    """#635: a lower compact choice reveals, but does not centre, the next action."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 390, "height": 320},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(
+                    f"{origin}/library?lens=needs_attention&preview={case_id}&field=title"
+                )
+                page.locator(".decision-canvas").wait_for()
+                rail_order = [
+                    label.splitlines()[0]
+                    for label in page.locator(
+                        ".field-filmstrip button"
+                    ).all_inner_texts()
+                ]
+                before = page.locator(_CURRENT_FIELD_SELECTOR).first.inner_text()
+                lower_choice = page.get_by_role(
+                    "button", name="Take no action", exact=True
+                )
+                lower_choice.scroll_into_view_if_needed()
+                scroll_before = page.evaluate("() => window.scrollY")
+                assert scroll_before > 0
+                page.evaluate(
+                    """() => {
+                      const original = window.scrollBy.bind(window)
+                      window.scrollBy = (options) => {
+                          const control = document.activeElement
+                          const bounds = control?.getBoundingClientRect()
+                          const masthead = document.querySelector('.masthead')
+                          const visibleTop = (masthead?.getBoundingClientRect().bottom ?? 0) + 8
+                          window.__compactReveal = {
+                            requested: typeof options === 'object' ? options.top : null,
+                            beforeTop: bounds?.top ?? null,
+                            beforeBottom: bounds?.bottom ?? null,
+                            visibleTop,
+                            viewport: innerHeight,
+                        }
+                        original(options)
+                      }
+                    }"""
+                )
+                lower_choice.click()
+                page.wait_for_function(_CURRENT_FIELD_CHANGED, arg=before)
+                page.wait_for_function(
+                    "() => document.activeElement?.matches("
+                    "'.decision-canvas button:not(:disabled)')"
+                )
+                result = page.evaluate(
+                    """() => {
+                      const control = document.activeElement
+                      if (!(control instanceof HTMLButtonElement) || control.disabled)
+                        return null
+                      const bounds = control.getBoundingClientRect()
+                      const masthead = document.querySelector('.masthead')
+                      const mastheadBottom = masthead?.getBoundingClientRect().bottom ?? 0
+                      const hit = document.elementFromPoint(
+                        Math.min(innerWidth - 1, Math.max(0, bounds.left + bounds.width / 2)),
+                        Math.min(innerHeight - 1, Math.max(0, bounds.top + 1)),
+                      )
+                      return {
+                        focused: control.matches('.decision-canvas button:not(:disabled)'),
+                        top: bounds.top,
+                        bottom: bounds.bottom,
+                        mastheadBottom,
+                        occluded: hit !== control && !control.contains(hit),
+                        scrollY,
+                        reveal: window.__compactReveal ?? null,
+                      }
+                    }"""
+                )
+                assert result is not None
+                assert result["focused"]
+                assert result["top"] >= result["mastheadBottom"] + 7
+                assert result["bottom"] <= 321
+                assert not result["occluded"]
+                assert result["scrollY"] > 0
+                reveal = result["reveal"]
+                assert reveal is not None
+                expected = (
+                    reveal["beforeTop"] - reveal["visibleTop"]
+                    if reveal["beforeTop"] < reveal["visibleTop"]
+                    else max(0, reveal["beforeBottom"] - reveal["viewport"])
+                )
+                assert abs(reveal["requested"] - expected) <= 1
+                assert [
+                    label.splitlines()[0]
+                    for label in page.locator(
+                        ".field-filmstrip button"
+                    ).all_inner_texts()
+                ] == rail_order
             browser.close()
 
 
