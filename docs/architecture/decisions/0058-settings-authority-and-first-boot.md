@@ -19,8 +19,9 @@ or import path.
 `/data/config.json` remains fully supported. When it exists, it is the sole
 authority for every setting it covers. The settings API rejects every covered
 write with `409`; the UI renders those fields read-only and says `Managed by
-/data/config.json — remove it to manage in-app`. It never combines file and
-store values.
+/data/config.json — use Import and retire file management to manage in-app`.
+It never combines file and store values, and no UI copy instructs an owner to
+delete the file manually.
 
 When that file is absent, the settings store in `/data/application.sqlite3` is
 the authority. Its secret fields are write-only: an authenticated owner may set,
@@ -31,32 +32,44 @@ secret files. The project will not claim encryption at rest from an
 application-held key: a single-container key stored with `/data` would not
 protect a stolen volume.
 
+The owner credential is an exception to generic secret clearing. An established
+owner password is changed only by an authenticated, CSRF-protected atomic
+replacement that records the new verifier and invalidates affected sessions; it
+cannot be cleared through the settings API. Lost-owner recovery is a separately
+designed, explicit recovery flow with its own durable proof and is not an
+alternate settings write.
+
 Compose remains authoritative forever for the published port mapping, `/data`
 volume, and read-only media mounts. File-managed mode reads the TLS certificate
 and key, canonical origin, and trusted proxy IPs solely from `config-v6`; it
 does not read a bootstrap document. Only setup and store mode require Compose
 to mount the strict, owner-only `/run/secrets/review-bootstrap.json` document,
-which supplies those values. Bootstrap material and referenced TLS files are
-deploy-side material, never settings-store fields; missing, invalid, or unsafe
-bootstrap material stops setup/store startup before setup. An empty volume means
-an empty `/data` volume only: it does not create, replace, or relax the required
-bootstrap material. The wizard verifies media mounts but cannot author bind
-mounts. The settings API does not accept Compose or bootstrap fields and never
-returns an apply effect for them; the UI directs the owner to deployment
-configuration. Deploy-side changes take effect only after an operator restart.
+which supplies those values. In setup mode only, it also supplies the initial
+owner-password verifier; normal store mode does not read that verifier.
+Bootstrap material and referenced TLS files are deploy-side material, never
+settings-store fields; missing, invalid, or unsafe bootstrap material stops
+setup/store startup before setup. An empty volume means an empty `/data` volume
+only: it does not create, replace, or relax the required bootstrap material. The
+wizard verifies media mounts but cannot author bind mounts. The settings API
+does not accept Compose or bootstrap fields and never returns an apply effect
+for them; the UI directs the owner to deployment configuration. Deploy-side
+changes take effect only after an operator restart.
 
 On an empty `/data` volume, the server enters explicit setup mode and exposes
-only the first-run wizard. Its first successful mutation claims ownership by
-setting the owner password. Completion is two phase: it first commits staged
-settings and a durable completion record, then enters a restart-requested,
-draining state. It returns that explicit instruction and a bounded
-setup-complete state while the setup listener remains reachable, so the owner
-can see that no normal service has started; the process then shuts down for the
-Compose restart policy. It starts no preparation or normal routes. Only that
-next boot composes the exact staged settings, closes setup endpoints
-permanently, and admits normal routes and preparation. Every state other than
-that empty-volume first boot retains the existing stop-rather-than-repair
-startup rule.
+only the first-run wizard and its bootstrap-authenticated owner session. It has
+no unauthenticated mutation route: the owner proves the password against the
+bootstrap verifier before staging settings. Final claim and completion are one
+SQLite transaction containing the exact staged settings, store-mode owner
+verifier, durable completion record, and restart request; an interruption leaves
+either that complete record or the still-bootstrap-authorized setup state, never
+a partial owner claim. It then enters a restart-requested, draining state. It
+returns that explicit instruction and a bounded setup-complete state while the
+setup listener remains reachable, so the owner can see that no normal service
+has started; the process then shuts down for the Compose restart policy. It
+starts no preparation or normal routes. Only that next boot composes the exact
+staged settings, closes setup endpoints permanently, and admits normal routes
+and preparation. Every state other than that empty-volume first boot retains the
+existing stop-rather-than-repair startup rule.
 
 Existing deployments stay file-managed. The supported move to in-app management
 is an authenticated, CSRF-protected **Import and retire file management** action:
@@ -70,11 +83,15 @@ of them before renaming. A mismatch fails closed with the file still
 authoritative. The rename is same-volume and atomic to a newly created,
 owner-only, non-clobbering private retired destination. On restart, only a
 recorded intent may resume; it repeats the snapshot and bootstrap checks before
-rename and otherwise fails closed. Until the rename succeeds, the file remains
-authoritative; after it, the committed store is authoritative. Startup must not
-infer, merge, or repair any other state. This keeps the transition one deliberate
-owner action rather than asking operators to manually delete a configuration
-that the next boot still needs.
+rename and otherwise fails closed. If a crash follows a completed rename, the
+intent's exact retired destination is the only accepted recovery receipt:
+startup validates that private file against the intent, revalidates the bound
+secret snapshots and bootstrap material, and finalizes retirement. A missing
+receipt, both source and receipt, or any mismatch fails closed. Until the rename
+succeeds, the file remains authoritative; after it, the committed store is
+authoritative. Startup must not infer, merge, or repair any other state. This
+keeps the transition one deliberate owner action rather than asking operators to
+manually delete a configuration that the next boot still needs.
 
 Store writes declare either `applied_live` or `restart_required`. Policy choices
 and cover-preference values apply live to later evaluations; target connections,
@@ -124,10 +141,13 @@ claim would imply.
 - File-mode API/UI tests prove read-only fields and `409`; restart proves no
   store value overrides a present file.
 - Store-mode tests prove secret values never appear in reads, logs, errors,
-  exports, or backups' public manifests, while presence and clear/replace work.
+  exports, or backups' public manifests, while presence and generic
+  clear/replace work; owner-password replacement is separately atomic and
+  generic clear is refused.
 - Startup and integration tests prove the empty-volume setup boundary, owner
-  claim, staged restart handoff, permanent setup-route closure, bootstrap
-  rejection, retirement crash/drift points, and the stated live/restart response
-  for every store setting category.
+  authentication, atomic claim/completion and staged restart handoff, permanent
+  setup-route closure, bootstrap rejection, retirement crash/drift and
+  rename-receipt points, and the stated live/restart response for every store
+  setting category.
 - Security review verifies secret permissions, backup guidance, CSRF/origin
   protection, and preserved contained-reviewer isolation.
