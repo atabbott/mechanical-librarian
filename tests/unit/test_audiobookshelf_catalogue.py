@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import tempfile
+import threading
 from collections.abc import Callable
+from pathlib import Path
+from typing import cast
 
 import httpx
 import pytest
@@ -13,15 +18,32 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue imp
 from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
     _entry as catalogue_entry,
 )
+from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.catalogue import (
     CatalogueError,
+    RefreshCurrentCatalogue,
     TargetConnectionError,
+    catalogue_fingerprint,
 )
 from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
     LibraryConfiguration,
     MediaMountConfiguration,
+    TargetConnectionConfiguration,
 )
-from mechanical_librarian.domain.metadata_report import canonical_json
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationService,
+)
+from mechanical_librarian.application.provider_recovery_evidence import (
+    ProviderFailureObserver,
+)
+from mechanical_librarian.application.review_pipeline import (
+    ReviewPipelineRepository,
+    ReviewPreparationPipeline,
+)
+from mechanical_librarian.application.review_pipeline_stages import ReviewPipelineStages
+from mechanical_librarian.domain.metadata_report import ProviderStatus, canonical_json
 
 
 def _library(
@@ -144,6 +166,305 @@ def test_singular_unmounted_book_is_catalogued_but_not_eligible_and_matches_item
         False,
         expected,
     )
+
+
+def test_untrimmed_title_is_retained_as_attention_without_hiding_valid_sibling() -> (
+    None
+):
+    valid = _item("valid")
+    untrimmed = _item("untrimmed")
+    invalid = _item("invalid")
+    surrogate = _item("surrogate")
+    untrimmed["media"]["metadata"]["title"] = "  Needs attention  "
+    invalid["media"]["metadata"]["title"] = "   "
+    surrogate["media"]["metadata"]["title"] = "\ud800"
+    details = {
+        "valid": valid,
+        "untrimmed": untrimmed,
+        "invalid": invalid,
+        "surrogate": surrogate,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/libraries":
+            return httpx.Response(
+                200, json={"libraries": [{"id": "library-1", "mediaType": "book"}]}
+            )
+        if request.url.path.endswith("/items"):
+            return httpx.Response(
+                200,
+                json={
+                    "total": 4,
+                    "results": [
+                        {"id": "valid", "libraryId": "library-1", "updatedAt": 1},
+                        {
+                            "id": "untrimmed",
+                            "libraryId": "library-1",
+                            "updatedAt": 1,
+                        },
+                        {"id": "invalid", "libraryId": "library-1", "updatedAt": 1},
+                        {"id": "surrogate", "libraryId": "library-1", "updatedAt": 1},
+                    ],
+                },
+            )
+        return httpx.Response(
+            200,
+            content=json.dumps(
+                details[request.url.path.rsplit("/", 1)[1]], ensure_ascii=True
+            ).encode("utf-8"),
+            headers={"content-type": "application/json"},
+        )
+
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda _: httpx.Client(
+            transport=httpx.MockTransport(handler), base_url="https://abs.invalid"
+        ),
+        mounts={},
+        maximum_bytes=65_536,
+        timeout_seconds=1,
+    )
+    configuration = ApplicationConfiguration(
+        (TargetConnectionConfiguration("primary", "https://abs.invalid", "/token"),),
+        (_library(),),
+        (),
+        (),
+    )
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_catalogue(Path(directory) / "catalogue.sqlite", create=True)
+        RefreshCurrentCatalogue(reader, repository).refresh(configuration)
+        entries = repository.inspect(catalogue_fingerprint(configuration).digest)
+        repository.close()
+
+    assert [
+        (entry.item_id, entry.title, entry.classification) for entry in entries
+    ] == [
+        ("invalid", "Untitled item requiring attention", "needs-attention"),
+        ("surrogate", "Untitled item requiring attention", "needs-attention"),
+        ("untrimmed", "Needs attention", "needs-attention"),
+        ("valid", "Title", "singular-supported"),
+    ]
+    corrected = _item("untrimmed")
+    corrected["media"]["metadata"]["title"] = "Needs attention"
+    assert (
+        next(
+            entry for entry in entries if entry.item_id == "untrimmed"
+        ).source_fingerprint
+        != catalogue_entry(
+            "primary",
+            _library(),
+            None,
+            {"id": "untrimmed", "libraryId": "library-1", "updatedAt": 1},
+            corrected,
+        ).source_fingerprint
+    )
+    different_surrogate = _item("surrogate")
+    different_surrogate["media"]["metadata"]["title"] = "\ud801"
+    assert (
+        next(
+            entry for entry in entries if entry.item_id == "surrogate"
+        ).source_fingerprint
+        != catalogue_entry(
+            "primary",
+            _library(),
+            None,
+            {"id": "surrogate", "libraryId": "library-1", "updatedAt": 1},
+            different_surrogate,
+        ).source_fingerprint
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "code"),
+    (
+        pytest.param(401, "authentication", id="authentication"),
+        pytest.param(403, "authorization", id="authorization"),
+        pytest.param(500, "unavailable", id="status"),
+    ),
+)
+def test_status_connection_classifications_are_preserved(
+    status: int, code: str
+) -> None:
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda _: httpx.Client(
+            transport=httpx.MockTransport(lambda _: httpx.Response(status)),
+            base_url="https://abs.invalid",
+        ),
+        mounts={},
+        maximum_bytes=65_536,
+        timeout_seconds=1,
+    )
+    with pytest.raises(TargetConnectionError) as raised:
+        reader.read_library("primary", _library(), 10)
+    assert raised.value.code == code
+
+
+@pytest.mark.parametrize(
+    "error",
+    (
+        pytest.param(httpx.ConnectError("offline"), id="transport"),
+        pytest.param(httpx.ReadTimeout("slow"), id="timeout"),
+    ),
+)
+def test_transport_connection_classifications_are_preserved(
+    error: httpx.TransportError,
+) -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        raise error
+
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda _: httpx.Client(
+            transport=httpx.MockTransport(handler), base_url="https://abs.invalid"
+        ),
+        mounts={},
+        maximum_bytes=65_536,
+        timeout_seconds=1,
+    )
+    with pytest.raises(TargetConnectionError) as raised:
+        reader.read_library("primary", _library(), 10)
+    assert raised.value.code == "unavailable"
+
+
+def test_malformed_top_level_catalogue_remains_a_catalogue_failure() -> None:
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda _: httpx.Client(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, json=[])),
+            base_url="https://abs.invalid",
+        ),
+        mounts={},
+        maximum_bytes=65_536,
+        timeout_seconds=1,
+    )
+    with pytest.raises(CatalogueError, match="catalogue response is invalid"):
+        reader.read_library("primary", _library(), 10)
+
+
+@pytest.mark.parametrize("libraries", (None, {}, "books"))
+def test_non_list_libraries_is_bounded_at_the_catalogue_boundary(
+    libraries: object,
+) -> None:
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda _: httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(200, json={"libraries": libraries})
+            ),
+            base_url="https://abs.invalid",
+        ),
+        mounts={},
+        maximum_bytes=65_536,
+        timeout_seconds=1,
+    )
+    with pytest.raises(CatalogueError, match="catalogue response is invalid"):
+        reader.read_library("primary", _library(), 10)
+    with pytest.raises(TargetConnectionError) as raised:
+        reader.probe_connection("primary", (_library(),))
+    assert raised.value.code == "unavailable"
+
+
+@pytest.mark.parametrize(
+    "invalid_title",
+    (
+        pytest.param("  Needs attention  ", id="untrimmed"),
+        pytest.param("\ud800", id="lone_surrogate"),
+    ),
+)
+def test_preparation_discovery_keeps_an_untrimmed_title_out_of_connection_pause(
+    invalid_title: str,
+) -> None:
+    valid = _item("valid")
+    untrimmed = _item("untrimmed")
+    untrimmed["media"]["metadata"]["title"] = invalid_title
+    details = {"valid": valid, "untrimmed": untrimmed}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/libraries":
+            return httpx.Response(
+                200, json={"libraries": [{"id": "library-1", "mediaType": "book"}]}
+            )
+        if request.url.path.endswith("/items"):
+            return httpx.Response(
+                200,
+                json={
+                    "total": 2,
+                    "results": [
+                        {"id": "valid", "libraryId": "library-1", "updatedAt": 1},
+                        {"id": "untrimmed", "libraryId": "library-1", "updatedAt": 1},
+                    ],
+                },
+            )
+        return httpx.Response(
+            200,
+            content=json.dumps(
+                details[request.url.path.rsplit("/", 1)[1]], ensure_ascii=True
+            ).encode("utf-8"),
+            headers={"content-type": "application/json"},
+        )
+
+    mount = MediaMountConfiguration("media", "/media", "/library", True)
+    library = LibraryConfiguration("books", "primary", "library-1", "book", "media", ())
+    configuration = ApplicationConfiguration(
+        (TargetConnectionConfiguration("primary", "https://abs.invalid", "/token"),),
+        (library,),
+        (mount,),
+        (),
+    )
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda _: httpx.Client(
+            transport=httpx.MockTransport(handler), base_url="https://abs.invalid"
+        ),
+        mounts={"media": mount},
+        maximum_bytes=65_536,
+        timeout_seconds=1,
+    )
+
+    def unreachable(*_arguments: object) -> object:
+        raise AssertionError
+
+    with tempfile.TemporaryDirectory() as directory:
+        catalogue_path = Path(directory) / "catalogue.sqlite"
+        application_path = Path(directory) / "application.sqlite"
+        open_repository(application_path).close()
+        stages = ReviewPipelineStages(
+            configuration=configuration,
+            catalogue=lambda create: open_catalogue(catalogue_path, create=create),
+            catalogue_reader=reader,
+            probe_connection=cast("Callable[..., None]", unreachable),
+            connections=frozenset({"primary"}),
+            repository_factory=lambda: open_repository(application_path),
+            recover_artifacts=cast("Callable[[], None]", unreachable),
+            generate_report=cast("Callable[..., str]", unreachable),
+            create_proposal_set=cast("Callable[..., str]", unreachable),
+            admit_review_case=cast("Callable[..., str]", unreachable),
+            cover_considerations=cast(
+                "Callable[[ReviewPipelineRepository], CoverConsiderationService]",
+                unreachable,
+            ),
+            recovery_observer=cast(ProviderFailureObserver, object()),
+            drain_outbox=cast("Callable[..., None]", unreachable),
+            discovery_lock=threading.Lock(),
+            clock=lambda: 1,
+        )
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(application_path),
+            libraries=(("primary", "books", "library-1", "f" * 64),),
+            discover=stages.discover,
+            extract=cast("Callable[..., tuple[str, bool]]", unreachable),
+            providers=cast(
+                "Callable[[ReviewPipelineRepository, str], tuple[ProviderStatus, ...]]",
+                unreachable,
+            ),
+            propose=cast("Callable[..., str]", unreachable),
+            admit=cast("Callable[..., tuple[str, str | None]]", unreachable),
+            project=cast("Callable[..., bool]", unreachable),
+            clock=lambda: 2,
+        )
+        pipeline.request("primary", "books")
+        assert pipeline.run_next()
+        assert pipeline.connection_conditions() == ()
+        repository = open_repository(application_path)
+        action = repository.claim_review_pipeline_action(3)
+        repository.close()
+        assert action is not None
+        assert (action.stage, action.item_id) == ("extraction", "valid")
 
 
 @pytest.mark.parametrize(

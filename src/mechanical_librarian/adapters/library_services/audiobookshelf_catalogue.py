@@ -23,6 +23,7 @@ from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ReportValueError,
     canonical_json,
     validate_observed_title,
 )
@@ -63,12 +64,7 @@ class AudiobookshelfCatalogueReader:
                 libraries = _get(
                     client, "/api/libraries", self._maximum_bytes, self._timeout_seconds
                 )
-                if not any(
-                    type(value) is dict
-                    and value.get("id") == library.library_id
-                    and value.get("mediaType") == "book"
-                    for value in libraries.get("libraries", [])
-                ):
+                if library.library_id not in _book_library_ids(libraries):
                     raise CatalogueError("configured library is unavailable")
                 summaries: list[dict[str, Any]] = []
                 page = 0
@@ -132,7 +128,7 @@ class AudiobookshelfCatalogueReader:
             # httpx keeps certificate verification enabled in the configured
             # target client.  Classifying the outcome must not weaken it.
             raise TargetConnectionError(target_connection_code(error)) from None
-        except (httpx.HTTPError, OSError, UnicodeError, ValueError, TypeError):
+        except (httpx.HTTPError, OSError):
             raise TargetConnectionError("unavailable") from None
 
     def probe_connection(
@@ -147,11 +143,7 @@ class AudiobookshelfCatalogueReader:
                     self._maximum_bytes,
                     self._timeout_seconds,
                 )
-                available = {
-                    value.get("id")
-                    for value in payload.get("libraries", [])
-                    if type(value) is dict and value.get("mediaType") == "book"
-                }
+                available = _book_library_ids(payload)
                 if any(library.library_id not in available for library in libraries):
                     # Deliberately retain only the closed owner-actionable
                     # condition; configured IDs never cross this boundary.
@@ -231,7 +223,7 @@ def _entry(
     metadata = media.get("metadata")
     if type(metadata) is not dict:
         raise CatalogueError("catalogue response is invalid")
-    title = validate_observed_title(metadata.get("title"))
+    title, invalid_title = _observed_catalogue_title(metadata.get("title"))
     authors = metadata.get("authors", [])
     if type(authors) is not list or len(authors) > 32:
         raise CatalogueError("catalogue response is invalid")
@@ -286,8 +278,21 @@ def _entry(
         classification = "needs-attention"
         file_identity = service_path = format_value = mount_name = None
         has_ebook = True
+    if invalid_title:
+        # This is deliberately an item disposition, never a target-health
+        # condition.  Dropping the usable location prevents report preparation
+        # from rereading the untrimmed title through its stricter item boundary.
+        classification = "needs-attention"
+        file_identity = service_path = format_value = mount_name = None
     reviewed_fields = {
-        name: {"present": name in metadata, "value": metadata.get(name)}
+        name: {
+            "present": name in metadata,
+            "value": (
+                _fingerprint_observed_title(metadata.get(name))
+                if name == "title"
+                else metadata.get(name)
+            ),
+        }
         for name in (
             "title",
             "subtitle",
@@ -380,6 +385,47 @@ def _entry(
         mount_name,
         source_fingerprint,
     )
+
+
+def _observed_catalogue_title(value: object) -> tuple[str, bool]:
+    """Project one target title without promoting item data to target health."""
+    try:
+        return validate_observed_title(value), False
+    except ReportValueError:
+        if type(value) is str:
+            try:
+                return validate_observed_title(value.strip()), True
+            except ReportValueError:
+                pass
+        return "Untitled item requiring attention", True
+
+
+def _fingerprint_observed_title(value: object) -> object:
+    """Keep a title current without requiring unsafe text to be encodable."""
+    encoded = canonical_json(value)
+    try:
+        encoded.encode("utf-8")
+    except UnicodeEncodeError:
+        return {
+            "encoding": "utf-8-surrogatepass-sha256",
+            "digest": hashlib.sha256(
+                encoded.encode("utf-8", "surrogatepass")
+            ).hexdigest(),
+        }
+    return value
+
+
+def _book_library_ids(payload: dict[str, Any]) -> set[str]:
+    values = payload.get("libraries")
+    if type(values) is not list:
+        raise CatalogueError("catalogue response is invalid")
+    return {
+        value["id"]
+        for value in values
+        if type(value) is dict
+        and type(value.get("id")) is str
+        and value.get("mediaType") == "book"
+    }
 
 
 def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:

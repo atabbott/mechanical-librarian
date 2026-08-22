@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep one malformed Audiobookshelf title from pausing a healthy connection.
+  Its trimmed public projection remains visible as needs-attention while valid
+  sibling work continues without target mutation. (#797)
+
 - Keep shared connection failures prominent only while owner action is needed.
   A successful check now gives one dismissible acknowledgement before yielding
   to the normal Library and Activity state; retained recovered records no
