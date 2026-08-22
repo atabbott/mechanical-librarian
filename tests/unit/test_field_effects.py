@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import os
 import sqlite3
@@ -30,6 +31,9 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     PrivateCoverRecoveryStore,
 )
 from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
+from mechanical_librarian.adapters.persistence.field_effect_activity import (
+    SQLiteFieldEffectActivityRepository,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     SQLiteMetadataReportRepository,
@@ -410,6 +414,14 @@ def test_activity_fetches_one_current_report_document_for_repeated_events(
     assert all(
         event["record"]["source_kind"] == "field_effect" for event in page["events"]
     )
+
+
+def test_activity_search_uses_fixed_cursor_batches_without_a_corpus_fetchall() -> None:
+    """The searchable path must retain only its page and clamp window (#787)."""
+    source = inspect.getsource(
+        SQLiteFieldEffectActivityRepository.field_effect_activity_page
+    )
+    assert "fetchmany(64)" in source
 
 
 def test_activity_page_bounds_filters_and_clamps_the_append_only_ledger(
