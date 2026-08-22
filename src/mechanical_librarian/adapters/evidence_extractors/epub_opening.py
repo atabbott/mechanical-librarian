@@ -2632,7 +2632,8 @@ def _series_indicia(
     labelled = _SERIES_LABEL.fullmatch(text)
     if labelled is not None:
         name = labelled.group("name").strip()
-        if _SERIES_RESERVED_NAME_BOUNDARY.search(name) is not None:
+        reserved = _SERIES_RESERVED_NAME_BOUNDARY.search(name)
+        if reserved is not None and reserved.lastgroup != "name_first":
             return None
         return None, name
     return None

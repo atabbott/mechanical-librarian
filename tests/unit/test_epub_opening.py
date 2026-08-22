@@ -1423,6 +1423,7 @@ def test_order_heading_excludes_its_forward_series_scope(heading: str) -> None:
     (
         "<p>Clockwork Archive Part 2.5</p>",
         "<p>Series: Clockwork Archive, The Mystery!</p>",
+        "<p>Series: New Worlds</p>",
     ),
 )
 def test_closed_series_forms_preserve_name_first_and_internal_punctuation(

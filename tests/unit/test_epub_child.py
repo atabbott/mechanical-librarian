@@ -1075,6 +1075,20 @@ def test_rear_series_trailing_clauses_are_rejected(markup: str) -> None:
     )
 
 
+def test_rear_series_label_can_begin_with_a_reserved_name_first_lead() -> None:
+    request, (package, opening, _) = _bundle(
+        _xhtml("<p>All rights reserved</p><p>Series: New Worlds</p>")
+    )
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        facts = child._rear_facts(request, package, opening, archive)
+    assert [
+        (fact.field, fact.canonical_value)
+        for fact in facts
+        if fact.field
+        in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+    ] == [(EpubInspectionField.SERIES, "New Worlds")]
+
+
 @pytest.mark.parametrize(
     "markup",
     (
