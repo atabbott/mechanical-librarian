@@ -1112,6 +1112,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         detail_workspace = page.locator(".workspace-detail")
         assert detail_workspace.get_by_role("button", name="Previous").count() == 0
         assert detail_workspace.get_by_role("button", name="Next").count() == 0
+        expect(page.get_by_role("button", name="Back to works")).to_be_hidden()
+        expect(page.get_by_role("button", name="Attention queue")).to_be_visible()
         page.get_by_role("button", name="Attention queue").click()
         expect(page).to_have_url(
             "https://react-platform.invalid/library?lens=all&preview=case-1&attention=open"
@@ -1163,7 +1165,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "hardcover-main" in sources.inner_text()
         assert "Work lookup · 1 bounded request" in sources.inner_text()
         capture_visual_proof("library-work-summary")
-        page.get_by_role("button", name="Back to works").click()
+        # Exercise the same state transition without presenting its compact-only
+        # control at this width; the Works rail remains the visible navigation.
+        page.locator(".compact-workspace-back").evaluate("node => node.click()")
+        expect(page).to_have_url("https://react-platform.invalid/library?lens=all")
         page.get_by_role("link", name="Needs attention", exact=True).click()
         expect(page.locator(".library-work-row")).to_have_count(5)
         page.get_by_role("link", name="No attention needed", exact=True).click()
@@ -1187,7 +1192,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "2 consulted for this work"
             in work_detail.locator(".work-sources").inner_text()
         )
-        page.get_by_role("button", name="Back to works").click()
+        page.locator(".compact-workspace-back").evaluate("node => node.click()")
+        expect(page).to_have_url(
+            "https://react-platform.invalid/library?lens=all&cursor=page-2"
+        )
         # Browsing is reversible: the same pager walks the bounded window back.
         page.get_by_role("button", name="\u2190 Previous").click()
         page.get_by_text("Catalogue-only work", exact=True).wait_for()
@@ -1357,6 +1365,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 900
         page.locator(".attention-rail header button").click()
 
+        stage[0] = "library:viewport:761"
+        page.set_viewport_size({"width": 761, "height": 900})
+        expect(page.locator(".library-works")).to_be_visible()
+        expect(page.get_by_role("button", name="Back to works")).to_be_hidden()
+        expect(page.get_by_role("button", name="Attention queue")).to_be_visible()
+
         stage[0] = "library:viewport:760"
         page.set_viewport_size({"width": 760, "height": 900})
         page.goto("https://react-platform.invalid/library?lens=all")
@@ -1370,6 +1384,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         expect(page.locator(".library-works")).to_be_hidden()
         expect(page.locator(".workspace-detail")).to_be_visible()
+        expect(page.get_by_role("button", name="Back to works")).to_be_visible()
+        expect(page.get_by_role("button", name="Attention queue")).to_be_visible()
         assert (
             page.locator(".library-workspace").evaluate(
                 "node => getComputedStyle(node).display"
@@ -1441,6 +1457,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert page.get_by_role("button", name="Previous").count() == 0
         assert page.get_by_role("button", name="Next").count() == 0
         expect(page.locator(".compact-workspace-controls button")).to_have_count(2)
+        expect(page.get_by_role("button", name="Back to works")).to_be_visible()
         for control in page.locator(".compact-workspace-controls button").all():
             assert control.bounding_box()["height"] >= 44
         page.get_by_role("button", name="Back to works").click()
