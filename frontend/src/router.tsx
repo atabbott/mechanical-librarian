@@ -242,15 +242,20 @@ export const ConnectionNotice = ({
   data,
   checking,
   onCheck,
+  recovered,
+  onDismissRecovery,
+  onControlFocusChange,
   error,
 }: {
   data: PreparationView | undefined
   checking: boolean
   onCheck: (connection: string) => void
+  recovered: NonNullable<PreparationView['connections']>[number] | undefined
+  onDismissRecovery: () => void
+  onControlFocusChange: (focused: boolean) => void
   error: boolean
 }) => {
-  const condition =
-    data?.connections?.find((item) => item.state !== 'recovered') ?? data?.connections?.[0]
+  const condition = data?.connections?.find((item) => item.state !== 'recovered') ?? recovered
   if (!condition) return null
   const ready = data?.libraries.reduce((total, item) => total + item.ready, 0) ?? 0
   const paused = condition.state === 'recovered' ? 0 : condition.affected
@@ -267,12 +272,7 @@ export const ConnectionNotice = ({
         ? 'Preparation resumed from its retained checkpoint. Completed reviews remain available.'
         : `${connectionCopy(condition.code)} ${String(paused)} preparation ${paused === 1 ? 'work is' : 'works are'} safely paused. Completed reviews remain available.`
   const canCheck = condition.state === 'paused' && !checking
-  const action =
-    condition.state === 'paused'
-      ? 'Check connection again'
-      : condition.state === 'recovered'
-        ? 'Recovered'
-        : 'Checking connection…'
+  const action = condition.state === 'paused' ? 'Check connection again' : 'Checking connection…'
   return (
     <section
       className={`connection-notice is-${condition.state}`}
@@ -295,13 +295,16 @@ export const ConnectionNotice = ({
       </dl>
       <button
         type="button"
-        aria-disabled={!canCheck}
+        aria-disabled={condition.state === 'recovered' ? undefined : !canCheck}
         aria-busy={checking || undefined}
+        onFocus={() => onControlFocusChange(true)}
+        onBlur={() => onControlFocusChange(false)}
         onClick={() => {
-          if (canCheck) onCheck(condition.connection)
+          if (condition.state === 'recovered') onDismissRecovery()
+          else if (canCheck) onCheck(condition.connection)
         }}
       >
-        {action}
+        {condition.state === 'recovered' ? 'Dismiss' : action}
       </button>
       {error ? (
         <p role="alert">
@@ -314,10 +317,40 @@ export const ConnectionNotice = ({
 
 export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) => {
   const { data, queryClient, http } = usePreparation()
+  const connectionControlFocused = useRef(false)
+  const [recovered, setRecovered] = useState<
+    NonNullable<PreparationView['connections']>[number] | undefined
+  >()
+  const currentRecovery = data?.connections?.find(
+    (condition) => condition.connection === recovered?.connection,
+  )
+  const acknowledgedRecovery =
+    recovered &&
+    (!currentRecovery ||
+      (currentRecovery.state === 'recovered' &&
+        currentRecovery.updated_at === recovered.updated_at))
+      ? recovered
+      : undefined
+  const activeConnection = data?.connections?.some((condition) => condition.state !== 'recovered')
+  useLayoutEffect(() => {
+    if (activeConnection || acknowledgedRecovery || !connectionControlFocused.current) return
+    connectionControlFocused.current = false
+    document.querySelector<HTMLElement>('[data-route-focus]')?.focus()
+  }, [acknowledgedRecovery, activeConnection])
+  useEffect(() => {
+    if (!recovered) return
+    if (!acknowledgedRecovery) {
+      queueMicrotask(() => setRecovered(undefined))
+      return
+    }
+    const timer = window.setTimeout(() => setRecovered(undefined), 8_000)
+    return () => window.clearTimeout(timer)
+  }, [acknowledgedRecovery, recovered])
   const action = useMutation({
     mutationFn: (path: string) => http.preparationAction(path),
     retry: false,
     onMutate: (path) => {
+      setRecovered(undefined)
       const match = /^([^/]+)\/check-connection$/.exec(path)
       if (!match) return
       const encodedConnection = match[1]
@@ -337,6 +370,19 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
       })
       return { previous }
     },
+    onSuccess: (result, path) => {
+      if (!('schema_version' in result) || !result.connections) return
+      const match = /^([^/]+)\/check-connection$/.exec(path)
+      const encodedConnection = match?.[1]
+      if (!encodedConnection) return
+      const connection = decodeURIComponent(encodedConnection)
+      queryClient.setQueryData(['review-preparation'], result)
+      setRecovered(
+        result.connections.find(
+          (condition) => condition.connection === connection && condition.state === 'recovered',
+        ),
+      )
+    },
     onError: (_error, _path, context) => {
       if (context?.previous) queryClient.setQueryData(['review-preparation'], context.previous)
     },
@@ -353,6 +399,11 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
       data={data}
       checking={action.isPending}
       error={action.isError}
+      recovered={acknowledgedRecovery}
+      onDismissRecovery={() => setRecovered(undefined)}
+      onControlFocusChange={(focused) => {
+        connectionControlFocused.current = focused
+      }}
       onCheck={(connection) => {
         const main = document.getElementById('main-content')
         if (main) main.dataset.routeFocusIdentity = `${window.location.pathname}:${routeIdentity}`

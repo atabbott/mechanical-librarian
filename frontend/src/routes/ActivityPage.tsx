@@ -285,8 +285,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const data = query.data
   const preparation = usePreparation().data
   const connectionConditions = preparation?.connections ?? []
-  const connection =
-    connectionConditions.find((item) => item.state !== 'recovered') ?? connectionConditions[0]
+  const connection = connectionConditions.find((item) => item.state !== 'recovered')
   const ledger = data.ledger
   const configured = data.configured_libraries
   const enabled = data.enabled_libraries
@@ -504,19 +503,17 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             ? 'Connection checking'
             : connection?.state === 'paused'
               ? 'Connection paused'
-              : connection?.state === 'recovered'
-                ? 'Connection recovered'
-                : recoveryCount
-                  ? 'Recovery available'
-                  : permissionNeeded
-                    ? 'Action needed'
-                    : consentState === 'enabling'
-                      ? 'Enabling writes'
-                      : consentState === 'enabled' || consentState === 'applying'
-                        ? 'Writes enabled'
-                        : data.paused
-                          ? 'New work paused'
-                          : 'No action required'}
+              : recoveryCount
+                ? 'Recovery available'
+                : permissionNeeded
+                  ? 'Action needed'
+                  : consentState === 'enabling'
+                    ? 'Enabling writes'
+                    : consentState === 'enabled' || consentState === 'applying'
+                      ? 'Writes enabled'
+                      : data.paused
+                        ? 'New work paused'
+                        : 'No action required'}
         </span>
       </header>
       <PreparationNotice routeIdentity={routeIdentity} />
@@ -630,32 +627,28 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               ? 'Checking library connection'
               : connection?.state === 'paused'
                 ? 'Library connection is paused'
-                : connection?.state === 'recovered'
-                  ? 'Library connection recovered'
-                  : recoveryCount
-                    ? 'Recovery needs attention'
-                    : permissionNeeded
-                      ? 'Prepared work needs your permission'
-                      : data.paused
-                        ? 'New work is paused'
-                        : 'No intervention needed'}
+                : recoveryCount
+                  ? 'Recovery needs attention'
+                  : permissionNeeded
+                    ? 'Prepared work needs your permission'
+                    : data.paused
+                      ? 'New work is paused'
+                      : 'No intervention needed'}
           </h2>
           <p>
             {connection?.state === 'checking'
               ? 'Preparation remains safely paused while the authoritative connection check settles.'
               : connection?.state === 'paused'
                 ? `${String(connection.affected)} preparation ${connection.affected === 1 ? 'work remains' : 'works remain'} safely paused for an owner connection check.`
-                : connection?.state === 'recovered'
-                  ? 'Preparation is resuming from its retained checkpoint. No work needs recovery from this connection.'
-                  : dormantRecovery
-                    ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.`
-                    : recoveryCount
-                      ? 'Affected work remains held until its current state can be reconciled safely.'
-                      : permissionNeeded
-                        ? `${String(offeredChanges)} prepared ${offeredChanges === 1 ? 'change is' : 'changes are'} ready and will stay unwritten until you enable writes.`
-                        : data.paused
-                          ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
-                          : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}
+                : dormantRecovery
+                  ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.`
+                  : recoveryCount
+                    ? 'Affected work remains held until its current state can be reconciled safely.'
+                    : permissionNeeded
+                      ? `${String(offeredChanges)} prepared ${offeredChanges === 1 ? 'change is' : 'changes are'} ready and will stay unwritten until you enable writes.`
+                      : data.paused
+                        ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
+                        : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}
           </p>
         </div>
         <dl>
