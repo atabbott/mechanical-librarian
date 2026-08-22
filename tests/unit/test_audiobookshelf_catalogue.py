@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import tempfile
 import threading
 from collections.abc import Callable
@@ -173,9 +174,16 @@ def test_untrimmed_title_is_retained_as_attention_without_hiding_valid_sibling()
     valid = _item("valid")
     untrimmed = _item("untrimmed")
     invalid = _item("invalid")
+    surrogate = _item("surrogate")
     untrimmed["media"]["metadata"]["title"] = "  Needs attention  "
     invalid["media"]["metadata"]["title"] = "   "
-    details = {"valid": valid, "untrimmed": untrimmed, "invalid": invalid}
+    surrogate["media"]["metadata"]["title"] = "\ud800"
+    details = {
+        "valid": valid,
+        "untrimmed": untrimmed,
+        "invalid": invalid,
+        "surrogate": surrogate,
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/libraries":
@@ -186,7 +194,7 @@ def test_untrimmed_title_is_retained_as_attention_without_hiding_valid_sibling()
             return httpx.Response(
                 200,
                 json={
-                    "total": 3,
+                    "total": 4,
                     "results": [
                         {"id": "valid", "libraryId": "library-1", "updatedAt": 1},
                         {
@@ -195,10 +203,17 @@ def test_untrimmed_title_is_retained_as_attention_without_hiding_valid_sibling()
                             "updatedAt": 1,
                         },
                         {"id": "invalid", "libraryId": "library-1", "updatedAt": 1},
+                        {"id": "surrogate", "libraryId": "library-1", "updatedAt": 1},
                     ],
                 },
             )
-        return httpx.Response(200, json=details[request.url.path.rsplit("/", 1)[1]])
+        return httpx.Response(
+            200,
+            content=json.dumps(
+                details[request.url.path.rsplit("/", 1)[1]], ensure_ascii=True
+            ).encode("utf-8"),
+            headers={"content-type": "application/json"},
+        )
 
     reader = AudiobookshelfCatalogueReader(
         client_factory=lambda _: httpx.Client(
@@ -224,6 +239,7 @@ def test_untrimmed_title_is_retained_as_attention_without_hiding_valid_sibling()
         (entry.item_id, entry.title, entry.classification) for entry in entries
     ] == [
         ("invalid", "Untitled item requiring attention", "needs-attention"),
+        ("surrogate", "Untitled item requiring attention", "needs-attention"),
         ("untrimmed", "Needs attention", "needs-attention"),
         ("valid", "Title", "singular-supported"),
     ]
@@ -239,6 +255,20 @@ def test_untrimmed_title_is_retained_as_attention_without_hiding_valid_sibling()
             None,
             {"id": "untrimmed", "libraryId": "library-1", "updatedAt": 1},
             corrected,
+        ).source_fingerprint
+    )
+    different_surrogate = _item("surrogate")
+    different_surrogate["media"]["metadata"]["title"] = "\ud801"
+    assert (
+        next(
+            entry for entry in entries if entry.item_id == "surrogate"
+        ).source_fingerprint
+        != catalogue_entry(
+            "primary",
+            _library(),
+            None,
+            {"id": "surrogate", "libraryId": "library-1", "updatedAt": 1},
+            different_surrogate,
         ).source_fingerprint
     )
 
@@ -308,12 +338,41 @@ def test_malformed_top_level_catalogue_remains_a_catalogue_failure() -> None:
         reader.read_library("primary", _library(), 10)
 
 
-def test_preparation_discovery_keeps_an_untrimmed_title_out_of_connection_pause() -> (
-    None
-):
+@pytest.mark.parametrize("libraries", (None, {}, "books"))
+def test_non_list_libraries_is_bounded_at_the_catalogue_boundary(
+    libraries: object,
+) -> None:
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda _: httpx.Client(
+            transport=httpx.MockTransport(
+                lambda _: httpx.Response(200, json={"libraries": libraries})
+            ),
+            base_url="https://abs.invalid",
+        ),
+        mounts={},
+        maximum_bytes=65_536,
+        timeout_seconds=1,
+    )
+    with pytest.raises(CatalogueError, match="catalogue response is invalid"):
+        reader.read_library("primary", _library(), 10)
+    with pytest.raises(TargetConnectionError) as raised:
+        reader.probe_connection("primary", (_library(),))
+    assert raised.value.code == "unavailable"
+
+
+@pytest.mark.parametrize(
+    "invalid_title",
+    (
+        pytest.param("  Needs attention  ", id="untrimmed"),
+        pytest.param("\ud800", id="lone_surrogate"),
+    ),
+)
+def test_preparation_discovery_keeps_an_untrimmed_title_out_of_connection_pause(
+    invalid_title: str,
+) -> None:
     valid = _item("valid")
     untrimmed = _item("untrimmed")
-    untrimmed["media"]["metadata"]["title"] = "  Needs attention  "
+    untrimmed["media"]["metadata"]["title"] = invalid_title
     details = {"valid": valid, "untrimmed": untrimmed}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -332,7 +391,13 @@ def test_preparation_discovery_keeps_an_untrimmed_title_out_of_connection_pause(
                     ],
                 },
             )
-        return httpx.Response(200, json=details[request.url.path.rsplit("/", 1)[1]])
+        return httpx.Response(
+            200,
+            content=json.dumps(
+                details[request.url.path.rsplit("/", 1)[1]], ensure_ascii=True
+            ).encode("utf-8"),
+            headers={"content-type": "application/json"},
+        )
 
     mount = MediaMountConfiguration("media", "/media", "/library", True)
     library = LibraryConfiguration("books", "primary", "library-1", "book", "media", ())
