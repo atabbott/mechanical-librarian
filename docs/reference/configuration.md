@@ -11,6 +11,11 @@ are rejected. The generated schema is
 uv run --frozen python scripts/generate_configuration_schema.py
 ```
 
+The file remains the complete authority while `/data/config.json` exists.
+The accepted store-mode, first-boot, secret, retirement, and apply rules are
+[ADR-0058](../architecture/decisions/0058-settings-authority-and-first-boot.md);
+this reference describes the file-managed `config-v6` contract.
+
 `provider_recovery_generation` is a required positive operator generation for
 provider recovery. After correcting a provider credential, authorization, or
 configuration condition, increment it and restart the container. It is the
