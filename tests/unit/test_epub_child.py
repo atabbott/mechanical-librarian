@@ -1039,6 +1039,8 @@ def test_rear_indicia_rejects_prose_catalogue_and_trailing_series_ambiguity(
         "Publication order",
         "Books in reading order",
         "Clockwork Archive publication order",
+        "Books in the series",
+        "Part in series",
     ),
 )
 def test_rear_order_heading_excludes_its_forward_series_scope(heading: str) -> None:
@@ -1087,6 +1089,41 @@ def test_rear_series_label_can_begin_with_a_reserved_name_first_lead() -> None:
         if fact.field
         in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
     ] == [(EpubInspectionField.SERIES, "New Worlds")]
+
+
+@pytest.mark.parametrize(
+    ("markup", "expected"),
+    (
+        (
+            "<p>Series: Élan Cycle</p>",
+            ((EpubInspectionField.SERIES, "Élan Cycle"),),
+        ),
+        (
+            "<p>Élan Cycle Book 2.5</p>",
+            (
+                (EpubInspectionField.SERIES_SEQUENCE, "2.5"),
+                (EpubInspectionField.SERIES, "Élan Cycle"),
+            ),
+        ),
+    ),
+)
+def test_rear_unicode_series_names_preserve_label_and_order_first_forms(
+    markup, expected
+) -> None:
+    request, (package, opening, _) = _bundle(
+        _xhtml("<p>All rights reserved</p>" + markup)
+    )
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        facts = child._rear_facts(request, package, opening, archive)
+    assert (
+        tuple(
+            (fact.field, fact.canonical_value)
+            for fact in facts
+            if fact.field
+            in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+        )
+        == expected
+    )
 
 
 @pytest.mark.parametrize(

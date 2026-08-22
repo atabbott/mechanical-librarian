@@ -1406,6 +1406,8 @@ def test_explicit_series_label_retains_an_unpositioned_membership() -> None:
         "Publication order",
         "Books in reading order",
         "Clockwork Archive publication order",
+        "Books in the series",
+        "Part in series",
     ),
 )
 def test_order_heading_excludes_its_forward_series_scope(heading: str) -> None:
@@ -1447,6 +1449,30 @@ def test_closed_series_name_grammar_preserves_explicit_connectors_without_a_word
         (OpeningField.SERIES_ORDER, "2"),
         (OpeningField.SERIES, "A Song of Ice and Fire"),
     ]
+
+
+@pytest.mark.parametrize(
+    ("markup", "expected"),
+    (
+        ("<p>Series: Élan Cycle</p>", [(OpeningField.SERIES, "Élan Cycle")]),
+        (
+            "<p>Élan Cycle Book 2.5</p>",
+            [
+                (OpeningField.SERIES_ORDER, "2.5"),
+                (OpeningField.SERIES, "Élan Cycle"),
+            ],
+        ),
+    ),
+)
+def test_unicode_series_names_preserve_label_and_order_first_forms(
+    markup, expected
+) -> None:
+    claims = _extract(_single(_xhtml(markup))).claims
+    assert [
+        (claim.field, claim.normalized_value)
+        for claim in claims
+        if claim.field in {OpeningField.SERIES, OpeningField.SERIES_ORDER}
+    ] == expected
 
 
 @pytest.mark.parametrize(

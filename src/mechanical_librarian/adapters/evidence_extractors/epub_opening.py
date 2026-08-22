@@ -416,7 +416,7 @@ _CONTEXTUAL_CREDITS = (
     ),
     (re.compile(rf"\bworkflow\s*[:\-]\s*{_CREDIT_NAME_TEXT}", re.I), "workflow"),
 )
-_SERIES_NAME_TOKEN = r"[A-Z0-9][\w'’(),!?.-]*"
+_SERIES_NAME_TOKEN = r"(?:[A-Z0-9]|[^\W_a-z])[\w'’(),!?.-]*"
 _SERIES_NAME_CONNECTOR = r"(?:a|an|and|at|in|of|on|or|the|to|with|&)"
 _SERIES_NAME = (
     rf"{_SERIES_NAME_TOKEN}(?:\s+(?:{_SERIES_NAME_TOKEN}|{_SERIES_NAME_CONNECTOR}))*"
@@ -455,6 +455,7 @@ _INDICIA_PROMOTION_NOTICE = re.compile(
     r"sample(?:\s+(?:chapter|excerpt|of)\b.*)?|"
     r"also by(?:\b.*)?|other works? by(?:\b.*)?|"
     rf"(?:(?:(?:books?|volumes?|parts?)\s+in\s+)?(?:reading|publication)\s+order"
+    rf"|(?:books?|volumes?|parts?)\s+in\s+(?:the\s+)?series"
     rf"|(?-i:{_SERIES_NAME})\s+(?:reading|publication)\s+order))\s*[:.!]?\s*$",
     re.I,
 )
