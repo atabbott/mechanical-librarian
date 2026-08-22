@@ -616,6 +616,7 @@ class _ActivityTransition(_ClosedModel):
 
 class _ActivityTransitions(_ClosedModel):
     events: list[_ActivityTransition] = Field(max_length=20)
+    has_more: bool = False
 
 
 class _ActivitySuspension(_ClosedModel):

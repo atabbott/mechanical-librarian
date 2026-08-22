@@ -271,6 +271,10 @@ export interface ActivityTransitionView {
   occurred_at: number
   state: string
 }
+export interface ActivityTransitionsView {
+  events: readonly ActivityTransitionView[]
+  has_more: boolean
+}
 export interface ActivitySearch {
   q?: string
   eventType: 'all' | ActivityEventType
@@ -425,10 +429,7 @@ export interface ReviewHttp {
   getPolicyTransition(signal?: AbortSignal): Promise<PolicyTransitionView | null>
   policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T>
   getActivity(search?: ActivitySearch, signal?: AbortSignal): Promise<ActivityView>
-  getActivityTransitions(
-    eventId: string,
-    signal?: AbortSignal,
-  ): Promise<readonly ActivityTransitionView[]>
+  getActivityTransitions(eventId: string, signal?: AbortSignal): Promise<ActivityTransitionsView>
   activityCommand(
     path: string,
     body?: unknown,
@@ -655,14 +656,14 @@ export class ReviewApiClient implements ReviewHttp {
   async getActivityTransitions(
     eventId: string,
     signal?: AbortSignal,
-  ): Promise<readonly ActivityTransitionView[]> {
+  ): Promise<ActivityTransitionsView> {
     const data = await this.read(
       `/api/v1/activity/${encodeURIComponent(eventId)}/transitions`,
       signal,
     )
-    if (!record(data) || !Array.isArray(data.events))
+    if (!record(data) || !Array.isArray(data.events) || typeof data.has_more !== 'boolean')
       throw new ApiError(502, 'invalid_activity_response')
-    return data.events as ActivityTransitionView[]
+    return { events: data.events as ActivityTransitionView[], has_more: data.has_more }
   }
   async activityCommand(
     path: string,

@@ -152,15 +152,18 @@ function ActivityTransitions({ eventId }: { eventId: string }) {
     retry: false,
   })
   if (query.isLoading) return <p>Loading recorded transitions…</p>
-  if (query.isError || !query.data?.length) return null
+  if (query.isError || !query.data?.events.length) return null
   return (
     <ol className="cm-activity-transitions" aria-label="Recorded lifecycle transitions">
-      {query.data.map((transition) => (
+      {query.data.events.map((transition) => (
         <li key={transition.event_id}>
           <time>{dateParts(transition.occurred_at).time}</time>
           <span>{stateLabel(transition.state)}</span>
         </li>
       ))}
+      {query.data.has_more ? (
+        <li>Earlier recorded transitions are available in the durable audit.</li>
+      ) : null}
     </ol>
   )
 }

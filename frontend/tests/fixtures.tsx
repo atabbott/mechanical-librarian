@@ -226,7 +226,7 @@ export const createHttp = (): ReviewHttp => ({
   getPolicyTransition: vi.fn(async () => null),
   policyCommand: async <T,>() => ({}) as T,
   getActivity: vi.fn(async () => activity()),
-  getActivityTransitions: vi.fn(async () => []),
+  getActivityTransitions: vi.fn(async () => ({ events: [], has_more: false })),
   activityCommand: vi.fn(async () => undefined),
   logout: vi.fn(async () => undefined),
 })
