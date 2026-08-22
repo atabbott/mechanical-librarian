@@ -8,16 +8,18 @@ those announcements is authenticated, same-origin, uncached and value-free.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import tempfile
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 from typing import cast
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.types import Message
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
@@ -28,7 +30,7 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
     ReviewPreparationPipeline,
 )
-from mechanical_librarian.interfaces.web import live_stream
+from mechanical_librarian.interfaces.web import app, live_stream
 from tests.support.review_web_doubles import (
     FakeActivityApplication,
     FakeReviewRepository,
@@ -163,6 +165,45 @@ def test_a_same_origin_subscribe_is_private_uncached_and_unbuffered(
     assert response.headers["x-accel-buffering"] == "no"
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.text == f"retry: {live_stream.RECONNECT_MILLISECONDS}\n\n"
+
+
+def test_a_cancelled_response_before_iteration_releases_its_subscriber_slot() -> None:
+    """Cancellation lands at the response's first await, before its body starts."""
+    channel = LiveUpdateChannel(subscriber_maximum=1)
+    subscription = channel.subscribe(0)
+    started = False
+
+    async def body() -> AsyncIterator[bytes]:
+        nonlocal started
+        started = True
+        yield b"unexpected"
+
+    async def receive() -> Message:
+        return {"type": "http.disconnect"}
+
+    async def cancel_header(_: Message) -> None:
+        raise asyncio.CancelledError
+
+    async def exercise() -> int:
+        response = app._LiveUpdateStreamingResponse(
+            body(),
+            subscription,
+            media_type="text/event-stream",
+            headers={},
+        )
+        try:
+            await response(
+                {"type": "http", "asgi": {"spec_version": "2.4"}},
+                receive,
+                cancel_header,
+            )
+        except asyncio.CancelledError:
+            pass
+        return channel.subscribers
+
+    assert asyncio.run(exercise()) == 0
+    assert not started
+    channel.subscribe(0).close()
 
 
 def test_a_first_connect_is_told_to_look_at_everything_then_carries_a_change(
