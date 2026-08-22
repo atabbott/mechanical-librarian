@@ -1024,14 +1024,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "(ml_casefold(work_id) LIKE ? ESCAPE '\\' OR ml_casefold(library) LIKE ? ESCAPE '\\' "
                 "OR ml_casefold(destination) LIKE ? ESCAPE '\\' OR ml_casefold(state) LIKE ? ESCAPE '\\' "
                 "OR ml_casefold(coalesce(title,'')) LIKE ? ESCAPE '\\' OR ml_casefold(coalesce(detail,'')) LIKE ? ESCAPE '\\' "
-                "OR (source_valid=1 AND ml_casefold(document) LIKE ? ESCAPE '\\') "
-                "OR (source_valid=1 AND ml_casefold(coalesce(source_document,'')) LIKE ? ESCAPE '\\'))"
+                "OR (source_valid=1 AND EXISTS(SELECT 1 FROM json_tree(document,'$.pre_value') AS changed "
+                "WHERE changed.type IN ('text','integer','real') AND changed.key!='kind' "
+                "AND ml_casefold(CAST(changed.value AS TEXT)) LIKE ? ESCAPE '\\')) "
+                "OR (source_valid=1 AND EXISTS(SELECT 1 FROM json_tree(document,'$.desired_value') AS changed "
+                "WHERE changed.type IN ('text','integer','real') AND changed.key!='kind' "
+                "AND ml_casefold(CAST(changed.value AS TEXT)) LIKE ? ESCAPE '\\')) "
+                "OR (source_valid=1 AND EXISTS(SELECT 1 FROM json_tree(source_document,'$.selected_value') AS changed "
+                "WHERE changed.type IN ('text','integer','real') AND changed.key!='kind' "
+                "AND ml_casefold(CAST(changed.value AS TEXT)) LIKE ? ESCAPE '\\')))"
             )
-            # Values are retained only in each immutable source document. The
-            # predicate reads them without returning the document and stays
-            # parameterised; it deliberately does not create a duplicate
-            # search index or a mutable current-value projection (#787).
-            parameters.extend((like, like, like, like, like, like, like, like))
+            # Search reads only the owner-visible leaves of immutable change
+            # documents. It never scans opaque authority, identifiers or
+            # provenance keys, and it creates no mutable search projection.
+            parameters.extend((like, like, like, like, like, like, like, like, like))
         predicate = " WHERE " + " AND ".join(where)
         columns = (
             "event_id,connection,destination,library,occurred_at,origin,report_id,state,"
