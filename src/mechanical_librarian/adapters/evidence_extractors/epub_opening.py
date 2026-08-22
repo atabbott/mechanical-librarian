@@ -423,7 +423,7 @@ _SERIES_MEMBERSHIP = re.compile(
     re.I,
 )
 _SERIES_NAME_FIRST = re.compile(
-    rf"series\s+(?P<name>{_SERIES_NAME})\s+(?:book|volume|part)\s+"
+    rf"(?P<name>{_SERIES_NAME})\s+(?:book|volume|part)\s+"
     r"(?P<sequence>[0-9]+(?:\.[0-9]+)?)",
     re.I,
 )
@@ -2599,7 +2599,9 @@ def _indicia_credits(
     )
 
 
-def _series_indicia(value: str) -> tuple[str | None, str] | None:
+def _series_indicia(
+    value: str, *, allow_name_first: bool = False
+) -> tuple[str | None, str] | None:
     """Recognize one complete, source-explicit series indicium.
 
     This is deliberately a full-match vocabulary: opening and rear resource
@@ -2610,12 +2612,16 @@ def _series_indicia(value: str) -> tuple[str | None, str] | None:
     """
 
     text = _SPACE.sub(" ", value).strip()
-    membership = _SERIES_MEMBERSHIP.fullmatch(text) or _SERIES_NAME_FIRST.fullmatch(
-        text
+    membership = _SERIES_MEMBERSHIP.fullmatch(text) or (
+        _SERIES_NAME_FIRST.fullmatch(text) if allow_name_first else None
     )
     if membership is not None:
         name = membership.group("name").strip()
-        if _SERIES_TRAILING_AMBIGUITY.search(name) is not None:
+        if (
+            _SERIES_TRAILING_AMBIGUITY.search(name) is not None
+            or re.match(r"^(?:discover|read)\b", name, re.I) is not None
+            or len(name.split()) > 4
+        ):
             return None
         return membership.group("sequence"), name
     labelled = _SERIES_LABEL.fullmatch(text)
@@ -3394,7 +3400,7 @@ def _recognize(
                         element.start + date_span[1],
                     ),
                 )
-        series = _series_indicia(text)
+        series = _series_indicia(text, allow_name_first=element.name == "p")
         if series is not None:
             sequence, name = series
             if sequence is not None:

@@ -1413,7 +1413,7 @@ def test_order_heading_excludes_its_forward_series_scope(heading: str) -> None:
 @pytest.mark.parametrize(
     "markup",
     (
-        "<p>SERIES Clockwork Archive Part 2.5</p>",
+        "<p>Clockwork Archive Part 2.5</p>",
         "<p>Series: Clockwork Archive, The Mystery!</p>",
     ),
 )
@@ -1457,7 +1457,6 @@ def test_opening_fact_limit_keeps_a_series_pair_atomic() -> None:
 @pytest.mark.parametrize(
     "markup",
     (
-        "<p>Clockwork Archive Book 2.5</p>",
         "<p>Read Clockwork Archive Book 2.5</p>",
         "<p>Discover Clockwork Archive Volume 2.5</p>",
         "<p>Clockwork Archive Book II</p>",
@@ -1468,7 +1467,6 @@ def test_opening_fact_limit_keeps_a_series_pair_atomic() -> None:
         "<p>One Two Three Four Five Six Seven Book 2.5</p>",
     ),
     ids=(
-        "trailing_order",
         "read_prefix",
         "discover_volume",
         "roman_order",

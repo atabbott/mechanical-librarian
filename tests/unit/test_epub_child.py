@@ -929,7 +929,7 @@ def test_rear_indicia_retains_correlated_multiple_series_memberships() -> None:
         _xhtml(
             "<p>All rights reserved</p>"
             "<p>Book 2.5 of the Clockwork Archive</p>"
-            "<p>Part 1 of the Colophon Cycle</p>"
+            "<p>Colophon Cycle Part 1</p>"
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
@@ -954,12 +954,12 @@ def test_rear_indicia_retains_correlated_multiple_series_memberships() -> None:
         (
             EpubInspectionField.SERIES_SEQUENCE,
             "1",
-            "Part 1 of the Colophon Cycle",
+            "Colophon Cycle Part 1",
         ),
         (
             EpubInspectionField.SERIES,
             "Colophon Cycle",
-            "Part 1 of the Colophon Cycle",
+            "Colophon Cycle Part 1",
         ),
     )
     assert all(

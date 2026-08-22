@@ -706,7 +706,9 @@ def rear_facts(
                         rear_provenance=provenance,
                     )
                 )
-            series = opening._series_indicia(value)
+            series = opening._series_indicia(
+                value, allow_name_first=element.name == "p"
+            )
             if series is not None:
                 sequence, name = series
                 if len(facts) + (2 if sequence is not None else 1) > 16:
