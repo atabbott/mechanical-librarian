@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -88,7 +88,6 @@ describe('Application shell', () => {
   it.each([
     ['paused', 'Library connection needs attention', 'Check connection again', false],
     ['checking', 'Checking library connection', 'Checking connection…', true],
-    ['recovered', 'Library connection recovered', 'Recovered', true],
   ] as const)(
     'renders %s connection recovery through Library, full Detail, and Activity without replacing route state',
     async (state, title, action, disabled) => {
@@ -116,7 +115,7 @@ describe('Application shell', () => {
             connection: 'primary',
             code: 'unavailable',
             state,
-            affected: state === 'recovered' ? 0 : 2,
+            affected: 2,
             updated_at: 1,
           },
         ],
@@ -153,15 +152,42 @@ describe('Application shell', () => {
       ).toBe(true)
       const activityTitle = state === 'paused' ? 'Library connection is paused' : title
       expect(screen.getByRole('heading', { name: activityTitle })).toBeVisible()
-      expect(screen.getByText('Recovery needed').parentElement).toHaveTextContent(
-        state === 'recovered' ? '0' : '2',
-      )
-      if (state !== 'recovered') {
-        expect(screen.queryByRole('heading', { name: 'No intervention needed' })).toBeNull()
-        expect(screen.queryByText('No action required')).toBeNull()
-      }
+      expect(screen.getByText('Recovery needed').parentElement).toHaveTextContent('2')
+      expect(screen.queryByRole('heading', { name: 'No intervention needed' })).toBeNull()
+      expect(screen.queryByText('No action required')).toBeNull()
     },
   )
+
+  it('does not restore a completed connection incident from retained recovered state', async () => {
+    const recovered: PreparationView = {
+      schema_version: 'review-preparation-v1',
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+      connections: [
+        {
+          connection: 'primary',
+          code: 'unavailable',
+          state: 'recovered',
+          affected: 0,
+          updated_at: 2,
+        },
+      ],
+    }
+    const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => recovered) }
+    const { router } = renderRoute('/library?lens=all', http)
+
+    await screen.findByRole('heading', { name: 'Works' })
+    expect(screen.queryByLabelText('Shared library connection status')).toBeNull()
+    await router.navigate({
+      to: '/activity',
+      search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
+    })
+    expect(await screen.findByRole('heading', { name: 'No intervention needed' })).toBeVisible()
+    expect(screen.getByText('No action required')).toBeVisible()
+    expect(screen.queryByText('Library connection recovered')).toBeNull()
+  })
 
   it('sums simultaneous connection holds while keeping one focused recovery control', async () => {
     const preparation: PreparationView = {
@@ -278,6 +304,178 @@ describe('Application shell', () => {
     current = recovered
     settle?.(recovered)
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+  })
+
+  it('acknowledges a successful check once, then clears it and exposes a new incident', async () => {
+    vi.useFakeTimers()
+    try {
+      const connection = {
+        connection: 'primary',
+        code: 'unavailable' as const,
+        state: 'paused' as const,
+        affected: 2,
+        updated_at: 1,
+      }
+      const paused: PreparationView = {
+        schema_version: 'review-preparation-v1',
+        active: true,
+        actionable: false,
+        paused: false,
+        libraries: [],
+        connections: [connection],
+      }
+      const recovered: PreparationView = {
+        ...paused,
+        connections: [{ ...connection, state: 'recovered', affected: 0, updated_at: 2 }],
+      }
+      let current = paused
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getPreparation: vi.fn(async () => current),
+        preparationAction: vi.fn(async () => {
+          current = recovered
+          return recovered
+        }),
+      }
+      const { queryClient } = renderRoute('/library?lens=all', http)
+
+      await vi.waitFor(
+        () => expect(screen.getByRole('button', { name: 'Check connection again' })).toBeVisible(),
+        { interval: 0 },
+      )
+      const initialCheck = screen.getByRole('button', { name: 'Check connection again' })
+      initialCheck.focus()
+      expect(initialCheck).toHaveFocus()
+      fireEvent.click(initialCheck)
+      await vi.waitFor(
+        () => expect(screen.getByText('Library connection recovered')).toBeVisible(),
+        { interval: 0 },
+      )
+      const dismiss = screen.getByRole('button', { name: 'Dismiss' })
+      expect(dismiss).toHaveFocus()
+      fireEvent.click(dismiss)
+      expect(screen.queryByLabelText('Shared library connection status')).toBeNull()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(16)
+      })
+      expect(screen.getByLabelText('Library controls')).toHaveFocus()
+
+      current = paused
+      await act(async () => {
+        await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+      })
+      await vi.waitFor(
+        () => expect(screen.getByText('Library connection needs attention')).toBeVisible(),
+        { interval: 0 },
+      )
+      const repeatCheck = screen.getByRole('button', { name: 'Check connection again' })
+      repeatCheck.focus()
+      expect(repeatCheck).toHaveFocus()
+      fireEvent.click(repeatCheck)
+      await vi.waitFor(
+        () => expect(screen.getByText('Library connection recovered')).toBeVisible(),
+        { interval: 0 },
+      )
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(7_999)
+      })
+      expect(screen.getByLabelText('Shared library connection status')).toBeVisible()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(screen.queryByLabelText('Shared library connection status')).toBeNull()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(16)
+      })
+      expect(screen.getByLabelText('Library controls')).toHaveFocus()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('uses the successful check response when its follow-up refetch fails', async () => {
+    const user = userEvent.setup()
+    const connection = {
+      connection: 'primary',
+      code: 'unavailable' as const,
+      state: 'paused' as const,
+      affected: 2,
+      updated_at: 1,
+    }
+    const paused: PreparationView = {
+      schema_version: 'review-preparation-v1',
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+      connections: [connection],
+    }
+    const recovered: PreparationView = {
+      ...paused,
+      connections: [{ ...connection, state: 'recovered', affected: 0, updated_at: 2 }],
+    }
+    let reads = 0
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => {
+        if (reads++ > 0) throw new Error('refetch failed')
+        return paused
+      }),
+      preparationAction: vi.fn(async () => recovered),
+    }
+    renderRoute('/library?lens=all', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Check connection again' }))
+    expect(await screen.findByText('Library connection recovered')).toBeVisible()
+    expect(screen.queryByText('Checking library connection')).toBeNull()
+  })
+
+  it('does not revive an acknowledgement after a newer incident has replaced it', async () => {
+    const user = userEvent.setup()
+    const base = {
+      connection: 'primary',
+      code: 'unavailable' as const,
+      affected: 2,
+    }
+    const view = (state: 'paused' | 'recovered', updated_at: number): PreparationView => ({
+      schema_version: 'review-preparation-v1',
+      active: true,
+      actionable: false,
+      paused: false,
+      libraries: [],
+      connections: [{ ...base, state, affected: state === 'recovered' ? 0 : 2, updated_at }],
+    })
+    let current = view('paused', 2)
+    const firstRecovery = view('recovered', 2)
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async () => current),
+      preparationAction: vi.fn(async () => {
+        current = firstRecovery
+        return firstRecovery
+      }),
+    }
+    const { queryClient } = renderRoute('/library?lens=all', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Check connection again' }))
+    expect(await screen.findByText('Library connection recovered')).toBeVisible()
+
+    current = view('paused', 2)
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+    })
+    expect(await screen.findByText('Library connection needs attention')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Check connection again' })).toHaveFocus()
+
+    current = view('recovered', 2)
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+    })
+    await waitFor(() =>
+      expect(screen.queryByLabelText('Shared library connection status')).toBeNull(),
+    )
+    expect(screen.getByLabelText('Library controls')).toHaveFocus()
   })
 
   it.each(['pointer', 'keyboard'] as const)(

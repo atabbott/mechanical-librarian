@@ -55,8 +55,8 @@ h2 { margin-bottom:.35rem; }
 .connection-notice dt { color:var(--soft); font-size:.62rem; font-weight:650; }
 .connection-notice dd { margin:0; font-family:Georgia,serif; font-size:1.1rem; font-weight:700; }
 .connection-notice.is-checking { border-color:var(--accent); background:var(--accent-soft); }
-@media (max-width:1044px) { .connection-notice { grid-template-columns:minmax(0,1fr) auto; } .connection-notice > div:first-child { grid-column:1 / -1; } }
-@media (max-width:800px) { .connection-notice { grid-template-columns:1fr; align-items:start; } .connection-notice button { width:100%; } }
+@media (max-width:1044px) { .connection-notice { grid-template-columns:repeat(2,minmax(0,1fr)); } .connection-notice > div:first-child { grid-column:1 / -1; } .connection-notice dl { min-width:0; justify-self:start; } .connection-notice button { min-width:0; justify-self:end; overflow-wrap:anywhere; } }
+@media (max-width:800px) { .connection-notice { grid-template-columns:1fr; align-items:start; } .connection-notice dl { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); width:100%; } .connection-notice dl div { min-width:0; } .connection-notice button { width:100%; } }
 main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outline:none; }
 .eyebrow { margin-bottom:.35rem; color:var(--soft); font-size:.7rem; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }
 

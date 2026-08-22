@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep shared connection failures prominent only while owner action is needed.
+  A successful check now gives one dismissible acknowledgement before yielding
+  to the normal Library and Activity state; retained recovered records no
+  longer restore the banner after navigation or restart. (#638)
+
 - Keep Library as the per-work decision workspace, with provenance and bounded
   Evidence inline. Evidence and History remain read-only direct diagnostic pages
   with Back to work and no decision controls; no legacy redirect is provided.

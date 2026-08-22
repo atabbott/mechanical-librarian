@@ -127,11 +127,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
     description_mode = False
     consent_payloads: list[object] = []
     return_automatic_requests = 0
+    connection_state = "paused"
     failed_requests: list[tuple[str, str, str | None]] = []
 
     def fulfill(route: Route) -> None:
         nonlocal activity_failures, ambiguous_decisions, documents
-        nonlocal return_automatic_requests
+        nonlocal connection_state, return_automatic_requests
         parsed = urlsplit(route.request.url)
         path = parsed.path
         if path.startswith("/api/v1/"):
@@ -172,6 +173,29 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     status=204, headers={"x-ml-build-identity": "c" * 64}, body=""
                 )
                 return
+            if (
+                path == "/api/v1/review-preparation/primary/check-connection"
+                and route.request.method == "POST"
+            ):
+                connection_state = "recovered"
+                recovered_payload = cast(
+                    "dict[str, object]", rich_payload("/api/v1/review-preparation")
+                )
+                conditions = cast(
+                    "list[dict[str, object]]", recovered_payload["connections"]
+                )
+                conditions[0] = {
+                    **conditions[0],
+                    "state": "recovered",
+                    "affected": 0,
+                    "updated_at": 2,
+                }
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(recovered_payload),
+                )
+                return
             if path == "/api/v1/activity/consent" and route.request.method == "POST":
                 consent_payloads.append(route.request.post_data_json)
                 route.fulfill(
@@ -181,6 +205,15 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 )
                 return
             payload = rich_payload(route.request.url)
+            if path == "/api/v1/review-preparation" and connection_state == "recovered":
+                preparation = cast("dict[str, object]", payload)
+                conditions = cast("list[dict[str, object]]", preparation["connections"])
+                conditions[0] = {
+                    **conditions[0],
+                    "state": "recovered",
+                    "affected": 0,
+                    "updated_at": 2,
+                }
             if description_mode and path == "/api/v1/review-cases/case-1":
                 detail = cast("dict[str, object]", payload)
                 fields = cast("list[dict[str, object]]", detail["fields"])
@@ -536,6 +569,50 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     # so the degraded notice is present on every route here.
                     _fits_its_container(page, ".shell-actions", width)
                     _fits_its_container(page, ".masthead", width)
+                for width in (1440, 900, 390):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    page.locator("html").evaluate(
+                        "node => { node.style.fontSize = '200%' }"
+                    )
+                    _fits_its_container(page, ".connection-notice", width)
+                    page.locator("html").evaluate(
+                        "node => { node.style.fontSize = '' }"
+                    )
+                if path == "/library?lens=all":
+                    check.click()
+                    page.get_by_text(
+                        "Library connection recovered", exact=True
+                    ).wait_for()
+                    recovered = page.get_by_label("Shared library connection status")
+                    capture_visual_proof("connection-recovered")
+                    for width in (1440, 900, 390):
+                        page.set_viewport_size({"width": width, "height": 900})
+                        page.locator("html").evaluate(
+                            "node => { node.style.fontSize = '200%' }"
+                        )
+                        _fits_its_container(page, ".connection-notice", width)
+                        page.locator("html").evaluate(
+                            "node => { node.style.fontSize = '' }"
+                        )
+                    recovered.get_by_role("button", name="Dismiss").click()
+                    expect(recovered).to_have_count(0)
+
+                    page.goto("https://react-platform.invalid/library?lens=all")
+                    page.get_by_label("Library controls").wait_for()
+                    expect(
+                        page.get_by_label("Shared library connection status")
+                    ).to_have_count(0)
+
+                    connection_state = "paused"
+                    page.goto("https://react-platform.invalid/library?lens=all")
+                    page.get_by_label("Library controls").wait_for()
+                    page.get_by_text(
+                        "Library connection needs attention", exact=True
+                    ).first.wait_for()
+                    # These two fresh documents prove recovered state is not
+                    # restored after a restart; keep the route's navigation
+                    # accounting scoped to its original direct entry.
+                    before_entry += 2
             if path == "/attention":
                 page.get_by_text(
                     "This field needs your review.", exact=True
