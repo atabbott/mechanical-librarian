@@ -96,6 +96,12 @@ applicable`. #598 and #599 are focused defects blocked on the final installed
 copied nor modified by this checkpoint. This checkpoint creates no horizontal
 plan or additional constituents.
 
+## Delivery checkpoint 0.17.0: full-library evidence foundation
+
+| Slice | Tracker | Demonstrable outcome | Planning state |
+| --- | --- | --- | --- |
+| F25 Bounded EPUB series evidence | #375 | Exact installed inspection and report paths retain explicit package, front, and rear series/sequence indicia without prose or catalogue inference. | In delivery as one activation slice. |
+
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit

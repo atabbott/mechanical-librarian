@@ -1335,6 +1335,8 @@ def test_provider_claim_values_refuse_unsafe_text(kind, value) -> None:
     "kind",
     (
         ClaimKind.SUBTITLE,
+        ClaimKind.SERIES,
+        ClaimKind.SERIES_SEQUENCE,
         ClaimKind.PUBLISHER,
         ClaimKind.IMPRINT,
     ),
@@ -1352,6 +1354,16 @@ def test_rear_provenance_is_carried_by_every_bounded_opening_matter_kind(kind) -
         rear_provenance=_REAR_PROVENANCE,
     )
     assert claim.rear_provenance == _REAR_PROVENANCE
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(claim,),
+        local_reasons=("opening_matter",),
+        providers=(),
+    )
+    assert MetadataReport.from_json(report.to_json()) == report
 
 
 @pytest.mark.parametrize(

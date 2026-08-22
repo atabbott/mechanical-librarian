@@ -372,11 +372,13 @@ now covered by tests named for what they prove; the remaining 303 are accepted
 here, and this is the record. (2026-08-18)
 
 - `_IsolatedEpubInspector.inspect` and `.unchanged` (186) — the adapter around
-  the EPUB inspector child. The child itself is proved by
-  `tests/unit/test_epub_child.py`; the wrapper runs only against real media,
-  which no tier supplies and every test in the map substitutes. It is accepted
-  as the largest unproved seam in the module, not as a proved one: closing it
-  needs a real-file fixture and a child process, and that is a unit of its own.
+  the EPUB inspector child. `tests/unit/test_epub_child.py` supplies generated
+  real EPUB media to the isolated inspector, then proves rear series claims
+  retain provenance through canonical report replay without a source path.
+- EPUB series recovery is proved in the opening, child, and isolated-inspector
+  cohorts with generated package/front/rear fixtures, decimal and
+  multiple-membership positives, and explicit advertisement, catalogue, prose,
+  promotion, and trailing-ambiguity negatives.
 - `compose_continuous_guarded_application` (115) — composed unmocked by
   `run_review_server` on every started container, so the container lifecycle
   qualifier proves it end to end against a real SQLite store. This is the case

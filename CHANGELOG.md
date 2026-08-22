@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Recover explicit EPUB package, front, and rear series memberships with their
+  stated sequence while keeping advertisements, reading lists, prose, and
+  trailing ambiguity out of local evidence. (#375)
+
 - Keep one malformed Audiobookshelf title from pausing a healthy connection.
   Its trimmed public projection remains visible as needs-attention while valid
   sibling work continues without target mutation. (#797)

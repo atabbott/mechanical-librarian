@@ -706,6 +706,44 @@ def rear_facts(
                         rear_provenance=provenance,
                     )
                 )
+            series = opening._series_indicia(
+                value, allow_name_first=element.name == "p"
+            )
+            if series is not None:
+                sequence, name = series
+                if len(facts) + (2 if sequence is not None else 1) > 16:
+                    raise opening._AggregateRejected(
+                        report.outcome.RESOURCE_LIMIT, tuple(facts)
+                    )
+                if sequence is not None:
+                    facts.append(
+                        EpubInspectionFact(
+                            EpubInspectionField.SERIES_SEQUENCE,
+                            report.source_fingerprint,
+                            sequence,
+                            sequence,
+                            value,
+                            "not_applicable",
+                            "not_applicable",
+                            "not_applicable",
+                            "opening_matter",
+                            rear_provenance=provenance,
+                        )
+                    )
+                facts.append(
+                    EpubInspectionFact(
+                        EpubInspectionField.SERIES,
+                        report.source_fingerprint,
+                        name,
+                        name,
+                        value,
+                        "not_applicable",
+                        "not_applicable",
+                        "not_applicable",
+                        "opening_matter",
+                        rear_provenance=provenance,
+                    )
+                )
             for credit_field, credit_value, credit_role, _applicability in credits:
                 inspection_field = (
                     EpubInspectionField.CONTRIBUTOR

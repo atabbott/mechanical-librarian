@@ -1378,7 +1378,7 @@ def test_fact_limit_marker_is_reserved_inside_a_full_warning_budget() -> None:
     assert EpubOpeningReport.from_json(report.to_json()) == report
 
 
-def test_trailing_series_cue_without_positive_structure_is_rejected() -> None:
+def test_complete_series_membership_retains_decimal_sequence_and_name() -> None:
     report = _extract(_single(_xhtml("<p>Book 2.5 of the Clockwork Archive</p>")))
     assert [
         (claim.field, claim.normalized_value)
@@ -1390,29 +1390,180 @@ def test_trailing_series_cue_without_positive_structure_is_rejected() -> None:
     ]
 
 
+def test_explicit_series_label_retains_an_unpositioned_membership() -> None:
+    report = _extract(_single(_xhtml("<p>Series: Clockwork Archive</p>")))
+    assert [
+        (claim.field, claim.normalized_value)
+        for claim in report.claims
+        if claim.field in {OpeningField.SERIES, OpeningField.SERIES_ORDER}
+    ] == [(OpeningField.SERIES, "Clockwork Archive")]
+
+
+@pytest.mark.parametrize(
+    "heading",
+    (
+        "Reading order",
+        "Publication order",
+        "Books in reading order",
+        "Clockwork Archive publication order",
+        "Books in the series",
+        "Part in series",
+    ),
+)
+def test_order_heading_excludes_its_forward_series_scope(heading: str) -> None:
+    report = _extract(
+        _single(_xhtml(f"<h2>{heading}</h2><p>Book 2 of Clockwork Archive</p>"))
+    )
+    assert not {claim.field for claim in report.claims} & {
+        OpeningField.SERIES,
+        OpeningField.SERIES_ORDER,
+    }
+
+
 @pytest.mark.parametrize(
     "markup",
     (
-        "<p>Clockwork Archive Book 2.5</p>",
+        "<p>Clockwork Archive Part 2.5</p>",
+        "<p>Series: Clockwork Archive, The Mystery!</p>",
+        "<p>Series: New Worlds</p>",
+    ),
+)
+def test_closed_series_forms_preserve_name_first_and_internal_punctuation(
+    markup: str,
+) -> None:
+    assert any(
+        claim.field is OpeningField.SERIES
+        for claim in _extract(_single(_xhtml(markup))).claims
+    )
+
+
+def test_closed_series_name_grammar_preserves_explicit_connectors_without_a_word_cap() -> (
+    None
+):
+    claims = _extract(_single(_xhtml("<p>Book 2 of A Song of Ice and Fire</p>"))).claims
+    assert [
+        (claim.field, claim.normalized_value)
+        for claim in claims
+        if claim.field in {OpeningField.SERIES, OpeningField.SERIES_ORDER}
+    ] == [
+        (OpeningField.SERIES_ORDER, "2"),
+        (OpeningField.SERIES, "A Song of Ice and Fire"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("markup", "expected"),
+    (
+        ("<p>Series: Élan Cycle</p>", [(OpeningField.SERIES, "Élan Cycle")]),
+        (
+            "<p>Élan Cycle Book 2.5</p>",
+            [
+                (OpeningField.SERIES_ORDER, "2.5"),
+                (OpeningField.SERIES, "Élan Cycle"),
+            ],
+        ),
+    ),
+)
+def test_unicode_series_names_preserve_label_and_order_first_forms(
+    markup, expected
+) -> None:
+    claims = _extract(_single(_xhtml(markup))).claims
+    assert [
+        (claim.field, claim.normalized_value)
+        for claim in claims
+        if claim.field in {OpeningField.SERIES, OpeningField.SERIES_ORDER}
+    ] == expected
+
+
+@pytest.mark.parametrize(
+    "markup",
+    (
+        "<p>élan Cycle Book 2</p>",
+        "<p>ёлка Cycle Book 2</p>",
+        "<p>Book 2 of élan Cycle</p>",
+        "<p>Book 2 of ёлка Cycle</p>",
+    ),
+)
+def test_unicode_series_names_require_explicit_cased_or_numeric_tokens(
+    markup: str,
+) -> None:
+    claims = _extract(_single(_xhtml(markup))).claims
+    assert not {claim.field for claim in claims} & {
+        OpeningField.SERIES,
+        OpeningField.SERIES_ORDER,
+    }
+
+
+def test_series_indicia_rejects_oversized_hostile_text_before_regex_matching() -> None:
+    text = "Book 2 of " + "and " * 250_000 + "tail"
+    started = time.monotonic()
+    assert opening._series_indicia(text) is None
+    assert time.monotonic() - started < 0.1
+
+
+@pytest.mark.parametrize(
+    "markup",
+    (
+        "<p>Series: a series of historical mysteries</p>",
+        "<p>Book 2 of Clockwork Archive coming soon</p>",
+        "<p>Book 2 of Clockwork Archive today!</p>",
+        "<p>Book 2 of Clockwork Archive by Ada</p>",
+        "<p>Book 2 of Clockwork Archive for sale</p>",
+        "<p>Book 2 of Clockwork Archive continues</p>",
+        "<p>Book 2 of Clockwork Archive By Ada</p>",
+        "<p>Book 2 of Clockwork Archive By The Author</p>",
+        "<p>Book 2 of Clockwork Archive By An Editor</p>",
+        "<p>Book 2 of Clockwork Archive For Sale</p>",
+        "<p>Book 2 of Clockwork Archive Continues</p>",
+    ),
+)
+def test_series_trailing_clauses_are_rejected(markup: str) -> None:
+    assert not {claim.field for claim in _extract(_single(_xhtml(markup))).claims} & {
+        OpeningField.SERIES,
+        OpeningField.SERIES_ORDER,
+    }
+
+
+def test_opening_fact_limit_keeps_a_series_pair_atomic() -> None:
+    report = _extract(
+        _single(
+            _xhtml("<p>Series: Earlier Archive</p><p>Book 2 of Clockwork Archive</p>")
+        ),
+        EpubOpeningLimits(facts=2),
+    )
+    assert [(claim.field, claim.normalized_value) for claim in report.claims] == [
+        (OpeningField.SERIES, "Earlier Archive"),
+    ]
+    assert "opening_fact_limit" in report.warnings
+
+
+@pytest.mark.parametrize(
+    "markup",
+    (
         "<p>Read Clockwork Archive Book 2.5</p>",
+        "<p>Buy Clockwork Archive Book 2.5</p>",
+        "<p>New Clockwork Archive Book 2.5</p>",
+        "<p>Get Clockwork Archive Book 2.5</p>",
+        "<p>Start Clockwork Archive Book 2.5</p>",
         "<p>Discover Clockwork Archive Volume 2.5</p>",
         "<p>Clockwork Archive Book II</p>",
         "<p>Clockwork Archive Book Two</p>",
         "<p>Clockwork Archive Book 2.5 revised</p>",
         "<p>Read Clockwork Archive Book 2.5 today</p>",
         "<h2>Clockwork Archive Book 2.5</h2>",
-        "<p>One Two Three Four Five Six Seven Book 2.5</p>",
     ),
     ids=(
-        "trailing_order",
         "read_prefix",
+        "buy_prefix",
+        "new_prefix",
+        "get_prefix",
+        "start_prefix",
         "discover_volume",
         "roman_order",
         "word_order",
         "revised_tail",
         "promotional_tail",
         "heading_element",
-        "long_lead_in",
     ),
 )
 def test_trailing_series_cue_variants_are_rejected(markup: str) -> None:

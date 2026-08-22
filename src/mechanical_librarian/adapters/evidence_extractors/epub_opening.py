@@ -416,8 +416,43 @@ _CONTEXTUAL_CREDITS = (
     ),
     (re.compile(rf"\bworkflow\s*[:\-]\s*{_CREDIT_NAME_TEXT}", re.I), "workflow"),
 )
-_SERIES = re.compile(
-    r"\b(?:book|volume)\s+([0-9]+(?:\.[0-9]+)?)\s+(?:of|in)\s+(?:the\s+)?(.+)", re.I
+_SERIES_NAME_CONNECTOR_WORDS = (
+    "a",
+    "an",
+    "and",
+    "at",
+    "in",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "with",
+    "&",
+)
+_SERIES_NAME_CONNECTOR = rf"(?:{'|'.join(_SERIES_NAME_CONNECTOR_WORDS)})(?=\s|$)"
+_SERIES_NAME_TOKEN = (
+    rf"(?!(?:{'|'.join(_SERIES_NAME_CONNECTOR_WORDS)})(?=\s|$))[^\W_][\w'’(),!?.-]*"
+)
+_SERIES_ATTRIBUTION_TOKEN = r"[^\W_][\w'’(),!?.-]*"
+_SERIES_NAME = (
+    rf"{_SERIES_NAME_TOKEN}(?:\s+(?:{_SERIES_NAME_TOKEN}|{_SERIES_NAME_CONNECTOR}))*"
+)
+_SERIES_MEMBERSHIP = re.compile(
+    r"(?i:book|volume|part)\s+(?P<sequence>[0-9]+(?:\.[0-9]+)?)\s+"
+    rf"(?i:of|in)\s+(?:(?i:the)\s+)?(?P<name>{_SERIES_NAME})",
+)
+_SERIES_NAME_FIRST = re.compile(
+    rf"(?P<name>{_SERIES_NAME})\s+(?i:book|volume|part)\s+"
+    r"(?P<sequence>[0-9]+(?:\.[0-9]+)?)",
+)
+_SERIES_LABEL = re.compile(rf"(?i:series)\s*:\s*(?P<name>{_SERIES_NAME})")
+_SERIES_RESERVED_NAME_BOUNDARY = re.compile(
+    r"(?:(?P<name_first>^(?:buy|discover|get|new|read|start)\b)"
+    r"|^a\s+series\s+of\b"
+    rf"|\s+by\s+{_SERIES_ATTRIBUTION_TOKEN}(?:\s+(?:{_SERIES_NAME_TOKEN}|{_SERIES_NAME_CONNECTOR})){{0,3}}[!?.]*$"
+    r"|\s+(?:available|coming\s+soon|continues|for\s+sale|now|revised|today)[!?.]*$)",
+    re.I,
 )
 _EBOOK_LABEL = re.compile(
     r"(?<![\w])(?:e[\s-]?book|epub|electronic|digital)(?![\w])",
@@ -435,7 +470,10 @@ _NON_ISBN_IDENTIFIER = re.compile(
 _INDICIA_PROMOTION_NOTICE = re.compile(
     r"^\s*(?:advertisement|preview(?:\s+of\b.*)?|"
     r"sample(?:\s+(?:chapter|excerpt|of)\b.*)?|"
-    r"also by(?:\b.*)?|other works? by(?:\b.*)?)\s*[:.!]?\s*$",
+    r"also by(?:\b.*)?|other works? by(?:\b.*)?|"
+    rf"(?:(?:(?:books?|volumes?|parts?)\s+in\s+)?(?:reading|publication)\s+order"
+    rf"|(?:books?|volumes?|parts?)\s+in\s+(?:the\s+)?series"
+    rf"|(?-i:{_SERIES_NAME})\s+(?:reading|publication)\s+order))\s*[:.!]?\s*$",
     re.I,
 )
 _CHARSET_PARAMETER = re.compile(
@@ -2585,6 +2623,77 @@ def _indicia_credits(
     )
 
 
+def _has_explicit_series_name_tokens(name: str) -> bool:
+    return all(
+        token.casefold() in _SERIES_NAME_CONNECTOR_WORDS
+        or token[0].isupper()
+        or token[0].istitle()
+        or token[0].isdigit()
+        for token in name.split()
+    )
+
+
+def _series_indicia(
+    value: str, *, allow_name_first: bool = False
+) -> tuple[str | None, str] | None:
+    """Recognize one complete, source-explicit series indicium.
+
+    This is deliberately a full-match vocabulary: opening and rear resource
+    selection establishes provenance, while this narrow grammar establishes
+    that the selected text describes this work rather than a catalogue entry
+    or ordinary prose.  The caller emits sequence then name, the existing
+    local-series correlation order.
+    """
+
+    if len(value) > 280:
+        return None
+    text = _SPACE.sub(" ", value).strip()
+    membership = _SERIES_MEMBERSHIP.fullmatch(text) or (
+        _SERIES_NAME_FIRST.fullmatch(text) if allow_name_first else None
+    )
+    if membership is not None:
+        name = membership.group("name").strip()
+        if not _has_explicit_series_name_tokens(name):
+            return None
+        reserved = _SERIES_RESERVED_NAME_BOUNDARY.search(name)
+        if reserved is not None and (
+            reserved.lastgroup != "name_first" or membership.re is _SERIES_NAME_FIRST
+        ):
+            return None
+        return membership.group("sequence"), name
+    labelled = _SERIES_LABEL.fullmatch(text)
+    if labelled is not None:
+        name = labelled.group("name").strip()
+        if not _has_explicit_series_name_tokens(name):
+            return None
+        reserved = _SERIES_RESERVED_NAME_BOUNDARY.search(name)
+        if reserved is not None and reserved.lastgroup != "name_first":
+            return None
+        return None, name
+    return None
+
+
+def _bounded_claims(
+    claims: list[OpeningClaim], maximum: int
+) -> tuple[list[OpeningClaim], bool]:
+    """Keep a correlated series pair whole at the public fact boundary."""
+
+    bounded: list[OpeningClaim] = []
+    index = 0
+    while index < len(claims):
+        pair = (
+            index + 1 < len(claims)
+            and claims[index].field is OpeningField.SERIES_ORDER
+            and claims[index + 1].field is OpeningField.SERIES
+        )
+        width = 2 if pair else 1
+        if len(bounded) + width > maximum:
+            return bounded, True
+        bounded.extend(claims[index : index + width])
+        index += width
+    return bounded, False
+
+
 def _credit_name(value: str) -> str:
     """Stop a credit at prose while preserving dotted personal initials."""
 
@@ -3332,14 +3441,16 @@ def _recognize(
                         element.start + date_span[1],
                     ),
                 )
-        series = _SERIES.search(text)
-        if series:
-            add(
-                OpeningField.SERIES_ORDER,
-                series.group(1),
-                EpubObservationApplicability.WORK,
-            )
-            add(OpeningField.SERIES, series.group(2), EpubObservationApplicability.WORK)
+        series = _series_indicia(text, allow_name_first=element.name == "p")
+        if series is not None:
+            sequence, name = series
+            if sequence is not None:
+                add(
+                    OpeningField.SERIES_ORDER,
+                    sequence,
+                    EpubObservationApplicability.WORK,
+                )
+            add(OpeningField.SERIES, name, EpubObservationApplicability.WORK)
         if "omnibus" in lowered:
             add(
                 OpeningField.OMNIBUS_MEMBERSHIP, text, EpubObservationApplicability.WORK
@@ -3868,9 +3979,7 @@ class EpubOpeningExtractor:
                         )
                     )
                     warnings.append(code)
-            fact_limit_reached = len(claims) > limits.facts
-            if fact_limit_reached:
-                claims = claims[: limits.facts]
+            claims, fact_limit_reached = _bounded_claims(claims, limits.facts)
             unique_warning_values = sorted(set(warnings))
             if fact_limit_reached and len(unique_warning_values) <= limits.warnings:
                 marker = "opening_fact_limit"

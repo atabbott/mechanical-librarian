@@ -48,6 +48,9 @@ Source-explicit target-work subtitle, publisher, and imprint claims use the
 same closed kinds for front and rear indicia. Rear claims additionally retain
 their bounded resource identity, spine ordinal, tail slot, marker, and exact
 supporting excerpt. Publisher and imprint remain separate edition-scoped kinds.
+Series and sequence are separate adjacent work-scoped claims: their retained
+order is their correlation, so multiple explicit memberships remain distinct
+and no later layer selects or recombines them.
 Each complete nested or sibling label owns its exact occurrence span without a
 synthetic combined value, while unmatched split labels in the same ancestor
 remain assembled. Repeated or conflicting occurrences are retained without

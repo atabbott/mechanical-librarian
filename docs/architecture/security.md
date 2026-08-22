@@ -157,6 +157,9 @@ a library-wide provider barrier.
   target identity again as the publication transaction's precondition. Explicit
   non-ISBN schemes and URIs retain ownership of their digit sequences, so a
   checksum-valid embedded substring cannot manufacture identifier evidence.
+  Series recovery is a closed full-match indicia vocabulary over already bounded
+  selected front/rear resources; it has no filename, prose, catalogue, ranking,
+  provider, decision, or write authority.
 - A local actor may replace or corrupt configuration, secret, media, manifest,
   or SQLite
   files. No-follow descriptor binding, side-effect-free validation of existing

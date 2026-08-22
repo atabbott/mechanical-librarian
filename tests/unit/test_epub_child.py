@@ -35,6 +35,9 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
 from mechanical_librarian.adapters.evidence_extractors.process import (
     run_epub_inspector_child,
 )
+from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.application.configuration import MediaMountConfiguration
+from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.epub_inspection import (
     DateEvent,
     DatePrecision,
@@ -922,6 +925,322 @@ def test_rear_pool_reads_only_tail_evidence_with_marker_and_explicit_cues() -> N
         ("creator", "Ada Example"),
         ("isbn", "9780306406157"),
     ]
+
+
+def test_rear_indicia_retains_correlated_multiple_series_memberships() -> None:
+    request, (package, opening, _) = _bundle(
+        _xhtml(
+            "<p>All rights reserved</p>"
+            "<p>Book 2.5 of the Clockwork Archive</p>"
+            "<p>Colophon Cycle Part 1</p>"
+        )
+    )
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        facts = child._rear_facts(request, package, opening, archive)
+    series = tuple(
+        (fact.field, fact.canonical_value, fact.supporting_context)
+        for fact in facts
+        if fact.field
+        in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+    )
+    assert series == (
+        (
+            EpubInspectionField.SERIES_SEQUENCE,
+            "2.5",
+            "Book 2.5 of the Clockwork Archive",
+        ),
+        (
+            EpubInspectionField.SERIES,
+            "Clockwork Archive",
+            "Book 2.5 of the Clockwork Archive",
+        ),
+        (
+            EpubInspectionField.SERIES_SEQUENCE,
+            "1",
+            "Colophon Cycle Part 1",
+        ),
+        (
+            EpubInspectionField.SERIES,
+            "Colophon Cycle",
+            "Colophon Cycle Part 1",
+        ),
+    )
+    assert all(
+        fact.rear_provenance is not None
+        for fact in facts
+        if fact.field
+        in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+    )
+
+
+def test_isolated_inspector_maps_rear_series_to_canonical_report_claims(
+    tmp_path: Path,
+) -> None:
+    request, _ = _bundle(
+        _xhtml("<p>All rights reserved</p><p>Book 2.5 of the Clockwork Archive</p>")
+    )
+    payload = request.source.read_at(0, request.source.length)
+    (tmp_path / "book.epub").write_bytes(payload)
+    inspection = composition._IsolatedEpubInspector(
+        CoverArtifactStore(tmp_path / "artifacts")
+    ).inspect(
+        MediaMountConfiguration("books", str(tmp_path), "/library", True),
+        "book.epub",
+        len(payload) + 1,
+    )
+    series_claims = tuple(
+        claim
+        for claim in inspection.claims
+        if claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
+    )
+    assert [(claim.kind, claim.canonical) for claim in series_claims] == [
+        (ClaimKind.SERIES_SEQUENCE, "2.5"),
+        (ClaimKind.SERIES, "Clockwork Archive"),
+    ]
+    assert all(claim.rear_provenance is not None for claim in series_claims)
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
+        file=FileFacts(0, "a" * 64, inspection.content_digest),
+        local_claims=inspection.claims,
+        local_reasons=("opening_matter",),
+        providers=(),
+    )
+    assert MetadataReport.from_json(report.to_json()) == report
+    assert str(tmp_path) not in report.to_json()
+
+
+@pytest.mark.parametrize(
+    "markup",
+    (
+        "<p>All rights reserved</p><p>Read Clockwork Archive Book 2 today</p>",
+        "<p>All rights reserved</p><p>Also by Ada: Book 2 of Other Work</p>",
+        "<p>All rights reserved</p><p>Reading order: Book 2 of Clockwork Archive</p>",
+        "<p>All rights reserved</p><p>Book 2 of Clockwork Archive today</p>",
+    ),
+)
+def test_rear_indicia_rejects_prose_catalogue_and_trailing_series_ambiguity(
+    markup: str,
+) -> None:
+    request, (package, opening, _) = _bundle(_xhtml(markup))
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        facts = child._rear_facts(request, package, opening, archive)
+    assert not any(
+        fact.field in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+        for fact in facts
+    )
+
+
+@pytest.mark.parametrize(
+    "heading",
+    (
+        "Reading order",
+        "Publication order",
+        "Books in reading order",
+        "Clockwork Archive publication order",
+        "Books in the series",
+        "Part in series",
+    ),
+)
+def test_rear_order_heading_excludes_its_forward_series_scope(heading: str) -> None:
+    request, (package, opening, _) = _bundle(
+        _xhtml(
+            f"<p>All rights reserved</p><h2>{heading}</h2><p>Book 2 of Clockwork Archive</p>"
+        )
+    )
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        facts = child._rear_facts(request, package, opening, archive)
+    assert not any(
+        fact.field in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+        for fact in facts
+    )
+
+
+@pytest.mark.parametrize(
+    "markup",
+    (
+        "<p>Series: a series of historical mysteries</p>",
+        "<p>Book 2 of Clockwork Archive coming soon</p>",
+        "<p>Book 2 of Clockwork Archive today!</p>",
+    ),
+)
+def test_rear_series_trailing_clauses_are_rejected(markup: str) -> None:
+    request, (package, opening, _) = _bundle(
+        _xhtml("<p>All rights reserved</p>" + markup)
+    )
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        facts = child._rear_facts(request, package, opening, archive)
+    assert not any(
+        fact.field in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+        for fact in facts
+    )
+
+
+def test_rear_series_label_can_begin_with_a_reserved_name_first_lead() -> None:
+    request, (package, opening, _) = _bundle(
+        _xhtml("<p>All rights reserved</p><p>Series: New Worlds</p>")
+    )
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        facts = child._rear_facts(request, package, opening, archive)
+    assert [
+        (fact.field, fact.canonical_value)
+        for fact in facts
+        if fact.field
+        in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+    ] == [(EpubInspectionField.SERIES, "New Worlds")]
+
+
+@pytest.mark.parametrize(
+    ("markup", "expected"),
+    (
+        (
+            "<p>Series: Élan Cycle</p>",
+            ((EpubInspectionField.SERIES, "Élan Cycle"),),
+        ),
+        (
+            "<p>Élan Cycle Book 2.5</p>",
+            (
+                (EpubInspectionField.SERIES_SEQUENCE, "2.5"),
+                (EpubInspectionField.SERIES, "Élan Cycle"),
+            ),
+        ),
+    ),
+)
+def test_rear_unicode_series_names_preserve_label_and_order_first_forms(
+    markup, expected
+) -> None:
+    request, (package, opening, _) = _bundle(
+        _xhtml("<p>All rights reserved</p>" + markup)
+    )
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        facts = child._rear_facts(request, package, opening, archive)
+    assert (
+        tuple(
+            (fact.field, fact.canonical_value)
+            for fact in facts
+            if fact.field
+            in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "markup",
+    (
+        "<p>élan Cycle Book 2</p>",
+        "<p>ёлка Cycle Book 2</p>",
+        "<p>Book 2 of élan Cycle</p>",
+        "<p>Book 2 of ёлка Cycle</p>",
+    ),
+)
+def test_rear_unicode_series_names_require_explicit_cased_or_numeric_tokens(
+    markup: str,
+) -> None:
+    request, (package, opening, _) = _bundle(
+        _xhtml("<p>All rights reserved</p>" + markup)
+    )
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        facts = child._rear_facts(request, package, opening, archive)
+    assert not any(
+        fact.field in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+        for fact in facts
+    )
+
+
+@pytest.mark.parametrize(
+    "markup",
+    (
+        "<p>Book 2 of A Song of Ice and Fire</p>",
+        "<p>Book 2 of Clockwork Archive by Ada</p>",
+        "<p>Book 2 of Clockwork Archive for sale</p>",
+        "<p>Book 2 of Clockwork Archive continues</p>",
+        "<p>Book 2 of Clockwork Archive By Ada</p>",
+        "<p>Book 2 of Clockwork Archive By The Author</p>",
+        "<p>Book 2 of Clockwork Archive By An Editor</p>",
+        "<p>Book 2 of Clockwork Archive For Sale</p>",
+        "<p>Book 2 of Clockwork Archive Continues</p>",
+        "<p>Buy Clockwork Archive Book 2</p>",
+        "<p>New Clockwork Archive Book 2</p>",
+        "<p>Get Clockwork Archive Book 2</p>",
+        "<p>Start Clockwork Archive Book 2</p>",
+    ),
+)
+def test_rear_series_name_grammar_is_closed(markup: str) -> None:
+    request, (package, opening, _) = _bundle(
+        _xhtml("<p>All rights reserved</p>" + markup)
+    )
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        facts = child._rear_facts(request, package, opening, archive)
+    series = tuple(
+        (fact.field, fact.canonical_value)
+        for fact in facts
+        if fact.field
+        in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+    )
+    if "A Song" in markup:
+        assert series == (
+            (EpubInspectionField.SERIES_SEQUENCE, "2"),
+            (EpubInspectionField.SERIES, "A Song of Ice and Fire"),
+        )
+    else:
+        assert series == ()
+
+
+def test_rear_fact_limit_keeps_a_series_pair_atomic() -> None:
+    markup = "".join(f"<p>Subtitle: Earlier {index}</p>" for index in range(15))
+    request, (package, opening, _) = _bundle(
+        _xhtml(
+            "<p>All rights reserved</p>" + markup + "<p>Book 2 of Clockwork Archive</p>"
+        )
+    )
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        with pytest.raises(child.opening_parser._AggregateRejected) as raised:
+            child._rear_facts(request, package, opening, archive)
+    assert raised.value.outcome is EpubInspectionOutcome.RESOURCE_LIMIT
+    assert len(raised.value.partial_facts) == 15
+    assert not any(
+        fact.field in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+        for fact in raised.value.partial_facts
+    )
+
+
+def test_rear_series_indicia_aggregate_improves_recall_without_false_positives() -> (
+    None
+):
+    samples = (
+        ("<p>Book 2.5 of the Clockwork Archive</p>", 2),
+        ("<p>Part 1 of the Colophon Cycle</p>", 2),
+        ("<p>Series: Unpositioned Archive</p>", 1),
+        ("<p>Also by Ada: Book 2 of Other Work</p>", 0),
+        ("<p>Reading order: Book 2 of Clockwork Archive</p>", 0),
+        ("<p>Book 2 of Clockwork Archive today</p>", 0),
+    )
+    expected = found = false_positives = 0
+    for markup, expected_count in samples:
+        request, (package, opening, _) = _bundle(
+            _xhtml("<p>All rights reserved</p>" + markup)
+        )
+        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+            facts = child._rear_facts(request, package, opening, archive)
+        actual_count = sum(
+            fact.field
+            in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+            for fact in facts
+        )
+        expected += expected_count
+        found += min(actual_count, expected_count)
+        false_positives += max(0, actual_count - expected_count)
+    assert {
+        "expected": expected,
+        "found": found,
+        "false_positives": false_positives,
+    } == {
+        "expected": 5,
+        "found": 5,
+        "false_positives": 0,
+    }
 
 
 def test_front_and_rear_bibliographic_indicia_have_paired_semantics() -> None:
