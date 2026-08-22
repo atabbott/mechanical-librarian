@@ -195,6 +195,78 @@ describe('Library route', () => {
     expect(screen.queryByRole('heading', { level: 2, name: 'Unfiled observation' })).toBeNull()
   })
 
+  it('keeps the latest case-less selection when an older navigation settles last', async () => {
+    const user = userEvent.setup()
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const caseLess = (id: string, title: string) => {
+      const work = { ...firstWork }
+      delete work.reviewCaseId
+      return {
+        ...work,
+        id,
+        workId: `work-${id}`,
+        title,
+        attentionCount: 0,
+        summary: {
+          state: 'no_decision_recorded' as const,
+          reason: 'No review decision is recorded for this work.',
+          fields: [{ destination: 'title', state: 'value' as const, value: title }],
+        },
+      }
+    }
+    const first = caseLess('first-observation', 'First observation')
+    const second = caseLess('second-observation', 'Second observation')
+    const getLibrary = vi.fn(async (search: { q?: string }) => ({
+      lens: 'all' as const,
+      page: 1,
+      counts: { attention: 0, all: 2, clear: 2 },
+      works: search.q ? [] : [first, second],
+    }))
+    const { router } = renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
+    const firstRow = await screen.findByRole('button', { name: /^First observation\./u })
+    const secondRow = screen.getByRole('button', { name: /^Second observation\./u })
+    const navigate = router.navigate.bind(router)
+    let releaseFirstNavigation: () => void = () => undefined
+    const firstNavigationHeld = new Promise<void>((resolve) => {
+      releaseFirstNavigation = resolve
+    })
+    let selectionNavigations = 0
+    vi.spyOn(router, 'navigate').mockImplementation(async (options) => {
+      selectionNavigations += 1
+      const invocation = selectionNavigations
+      const result = await navigate(options)
+      if (invocation === 1) await firstNavigationHeld
+      return result
+    })
+
+    fireEvent.click(firstRow)
+    fireEvent.click(secondRow)
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({
+        lens: 'all',
+        work: 'work-second-observation',
+      }),
+    )
+    await act(async () => {
+      releaseFirstNavigation()
+      await firstNavigationHeld
+    })
+    await user.type(
+      screen.getByLabelText('Search title, author, identifier, library, or format'),
+      'hide both',
+    )
+    await screen.findByText('No exact-current works match this search and lens.')
+    expect(await screen.findByRole('heading', { level: 2, name: 'Second observation' })).toBeVisible()
+    await waitFor(() =>
+      expect(router.state.location.search).toMatchObject({
+        lens: 'all',
+        q: 'hide both',
+        work: 'work-second-observation',
+      }),
+    )
+  })
+
   it('normalises an unresolvable work selection out of the URL', async () => {
     const http: ReviewHttp = { ...createHttp(), getLibrary: vi.fn(async () => library) }
     const { router } = renderRoute('/library?lens=all&work=work-that-is-not-on-this-page', http)
