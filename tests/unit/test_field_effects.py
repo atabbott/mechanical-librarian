@@ -910,14 +910,17 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
         ),
     )
     effects.repository._connection.commit()
-    with pytest.raises(FieldEffectError, match="^persistence$"):
-        effects.repository.field_effect_activity_page(
-            search=None,
-            event_type="metadata",
-            occurred_after=0,
-            page=1,
-            page_size=25,
-        )
+    activity = effects.repository.field_effect_activity_page(
+        search=None,
+        event_type="metadata",
+        occurred_after=0,
+        page=1,
+        page_size=25,
+    )
+    assert activity["total"] == 2
+    assert all(
+        event["record"]["source_kind"] == "degraded" for event in activity["events"]
+    )
     consent = effects.repository.grant_field_effect_consents(
         "primary", ("books",), (proposal["destination"],), 9
     )[0]

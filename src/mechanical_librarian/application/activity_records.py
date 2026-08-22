@@ -304,6 +304,16 @@ def readable_activity_event(
             },
         ]
         event["policy_changes"] = changes
+    elif source_kind == "degraded":
+        change = ReadableChange(
+            "Details unavailable", "Recorded details are unavailable"
+        )
+        facts = [
+            {
+                "label": "Record status",
+                "value": "This retained event cannot be fully projected",
+            }
+        ]
     else:
         change = ReadableChange("Recorded", "Recorded")
         facts = [{"label": "Chosen by", "value": chooser_label(origin)}]

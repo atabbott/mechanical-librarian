@@ -1225,8 +1225,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         ValueError,
                     ) as error:
                         raise FieldEffectError("persistence") from error
-                if set(automatic_authority) != set(automatic_identities):
-                    raise FieldEffectError("persistence")
+                # An absent or no-longer-resolvable authority belongs to its
+                # one retained automatic event.  Keep the validated event in
+                # the page and let the per-event projection below emit the
+                # bounded degraded row; do not turn it into a whole-ledger
+                # storage failure (#786).
             events = []
             decision: HumanDecision | AutomaticDecision
             for (
@@ -1555,7 +1558,28 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         )
                     )
                     if authority is None:
-                        raise FieldEffectError("persistence")
+                        durable["source_kind"] = "degraded"
+                        durable["degraded_reason"] = (
+                            "Recorded automatic decision details are unavailable"
+                        )
+                        events.append(
+                            {
+                                "connection": connection,
+                                "destination": destination,
+                                "event_id": event_id,
+                                "event_type": projected_type,
+                                "failure": None,
+                                "library": library,
+                                "occurred_at": occurred_at,
+                                "origin": origin,
+                                "report_id": report_id,
+                                "state": state,
+                                "work_id": work_id,
+                                **({"work_label": event_title} if event_title else {}),
+                                "record": durable,
+                            }
+                        )
+                        continue
                     try:
                         case, proposal, outcome = authority
                         report = MetadataReport.from_json(report_document)
