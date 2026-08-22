@@ -161,6 +161,34 @@ def test_search_narrows_on_the_work_the_field_and_the_status(
     assert _all_rows(ledger, search="no such work anywhere in this ledger") == []
 
 
+@pytest.mark.parametrize(
+    ("term", "destination"),
+    (
+        ("9780060512750", "isbn"),
+        ("雨の地図", "authors"),
+        ("Larkspur Cycle", "series"),
+        ("1974-05-13", "publishedDate"),
+    ),
+)
+def test_each_public_changed_value_shape_is_searchable(
+    ledger: ContinuousGuardedApplication, term: str, destination: str
+) -> None:
+    """Scalar, list, structured series and date leaves stay searchable (#787)."""
+    rows = _all_rows(ledger, search=term)
+    assert rows
+    assert {str(row["destination"]) for row in rows} == {destination}
+
+
+@pytest.mark.parametrize(
+    "term",
+    ("field-effect-event-v1", "schema_version", "decision_id", "automatic_bundle_"),
+)
+def test_activity_search_never_exposes_immutable_internal_keys_or_identifiers(
+    ledger: ContinuousGuardedApplication, term: str
+) -> None:
+    assert _all_rows(ledger, search=term) == []
+
+
 def test_the_changed_value_itself_is_searchable(
     ledger: ContinuousGuardedApplication,
 ) -> None:
