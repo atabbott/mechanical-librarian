@@ -36,9 +36,19 @@ from mechanical_librarian.domain.metadata_policy import (
     human_review_destinations,
     resolve_policy,
 )
+from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
+    MetadataReport,
+    TargetDestination,
+    TargetField,
+    TargetFieldState,
+)
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from tests.support.proposal_evidence import _claim, _fields, _provider
+from tests.support.proposal_evidence import _report as _proposal_report
 from tests.unit.test_field_effects import (  # noqa: F401
     CAPABILITY,
     DEPENDENCY,
@@ -80,11 +90,15 @@ def _facts(event: dict[str, object]) -> dict[str, str]:
     return {str(item["label"]): str(item["value"]) for item in evidence}
 
 
-def _automatic_no_change_decisions(
-    environment: _EffectEnvironment, *, qualified: bool
+def _automatic_decisions(
+    environment: _EffectEnvironment,
+    report: MetadataReport,
+    category: str,
+    option: str,
+    *,
+    qualified: bool,
 ) -> tuple[AutomaticDecision, ...]:
     """Persist naturally supported automatic outcomes through public seams."""
-    report, category, option, destination = _automatic_no_change_inputs("exact_title")
     options = dict(DEFAULT_OPTIONS)
     options[category] = option
     destinations = {
@@ -92,7 +106,7 @@ def _automatic_no_change_decisions(
         for name in OPTION_CATALOGUE
     }
     destinations[category] = "automatic"
-    profile = MetadataPolicyProfile.create("Activity no-change", options, destinations)
+    profile = MetadataPolicyProfile.create("Activity automatic", options, destinations)
     resolved = resolve_policy(profile, report.target.library)
     environment.repository.enter_shadow_preview(1)
     environment.repository.create_metadata_policy_draft(profile.canonical_json)
@@ -113,16 +127,66 @@ def _automatic_no_change_decisions(
         "review_case_id"
     ]
     assert type(case_id) is str
-    outcome = ShadowOutcomeSet.from_json(
+    ShadowOutcomeSet.from_json(
         environment.repository.persist_shadow_outcome(case_id, 4)
-    )
-    assert any(
-        value.destination == destination and value.disposition == "keep_current"
-        for value in outcome.outcomes
     )
     return tuple(
         AutomaticDecision.from_json(value)
         for value in environment.repository.get_review_case_decisions(case_id)
+    )
+
+
+def _automatic_no_change_decisions(
+    environment: _EffectEnvironment, *, qualified: bool
+) -> tuple[AutomaticDecision, ...]:
+    report, category, option, destination = _automatic_no_change_inputs("exact_title")
+    decisions = _automatic_decisions(
+        environment, report, category, option, qualified=qualified
+    )
+    assert not decisions or any(
+        value.destination == destination and value.outcome == "keep_current"
+        for value in decisions
+    )
+    return decisions
+
+
+def _automatic_candidate_decision(
+    environment: _EffectEnvironment,
+) -> AutomaticDecision:
+    description = "An exact source-bound description."
+    report = _proposal_report(
+        fields=_fields(
+            description=TargetField(
+                TargetDestination.DESCRIPTION, TargetFieldState.MISSING
+            )
+        ),
+        providers=(
+            _provider(
+                "catalogue",
+                "edition-1",
+                (
+                    _claim(
+                        "catalogue",
+                        "edition-1",
+                        ClaimKind.DESCRIPTION,
+                        description,
+                        scope=ClaimScope.WORK,
+                    ),
+                ),
+            ),
+        ),
+    )
+    decisions = _automatic_decisions(
+        environment,
+        report,
+        "description_fill",
+        "safe_plain_text",
+        qualified=True,
+    )
+    return next(
+        value
+        for value in decisions
+        if value.destination == "description" and value.outcome == "candidate"
     )
 
 
@@ -143,6 +207,37 @@ def test_a_qualified_automatic_decision_reaches_activity_without_raw_inserts(
     assert automatic["state"] == "recorded"
     assert automatic["change"] == "Chose a title value automatically"
     assert _facts(automatic)["New value"] == "Secret History"
+
+
+def test_missing_authority_degrades_one_supported_automatic_decision(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    decision = _qualified_no_change_decision(effects)
+    effects.repository._connection.execute(
+        "DROP TRIGGER shadow_decision_outcomes_no_delete"
+    )
+    effects.repository._connection.execute(
+        "DELETE FROM shadow_outcome_field_facts WHERE review_case_id=?",
+        (decision.review_case_id,),
+    )
+    effects.repository._connection.execute(
+        "DELETE FROM shadow_decision_outcomes WHERE review_case_id=?",
+        (decision.review_case_id,),
+    )
+    effects.repository._connection.commit()
+
+    retained = effects.repository.field_effect_activity_page(
+        search=None,
+        event_type="metadata",
+        occurred_after=0,
+        page=1,
+        page_size=25,
+    )
+    assert retained["total"] == 1
+    assert retained["events"][0]["record"] == {
+        "source_kind": "degraded",
+        "degraded_reason": "automatic_authority_unavailable",
+    }
 
 
 def test_an_unqualified_policy_records_no_automatic_decision(

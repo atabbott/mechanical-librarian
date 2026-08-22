@@ -58,6 +58,7 @@ from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
     OPTION_CATALOGUE,
     MetadataPolicyProfile,
+    human_review_destinations,
     resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -135,7 +136,11 @@ def envelope(destination: str, value: object) -> dict[str, object]:
 
 
 def metadata_report(
-    title: str, content: str, file_identity: str, item_id: str = "1234567890abcdef"
+    title: str,
+    content: str,
+    file_identity: str,
+    item_id: str = "1234567890abcdef",
+    library: str = "books",
 ) -> MetadataReport:
     claim = LocalClaim.create(
         kind=ClaimKind.TITLE,
@@ -148,7 +153,7 @@ def metadata_report(
         scope=ClaimScope.WORK,
     )
     return MetadataReport.create(
-        target=TargetFacts("primary", "books", item_id, default_target_fields(title)),
+        target=TargetFacts("primary", library, item_id, default_target_fields(title)),
         file=FileFacts(0, content * 64, file_identity * 64),
         local_claims=(claim,),
         local_reasons=("opening_matter_title",),
@@ -820,22 +825,23 @@ def test_stale_success_does_not_clear_newer_capability_suspension(
 def test_manual_hold_requires_explicit_return_and_later_human_wins(
     effects: _EffectEnvironment,
 ) -> None:
-    report = metadata_report("Old title", "1", "2")
-    effects.repository.publish(report, lambda: True)
-    proposal_set = evaluate_report(report)
-    effects.repository.publish_proposal(proposal_set)
-    case_id = json.loads(effects.repository.admit_review_case(proposal_set))[
-        "review_case_id"
-    ]
+    from tests.unit.test_activity_end_to_end import _automatic_candidate_decision
+
+    automatic = _automatic_candidate_decision(effects)
+    case_id = automatic.review_case_id
     case = ReviewCase.create_from_data(
         json.loads(effects.repository.get_review_case(case_id))["case"]
     )
     proposal = next(
         value
         for value in case.proposals
-        if value["result"]["outcome"] == "unresolved_choice"
+        if value["proposal_id"] == automatic.proposal_id
     )
-    selected = proposal["result"]["alternatives"][0]["value"]
+    selected = next(
+        value
+        for value in proposal["result"]["alternatives"]
+        if value["alternative_id"] == automatic.candidate_id
+    )["value"]
     human = HumanDecision.create(
         case,
         proposal_id=proposal["proposal_id"],
@@ -847,82 +853,8 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
         idempotency_key="manual-hold-human-0001",
         occurred_at=10,
     )
-    automatic = AutomaticDecision.create(
-        review_case_id=case.review_case_id,
-        report_id=case.report_id,
-        proposal_set_id=case.proposal_set_id,
-        proposal_id=proposal["proposal_id"],
-        target_fingerprint=case.target_fingerprint,
-        destination=proposal["destination"],
-        outcome="candidate",
-        candidate_id=proposal["result"]["alternatives"][0]["alternative_id"],
-        resolved_policy_id=effects.repository.current_resolved_policy_id("books"),
-        policy_generation=1,
-        rule_id="shadow_rule_" + "1" * 64,
-        policy_category="title_layout",
-        policy_option="preserve",
-        qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
-        source_outcome_id="shadow_outcome_" + "3" * 64,
-        occurred_at=9,
-        bundle_id="automatic_bundle_" + "4" * 64,
-    )
-    effects.repository._connection.execute(
-        "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
-        "idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
-        (
-            automatic.decision_id,
-            automatic.review_case_id,
-            automatic.destination,
-            automatic.idempotency_digest,
-            automatic.occurred_at,
-            automatic.to_json(),
-        ),
-    )
-    non_candidate = AutomaticDecision.create(
-        review_case_id=case.review_case_id,
-        report_id=case.report_id,
-        proposal_set_id=case.proposal_set_id,
-        proposal_id=proposal["proposal_id"],
-        target_fingerprint=case.target_fingerprint,
-        destination="subtitle",
-        outcome="ignore",
-        candidate_id=None,
-        resolved_policy_id=effects.repository.current_resolved_policy_id("books"),
-        policy_generation=1,
-        rule_id="shadow_rule_" + "2" * 64,
-        policy_category="title_layout",
-        policy_option="preserve",
-        qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
-        source_outcome_id="shadow_outcome_" + "5" * 64,
-        occurred_at=8,
-        bundle_id="automatic_bundle_" + "6" * 64,
-    )
-    effects.repository._connection.execute(
-        "INSERT INTO automatic_decisions(decision_id,review_case_id,destination,"
-        "idempotency_digest,occurred_at,document) VALUES(?,?,?,?,?,?)",
-        (
-            non_candidate.decision_id,
-            non_candidate.review_case_id,
-            non_candidate.destination,
-            non_candidate.idempotency_digest,
-            non_candidate.occurred_at,
-            non_candidate.to_json(),
-        ),
-    )
-    effects.repository._connection.commit()
-    activity = effects.repository.field_effect_activity_page(
-        search=None,
-        event_type="metadata",
-        occurred_after=0,
-        page=1,
-        page_size=25,
-    )
-    assert activity["total"] == 2
-    assert all(
-        event["record"]["source_kind"] == "degraded" for event in activity["events"]
-    )
     consent = effects.repository.grant_field_effect_consents(
-        "primary", ("books",), (proposal["destination"],), 9
+        "primary", ("ebooks",), (proposal["destination"],), 9
     )[0]
     authority = EffectAuthority(
         automatic.decision_id,
@@ -936,10 +868,10 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
     )
     plan = FieldEffectPlan.create(
         connection="primary",
-        library="books",
-        work_id="1234567890abcdef",
+        library="ebooks",
+        work_id="item-1",
         destination=proposal["destination"],
-        pre_value="Old title",
+        pre_value=None,
         desired_value=selected["value"],
         target_fingerprint=case.target_fingerprint,
         target_version="version-before-manual",
@@ -996,7 +928,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
     consideration_document = json.dumps(
         {
             "consideration_id": consideration_id,
-            "report_id": report.report_id,
+            "report_id": case.report_id,
             "replay_digest": "8" * 64,
             "review_case_id": case.review_case_id,
             "schema_version": "cover-consideration-v1",
@@ -1010,7 +942,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
         (
             consideration_id,
             case.review_case_id,
-            report.report_id,
+            case.report_id,
             "8" * 64,
             hashlib.sha256(consideration_document.encode()).hexdigest(),
             None,
@@ -1079,7 +1011,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
     assert stale_hold_token is not None
     assert stale_hold_token is not None
     return_scan = effects.repository.request_review_scan(
-        "primary", "books", "library-books", "a" * 64, 10
+        "primary", "ebooks", "library-ebooks", "a" * 64, 10
     )
     effects.repository._connection.execute(
         "UPDATE review_preparation_scans SET state='completed_with_failures',"
@@ -1100,7 +1032,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
             case_id,
             proposal["destination"],
             "primary",
-            "books",
+            "ebooks",
             stale_hold_token,
             return_scan.scan_id,
             11,
@@ -1110,7 +1042,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
     assert (
         effects.repository.pending_field_effect_manual_returns(100) == expected_pending
     )
-    requeued = effects.repository.review_pipeline_progress("primary", "books")
+    requeued = effects.repository.review_pipeline_progress("primary", "ebooks")
     assert requeued is not None
     assert requeued.state == "queued"
     refresh_count = effects.repository._connection.execute(
@@ -1129,11 +1061,11 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
     assert effects.repository.get_field_effect(plan.plan_id).state == "superseded"
     assert effects.repository.field_effect_manual_hold_context(
         case_id, proposal["destination"]
-    ) == ("primary", "books")
+    ) == ("primary", "ebooks")
     assert len(effects.repository.pending_field_effect_decision_documents(10)) == 1
     assert effects.repository.clear_field_effect_manual_hold(
         case_id, proposal["destination"], 12
-    ) == ("primary", "books")
+    ) == ("primary", "ebooks")
     assert (
         effects.repository.field_effect_manual_hold_context(
             case_id, proposal["destination"]
@@ -1184,7 +1116,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
     assert effects.repository.get_field_effect(plan.plan_id).state == "superseded"
     assert effects.repository.field_effect_manual_hold_context(
         case_id, proposal["destination"]
-    ) == ("primary", "books")
+    ) == ("primary", "ebooks")
     current_hold_token = effects.repository.field_effect_manual_hold_token(
         case_id, proposal["destination"]
     )
@@ -1206,11 +1138,19 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
     )
     assert effects.repository.field_effect_manual_hold_context(
         case_id, proposal["destination"]
-    ) == ("primary", "books")
+    ) == ("primary", "ebooks")
 
-    replacement = metadata_report("Replacement title", "3", "4")
+    replacement = metadata_report(
+        "Replacement title", "3", "4", item_id="item-1", library="ebooks"
+    )
     effects.repository.publish(replacement, lambda: True)
-    replacement_proposal = evaluate_report(replacement)
+    current_policy = effects.repository.current_resolved_metadata_policy("ebooks")
+    assert current_policy is not None
+    replacement_proposal = evaluate_report(
+        replacement,
+        current_policy.resolved_id,
+        human_review_destinations(current_policy),
+    )
     effects.repository.publish_proposal(replacement_proposal)
     effects.repository.admit_review_case(replacement_proposal)
     assert effects.repository.pending_field_effect_decision_documents(10) == ()

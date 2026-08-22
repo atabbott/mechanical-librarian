@@ -2,10 +2,9 @@
 
 ## Unreleased
 
-- Prove Activity's automatic-decision and no-change rows through the supported
-  report, policy, shadow-evaluation, admission, and scheduler path. Unqualified
-  policy remains unable to create an automatic decision or bypass authority.
-  (#789)
+- Keep one retained Activity event with unavailable automatic authority from
+  taking down the ledger. The row explains its bounded limitation while valid
+  neighbours, filters, totals, ordering, and pagination remain usable. (#786)
 - Let Activity search find a durable record by the value it changed from or
   to. The server searches only its existing bounded immutable documents using
   parameterised literals; it adds no index, duplicate audit document, or new

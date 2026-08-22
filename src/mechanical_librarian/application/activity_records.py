@@ -28,6 +28,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import canonical_target_fields
 from mechanical_librarian.domain.readable_activity import (
     ABSENT,
+    AUTOMATIC_AUTHORITY_UNAVAILABLE,
     ReadableChange,
     chooser_label,
     destination_label,
@@ -305,9 +306,10 @@ def readable_activity_event(
         ]
         event["policy_changes"] = changes
     elif source_kind == "degraded":
+        degraded_reason = cast(str, record.get("degraded_reason", ""))
         unavailable = {
-            "automatic_authority_unavailable": "The automatic authority is no longer available",
-        }.get(cast(str, record.get("degraded_reason", "")), "Details cannot be read")
+            AUTOMATIC_AUTHORITY_UNAVAILABLE: "The automatic authority is no longer available",
+        }.get(degraded_reason, "Details cannot be read")
         change = ReadableChange(
             "Details unavailable", "Recorded details are unavailable"
         )
@@ -318,6 +320,10 @@ def readable_activity_event(
             },
             {"label": "Disclosure", "value": unavailable},
         ]
+        event["diagnostic"] = {
+            "event_class": "automatic_decision",
+            "reason": degraded_reason,
+        }
     else:
         change = ReadableChange("Recorded", "Recorded")
         facts = [{"label": "Chosen by", "value": chooser_label(origin)}]

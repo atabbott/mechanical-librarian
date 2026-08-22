@@ -89,6 +89,7 @@ from mechanical_librarian.domain.proposal_set import (
 )
 from mechanical_librarian.domain.readable_activity import (
     ABSENT,
+    AUTOMATIC_AUTHORITY_UNAVAILABLE,
     destination_label,
     policy_option_label,
 )
@@ -1565,9 +1566,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     )
                     if authority is None:
                         durable["source_kind"] = "degraded"
-                        durable["degraded_reason"] = (
-                            "Recorded automatic decision details are unavailable"
-                        )
+                        durable["degraded_reason"] = AUTOMATIC_AUTHORITY_UNAVAILABLE
                         events.append(
                             {
                                 "connection": connection,
@@ -1608,7 +1607,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         if error.code != "authority_binding":
                             raise
                         durable["source_kind"] = "degraded"
-                        durable["degraded_reason"] = "automatic_authority_unavailable"
+                        durable["degraded_reason"] = AUTOMATIC_AUTHORITY_UNAVAILABLE
                         events.append(
                             {
                                 "connection": connection,
