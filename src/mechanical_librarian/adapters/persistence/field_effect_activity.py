@@ -1782,7 +1782,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 total = matched_count
                 page_count = max(1, (total + page_size - 1) // page_size)
                 selected_page = min(page, page_count)
-                selected = matched if selected_page == page else list(trailing)
+                final_page_size = total % page_size or page_size
+                selected = (
+                    matched
+                    if selected_page == page
+                    else list(trailing)[-final_page_size:]
+                )
                 projected_events = [event for event, _ in selected]
                 report_documents = {
                     cast(str, event["report_id"]): document

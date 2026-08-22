@@ -491,9 +491,16 @@ def test_activity_search_projects_dependency_maps_per_cursor_batch(
     assert all(searched and 1 <= size <= 64 for size, searched in projected)
     assert page["total"] == 193
     assert page["page"] == page["page_count"] == 8
+    assert len(page["events"]) == 18
     assert [event["occurred_at"] for event in page["events"]] == list(
-        range(1_000_024, 1_000_000 - 1, -1)
+        range(1_000_017, 1_000_000 - 1, -1)
     )
+    final_page = effects.repository.field_effect_activity_page(
+        search="book-", event_type="review", occurred_after=0, page=8, page_size=25
+    )
+    assert [event["event_id"] for event in page["events"]] == [
+        event["event_id"] for event in final_page["events"]
+    ]
 
 
 def test_activity_page_bounds_filters_and_clamps_the_append_only_ledger(
