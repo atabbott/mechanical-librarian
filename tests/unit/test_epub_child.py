@@ -1157,6 +1157,8 @@ def test_rear_unicode_series_names_require_explicit_cased_or_numeric_tokens(
         "<p>Book 2 of Clockwork Archive for sale</p>",
         "<p>Book 2 of Clockwork Archive continues</p>",
         "<p>Book 2 of Clockwork Archive By Ada</p>",
+        "<p>Book 2 of Clockwork Archive By The Author</p>",
+        "<p>Book 2 of Clockwork Archive By An Editor</p>",
         "<p>Book 2 of Clockwork Archive For Sale</p>",
         "<p>Book 2 of Clockwork Archive Continues</p>",
         "<p>Buy Clockwork Archive Book 2</p>",

@@ -1511,6 +1511,8 @@ def test_series_indicia_rejects_oversized_hostile_text_before_regex_matching() -
         "<p>Book 2 of Clockwork Archive for sale</p>",
         "<p>Book 2 of Clockwork Archive continues</p>",
         "<p>Book 2 of Clockwork Archive By Ada</p>",
+        "<p>Book 2 of Clockwork Archive By The Author</p>",
+        "<p>Book 2 of Clockwork Archive By An Editor</p>",
         "<p>Book 2 of Clockwork Archive For Sale</p>",
         "<p>Book 2 of Clockwork Archive Continues</p>",
     ),

@@ -434,6 +434,7 @@ _SERIES_NAME_CONNECTOR = rf"(?:{'|'.join(_SERIES_NAME_CONNECTOR_WORDS)})(?=\s|$)
 _SERIES_NAME_TOKEN = (
     rf"(?!(?:{'|'.join(_SERIES_NAME_CONNECTOR_WORDS)})(?=\s|$))[^\W_][\w'’(),!?.-]*"
 )
+_SERIES_ATTRIBUTION_TOKEN = r"[^\W_][\w'’(),!?.-]*"
 _SERIES_NAME = (
     rf"{_SERIES_NAME_TOKEN}(?:\s+(?:{_SERIES_NAME_TOKEN}|{_SERIES_NAME_CONNECTOR}))*"
 )
@@ -449,7 +450,7 @@ _SERIES_LABEL = re.compile(rf"(?i:series)\s*:\s*(?P<name>{_SERIES_NAME})")
 _SERIES_RESERVED_NAME_BOUNDARY = re.compile(
     r"(?:(?P<name_first>^(?:buy|discover|get|new|read|start)\b)"
     r"|^a\s+series\s+of\b"
-    rf"|\s+by\s+{_SERIES_NAME_TOKEN}(?:\s+(?:{_SERIES_NAME_TOKEN}|{_SERIES_NAME_CONNECTOR})){{0,3}}[!?.]*$"
+    rf"|\s+by\s+{_SERIES_ATTRIBUTION_TOKEN}(?:\s+(?:{_SERIES_NAME_TOKEN}|{_SERIES_NAME_CONNECTOR})){{0,3}}[!?.]*$"
     r"|\s+(?:available|coming\s+soon|continues|for\s+sale|now|revised|today)[!?.]*$)",
     re.I,
 )
