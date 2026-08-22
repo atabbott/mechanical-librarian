@@ -36,12 +36,14 @@ from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import (
     BibliographicSelectionKind,
     ProposalAlternative,
     ProposalAssessment,
     ProposalSet,
+    canonical_target_fields,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_preview import (
@@ -49,7 +51,10 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     project_f20_automatic_decision_value,
     select_isbn_representation,
 )
-from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from mechanical_librarian.domain.shadow_outcome import (
+    ShadowFieldOutcome,
+    ShadowOutcomeSet,
+)
 from mechanical_librarian.domain.validation import (
     boolean,
     bounded_integer,
@@ -62,18 +67,17 @@ from mechanical_librarian.domain.validation import (
 __all__ = ["_automatic_decision_value", "_validate_field_effect_state"]
 
 
-def _automatic_decision_value(
+def _validate_automatic_decision_authority(
     decision: AutomaticDecision,
     case: ReviewCase,
     report: MetadataReport,
     proposal_set: ProposalSet,
     source_outcome: ShadowOutcomeSet,
-) -> object:
-    """Project one persisted automatic decision to its exact target envelope."""
+) -> ShadowFieldOutcome:
+    """Bind an automatic decision to the exact immutable authorities it names."""
     target = case.target
     if (
-        decision.outcome not in {"candidate", "keep_current"}
-        or decision.review_case_id != case.review_case_id
+        decision.review_case_id != case.review_case_id
         or decision.report_id != case.report_id
         or decision.proposal_set_id != case.proposal_set_id
         or decision.target_fingerprint != case.target_fingerprint
@@ -82,10 +86,53 @@ def _automatic_decision_value(
         or proposal_set.target_fingerprint != case.target_fingerprint
         or report.report_id != case.report_id
         or report.target.fingerprint != case.target_fingerprint
+        or source_outcome.review_case_id != case.review_case_id
+        or source_outcome.report_id != case.report_id
+        or source_outcome.proposal_set_id != case.proposal_set_id
+        or source_outcome.target_fingerprint != case.target_fingerprint
+        or source_outcome.resolved_policy_id != decision.resolved_policy_id
+        or source_outcome.policy_generation != decision.policy_generation
         or (target.get("connection"), target.get("library"), target.get("item"))
         != (report.target.connection, report.target.library, report.target.item)
     ):
         raise FieldEffectError("authority_binding")
+    source = next(
+        (
+            field
+            for field in source_outcome.outcomes
+            if field.outcome_id == decision.source_outcome_id
+        ),
+        None,
+    )
+    if source is None or any(
+        (
+            source.proposal_id != decision.proposal_id,
+            source.destination != decision.destination,
+            source.disposition != decision.outcome,
+            source.candidate_id != decision.candidate_id,
+            source.rule_id != decision.rule_id,
+            source.policy_category != decision.policy_category,
+            source.policy_option != decision.policy_option,
+        )
+    ):
+        raise FieldEffectError("authority_binding")
+    return source
+
+
+def _automatic_decision_value(
+    decision: AutomaticDecision,
+    case: ReviewCase,
+    report: MetadataReport,
+    proposal_set: ProposalSet,
+    source_outcome: ShadowOutcomeSet,
+) -> object:
+    """Project one persisted automatic decision to its exact target envelope."""
+    if decision.outcome not in {"candidate", "keep_current"}:
+        raise FieldEffectError("authority_binding")
+    source = _validate_automatic_decision_authority(
+        decision, case, report, proposal_set, source_outcome
+    )
+    target = case.target
     proposal = next(
         (
             item
@@ -113,16 +160,15 @@ def _automatic_decision_value(
         raise FieldEffectError("authority_binding")
     result = proposal.get("result")
     alternatives = result.get("alternatives") if type(result) is dict else None
-    pre_value = target_field.get("value") if target_field["state"] == "value" else None
+    canonical_target = canonical_target_fields(report.target.fields)[
+        TargetDestination(decision.destination)
+    ]
+    pre_value = (
+        canonical_target.value
+        if canonical_target.state is TargetFieldState.VALUE
+        else None
+    )
     if decision.outcome == "keep_current":
-        source = next(
-            (
-                field
-                for field in source_outcome.outcomes
-                if field.outcome_id == decision.source_outcome_id
-            ),
-            None,
-        )
         preservation = tuple(
             value
             for value in alternatives or ()
@@ -209,17 +255,9 @@ def _automatic_decision_value(
         if (
             decision.candidate_id is not None
             or (not typed_preservation_matches and not identifier_preservation)
-            or source is None
             or any(
                 (
-                    source.proposal_id != decision.proposal_id,
-                    source.destination != decision.destination,
-                    source.disposition != "keep_current",
-                    source.candidate_id is not None,
                     source.reason_code != "unique_supported_preservation",
-                    source.rule_id != decision.rule_id,
-                    source.policy_category != decision.policy_category,
-                    source.policy_option != decision.policy_option,
                     not typed_preservation_matches
                     and not (
                         decision.policy_category == "isbn_form"

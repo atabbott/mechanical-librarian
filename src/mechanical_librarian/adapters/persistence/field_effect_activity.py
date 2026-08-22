@@ -46,6 +46,7 @@ from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBind
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _automatic_decision_value,
+    _validate_automatic_decision_authority,
 )
 from mechanical_librarian.adapters.persistence.schema import _validate_report_row
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
@@ -1110,6 +1111,116 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     raise FieldEffectError("persistence") from error
                 if set(policy_profiles) != set(policy_ids):
                     raise FieldEffectError("persistence")
+            # An automatic Activity row needs the value the policy selected,
+            # not only the policy's name. Reconstruct it from the immutable
+            # authority documents the decision names. Several decisions can
+            # share one review aggregate, so retrieve and parse each aggregate
+            # once rather than duplicating its bounded private documents for
+            # every field on the page.
+            automatic_decisions: dict[str, AutomaticDecision] = {}
+            try:
+                for row in rows:
+                    if row[13] != "automatic_decision":
+                        continue
+                    document = row[9]
+                    if (
+                        row[20] != 1
+                        or type(document) is not str
+                        or not 2 <= len(document.encode("utf-8")) <= document_limit
+                    ):
+                        raise FieldEffectError("persistence")
+                    automatic_decision = AutomaticDecision.from_json(document)
+                    if (
+                        automatic_decision.decision_id != row[17]
+                        or automatic_decision.decision_id in automatic_decisions
+                    ):
+                        raise FieldEffectError("persistence")
+                    automatic_decisions[automatic_decision.decision_id] = (
+                        automatic_decision
+                    )
+            except (AutomaticDecisionError, TypeError, ValueError) as error:
+                raise FieldEffectError("persistence") from error
+            automatic_identities = sorted(
+                {
+                    (
+                        decision.review_case_id,
+                        decision.report_id,
+                        decision.proposal_set_id,
+                        decision.resolved_policy_id,
+                    )
+                    for decision in automatic_decisions.values()
+                }
+            )
+            automatic_authority: dict[
+                tuple[str, str, str, str],
+                tuple[ReviewCase, ProposalSet, ShadowOutcomeSet],
+            ] = {}
+            if automatic_identities:
+                authority_rows = self._connection.execute(
+                    "WITH requested(review_case_id,report_id,proposal_set_id,resolved_policy_id) AS (VALUES "
+                    + ",".join("(?,?,?,?)" for _ in automatic_identities)
+                    + ") SELECT requested.review_case_id,requested.report_id,"
+                    "requested.proposal_set_id,requested.resolved_policy_id,"
+                    "review.document,proposal.document,outcome.document "
+                    "FROM requested "
+                    "JOIN review_cases review "
+                    "ON review.review_case_id=requested.review_case_id "
+                    "AND review.report_id=requested.report_id "
+                    "AND review.proposal_set_id=requested.proposal_set_id "
+                    "JOIN proposal_sets proposal "
+                    "ON proposal.proposal_set_id=requested.proposal_set_id "
+                    "AND proposal.report_id=requested.report_id "
+                    "JOIN shadow_decision_outcomes outcome "
+                    "ON outcome.review_case_id=requested.review_case_id "
+                    "AND outcome.report_id=requested.report_id "
+                    "AND outcome.proposal_set_id=requested.proposal_set_id "
+                    "AND outcome.resolved_policy_id=requested.resolved_policy_id",
+                    tuple(
+                        value for identity in automatic_identities for value in identity
+                    ),
+                ).fetchall()
+                for (
+                    review_case_id,
+                    authority_report_id,
+                    proposal_set_id,
+                    resolved_policy_id,
+                    case_document,
+                    proposal_document,
+                    outcome_document,
+                ) in authority_rows:
+                    identity = (
+                        review_case_id,
+                        authority_report_id,
+                        proposal_set_id,
+                        resolved_policy_id,
+                    )
+                    if identity in automatic_authority or any(
+                        type(value) is not str
+                        or not 2 <= len(value.encode("utf-8")) <= document_limit
+                        for value in (
+                            case_document,
+                            proposal_document,
+                            outcome_document,
+                        )
+                    ):
+                        raise FieldEffectError("persistence")
+                    try:
+                        automatic_authority[identity] = (
+                            ReviewCase.from_json(case_document),
+                            ProposalSet.from_json(proposal_document),
+                            ShadowOutcomeSet.from_json(outcome_document),
+                        )
+                    except (
+                        ReportValueError,
+                        ProposalValueError,
+                        RichMetadataPreviewError,
+                        ShadowOutcomeError,
+                        TypeError,
+                        ValueError,
+                    ) as error:
+                        raise FieldEffectError("persistence") from error
+                if set(automatic_authority) != set(automatic_identities):
+                    raise FieldEffectError("persistence")
             events = []
             decision: HumanDecision | AutomaticDecision
             for (
@@ -1306,16 +1417,19 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         ):
                             raise FieldEffectError("persistence")
                     elif source_kind == "automatic_decision":
-                        decision = AutomaticDecision.from_json(document)
+                        projected_automatic = automatic_decisions.get(
+                            cast(str, source_identity)
+                        )
                         if (
-                            decision.decision_id != event_id
-                            or decision.decision_id != source_identity
-                            or decision.destination != destination
-                            or decision.occurred_at != occurred_at
+                            projected_automatic is None
+                            or projected_automatic.decision_id != event_id
+                            or projected_automatic.decision_id != source_identity
+                            or projected_automatic.destination != destination
+                            or projected_automatic.occurred_at != occurred_at
                             or origin != "automatic_policy"
-                            or decision.review_case_id != source_parent_id
-                            or decision.report_id != report_id
-                            or decision.to_json() != document
+                            or projected_automatic.review_case_id != source_parent_id
+                            or projected_automatic.report_id != report_id
+                            or projected_automatic.to_json() != document
                         ):
                             raise FieldEffectError("persistence")
                     elif source_kind == "cover_safeguard":
@@ -1419,12 +1533,53 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     durable["selected_value"] = decision.selected_value
                     durable["target_fingerprint"] = decision.target_fingerprint
                 elif source_kind == "automatic_decision":
-                    if not isinstance(decision, AutomaticDecision):
+                    if projected_automatic is None:
                         raise FieldEffectError("persistence")
-                    durable["policy_category"] = decision.policy_category
-                    durable["policy_option"] = decision.policy_option
-                    durable["policy_generation"] = decision.policy_generation
-                    durable["target_fingerprint"] = decision.target_fingerprint
+                    report_document = report_documents.get(
+                        projected_automatic.report_id
+                    )
+                    if report_document is None:
+                        raise FieldEffectError("persistence")
+                    authority = automatic_authority.get(
+                        (
+                            projected_automatic.review_case_id,
+                            projected_automatic.report_id,
+                            projected_automatic.proposal_set_id,
+                            projected_automatic.resolved_policy_id,
+                        )
+                    )
+                    if authority is None:
+                        raise FieldEffectError("persistence")
+                    try:
+                        case, proposal, outcome = authority
+                        report = MetadataReport.from_json(report_document)
+                        if projected_automatic.outcome in {"candidate", "keep_current"}:
+                            selected_value = _automatic_decision_value(
+                                projected_automatic, case, report, proposal, outcome
+                            )
+                        else:
+                            _validate_automatic_decision_authority(
+                                projected_automatic, case, report, proposal, outcome
+                            )
+                            selected_value = None
+                    except (
+                        FieldEffectError,
+                        ReportValueError,
+                        ProposalValueError,
+                        RichMetadataPreviewError,
+                        ShadowOutcomeError,
+                        TypeError,
+                        ValueError,
+                    ) as error:
+                        raise FieldEffectError("persistence") from error
+                    durable["policy_category"] = projected_automatic.policy_category
+                    durable["policy_option"] = projected_automatic.policy_option
+                    durable["policy_generation"] = projected_automatic.policy_generation
+                    durable["outcome"] = projected_automatic.outcome
+                    durable["selected_value"] = selected_value
+                    durable["target_fingerprint"] = (
+                        projected_automatic.target_fingerprint
+                    )
                 elif source_kind == "field_effect_no_change":
                     durable["target_fingerprint"] = self._connection.execute(
                         "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",

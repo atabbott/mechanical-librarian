@@ -25,6 +25,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     TargetSeries,
 )
+from mechanical_librarian.domain.proposal_set import canonical_target_fields
 from mechanical_librarian.domain.readable_activity import (
     ABSENT,
     ReadableChange,
@@ -71,10 +72,8 @@ def _reported_value(report: MetadataReport | None, destination: str) -> object:
         target = TargetDestination(destination)
     except ValueError:
         return None
-    field = next(
-        (item for item in report.target.fields if item.destination is target), None
-    )
-    if field is None or field.state is not TargetFieldState.VALUE:
+    field = canonical_target_fields(report.target.fields)[target]
+    if field.state is not TargetFieldState.VALUE:
         return None
     value = field.value
     if type(value) is tuple:
@@ -183,17 +182,22 @@ def _decision_facts(
 def _automatic_facts(
     record: dict[str, object], destination: str, report: MetadataReport | None
 ) -> tuple[ReadableChange, list[dict[str, str]]]:
-    # The chosen candidate's exact value is written by the field effect this
-    # decision authorises, and that event carries it in its own document. This
-    # row states the authority instead of restating a value it would have to
-    # reach outside its own document to find.
     current = _reported_value(_pinned_report(record, report), destination)
+    selected_value = record.get("selected_value")
+    selected = (
+        current
+        if record.get("outcome") in {"keep_current", "ignore"}
+        else cast("dict[str, object]", selected_value).get("value")
+        if type(selected_value) is dict
+        else None
+    )
     field = destination_label(destination)
     category = cast(str, record.get("policy_category", ""))
     option = cast(str, record.get("policy_option", ""))
     generation = record.get("policy_generation")
     facts = [
-        {"label": "Current value", "value": value_text(destination, current)},
+        {"label": "Previous value", "value": value_text(destination, current)},
+        {"label": "New value", "value": value_text(destination, selected)},
         {"label": "Chosen by", "value": "Automatic policy"},
         {
             "label": "Policy setting",

@@ -679,6 +679,32 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     )
                     expect(row).to_have_count(1)
                     expect(row.get_by_text(label, exact=True)).to_have_count(1)
+                automatic_row = activity_ledger.get_by_text(
+                    "The Glass Orchard", exact=True
+                ).locator("xpath=ancestor::article")
+                automatic_row.get_by_role("button", name="Details").click()
+                expect(
+                    automatic_row.get_by_text("Previous value", exact=True)
+                ).to_be_visible()
+                expect(
+                    automatic_row.get_by_text("Paper Moons: Larkspur", exact=True)
+                ).to_be_visible()
+                expect(
+                    automatic_row.get_by_text("New value", exact=True)
+                ).to_be_visible()
+                expect(
+                    automatic_row.get_by_text(
+                        "Paper Moons over Larkspur Station", exact=True
+                    )
+                ).to_be_visible()
+                expect(
+                    automatic_row.get_by_text("Chosen by", exact=True)
+                ).to_be_visible()
+                expect(
+                    automatic_row.get_by_text("Automatic policy", exact=True)
+                ).to_be_visible()
+                capture_visual_proof("activity-automatic-values")
+                automatic_row.get_by_role("button", name="Hide details").click()
                 capture_visual_proof("activity-labels")
                 assert page.locator(".cm-activity-ledger").evaluate(
                     "node => node.previousElementSibling?.classList.contains('cm-activity-status')"

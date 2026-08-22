@@ -260,6 +260,11 @@ def test_an_automatic_decision_names_the_policy_that_chose_it() -> None:
             record={
                 "source_kind": "automatic_decision",
                 "target_fingerprint": report.target.fingerprint,
+                "outcome": "candidate",
+                "selected_value": {
+                    "kind": "series",
+                    "value": [{"name": "Earthsea Cycle", "sequence": "1"}],
+                },
                 "policy_category": "series",
                 "policy_option": "primary_narrative",
                 "policy_generation": 4,
@@ -270,11 +275,37 @@ def test_an_automatic_decision_names_the_policy_that_chose_it() -> None:
     assert event["category"] == "automatic"
     assert event["change_detail"] == "Chose a Series value automatically"
     assert _facts(event) == {
-        "Current value": ABSENT,
+        "Previous value": ABSENT,
+        "New value": "Earthsea Cycle (1)",
         "Chosen by": "Automatic policy",
         "Policy setting": "Series: Primary narrative",
         "Policy generation": "4",
     }
+
+
+def test_an_automatic_keep_shows_the_unchanged_value_on_both_sides() -> None:
+    report = _titled("The Farthest Shore")
+    event = _project(
+        _event(
+            event_type="metadata",
+            origin="automatic_policy",
+            state="keep_current",
+            record={
+                "source_kind": "automatic_decision",
+                "target_fingerprint": report.target.fingerprint,
+                "outcome": "keep_current",
+                "selected_value": None,
+                "policy_category": "title_layout",
+                "policy_option": "preserve",
+                "policy_generation": 4,
+            },
+        ),
+        report,
+    )
+
+    facts = _facts(event)
+    assert facts["Previous value"] == "The Farthest Shore"
+    assert facts["New value"] == "The Farthest Shore"
 
 
 def test_a_no_change_decision_says_the_value_already_matched() -> None:

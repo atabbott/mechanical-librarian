@@ -26,11 +26,13 @@ from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectCo
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _automatic_decision_value,
+    _validate_automatic_decision_authority,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     open_repository,
 )
+from mechanical_librarian.application.activity_records import readable_activity_event
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
@@ -1247,7 +1249,19 @@ def test_year_current_reaches_one_durable_publication_keep_and_read_models() -> 
             search=None, event_type="metadata", occurred_after=0, page=1, page_size=50
         )
         assert 1 == activity["total"]
-        assert "publishedDate" == activity["events"][0]["destination"]
+        automatic_event = activity["events"][0]
+        assert "publishedDate" == automatic_event["destination"]
+        assert "keep_current" == automatic_event["record"]["outcome"]
+        assert automatic_event["record"]["selected_value"] is None
+        readable_activity_event(
+            automatic_event,
+            MetadataReport.from_json(activity["report_documents"][report.report_id]),
+        )
+        evidence = {
+            fact["label"]: fact["value"] for fact in automatic_event["evidence"]
+        }
+        assert "2001" == evidence["Previous value"]
+        assert "2001" == evidence["New value"]
         repository.close()
 
         reopened = open_repository(path, create=False)
@@ -1464,13 +1478,20 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
         ).fetchone() == (len(expected_decisions),)
         assert repository.pending_field_effect_decision_documents(100) == ()
         assert repository.count_current_attention_fields(None) == 0
-        page = repository.field_effect_activity_page(
-            search="item-1",
-            event_type="metadata",
-            occurred_after=0,
-            page=1,
-            page_size=25,
-        )
+        with patch.object(
+            ReviewCase, "from_json", wraps=ReviewCase.from_json
+        ) as parse_case:
+            page = repository.field_effect_activity_page(
+                search="item-1",
+                event_type="metadata",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            )
+        # Contributor-name cases record two automatic fields from the same
+        # review aggregate. Its private authority is parsed once for the page,
+        # not once per decision.
+        assert parse_case.call_count == 1
         no_change = next(
             event for event in page["events"] if event["state"] == "no_change_required"
         )
@@ -1904,6 +1925,54 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             assert expected == authority["decision_value"]
             assert destination == authority["destination"]
             assert case_id == authority["review_case_id"]
+            activity = repository.field_effect_activity_page(
+                search=None,
+                event_type="metadata",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            )
+            automatic_event = next(
+                event
+                for event in activity["events"]
+                if event["event_id"] == decision.decision_id
+            )
+            assert "candidate" == automatic_event["record"]["outcome"]
+            assert expected == automatic_event["record"]["selected_value"]
+            if category == "series":
+                wrong_source = next(
+                    value
+                    for value in outcome.outcomes
+                    if value.outcome_id != decision.source_outcome_id
+                )
+                mismatched = AutomaticDecision.create(
+                    review_case_id=decision.review_case_id,
+                    report_id=decision.report_id,
+                    proposal_set_id=decision.proposal_set_id,
+                    proposal_id=decision.proposal_id,
+                    target_fingerprint=decision.target_fingerprint,
+                    destination=decision.destination,
+                    outcome=decision.outcome,
+                    candidate_id=decision.candidate_id,
+                    resolved_policy_id=decision.resolved_policy_id,
+                    policy_generation=decision.policy_generation,
+                    rule_id=decision.rule_id,
+                    policy_category=decision.policy_category,
+                    policy_option=decision.policy_option,
+                    qualification_manifest_sha256=(
+                        decision.qualification_manifest_sha256
+                    ),
+                    source_outcome_id=wrong_source.outcome_id,
+                    bundle_id=decision.bundle_id,
+                    occurred_at=decision.occurred_at,
+                )
+                case = ReviewCase.create_from_data(
+                    json.loads(repository.get_review_case(case_id))["case"]
+                )
+                with pytest.raises(FieldEffectError, match="^authority_binding$"):
+                    _validate_automatic_decision_authority(
+                        mismatched, case, report, proposal, outcome
+                    )
             repository.grant_field_effect_consents(
                 authority["connection"],
                 (authority["library"],),
