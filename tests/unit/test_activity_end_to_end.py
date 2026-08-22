@@ -23,7 +23,11 @@ from mechanical_librarian.adapters.field_effect_authority import (
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
-from mechanical_librarian.application.field_effects import GuardedFieldApplication
+from mechanical_librarian.application.field_effects import (
+    AuthoritySnapshot,
+    GuardedFieldApplication,
+)
+from mechanical_librarian.domain.field_effect import EffectAuthority
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
@@ -253,7 +257,12 @@ def test_a_qualified_automatic_no_change_is_recorded_by_normal_scheduling(
     decision = _qualified_no_change_decision(effects)
 
     class UnexpectedAuthority:
-        def resolve(self, _decision: AutomaticDecision) -> object:
+        def resolve(
+            self, _decision: HumanDecision | AutomaticDecision
+        ) -> AuthoritySnapshot:
+            raise AssertionError("keep-current decision reached authority")
+
+        def current(self, _authority: EffectAuthority) -> bool:
             raise AssertionError("keep-current decision reached authority")
 
     scheduler = ContinuousGuardedApplication(
