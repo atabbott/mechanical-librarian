@@ -1102,6 +1102,41 @@ describe('Library route', () => {
     expect(document.activeElement).toHaveClass('review-complete')
   })
 
+  it('does not carry failed same-field advancement into a manual field change', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('workspace fixture requires a title field')
+    const authorsField = {
+      ...titleField,
+      destination: 'authors',
+      currentValue: 'Ada Example',
+      proposalId: 'proposal-authors',
+      targetFingerprint: 'fingerprint-authors',
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
+      recordDecision: vi.fn(async () => {
+        throw new ApiError(503, 'decision_failed')
+      }),
+    }
+    const scrollTo = vi.mocked(window.scrollTo)
+    scrollTo.mockClear()
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
+    expect(
+      await screen.findByText('The decision was not recorded. Your choice is unchanged.'),
+    ).toBeVisible()
+    scrollTo.mockClear()
+    const authors = screen.getByRole('button', { name: /Authors.*Needs review/u })
+    await user.click(authors)
+
+    await waitFor(() => expect(authors).toHaveAttribute('aria-current', 'true'))
+    expect(authors).toHaveFocus()
+    expect(scrollTo).not.toHaveBeenCalledWith({ top: 0 })
+  })
+
   it('preserves final completion when the reviewer moves on while a decision settles', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]
@@ -2222,6 +2257,46 @@ describe('Library route', () => {
         configurable: true,
         value: originalScrollTo,
       })
+    }
+  })
+
+  it('centres a positioned rail from viewport coordinates and its existing scroll', async () => {
+    const originalScrollTo = HTMLElement.prototype.scrollTo
+    const originalRect = HTMLElement.prototype.getBoundingClientRect
+    const scrollLeft = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollLeft')
+    const clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+    const scrollTo = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: scrollTo })
+    Object.defineProperty(HTMLElement.prototype, 'scrollLeft', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('field-filmstrip') ? 40 : Number(scrollLeft?.get?.call(this) ?? 0)
+      },
+    })
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('field-filmstrip') ? 300 : Number(clientWidth?.get?.call(this) ?? 0)
+      },
+    })
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains('field-filmstrip'))
+        return { left: 240, width: 300 } as DOMRect
+      if (this.getAttribute('aria-current') === 'true') return { left: 540, width: 100 } as DOMRect
+      return originalRect.call(this)
+    })
+    try {
+      renderRoute('/library?lens=all&preview=case-1&field=title')
+      await screen.findByRole('button', { name: 'Choose current value: Old title' })
+      expect(scrollTo).toHaveBeenCalledWith(expect.objectContaining({ left: 240 }))
+    } finally {
+      vi.restoreAllMocks()
+      Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+        configurable: true,
+        value: originalScrollTo,
+      })
+      if (scrollLeft) Object.defineProperty(HTMLElement.prototype, 'scrollLeft', scrollLeft)
+      if (clientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidth)
     }
   })
 

@@ -939,8 +939,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       search.preview !== undefined &&
       (currentSearch.current.field === undefined || currentSearch.current.field === destination),
     onAdvance: async (field) => {
-      advanceFocus.current = true
-      advanceScroll.current = window.scrollY
+      const advancing = field !== selected?.destination
+      advanceFocus.current = advancing
+      advanceScroll.current = advancing ? window.scrollY : null
       await navigate({
         resetScroll: false,
         search: (current) => (current.preview === search.preview ? { ...current, field } : current),
@@ -1007,7 +1008,15 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     // This is a horizontal rail adjustment, not a request to reposition the
     // document. `scrollIntoView` can pull the selected work back to the top
     // when the owner records a middle field.
-    const left = Math.max(0, active.offsetLeft - (rail.clientWidth - active.offsetWidth) / 2)
+    const railBounds = rail.getBoundingClientRect()
+    const activeBounds = active.getBoundingClientRect()
+    const left = Math.max(
+      0,
+      rail.scrollLeft +
+        activeBounds.left -
+        railBounds.left -
+        (rail.clientWidth - activeBounds.width) / 2,
+    )
     if (typeof rail.scrollTo === 'function')
       rail.scrollTo({ left, behavior: reducedMotion ? 'auto' : 'smooth' })
     if (!advanceFocus.current) return
