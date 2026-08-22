@@ -63,6 +63,7 @@ describe('Library route', () => {
     ).toBeTruthy()
     expect(screen.getByRole('heading', { level: 1, name: 'Library' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Attention \d+$/u })).toBeNull()
+    expect(back).toHaveClass('compact-workspace-back')
   })
 
   it('loads the critical library query and progressively reveals detail', async () => {

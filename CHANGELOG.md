@@ -93,8 +93,8 @@
 - Make Library browsing reversible and every work reachable. Rows are whole
   targets, the bounded window walks both ways, search narrows as it is typed,
   and works without review cases open to their values and sources. All lenses
-  stay in one compact row without a redundant headline, while page-level Back
-  and Attention controls sit below the masthead and before the selected work. (#642)
+  stay in one compact row without a redundant headline. Attention remains
+  above the selected work; Back appears only when the Works rail is hidden. (#642)
 - Stop Policy reporting an activation the owner never made, name a fresh
   container's seeded profile the active baseline, and return every surface to
   a clean draft on exact revert. (#643)

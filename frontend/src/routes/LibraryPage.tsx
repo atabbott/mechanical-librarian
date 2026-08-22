@@ -1315,7 +1315,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       ) : null}
       {hasSelection && search.attention !== 'open' ? (
         <div className="compact-workspace-controls">
-          <button type="button" onClick={clearSelection}>
+          <button className="compact-workspace-back" type="button" onClick={clearSelection}>
             Back to works
           </button>
           <button
