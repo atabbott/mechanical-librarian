@@ -146,7 +146,11 @@ def test_search_narrows_on_the_work_the_field_and_the_status(
     """
     by_work = _all_rows(ledger, search="Larkspur")
     assert by_work
-    assert all("larkspur" in str(row["work_label"]).casefold() for row in by_work)
+    assert all(
+        "larkspur" in str(row["change"]).casefold()
+        or "larkspur" in str(row["change_detail"]).casefold()
+        for row in by_work
+    )
 
     by_field = _all_rows(ledger, search="isbn")
     assert by_field
@@ -195,7 +199,32 @@ def test_the_changed_value_itself_is_searchable(
         row for row in _all_rows(ledger) if "9780060512750" in str(row["change"])
     ]
     assert written, "the seeded ledger should contain this exact new value"
-    assert _all_rows(ledger, search="9780060512750") == written
+    matched = _all_rows(ledger, search="9780060512750")
+    assert [row["event_id"] for row in matched] == [row["event_id"] for row in written]
+    assert all("9780060512750" in str(row["change"]) for row in matched)
+
+
+def test_search_uses_the_same_automatic_and_policy_words_the_owner_reads(
+    ledger: ContinuousGuardedApplication,
+) -> None:
+    automatic = _all_rows(ledger, search="A later automatic choice")
+    assert automatic
+    assert {str(row["event_type"]) for row in automatic} == {"metadata"}
+    assert all(
+        "a later automatic choice" in str(row["change"]).casefold() for row in automatic
+    )
+
+    policy = _all_rows(ledger, search="Ask me")
+    assert policy
+    assert {str(row["event_type"]) for row in policy} == {"policy"}
+    assert all(
+        any(
+            fact.get("previous") == "Ask me"
+            for fact in row.get("policy_changes", [])
+            if isinstance(fact, dict)
+        )
+        for row in policy
+    )
 
 
 def test_the_date_range_excludes_what_falls_outside_it(

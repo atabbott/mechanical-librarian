@@ -40,7 +40,7 @@ from mechanical_librarian.domain.readable_activity import (
     value_text,
 )
 
-__all__ = ["ACTIVITY_CATEGORIES", "readable_activity_event"]
+__all__ = ["ACTIVITY_CATEGORIES", "activity_search_text", "readable_activity_event"]
 
 ACTIVITY_CATEGORIES = ("owner", "automatic", "policy", "recovery")
 # The write lifecycle states that are still moving or already closed without
@@ -334,3 +334,43 @@ def readable_activity_event(
     event["change"] = change.compact
     event["change_detail"] = change.sentence
     event["evidence"] = facts
+
+
+def activity_search_text(
+    event: dict[str, object], report: MetadataReport | None
+) -> str:
+    """Return exactly the owner-readable Activity words that may be searched."""
+    projected = dict(event)
+    readable_activity_event(projected, report)
+    values: list[str] = []
+    for key in (
+        "work_id",
+        "library",
+        "destination",
+        "state",
+        "work_label",
+        "detail",
+        "field_label",
+        "change",
+        "change_detail",
+    ):
+        value = projected.get(key)
+        if type(value) is str:
+            values.append(value)
+    if report is not None:
+        values.append(report.target.current_title or "Untitled")
+    evidence = projected.get("evidence")
+    for fact in evidence if type(evidence) is list else ():
+        if type(fact) is dict:
+            for key in ("label", "value"):
+                value = fact.get(key)
+                if type(value) is str:
+                    values.append(value)
+    policy_changes = projected.get("policy_changes")
+    for change in policy_changes if type(policy_changes) is list else ():
+        if type(change) is dict:
+            for key in ("field", "setting", "previous", "next"):
+                value = change.get(key)
+                if type(value) is str:
+                    values.append(value)
+    return "\n".join(values).casefold()

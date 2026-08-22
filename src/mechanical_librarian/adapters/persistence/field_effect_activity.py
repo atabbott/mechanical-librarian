@@ -39,8 +39,9 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from collections.abc import Callable
-from typing import cast
+from collections import deque
+from collections.abc import Callable, Iterator
+from typing import Any, cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
@@ -51,6 +52,7 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
 from mechanical_librarian.adapters.persistence.schema import _validate_report_row
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.activity_records import activity_search_text
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
@@ -1008,37 +1010,29 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                    'Library policy', 'Policy generation ' || transition.generation, 'policy_transition', NULL, NULL, NULL, NULL, transition.from_policy_id, transition.to_policy_id, 1
               FROM metadata_policy_transitions transition
         """
+        if search is not None:
+            # Field-effect events name a decision but not a report.  A search
+            # must not substitute the work's later current report for that
+            # missing immutable identity, so those rows retain their own
+            # readable event values and no report title.  The normal page path
+            # keeps its established bounded current projection below.
+            events = (
+                cast(str, events)
+                .replace(
+                    """         LEFT JOIN current_metadata_report_lineages lineage
+                ON lineage.connection_name=effect.connection_name
+               AND lineage.library_name=effect.library_name AND lineage.item_id=effect.work_id
+              LEFT JOIN metadata_reports report ON report.report_id=lineage.report_id""",
+                    "LEFT JOIN metadata_reports report ON 0",
+                    1,
+                )
+                .replace("lineage.report_id", "NULL", 1)
+            )
         where = ["occurred_at>=?"]
         parameters: list[object] = [occurred_after]
         if event_type != "all":
             where.append("event_type=?")
             parameters.append(event_type)
-        if search is not None:
-            escaped = (
-                search.casefold()
-                .replace("\\", "\\\\")
-                .replace("%", "\\%")
-                .replace("_", "\\_")
-            )
-            like = f"%{escaped}%"
-            where.append(
-                "(ml_casefold(work_id) LIKE ? ESCAPE '\\' OR ml_casefold(library) LIKE ? ESCAPE '\\' "
-                "OR ml_casefold(destination) LIKE ? ESCAPE '\\' OR ml_casefold(state) LIKE ? ESCAPE '\\' "
-                "OR ml_casefold(coalesce(title,'')) LIKE ? ESCAPE '\\' OR ml_casefold(coalesce(detail,'')) LIKE ? ESCAPE '\\' "
-                "OR (source_valid=1 AND EXISTS(SELECT 1 FROM json_tree(document,'$.pre_value') AS changed "
-                "WHERE changed.type IN ('text','integer','real') AND changed.key!='kind' "
-                "AND ml_casefold(CAST(changed.value AS TEXT)) LIKE ? ESCAPE '\\')) "
-                "OR (source_valid=1 AND EXISTS(SELECT 1 FROM json_tree(document,'$.desired_value') AS changed "
-                "WHERE changed.type IN ('text','integer','real') AND changed.key!='kind' "
-                "AND ml_casefold(CAST(changed.value AS TEXT)) LIKE ? ESCAPE '\\')) "
-                "OR (source_valid=1 AND EXISTS(SELECT 1 FROM json_tree(source_document,'$.selected_value') AS changed "
-                "WHERE changed.type IN ('text','integer','real') AND changed.key!='kind' "
-                "AND ml_casefold(CAST(changed.value AS TEXT)) LIKE ? ESCAPE '\\')))"
-            )
-            # Search reads only the owner-visible leaves of immutable change
-            # documents. It never scans opaque authority, identifiers or
-            # provenance keys, and it creates no mutable search projection.
-            parameters.extend((like, like, like, like, like, like, like, like, like))
         predicate = " WHERE " + " AND ".join(where)
         projection = (
             "WITH activity_events(event_id,connection,destination,library,occurred_at,origin,report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,policy_from,policy_to,source_valid) AS ("
@@ -1054,23 +1048,53 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             return value
 
         try:
-            total = int(
-                self._connection.execute(
-                    projection + "SELECT count(*) FROM activity_events" + predicate,
-                    parameters,
-                ).fetchone()[0]
+            columns = (
+                "SELECT event_id,connection,destination,library,occurred_at,origin,"
+                "report_id,state,work_id,document,event_type,title,detail,source_kind,"
+                "source_document,source_parent_id,source_sequence,source_identity,"
+                "policy_from,policy_to,source_valid FROM activity_events"
             )
-            page_count = max(1, (total + page_size - 1) // page_size)
-            selected_page = min(page, page_count)
-            rows = self._connection.execute(
-                projection
-                + "SELECT event_id,connection,destination,library,occurred_at,origin,"
-                "report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,policy_from,policy_to,source_valid FROM activity_events"
-                + predicate
-                + " ORDER BY occurred_at DESC,event_id DESC LIMIT ? OFFSET ?",
-                (*parameters, page_size, (selected_page - 1) * page_size),
-            ).fetchall()
-            report_ids = sorted({row[6] for row in rows if row[6] is not None})
+
+            def streamed_rows() -> Iterator[tuple[Any, ...]]:
+                cursor = self._connection.execute(
+                    projection
+                    + columns
+                    + predicate
+                    + " ORDER BY occurred_at DESC,event_id DESC",
+                    parameters,
+                )
+                while batch := cursor.fetchmany(64):
+                    yield from batch
+
+            if search is None:
+                total = int(
+                    self._connection.execute(
+                        projection + "SELECT count(*) FROM activity_events" + predicate,
+                        parameters,
+                    ).fetchone()[0]
+                )
+                page_count = max(1, (total + page_size - 1) // page_size)
+                selected_page = min(page, page_count)
+                rows = self._connection.execute(
+                    projection
+                    + columns
+                    + predicate
+                    + " ORDER BY occurred_at DESC,event_id DESC LIMIT ? OFFSET ?",
+                    (*parameters, page_size, (selected_page - 1) * page_size),
+                ).fetchall()
+                iter_rows: Callable[[], Iterator[tuple[Any, ...]]] = lambda: iter(
+                    cast("list[tuple[Any, ...]]", rows)
+                )
+            else:
+                # Searching is allowed to scan the selected immutable corpus.
+                # It renders and validates each row below before deciding a
+                # match, rather than indexing raw JSON or consulting current
+                # library state.
+                total = 0
+                page_count = 1
+                selected_page = page
+                iter_rows = streamed_rows
+            report_ids = sorted({row[6] for row in iter_rows() if row[6] is not None})
             report_rows = (
                 []
                 if not report_ids
@@ -1098,12 +1122,26 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # a bounded poll proportional to unrelated history.
             if set(report_documents) != set(report_ids):
                 raise FieldEffectError("persistence")
+            reports: dict[str, MetadataReport] = {}
+            try:
+                for report_id, report_document in report_documents.items():
+                    report = MetadataReport.from_json(report_document)
+                    if report.report_id != report_id:
+                        raise FieldEffectError("persistence")
+                    reports[report_id] = report
+            except ReportValueError as error:
+                raise FieldEffectError("persistence") from error
             # A Policy row's exact From/To comes from the two immutable
             # profiles its own transition names, not from whatever policy is
             # active now. At most two per row on a closed page, each capped at
             # 16KB by the schema, so this stays a bounded page read.
             policy_ids = sorted(
-                {value for row in rows for value in row[18:20] if value is not None}
+                {
+                    value
+                    for row in iter_rows()
+                    for value in row[18:20]
+                    if value is not None
+                }
             )
             policy_profiles: dict[str, MetadataPolicyProfile] = {}
             if policy_ids:
@@ -1132,7 +1170,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # every field on the page.
             automatic_decisions: dict[str, AutomaticDecision] = {}
             try:
-                for row in rows:
+                for row in iter_rows():
                     if row[13] != "automatic_decision":
                         continue
                     document = row[9]
@@ -1237,7 +1275,25 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 # the page and let the per-event projection below emit the
                 # bounded degraded row; do not turn it into a whole-ledger
                 # storage failure (#786).
-            events = []
+            projected_events: list[dict[str, object]] = []
+            matched: list[dict[str, object]] = []
+            trailing: deque[dict[str, object]] = deque(maxlen=page_size)
+            matched_count = 0
+
+            def append_event(event: dict[str, object]) -> None:
+                nonlocal matched_count
+                if search is None:
+                    projected_events.append(event)
+                    return
+                if search not in activity_search_text(
+                    event, reports.get(cast(str, event.get("report_id")))
+                ):
+                    return
+                if (page - 1) * page_size <= matched_count < page * page_size:
+                    matched.append(event)
+                trailing.append(event)
+                matched_count += 1
+
             decision: HumanDecision | AutomaticDecision
             for (
                 event_id,
@@ -1261,7 +1317,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 policy_from,
                 policy_to,
                 source_valid,
-            ) in rows:
+            ) in iter_rows():
                 if (
                     source_valid != 1
                     or type(document) is not str
@@ -1531,6 +1587,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 failure = scalar(raw.get("failure"), nullable=True)
                 if report_id is not None:
                     scalar(report_id)
+                if search is not None and report_id is None:
+                    # The public renderer accepts a value-free historical row
+                    # without a report join.  It must not receive a current
+                    # connection/title pair that this immutable event did not
+                    # name.
+                    connection = None
                 # Every fact below leaves this loop from the document that
                 # was just checked against its own identity above, so an
                 # Activity row is a function of one immutable event and
@@ -1551,10 +1613,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 elif source_kind == "automatic_decision":
                     if projected_automatic is None:
                         raise FieldEffectError("persistence")
-                    report_document = report_documents.get(
+                    automatic_report_document = report_documents.get(
                         projected_automatic.report_id
                     )
-                    if report_document is None:
+                    if automatic_report_document is None:
                         raise FieldEffectError("persistence")
                     authority = automatic_authority.get(
                         (
@@ -1567,7 +1629,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     if authority is None:
                         durable["source_kind"] = "degraded"
                         durable["degraded_reason"] = AUTOMATIC_AUTHORITY_UNAVAILABLE
-                        events.append(
+                        append_event(
                             {
                                 "connection": connection,
                                 "destination": destination,
@@ -1587,7 +1649,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         continue
                     try:
                         case, proposal, outcome = authority
-                        report = MetadataReport.from_json(report_document)
+                        report = MetadataReport.from_json(automatic_report_document)
                         if projected_automatic.outcome in {"candidate", "keep_current"}:
                             selected_value = _automatic_decision_value(
                                 projected_automatic, case, report, proposal, outcome
@@ -1608,7 +1670,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                             raise
                         durable["source_kind"] = "degraded"
                         durable["degraded_reason"] = AUTOMATIC_AUTHORITY_UNAVAILABLE
-                        events.append(
+                        append_event(
                             {
                                 "connection": connection,
                                 "destination": destination,
@@ -1662,7 +1724,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     or not 0 <= occurred_at <= 253_402_300_799
                 ):
                     raise FieldEffectError("persistence")
-                events.append(
+                append_event(
                     {
                         "connection": connection,
                         "destination": destination,
@@ -1679,6 +1741,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         "record": durable,
                     }
                 )
+            if search is not None:
+                total = matched_count
+                page_count = max(1, (total + page_size - 1) // page_size)
+                selected_page = min(page, page_count)
+                projected_events = matched if selected_page == page else list(trailing)
             waiting = self._connection.execute(
                 "SELECT effect.connection_name,effect.destination,effect.library_name,effect.work_id,effect.state,"
                 "lineage.report_id FROM field_effects effect "
@@ -1723,7 +1790,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         raise FieldEffectError("persistence")
                     waiting_title = waiting_report.target.current_title or "Untitled"
             result = {
-                "events": events,
+                "events": projected_events,
                 "page": selected_page,
                 "page_count": page_count,
                 "page_size": page_size,

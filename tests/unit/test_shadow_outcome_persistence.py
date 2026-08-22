@@ -32,7 +32,6 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     open_repository,
 )
-from mechanical_librarian.application.activity_records import readable_activity_event
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
@@ -57,6 +56,7 @@ from mechanical_librarian.application.review_web import (
     InspectCurrentReviewCase,
 )
 from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,

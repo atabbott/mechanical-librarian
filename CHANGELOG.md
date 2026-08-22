@@ -5,9 +5,9 @@
 - Keep one retained Activity event with unavailable automatic authority from
   taking down the ledger. The row explains its bounded limitation while valid
   neighbours, filters, totals, ordering, and pagination remain usable. (#786)
-- Let Activity search find a durable record by the value it changed from or
-  to. The server searches only its existing bounded immutable documents using
-  parameterised literals; it adds no index, duplicate audit document, or new
+- Let Activity search find durable displayed values, including automatic,
+  no-change, decision, and policy before/after wording. It streams immutable
+  authority in order without an index, duplicate audit document, or new
   private output. (#787)
 
 - Recover explicit EPUB package, front, and rear series memberships with their

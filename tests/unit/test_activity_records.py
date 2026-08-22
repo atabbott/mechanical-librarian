@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from mechanical_librarian.application.activity_records import readable_activity_event
+from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,

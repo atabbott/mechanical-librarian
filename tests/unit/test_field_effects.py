@@ -387,14 +387,26 @@ def test_activity_fetches_one_current_report_document_for_repeated_events(
     assert {event["report_id"] for event in activity["events"]} == {report.report_id}
     assert all("report_document" not in event for event in activity["events"])
     page = effects.repository.field_effect_activity_page(
-        search="readable work",
+        search="old",
         event_type="all",
         occurred_after=0,
         page=1,
         page_size=25,
     )
+    # A field-effect event names its own decision and values, not a later
+    # current report. Search must not make that later title discoverable.
     assert page["total"] == 2
-    assert all(event["work_label"] == "Readable work" for event in page["events"])
+    assert (
+        effects.repository.field_effect_activity_page(
+            search="readable work",
+            event_type="all",
+            occurred_after=0,
+            page=1,
+            page_size=25,
+        )["total"]
+        == 0
+    )
+    assert all(event["report_id"] is None for event in page["events"])
     assert all(
         event["record"]["source_kind"] == "field_effect" for event in page["events"]
     )
