@@ -23,6 +23,7 @@ from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ReportValueError,
     canonical_json,
     validate_observed_title,
 )
@@ -132,7 +133,7 @@ class AudiobookshelfCatalogueReader:
             # httpx keeps certificate verification enabled in the configured
             # target client.  Classifying the outcome must not weaken it.
             raise TargetConnectionError(target_connection_code(error)) from None
-        except (httpx.HTTPError, OSError, UnicodeError, ValueError, TypeError):
+        except (httpx.HTTPError, OSError):
             raise TargetConnectionError("unavailable") from None
 
     def probe_connection(
@@ -231,7 +232,7 @@ def _entry(
     metadata = media.get("metadata")
     if type(metadata) is not dict:
         raise CatalogueError("catalogue response is invalid")
-    title = validate_observed_title(metadata.get("title"))
+    title, invalid_title = _observed_catalogue_title(metadata.get("title"))
     authors = metadata.get("authors", [])
     if type(authors) is not list or len(authors) > 32:
         raise CatalogueError("catalogue response is invalid")
@@ -286,6 +287,12 @@ def _entry(
         classification = "needs-attention"
         file_identity = service_path = format_value = mount_name = None
         has_ebook = True
+    if invalid_title:
+        # This is deliberately an item disposition, never a target-health
+        # condition.  Dropping the usable location prevents report preparation
+        # from rereading the untrimmed title through its stricter item boundary.
+        classification = "needs-attention"
+        file_identity = service_path = format_value = mount_name = None
     reviewed_fields = {
         name: {"present": name in metadata, "value": metadata.get(name)}
         for name in (
@@ -380,6 +387,19 @@ def _entry(
         mount_name,
         source_fingerprint,
     )
+
+
+def _observed_catalogue_title(value: object) -> tuple[str, bool]:
+    """Project one target title without promoting item data to target health."""
+    try:
+        return validate_observed_title(value), False
+    except ReportValueError:
+        if type(value) is str:
+            try:
+                return validate_observed_title(value.strip()), True
+            except ReportValueError:
+                pass
+        return "Untitled item requiring attention", True
 
 
 def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
