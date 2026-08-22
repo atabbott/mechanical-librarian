@@ -144,26 +144,6 @@ function PageJump({
     </label>
   )
 }
-function ActivityTransitions({ eventId }: { eventId: string }) {
-  const { http } = useReviewContext()
-  const query = useQuery({
-    queryKey: ['activity-transitions', eventId],
-    queryFn: ({ signal }) => http.getActivityTransitions(eventId, signal),
-    retry: false,
-  })
-  if (query.isLoading) return <p>Loading recorded transitions…</p>
-  if (query.isError || !query.data?.length) return null
-  return (
-    <ol className="cm-activity-transitions" aria-label="Recorded lifecycle transitions">
-      {query.data.map((transition) => (
-        <li key={transition.event_id}>
-          <time>{dateParts(transition.occurred_at).time}</time>
-          <span>{stateLabel(transition.state)}</span>
-        </li>
-      ))}
-    </ol>
-  )
-}
 export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const { http, queryClient } = useReviewContext()
   const router = useRouter()
@@ -1002,7 +982,6 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                             </div>
                           ))}
                         </dl>
-                        <ActivityTransitions eventId={event.event_id} />
                       </div>
                     ) : null}
                   </article>

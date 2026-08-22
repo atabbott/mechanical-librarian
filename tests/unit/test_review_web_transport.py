@@ -865,7 +865,6 @@ def test_openapi_is_deterministic_and_secret_free(
     }
     assert protected_operations == {
         ("get", "/api/v1/activity"),
-        ("get", "/api/v1/activity/{event_id}/transitions"),
         ("post", "/api/v1/activity/consent"),
         ("post", "/api/v1/activity/{connection}/{library}/revoke"),
         ("get", "/api/v1/attention"),

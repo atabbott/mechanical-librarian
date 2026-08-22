@@ -92,15 +92,13 @@ def _all_rows(
     return collected
 
 
-def test_the_seeded_ledger_groups_lifecycle_transitions_by_change(
+def test_the_seeded_ledger_crosses_a_page_boundary(
     ledger: ContinuousGuardedApplication,
 ) -> None:
-    """The default ledger is a current change view, not the raw event stream."""
+    """Everything below depends on there being more than one page to get wrong."""
     block = ledger.activity()["ledger"]
     assert isinstance(block, dict)
-    rows = _all_rows(ledger)
-    assert block["total"] == len(rows)
-    assert block["total"] < 25
+    assert block["total"] > 25 and block["page_count"] > 1
 
 
 def test_a_filter_chip_narrows_to_its_own_category_and_the_count_follows(
@@ -244,6 +242,7 @@ def test_paging_forward_and_back_lands_on_the_same_window(
 
     # Paging forward then back is the same window, not a re-sorted one.
     assert [str(row["event_id"]) for row in _rows(ledger, page=1)] == windows[0]
+    assert [str(row["event_id"]) for row in _rows(ledger, page=2)] == windows[1]
 
     # A larger page size covers the same ledger in fewer pages.
     larger = ledger.activity(page_size=50)["ledger"]

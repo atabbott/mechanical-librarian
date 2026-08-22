@@ -1039,34 +1039,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # provenance keys, and it creates no mutable search projection.
             parameters.extend((like, like, like, like, like, like, like, like, like))
         predicate = " WHERE " + " AND ".join(where)
-        columns = (
-            "event_id,connection,destination,library,occurred_at,origin,report_id,state,"
-            "work_id,document,event_type,title,detail,source_kind,source_document,"
-            "source_parent_id,source_sequence,source_identity,policy_from,policy_to,source_valid"
-        )
-        group_identity = (
-            "CASE WHEN source_kind='field_effect' THEN source_parent_id "
-            "ELSE coalesce(source_identity,event_id) END"
-        )
         projection = (
-            "WITH raw_activity_events("
-            + columns
-            + ") AS ("
+            "WITH activity_events(event_id,connection,destination,library,occurred_at,origin,report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,policy_from,policy_to,source_valid) AS ("
             + cast(str, events)
-            + "), ranked_activity_events AS (SELECT raw_activity_events.*, "
-            "row_number() OVER (PARTITION BY source_kind,"
-            + group_identity
-            + " ORDER BY occurred_at DESC,event_id DESC) AS activity_rank, "
-            "min(source_valid) OVER (PARTITION BY source_kind,"
-            + group_identity
-            + ") AS group_valid FROM raw_activity_events), "
-            "activity_events("
-            + columns
-            + ") AS (SELECT "
-            + columns.replace(
-                "source_valid", "CASE WHEN group_valid=1 THEN source_valid ELSE 0 END"
-            )
-            + " FROM ranked_activity_events WHERE activity_rank=1) "
+            + ") "
         )
 
         def waiting_scalar(value: object, *, nullable: bool = False) -> str | None:
@@ -1778,44 +1754,6 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         except FieldEffectError:
             transaction.rollback()
             raise
-
-    def field_effect_activity_transitions(
-        self, event_id: str, limit: int = 20
-    ) -> tuple[dict[str, object], ...]:
-        """Return the bounded immutable lifecycle for one grouped effect row."""
-        if (
-            type(event_id) is not str
-            or not event_id
-            or len(event_id) > 128
-            or limit not in {10, 20}
-        ):
-            raise FieldEffectError("invalid_activity_query")
-        try:
-            row = self._connection.execute(
-                "SELECT plan_id FROM field_effect_events WHERE event_id=?", (event_id,)
-            ).fetchone()
-            if row is None:
-                return ()
-            rows = self._connection.execute(
-                "SELECT event_id,occurred_at,kind FROM field_effect_events WHERE plan_id=? "
-                "ORDER BY occurred_at ASC,event_id ASC LIMIT ?",
-                (row[0], limit),
-            ).fetchall()
-        except sqlite3.Error as error:
-            raise FieldEffectError("persistence") from error
-        if any(
-            type(item[0]) is not str
-            or type(item[1]) is not int
-            or type(item[2]) is not str
-            or len(item[0]) > 128
-            or len(item[2]) > 512
-            for item in rows
-        ):
-            raise FieldEffectError("persistence")
-        return tuple(
-            {"event_id": item[0], "occurred_at": item[1], "state": item[2]}
-            for item in rows
-        )
 
     def claim_field_effect(
         self, plan_id: str, expected_state: str, claim_token: str, claimed_at: int
