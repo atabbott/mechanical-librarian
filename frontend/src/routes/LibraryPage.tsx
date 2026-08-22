@@ -780,6 +780,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const keepManualHandling = useRef<HTMLButtonElement>(null)
   const restoreAutomaticTrigger = useRef(false)
   const attentionRail = useRef<HTMLElement>(null)
+  const workSelectionGeneration = useRef(0)
   const selectedIdentityRef = useRef<{
     id: string
     title: string
@@ -1088,6 +1089,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   }, [data.works, navigate])
 
   const selectCase = (reviewCaseId: string, field?: string) => {
+    workSelectionGeneration.current += 1
     if (reviewCaseId !== selectedReviewCaseId)
       setExpandedChoiceState({ work: reviewCaseId, keys: new Set() })
     if (complete?.id !== reviewCaseId) {
@@ -1105,15 +1107,15 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       },
     })
   }
-  const select = (work: LibraryWorkView) => {
+  const select = async (work: LibraryWorkView) => {
     if (work.reviewCaseId) {
       selectCase(work.reviewCaseId)
       return
     }
     setComplete(null)
     setCompletionInspection(null)
-    setOpenedWork(work)
-    void navigate({
+    const generation = ++workSelectionGeneration.current
+    await navigate({
       search: (current) => {
         const next = { ...current, work: work.workId }
         delete next.preview
@@ -1121,6 +1123,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         return next
       },
     })
+    if (generation !== workSelectionGeneration.current) return
+    setOpenedWork(work)
   }
   // Progressive filtering keeps the typed text local so each keystroke paints.
   // A short bounded delay avoids loading an obsolete clear before the next
@@ -1220,6 +1224,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     else void attention.refetch()
   }
   const clearSelection = () => {
+    workSelectionGeneration.current += 1
     setComplete(null)
     setCompletionInspection(null)
     setOpenedWork(null)
@@ -1235,6 +1240,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     })
   }
   const selectFromQueue = (reviewCaseId: string, field: string) => {
+    workSelectionGeneration.current += 1
     if (reviewCaseId !== selectedReviewCaseId)
       setExpandedChoiceState({ work: reviewCaseId, keys: new Set() })
     setComplete(null)
@@ -1407,7 +1413,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                     className={`library-work-row${selectedWorkRow ? ' active' : ''}`}
                     aria-current={selectedWorkRow ? 'true' : undefined}
                     aria-label={`${work.title}. ${authorLine(work)}. ${status}`}
-                    onClick={() => select(work)}
+                    onClick={() => void select(work)}
                   >
                     <span className="library-book-mark" aria-hidden="true">
                       {initials(work.title)}

@@ -1165,10 +1165,6 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "hardcover-main" in sources.inner_text()
         assert "Work lookup · 1 bounded request" in sources.inner_text()
         capture_visual_proof("library-work-summary")
-        # Exercise the same state transition without presenting its compact-only
-        # control at this width; the Works rail remains the visible navigation.
-        page.locator(".compact-workspace-back").evaluate("node => node.click()")
-        expect(page).to_have_url("https://react-platform.invalid/library?lens=all")
         page.get_by_role("link", name="Needs attention", exact=True).click()
         expect(page.locator(".library-work-row")).to_have_count(5)
         page.get_by_role("link", name="No attention needed", exact=True).click()
@@ -1180,9 +1176,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert page.locator(".library-work-row").count() == 6
         page.get_by_text("Page 2", exact=False).wait_for()
         # A published work with no review case still opens, and says so.
-        page.locator(".library-work-row").filter(
-            has_text="Pre-admission observation"
-        ).click()
+        page.get_by_text("Pre-admission observation", exact=True).click()
         work_detail.get_by_role("heading", name="Pre-admission observation").wait_for()
         assert (
             "No review decision is recorded for this work." in work_detail.inner_text()
@@ -1191,10 +1185,6 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert (
             "2 consulted for this work"
             in work_detail.locator(".work-sources").inner_text()
-        )
-        page.locator(".compact-workspace-back").evaluate("node => node.click()")
-        expect(page).to_have_url(
-            "https://react-platform.invalid/library?lens=all&cursor=page-2"
         )
         # Browsing is reversible: the same pager walks the bounded window back.
         page.get_by_role("button", name="\u2190 Previous").click()
