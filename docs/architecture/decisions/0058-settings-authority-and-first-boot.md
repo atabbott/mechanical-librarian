@@ -61,13 +61,16 @@ startup rule.
 Existing deployments stay file-managed. The supported move to in-app management
 is an authenticated, CSRF-protected **Import and retire file management** action:
 it reads and validates the exact file and every referenced secret through the
-existing private-file rules, commits the resulting settings and a retirement
-intent bound to those exact file and secret snapshots, then rereads and
-revalidates all of them before renaming. A mismatch fails closed with the file
-still authoritative. The rename is same-volume and atomic to a newly created,
+existing private-file rules, and, for this action only, validates the future
+store-mode bootstrap document and its referenced TLS identity. If that bootstrap
+material is missing, invalid, or unsafe, retirement refuses and the file remains
+authoritative. It then commits the resulting settings and a retirement intent
+bound to those exact file and secret snapshots, then rereads and revalidates all
+of them before renaming. A mismatch fails closed with the file still
+authoritative. The rename is same-volume and atomic to a newly created,
 owner-only, non-clobbering private retired destination. On restart, only a
-recorded intent may resume; it repeats the snapshot checks before rename and
-otherwise fails closed. Until the rename succeeds, the file remains
+recorded intent may resume; it repeats the snapshot and bootstrap checks before
+rename and otherwise fails closed. Until the rename succeeds, the file remains
 authoritative; after it, the committed store is authoritative. Startup must not
 infer, merge, or repair any other state. This keeps the transition one deliberate
 owner action rather than asking operators to manually delete a configuration
