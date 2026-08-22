@@ -30,11 +30,15 @@ operation; clean regeneration does not preserve history.
 
 The separate catalogue database and immutable batch manifests are regenerable
 from current configuration and source-only contributor operations; preserve
-them only when an operator needs their historical state. Runtime configuration
-and target/provider authentication stores follow the host's encrypted
-secret-backup policy and must not be embedded in the application database.
-Contained-reviewer profiles, executable paths, and authentication belong only
-to explicitly retained private workbench state, never runtime backups.
+them only when an operator needs their historical state. In file-managed mode,
+runtime configuration and target/provider authentication remain private files
+under the host's encrypted secret-backup policy and are not embedded in the
+application database. In store mode, settings live in
+`/data/application.sqlite3`, so that database and every complete `/data` backup
+are secret-bearing; protect them accordingly. Public backup manifests and
+verification reports remain secret-free in both modes. Contained-reviewer
+profiles, executable paths, and authentication belong only to explicitly
+retained private workbench state, never runtime backups.
 
 Backups expose bounded target metadata, cited evidence, sanitized deterministic
 packets, decisions/outcomes, and execution facts to anyone who can read them.
