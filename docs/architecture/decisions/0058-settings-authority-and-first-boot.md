@@ -32,17 +32,18 @@ application-held key: a single-container key stored with `/data` would not
 protect a stolen volume.
 
 Compose remains authoritative forever for the published port mapping, `/data`
-volume, and read-only media mounts. In every mode it also mounts the strict,
-owner-only `/run/secrets/review-bootstrap.json` bootstrap document, which names
-the TLS certificate and key, canonical origin, and trusted proxy IPs. The
-bootstrap document and referenced TLS files are deploy-side material, never
-settings-store fields; missing, invalid, or unsafe bootstrap material stops
-startup before setup. An empty volume means an empty `/data` volume only: it
-does not create, replace, or relax bootstrap material. The wizard verifies
-media mounts but cannot author bind mounts. The settings API does not accept
-Compose or bootstrap fields and never returns an apply effect for them; the UI
-directs the owner to deployment configuration. Deploy-side changes take effect
-only after an operator restart.
+volume, and read-only media mounts. File-managed mode reads the TLS certificate
+and key, canonical origin, and trusted proxy IPs solely from `config-v6`; it
+does not read a bootstrap document. Only setup and store mode require Compose
+to mount the strict, owner-only `/run/secrets/review-bootstrap.json` document,
+which supplies those values. Bootstrap material and referenced TLS files are
+deploy-side material, never settings-store fields; missing, invalid, or unsafe
+bootstrap material stops setup/store startup before setup. An empty volume means
+an empty `/data` volume only: it does not create, replace, or relax the required
+bootstrap material. The wizard verifies media mounts but cannot author bind
+mounts. The settings API does not accept Compose or bootstrap fields and never
+returns an apply effect for them; the UI directs the owner to deployment
+configuration. Deploy-side changes take effect only after an operator restart.
 
 On an empty `/data` volume, the server enters explicit setup mode and exposes
 only the first-run wizard. Its first successful mutation claims ownership by
