@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import inspect
 import json
 import os
 import sqlite3
@@ -31,9 +30,6 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     PrivateCoverRecoveryStore,
 )
 from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
-from mechanical_librarian.adapters.persistence.field_effect_activity import (
-    SQLiteFieldEffectActivityRepository,
-)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     SQLiteMetadataReportRepository,
@@ -416,12 +412,88 @@ def test_activity_fetches_one_current_report_document_for_repeated_events(
     )
 
 
-def test_activity_search_uses_fixed_cursor_batches_without_a_corpus_fetchall() -> None:
-    """The searchable path must retain only its page and clamp window (#787)."""
-    source = inspect.getsource(
-        SQLiteFieldEffectActivityRepository.field_effect_activity_page
+def test_activity_search_projects_dependency_maps_per_cursor_batch(
+    effects: _EffectEnvironment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Search retains no dependency map beyond its 64-row cursor batch (#787)."""
+    for index in range(193):
+        identity = f"{index:064x}"
+        plan_id = "effect_plan_" + identity
+        event_core = {
+            "attempt": 0,
+            "decision_id": "human_decision_" + "a" * 64,
+            "desired_value": "new",
+            "destination": "title",
+            "failure": None,
+            "kind": "planned",
+            "occurred_at": 1_000_000 + index,
+            "origin": "human",
+            "plan_id": plan_id,
+            "pre_value": "old",
+            "schema_version": "field-effect-event-v1",
+            "sequence": 1,
+            "state": "planned",
+        }
+        event_id = (
+            "effect_event_"
+            + hashlib.sha256(
+                json.dumps(event_core, separators=(",", ":"), sort_keys=True).encode()
+            ).hexdigest()
+        )
+        effects.repository._connection.execute(
+            "INSERT INTO field_effects(plan_id,decision_id,connection_name,library_name,work_id,destination,state,attempt,updated_at,document) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (
+                plan_id,
+                event_core["decision_id"],
+                "primary",
+                "books",
+                f"book-{index}",
+                "title",
+                "planned",
+                0,
+                event_core["occurred_at"],
+                "{}",
+            ),
+        )
+        effects.repository._connection.execute(
+            "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,document) VALUES(?,?,?,?,?,?)",
+            (
+                event_id,
+                plan_id,
+                1,
+                "planned",
+                event_core["occurred_at"],
+                json.dumps(
+                    {**event_core, "event_id": event_id},
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            ),
+        )
+    effects.repository._connection.commit()
+    projected: list[tuple[int, bool]] = []
+    projection = effects.repository._field_effect_activity
+    original = projection._project_activity_rows
+
+    def track_projection(rows: list[tuple[object, ...]], **kwargs: object) -> object:
+        projected.append((len(rows), kwargs["searched"] is True))
+        return original(rows, **kwargs)
+
+    monkeypatch.setattr(projection, "_project_activity_rows", track_projection)
+    page = effects.repository.field_effect_activity_page(
+        search="book-",
+        event_type="review",
+        occurred_after=0,
+        page=1_000_000,
+        page_size=25,
     )
-    assert "fetchmany(64)" in source
+    assert len(projected) >= 4
+    assert all(searched and 1 <= size <= 64 for size, searched in projected)
+    assert page["total"] == 193
+    assert page["page"] == page["page_count"] == 8
+    assert [event["occurred_at"] for event in page["events"]] == list(
+        range(1_000_024, 1_000_000 - 1, -1)
+    )
 
 
 def test_activity_page_bounds_filters_and_clamps_the_append_only_ledger(

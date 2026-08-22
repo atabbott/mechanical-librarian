@@ -40,7 +40,7 @@ import hashlib
 import json
 import sqlite3
 from collections import deque
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import Any, cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
@@ -172,6 +172,14 @@ def _policy_changes(
                 }
             )
     return changes
+
+
+def _bounded_fetch(cursor: sqlite3.Cursor, expected_max: int) -> list[tuple[Any, ...]]:
+    """Read a bounded dependency query without materialising a larger result."""
+    rows = cursor.fetchmany(expected_max + 1)
+    if len(rows) > expected_max:
+        raise FieldEffectError("persistence")
+    return rows
 
 
 class SQLiteFieldEffectActivityRepository(ConnectionScoped):
@@ -908,6 +916,652 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         ) as error:
             raise FieldEffectError("persistence") from error
 
+    def _project_activity_rows(
+        self,
+        rows: list[tuple[Any, ...]],
+        *,
+        document_limit: int,
+        scalar_limit: int,
+        searched: bool,
+    ) -> tuple[list[dict[str, object]], dict[str, str], dict[str, MetadataReport]]:
+        """Validate and project one bounded Activity dependency batch.
+
+        This substantial single-caller extraction is intentional: it gives the
+        cursor search a directly testable memory-safety and type-validation
+        boundary, so immutable report, policy, and authority maps cannot grow
+        beyond the batch that names them.
+        """
+        # Search hands this boundary 64 rows; the established no-search page
+        # still has a 100-row public maximum and invokes it once.
+        if len(rows) > 100:
+            raise FieldEffectError("persistence")
+        dependency_limit = 64 if searched else 100
+        report_ids = sorted({row[6] for row in rows if row[6] is not None})
+        report_rows = (
+            []
+            if not report_ids
+            else _bounded_fetch(
+                self._connection.execute(
+                    "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id IN ("
+                    + ",".join("?" for _ in report_ids)
+                    + ")",
+                    report_ids,
+                ),
+                dependency_limit,
+            )
+        )
+        report_documents = {}
+        try:
+            for report_row in report_rows:
+                if (
+                    type(report_row[8]) is not str
+                    or not 2 <= len(report_row[8].encode("utf-8")) <= document_limit
+                ):
+                    raise MetadataReportError("persisted report is invalid")
+                report_documents[report_row[0]] = _validate_report_row(report_row)
+        except MetadataReportError as error:
+            raise FieldEffectError("persistence") from error
+        # Every report joined to the selected page participates in the
+        # response contract.  Validate it here (not through a corpus-wide
+        # preflight) so malformed durable data fails closed without making
+        # a bounded poll proportional to unrelated history.
+        if set(report_documents) != set(report_ids):
+            raise FieldEffectError("persistence")
+        reports: dict[str, MetadataReport] = {}
+        try:
+            for report_id, report_document in report_documents.items():
+                report = MetadataReport.from_json(report_document)
+                if report.report_id != report_id:
+                    raise FieldEffectError("persistence")
+                reports[report_id] = report
+        except ReportValueError as error:
+            raise FieldEffectError("persistence") from error
+        # A Policy row's exact From/To comes from the two immutable
+        # profiles its own transition names, not from whatever policy is
+        # active now. At most two per row on a closed page, each capped at
+        # 16KB by the schema, so this stays a bounded page read.
+        policy_ids = sorted(
+            {value for row in rows for value in row[18:20] if value is not None}
+        )
+        policy_profiles: dict[str, MetadataPolicyProfile] = {}
+        if policy_ids:
+            try:
+                for policy_id, policy_document in _bounded_fetch(
+                    self._connection.execute(
+                        "SELECT policy_id,document FROM metadata_policy_drafts WHERE policy_id IN ("
+                        + ",".join("?" for _ in policy_ids)
+                        + ")",
+                        policy_ids,
+                    ),
+                    dependency_limit * 2,
+                ):
+                    profile = MetadataPolicyProfile.from_data(
+                        json.loads(policy_document)
+                    )
+                    if profile.policy_id != policy_id:
+                        raise FieldEffectError("persistence")
+                    policy_profiles[policy_id] = profile
+            except MetadataPolicyError as error:
+                raise FieldEffectError("persistence") from error
+            if set(policy_profiles) != set(policy_ids):
+                raise FieldEffectError("persistence")
+        # An automatic Activity row needs the value the policy selected,
+        # not only the policy's name. Reconstruct it from the immutable
+        # authority documents the decision names. Several decisions can
+        # share one review aggregate, so retrieve and parse each aggregate
+        # once rather than duplicating its bounded private documents for
+        # every field on the page.
+        automatic_decisions: dict[str, AutomaticDecision] = {}
+        try:
+            for row in rows:
+                if row[13] != "automatic_decision":
+                    continue
+                document = row[9]
+                if (
+                    row[20] != 1
+                    or type(document) is not str
+                    or not 2 <= len(document.encode("utf-8")) <= document_limit
+                ):
+                    raise FieldEffectError("persistence")
+                automatic_decision = AutomaticDecision.from_json(document)
+                if (
+                    automatic_decision.decision_id != row[17]
+                    or automatic_decision.decision_id in automatic_decisions
+                ):
+                    raise FieldEffectError("persistence")
+                automatic_decisions[automatic_decision.decision_id] = automatic_decision
+        except (AutomaticDecisionError, TypeError, ValueError) as error:
+            raise FieldEffectError("persistence") from error
+        automatic_identities = sorted(
+            {
+                (
+                    decision.review_case_id,
+                    decision.report_id,
+                    decision.proposal_set_id,
+                    decision.resolved_policy_id,
+                )
+                for decision in automatic_decisions.values()
+            }
+        )
+        automatic_authority: dict[
+            tuple[str, str, str, str],
+            tuple[ReviewCase, ProposalSet, ShadowOutcomeSet],
+        ] = {}
+        if automatic_identities:
+            authority_rows = _bounded_fetch(
+                self._connection.execute(
+                    "WITH requested(review_case_id,report_id,proposal_set_id,resolved_policy_id) AS (VALUES "
+                    + ",".join("(?,?,?,?)" for _ in automatic_identities)
+                    + ") SELECT requested.review_case_id,requested.report_id,"
+                    "requested.proposal_set_id,requested.resolved_policy_id,"
+                    "review.document,proposal.document,outcome.document "
+                    "FROM requested "
+                    "JOIN review_cases review "
+                    "ON review.review_case_id=requested.review_case_id "
+                    "AND review.report_id=requested.report_id "
+                    "AND review.proposal_set_id=requested.proposal_set_id "
+                    "JOIN proposal_sets proposal "
+                    "ON proposal.proposal_set_id=requested.proposal_set_id "
+                    "AND proposal.report_id=requested.report_id "
+                    "JOIN shadow_decision_outcomes outcome "
+                    "ON outcome.review_case_id=requested.review_case_id "
+                    "AND outcome.report_id=requested.report_id "
+                    "AND outcome.proposal_set_id=requested.proposal_set_id "
+                    "AND outcome.resolved_policy_id=requested.resolved_policy_id",
+                    tuple(
+                        value for identity in automatic_identities for value in identity
+                    ),
+                ),
+                dependency_limit,
+            )
+            for (
+                review_case_id,
+                authority_report_id,
+                proposal_set_id,
+                resolved_policy_id,
+                case_document,
+                proposal_document,
+                outcome_document,
+            ) in authority_rows:
+                identity = (
+                    review_case_id,
+                    authority_report_id,
+                    proposal_set_id,
+                    resolved_policy_id,
+                )
+                if identity in automatic_authority or any(
+                    type(value) is not str
+                    or not 2 <= len(value.encode("utf-8")) <= document_limit
+                    for value in (
+                        case_document,
+                        proposal_document,
+                        outcome_document,
+                    )
+                ):
+                    raise FieldEffectError("persistence")
+                try:
+                    automatic_authority[identity] = (
+                        ReviewCase.from_json(case_document),
+                        ProposalSet.from_json(proposal_document),
+                        ShadowOutcomeSet.from_json(outcome_document),
+                    )
+                except (
+                    ReportValueError,
+                    ProposalValueError,
+                    RichMetadataPreviewError,
+                    ShadowOutcomeError,
+                    TypeError,
+                    ValueError,
+                ) as error:
+                    raise FieldEffectError("persistence") from error
+            # An absent or no-longer-resolvable authority belongs to its
+            # one retained automatic event.  Keep the validated event in
+            # the page and let the per-event projection below emit the
+            # bounded degraded row; do not turn it into a whole-ledger
+            # storage failure (#786).
+        projected_events: list[dict[str, object]] = []
+        decision: HumanDecision | AutomaticDecision
+        for (
+            event_id,
+            connection,
+            destination,
+            library,
+            occurred_at,
+            origin,
+            report_id,
+            state,
+            work_id,
+            document,
+            projected_type,
+            title,
+            detail,
+            source_kind,
+            source_document,
+            source_parent_id,
+            source_sequence,
+            source_identity,
+            policy_from,
+            policy_to,
+            source_valid,
+        ) in rows:
+            if (
+                source_valid != 1
+                or type(document) is not str
+                or not 2 <= len(document.encode("utf-8")) <= document_limit
+            ):
+                raise FieldEffectError("persistence")
+            raw = json.loads(document)
+            if type(raw) is not dict:
+                raise FieldEffectError("persistence")
+
+            def scalar(
+                value: object, maximum: int = 512, *, nullable: bool = False
+            ) -> str | None:
+                if value is None and nullable:
+                    return None
+                if type(value) is not str or not value or len(value) > maximum:
+                    raise FieldEffectError("persistence")
+                return value
+
+            event_id = scalar(event_id, 128)
+            scalar(connection, nullable=True)
+            destination = scalar(destination)
+            library = scalar(library)
+            origin = scalar(origin)
+            state = scalar(state)
+            work_id = scalar(work_id)
+            projected_type = scalar(projected_type, 32)
+            if projected_type not in {
+                "review",
+                "policy",
+                "metadata",
+                "safety",
+                "unknown",
+            }:
+                raise FieldEffectError("persistence")
+            source_kind = scalar(source_kind)
+            if source_kind not in {
+                "field_effect",
+                "field_effect_no_change",
+                "human_decision",
+                "automatic_decision",
+                "cover_safeguard",
+                "policy_transition",
+            }:
+                raise FieldEffectError("persistence")
+            if source_document is not None and (
+                type(source_document) is not str
+                or not 2 <= len(source_document.encode("utf-8")) <= document_limit
+            ):
+                raise FieldEffectError("persistence")
+            try:
+                if source_kind == "field_effect":
+                    event_keys = {
+                        "attempt",
+                        "decision_id",
+                        "desired_value",
+                        "destination",
+                        "event_id",
+                        "failure",
+                        "kind",
+                        "occurred_at",
+                        "origin",
+                        "plan_id",
+                        "pre_value",
+                        "schema_version",
+                        "sequence",
+                        "state",
+                    }
+                    if (
+                        set(raw) != event_keys
+                        or raw.get("schema_version") != "field-effect-event-v1"
+                        or raw.get("event_id") != event_id
+                        or raw.get("plan_id") != source_parent_id
+                        or raw.get("decision_id") != source_identity
+                        or raw.get("sequence") != source_sequence
+                        or type(raw.get("sequence")) is not int
+                        or raw["sequence"] < 1
+                        or type(raw.get("attempt")) is not int
+                        or not 0 <= raw["attempt"] <= 3
+                        or raw.get("failure") not in FIELD_EFFECT_FAILURES
+                        or raw.get("destination") != destination
+                        or raw.get("kind") != state
+                        or raw.get("state") != state
+                        or raw.get("occurred_at") != occurred_at
+                        or raw.get("origin") != origin
+                        or canonical_effect_json(raw) != document
+                        or event_id
+                        != "effect_event_"
+                        + hashlib.sha256(
+                            canonical_effect_json(
+                                {
+                                    key: value
+                                    for key, value in raw.items()
+                                    if key != "event_id"
+                                }
+                            ).encode()
+                        ).hexdigest()
+                    ):
+                        raise FieldEffectError("persistence")
+                elif source_kind == "field_effect_no_change":
+                    if raw or document != "{}" or source_document is not None:
+                        raise FieldEffectError("persistence")
+                    record = FieldEffectNoChange.create(
+                        decision_id=source_identity,
+                        review_case_id=source_parent_id,
+                        # scalar() without nullable=True raises rather than
+                        # returning None, so these are always str here.
+                        report_id=report_id,
+                        connection=connection,
+                        library=cast(str, library),
+                        work_id=cast(str, work_id),
+                        destination=cast(str, destination),
+                        target_fingerprint=self._connection.execute(
+                            "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
+                            (source_identity,),
+                        ).fetchone()[0],
+                        target_version=self._connection.execute(
+                            "SELECT target_version FROM field_effect_no_changes WHERE decision_id=?",
+                            (source_identity,),
+                        ).fetchone()[0],
+                        occurred_at=occurred_at,
+                    )
+                    if (
+                        state != "no_change_required"
+                        or origin != record.origin
+                        or event_id != record.event_id
+                    ):
+                        raise FieldEffectError("persistence")
+                elif source_kind == "human_decision":
+                    if source_document is None:
+                        raise FieldEffectError("persistence")
+                    decision = HumanDecision.from_json(source_document)
+                    event_keys = {
+                        "actor",
+                        "decision_id",
+                        "destination",
+                        "event_id",
+                        "kind",
+                        "occurred_at",
+                        "outcome",
+                        "review_case_id",
+                        "schema_version",
+                    }
+                    if (
+                        set(raw) != event_keys
+                        or raw.get("schema_version") != "human-decision-event-v1"
+                        or raw.get("kind") != "human_decision_recorded"
+                        or raw.get("event_id") != event_id
+                        or raw.get("decision_id") != decision.decision_id
+                        or raw.get("decision_id") != source_identity
+                        or raw.get("destination") != destination
+                        or raw.get("actor") != decision.actor
+                        or raw.get("outcome") != state
+                        or raw.get("outcome") != decision.outcome
+                        or raw.get("occurred_at") != occurred_at
+                        or raw.get("occurred_at") != decision.occurred_at
+                        or raw.get("review_case_id") != decision.review_case_id
+                        or raw.get("review_case_id") != source_parent_id
+                        or decision.destination != destination
+                        or decision.to_json() != source_document
+                        or _canonical_json(raw) != document
+                        or event_id
+                        != "human_decision_event_"
+                        + hashlib.sha256(
+                            ("human-decision-event-v1:" + decision.decision_id).encode(
+                                "utf-8"
+                            )
+                        ).hexdigest()
+                    ):
+                        raise FieldEffectError("persistence")
+                elif source_kind == "automatic_decision":
+                    projected_automatic = automatic_decisions.get(
+                        cast(str, source_identity)
+                    )
+                    if (
+                        projected_automatic is None
+                        or projected_automatic.decision_id != event_id
+                        or projected_automatic.decision_id != source_identity
+                        or projected_automatic.destination != destination
+                        or projected_automatic.occurred_at != occurred_at
+                        or origin != "automatic_policy"
+                        or projected_automatic.review_case_id != source_parent_id
+                        or projected_automatic.report_id != report_id
+                        or projected_automatic.to_json() != document
+                    ):
+                        raise FieldEffectError("persistence")
+                elif source_kind == "cover_safeguard":
+                    if source_document is None:
+                        raise FieldEffectError("persistence")
+                    consideration = json.loads(source_document)
+                    if type(consideration) is not dict:
+                        raise FieldEffectError("persistence")
+                    reviewer_status = consideration.get("reviewer_status")
+                    event_keys = {
+                        "consideration_id",
+                        "decision_id",
+                        "kind",
+                        "occurred_at",
+                        "review_case_id",
+                        "schema_version",
+                    }
+                    if (
+                        set(raw) != event_keys
+                        or raw.get("schema_version") != "cover-consideration-event-v1"
+                        or raw.get("consideration_id") != source_identity
+                        or raw.get("kind")
+                        not in {
+                            "automatic_prepared",
+                            "owner_retry_prepared",
+                            "superseded",
+                            "selected",
+                            "kept_incumbent",
+                            "no_action",
+                            "stale",
+                        }
+                        or (
+                            raw.get("kind")
+                            in {"automatic_prepared", "owner_retry_prepared"}
+                            and reviewer_status
+                            not in {"completed", "unavailable", "failed"}
+                        )
+                        or state
+                        != (
+                            reviewer_status
+                            if raw.get("kind")
+                            in {"automatic_prepared", "owner_retry_prepared"}
+                            else raw.get("kind")
+                        )
+                        or (
+                            raw.get("kind") == "automatic_prepared"
+                            and (origin, projected_type)
+                            != ("automatic_pipeline", "metadata")
+                        )
+                        or (
+                            raw.get("kind") == "owner_retry_prepared"
+                            and (origin, projected_type) != ("owner_retry", "review")
+                        )
+                        or (
+                            raw.get("kind")
+                            in {"selected", "kept_incumbent", "no_action"}
+                            and (origin, projected_type) != ("human", "review")
+                        )
+                        or (
+                            raw.get("kind") in {"stale", "superseded"}
+                            and (origin, projected_type) != ("unknown", "safety")
+                        )
+                        or raw.get("occurred_at") != occurred_at
+                        or raw.get("review_case_id") != source_parent_id
+                        or _canonical_json(raw) != document
+                        or event_id
+                        != "cover_consideration_event_"
+                        + hashlib.sha256(document.encode("utf-8")).hexdigest()
+                    ):
+                        raise FieldEffectError("persistence")
+                elif raw or document != "{}" or source_document is not None:
+                    raise FieldEffectError("persistence")
+            except (
+                AutomaticDecisionError,
+                HumanDecisionError,
+                TypeError,
+                ValueError,
+            ) as error:
+                raise FieldEffectError("persistence") from error
+            event_title = scalar(title, nullable=True)
+            failure = scalar(raw.get("failure"), nullable=True)
+            if report_id is not None:
+                scalar(report_id)
+            if searched and report_id is None:
+                # The public renderer accepts a value-free historical row
+                # without a report join.  It must not receive a current
+                # connection/title pair that this immutable event did not
+                # name.
+                connection = None
+            # Every fact below leaves this loop from the document that
+            # was just checked against its own identity above, so an
+            # Activity row is a function of one immutable event and
+            # nothing else -- a later catalogue change cannot move it.
+            # The owner-facing words are composed one layer out, where the
+            # pinned report is already parsed; ``record`` is the closed
+            # private carrier the application consumes and removes, the
+            # same way ``connection`` and ``report_id`` are consumed there.
+            durable: dict[str, object] = {"source_kind": source_kind}
+            if source_kind == "field_effect":
+                durable["pre_value"] = raw["pre_value"]
+                durable["desired_value"] = raw["desired_value"]
+            elif source_kind == "human_decision":
+                if not isinstance(decision, HumanDecision):
+                    raise FieldEffectError("persistence")
+                durable["selected_value"] = decision.selected_value
+                durable["target_fingerprint"] = decision.target_fingerprint
+            elif source_kind == "automatic_decision":
+                if projected_automatic is None:
+                    raise FieldEffectError("persistence")
+                automatic_report_document = report_documents.get(
+                    projected_automatic.report_id
+                )
+                if automatic_report_document is None:
+                    raise FieldEffectError("persistence")
+                authority = automatic_authority.get(
+                    (
+                        projected_automatic.review_case_id,
+                        projected_automatic.report_id,
+                        projected_automatic.proposal_set_id,
+                        projected_automatic.resolved_policy_id,
+                    )
+                )
+                if authority is None:
+                    durable["source_kind"] = "degraded"
+                    durable["degraded_reason"] = AUTOMATIC_AUTHORITY_UNAVAILABLE
+                    projected_events.append(
+                        {
+                            "connection": connection,
+                            "destination": destination,
+                            "event_id": event_id,
+                            "event_type": projected_type,
+                            "failure": None,
+                            "library": library,
+                            "occurred_at": occurred_at,
+                            "origin": origin,
+                            "report_id": report_id,
+                            "state": state,
+                            "work_id": work_id,
+                            **({"work_label": event_title} if event_title else {}),
+                            "record": durable,
+                        }
+                    )
+                    continue
+                try:
+                    case, proposal, outcome = authority
+                    report = MetadataReport.from_json(automatic_report_document)
+                    if projected_automatic.outcome in {"candidate", "keep_current"}:
+                        selected_value = _automatic_decision_value(
+                            projected_automatic, case, report, proposal, outcome
+                        )
+                    else:
+                        _validate_automatic_decision_authority(
+                            projected_automatic, case, report, proposal, outcome
+                        )
+                        selected_value = None
+                except FieldEffectError as error:
+                    # A retained decision can outlive the exact authority
+                    # aggregate it names. That is an event-local inability
+                    # to disclose its selected value, not a reason to hide
+                    # unrelated audit truth. Only the closed authority
+                    # binding refusal degrades; corrupt persistence still
+                    # reaches the outer fail-closed boundary.
+                    if error.code != "authority_binding":
+                        raise
+                    durable["source_kind"] = "degraded"
+                    durable["degraded_reason"] = AUTOMATIC_AUTHORITY_UNAVAILABLE
+                    projected_events.append(
+                        {
+                            "connection": connection,
+                            "destination": destination,
+                            "event_id": event_id,
+                            "event_type": projected_type,
+                            "failure": None,
+                            "library": library,
+                            "occurred_at": occurred_at,
+                            "origin": origin,
+                            "report_id": report_id,
+                            "state": state,
+                            "work_id": work_id,
+                            **({"work_label": event_title} if event_title else {}),
+                            "record": durable,
+                        }
+                    )
+                    continue
+                except (
+                    ReportValueError,
+                    ProposalValueError,
+                    RichMetadataPreviewError,
+                    ShadowOutcomeError,
+                    TypeError,
+                    ValueError,
+                ) as error:
+                    raise FieldEffectError("persistence") from error
+                durable["policy_category"] = projected_automatic.policy_category
+                durable["policy_option"] = projected_automatic.policy_option
+                durable["policy_generation"] = projected_automatic.policy_generation
+                durable["outcome"] = projected_automatic.outcome
+                durable["selected_value"] = selected_value
+                durable["target_fingerprint"] = projected_automatic.target_fingerprint
+            elif source_kind == "field_effect_no_change":
+                durable["target_fingerprint"] = self._connection.execute(
+                    "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
+                    (source_identity,),
+                ).fetchone()[0]
+            elif source_kind == "cover_safeguard":
+                durable["kind"] = raw["kind"]
+            elif source_kind == "policy_transition":
+                durable["generation"] = scalar(detail)
+                durable["policy_changes"] = _policy_changes(
+                    policy_profiles, policy_from, policy_to
+                )
+            if failure is not None:
+                durable["failure"] = failure
+            if type(occurred_at) is not int or not 0 <= occurred_at <= 253_402_300_799:
+                raise FieldEffectError("persistence")
+            projected_events.append(
+                {
+                    "connection": connection,
+                    "destination": destination,
+                    "event_id": event_id,
+                    "event_type": projected_type,
+                    "failure": failure,
+                    "library": library,
+                    "occurred_at": occurred_at,
+                    "origin": origin,
+                    "report_id": report_id,
+                    "state": state,
+                    "work_id": work_id,
+                    **({"work_label": event_title} if event_title else {}),
+                    "record": durable,
+                }
+            )
+        return projected_events, report_documents, reports
+
     def field_effect_activity_page(
         self,
         *,
@@ -1055,17 +1709,6 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "policy_from,policy_to,source_valid FROM activity_events"
             )
 
-            def streamed_rows() -> Iterator[tuple[Any, ...]]:
-                cursor = self._connection.execute(
-                    projection
-                    + columns
-                    + predicate
-                    + " ORDER BY occurred_at DESC,event_id DESC",
-                    parameters,
-                )
-                while batch := cursor.fetchmany(64):
-                    yield from batch
-
             if search is None:
                 total = int(
                     self._connection.execute(
@@ -1082,9 +1725,6 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     + " ORDER BY occurred_at DESC,event_id DESC LIMIT ? OFFSET ?",
                     (*parameters, page_size, (selected_page - 1) * page_size),
                 ).fetchall()
-                iter_rows: Callable[[], Iterator[tuple[Any, ...]]] = lambda: iter(
-                    cast("list[tuple[Any, ...]]", rows)
-                )
             else:
                 # Searching is allowed to scan the selected immutable corpus.
                 # It renders and validates each row below before deciding a
@@ -1093,659 +1733,62 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 total = 0
                 page_count = 1
                 selected_page = page
-                iter_rows = streamed_rows
-            report_ids = sorted({row[6] for row in iter_rows() if row[6] is not None})
-            report_rows = (
-                []
-                if not report_ids
-                else self._connection.execute(
-                    "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id IN ("
-                    + ",".join("?" for _ in report_ids)
-                    + ")",
-                    report_ids,
-                ).fetchall()
-            )
-            report_documents = {}
-            try:
-                for report_row in report_rows:
-                    if (
-                        type(report_row[8]) is not str
-                        or not 2 <= len(report_row[8].encode("utf-8")) <= document_limit
-                    ):
-                        raise MetadataReportError("persisted report is invalid")
-                    report_documents[report_row[0]] = _validate_report_row(report_row)
-            except MetadataReportError as error:
-                raise FieldEffectError("persistence") from error
-            # Every report joined to the selected page participates in the
-            # response contract.  Validate it here (not through a corpus-wide
-            # preflight) so malformed durable data fails closed without making
-            # a bounded poll proportional to unrelated history.
-            if set(report_documents) != set(report_ids):
-                raise FieldEffectError("persistence")
-            reports: dict[str, MetadataReport] = {}
-            try:
-                for report_id, report_document in report_documents.items():
-                    report = MetadataReport.from_json(report_document)
-                    if report.report_id != report_id:
-                        raise FieldEffectError("persistence")
-                    reports[report_id] = report
-            except ReportValueError as error:
-                raise FieldEffectError("persistence") from error
-            # A Policy row's exact From/To comes from the two immutable
-            # profiles its own transition names, not from whatever policy is
-            # active now. At most two per row on a closed page, each capped at
-            # 16KB by the schema, so this stays a bounded page read.
-            policy_ids = sorted(
-                {
-                    value
-                    for row in iter_rows()
-                    for value in row[18:20]
-                    if value is not None
-                }
-            )
-            policy_profiles: dict[str, MetadataPolicyProfile] = {}
-            if policy_ids:
-                try:
-                    for policy_id, policy_document in self._connection.execute(
-                        "SELECT policy_id,document FROM metadata_policy_drafts WHERE policy_id IN ("
-                        + ",".join("?" for _ in policy_ids)
-                        + ")",
-                        policy_ids,
-                    ).fetchall():
-                        profile = MetadataPolicyProfile.from_data(
-                            json.loads(policy_document)
-                        )
-                        if profile.policy_id != policy_id:
-                            raise FieldEffectError("persistence")
-                        policy_profiles[policy_id] = profile
-                except MetadataPolicyError as error:
-                    raise FieldEffectError("persistence") from error
-                if set(policy_profiles) != set(policy_ids):
-                    raise FieldEffectError("persistence")
-            # An automatic Activity row needs the value the policy selected,
-            # not only the policy's name. Reconstruct it from the immutable
-            # authority documents the decision names. Several decisions can
-            # share one review aggregate, so retrieve and parse each aggregate
-            # once rather than duplicating its bounded private documents for
-            # every field on the page.
-            automatic_decisions: dict[str, AutomaticDecision] = {}
-            try:
-                for row in iter_rows():
-                    if row[13] != "automatic_decision":
-                        continue
-                    document = row[9]
-                    if (
-                        row[20] != 1
-                        or type(document) is not str
-                        or not 2 <= len(document.encode("utf-8")) <= document_limit
-                    ):
-                        raise FieldEffectError("persistence")
-                    automatic_decision = AutomaticDecision.from_json(document)
-                    if (
-                        automatic_decision.decision_id != row[17]
-                        or automatic_decision.decision_id in automatic_decisions
-                    ):
-                        raise FieldEffectError("persistence")
-                    automatic_decisions[automatic_decision.decision_id] = (
-                        automatic_decision
-                    )
-            except (AutomaticDecisionError, TypeError, ValueError) as error:
-                raise FieldEffectError("persistence") from error
-            automatic_identities = sorted(
-                {
-                    (
-                        decision.review_case_id,
-                        decision.report_id,
-                        decision.proposal_set_id,
-                        decision.resolved_policy_id,
-                    )
-                    for decision in automatic_decisions.values()
-                }
-            )
-            automatic_authority: dict[
-                tuple[str, str, str, str],
-                tuple[ReviewCase, ProposalSet, ShadowOutcomeSet],
-            ] = {}
-            if automatic_identities:
-                authority_rows = self._connection.execute(
-                    "WITH requested(review_case_id,report_id,proposal_set_id,resolved_policy_id) AS (VALUES "
-                    + ",".join("(?,?,?,?)" for _ in automatic_identities)
-                    + ") SELECT requested.review_case_id,requested.report_id,"
-                    "requested.proposal_set_id,requested.resolved_policy_id,"
-                    "review.document,proposal.document,outcome.document "
-                    "FROM requested "
-                    "JOIN review_cases review "
-                    "ON review.review_case_id=requested.review_case_id "
-                    "AND review.report_id=requested.report_id "
-                    "AND review.proposal_set_id=requested.proposal_set_id "
-                    "JOIN proposal_sets proposal "
-                    "ON proposal.proposal_set_id=requested.proposal_set_id "
-                    "AND proposal.report_id=requested.report_id "
-                    "JOIN shadow_decision_outcomes outcome "
-                    "ON outcome.review_case_id=requested.review_case_id "
-                    "AND outcome.report_id=requested.report_id "
-                    "AND outcome.proposal_set_id=requested.proposal_set_id "
-                    "AND outcome.resolved_policy_id=requested.resolved_policy_id",
-                    tuple(
-                        value for identity in automatic_identities for value in identity
-                    ),
-                ).fetchall()
-                for (
-                    review_case_id,
-                    authority_report_id,
-                    proposal_set_id,
-                    resolved_policy_id,
-                    case_document,
-                    proposal_document,
-                    outcome_document,
-                ) in authority_rows:
-                    identity = (
-                        review_case_id,
-                        authority_report_id,
-                        proposal_set_id,
-                        resolved_policy_id,
-                    )
-                    if identity in automatic_authority or any(
-                        type(value) is not str
-                        or not 2 <= len(value.encode("utf-8")) <= document_limit
-                        for value in (
-                            case_document,
-                            proposal_document,
-                            outcome_document,
-                        )
-                    ):
-                        raise FieldEffectError("persistence")
-                    try:
-                        automatic_authority[identity] = (
-                            ReviewCase.from_json(case_document),
-                            ProposalSet.from_json(proposal_document),
-                            ShadowOutcomeSet.from_json(outcome_document),
-                        )
-                    except (
-                        ReportValueError,
-                        ProposalValueError,
-                        RichMetadataPreviewError,
-                        ShadowOutcomeError,
-                        TypeError,
-                        ValueError,
-                    ) as error:
-                        raise FieldEffectError("persistence") from error
-                # An absent or no-longer-resolvable authority belongs to its
-                # one retained automatic event.  Keep the validated event in
-                # the page and let the per-event projection below emit the
-                # bounded degraded row; do not turn it into a whole-ledger
-                # storage failure (#786).
-            projected_events: list[dict[str, object]] = []
-            matched: list[dict[str, object]] = []
-            trailing: deque[dict[str, object]] = deque(maxlen=page_size)
-            matched_count = 0
-
-            def append_event(event: dict[str, object]) -> None:
-                nonlocal matched_count
-                if search is None:
-                    projected_events.append(event)
-                    return
-                if search not in activity_search_text(
-                    event, reports.get(cast(str, event.get("report_id")))
-                ):
-                    return
-                if (page - 1) * page_size <= matched_count < page * page_size:
-                    matched.append(event)
-                trailing.append(event)
-                matched_count += 1
-
-            decision: HumanDecision | AutomaticDecision
-            for (
-                event_id,
-                connection,
-                destination,
-                library,
-                occurred_at,
-                origin,
-                report_id,
-                state,
-                work_id,
-                document,
-                projected_type,
-                title,
-                detail,
-                source_kind,
-                source_document,
-                source_parent_id,
-                source_sequence,
-                source_identity,
-                policy_from,
-                policy_to,
-                source_valid,
-            ) in iter_rows():
-                if (
-                    source_valid != 1
-                    or type(document) is not str
-                    or not 2 <= len(document.encode("utf-8")) <= document_limit
-                ):
-                    raise FieldEffectError("persistence")
-                raw = json.loads(document)
-                if type(raw) is not dict:
-                    raise FieldEffectError("persistence")
-
-                def scalar(
-                    value: object, maximum: int = 512, *, nullable: bool = False
-                ) -> str | None:
-                    if value is None and nullable:
-                        return None
-                    if type(value) is not str or not value or len(value) > maximum:
-                        raise FieldEffectError("persistence")
-                    return value
-
-                event_id = scalar(event_id, 128)
-                scalar(connection, nullable=True)
-                destination = scalar(destination)
-                library = scalar(library)
-                origin = scalar(origin)
-                state = scalar(state)
-                work_id = scalar(work_id)
-                projected_type = scalar(projected_type, 32)
-                if projected_type not in {
-                    "review",
-                    "policy",
-                    "metadata",
-                    "safety",
-                    "unknown",
-                }:
-                    raise FieldEffectError("persistence")
-                source_kind = scalar(source_kind)
-                if source_kind not in {
-                    "field_effect",
-                    "field_effect_no_change",
-                    "human_decision",
-                    "automatic_decision",
-                    "cover_safeguard",
-                    "policy_transition",
-                }:
-                    raise FieldEffectError("persistence")
-                if source_document is not None and (
-                    type(source_document) is not str
-                    or not 2 <= len(source_document.encode("utf-8")) <= document_limit
-                ):
-                    raise FieldEffectError("persistence")
-                try:
-                    if source_kind == "field_effect":
-                        event_keys = {
-                            "attempt",
-                            "decision_id",
-                            "desired_value",
-                            "destination",
-                            "event_id",
-                            "failure",
-                            "kind",
-                            "occurred_at",
-                            "origin",
-                            "plan_id",
-                            "pre_value",
-                            "schema_version",
-                            "sequence",
-                            "state",
-                        }
-                        if (
-                            set(raw) != event_keys
-                            or raw.get("schema_version") != "field-effect-event-v1"
-                            or raw.get("event_id") != event_id
-                            or raw.get("plan_id") != source_parent_id
-                            or raw.get("decision_id") != source_identity
-                            or raw.get("sequence") != source_sequence
-                            or type(raw.get("sequence")) is not int
-                            or raw["sequence"] < 1
-                            or type(raw.get("attempt")) is not int
-                            or not 0 <= raw["attempt"] <= 3
-                            or raw.get("failure") not in FIELD_EFFECT_FAILURES
-                            or raw.get("destination") != destination
-                            or raw.get("kind") != state
-                            or raw.get("state") != state
-                            or raw.get("occurred_at") != occurred_at
-                            or raw.get("origin") != origin
-                            or canonical_effect_json(raw) != document
-                            or event_id
-                            != "effect_event_"
-                            + hashlib.sha256(
-                                canonical_effect_json(
-                                    {
-                                        key: value
-                                        for key, value in raw.items()
-                                        if key != "event_id"
-                                    }
-                                ).encode()
-                            ).hexdigest()
-                        ):
-                            raise FieldEffectError("persistence")
-                    elif source_kind == "field_effect_no_change":
-                        if raw or document != "{}" or source_document is not None:
-                            raise FieldEffectError("persistence")
-                        record = FieldEffectNoChange.create(
-                            decision_id=source_identity,
-                            review_case_id=source_parent_id,
-                            # scalar() without nullable=True raises rather than
-                            # returning None, so these are always str here.
-                            report_id=report_id,
-                            connection=connection,
-                            library=cast(str, library),
-                            work_id=cast(str, work_id),
-                            destination=cast(str, destination),
-                            target_fingerprint=self._connection.execute(
-                                "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
-                                (source_identity,),
-                            ).fetchone()[0],
-                            target_version=self._connection.execute(
-                                "SELECT target_version FROM field_effect_no_changes WHERE decision_id=?",
-                                (source_identity,),
-                            ).fetchone()[0],
-                            occurred_at=occurred_at,
-                        )
-                        if (
-                            state != "no_change_required"
-                            or origin != record.origin
-                            or event_id != record.event_id
-                        ):
-                            raise FieldEffectError("persistence")
-                    elif source_kind == "human_decision":
-                        if source_document is None:
-                            raise FieldEffectError("persistence")
-                        decision = HumanDecision.from_json(source_document)
-                        event_keys = {
-                            "actor",
-                            "decision_id",
-                            "destination",
-                            "event_id",
-                            "kind",
-                            "occurred_at",
-                            "outcome",
-                            "review_case_id",
-                            "schema_version",
-                        }
-                        if (
-                            set(raw) != event_keys
-                            or raw.get("schema_version") != "human-decision-event-v1"
-                            or raw.get("kind") != "human_decision_recorded"
-                            or raw.get("event_id") != event_id
-                            or raw.get("decision_id") != decision.decision_id
-                            or raw.get("decision_id") != source_identity
-                            or raw.get("destination") != destination
-                            or raw.get("actor") != decision.actor
-                            or raw.get("outcome") != state
-                            or raw.get("outcome") != decision.outcome
-                            or raw.get("occurred_at") != occurred_at
-                            or raw.get("occurred_at") != decision.occurred_at
-                            or raw.get("review_case_id") != decision.review_case_id
-                            or raw.get("review_case_id") != source_parent_id
-                            or decision.destination != destination
-                            or decision.to_json() != source_document
-                            or _canonical_json(raw) != document
-                            or event_id
-                            != "human_decision_event_"
-                            + hashlib.sha256(
-                                (
-                                    "human-decision-event-v1:" + decision.decision_id
-                                ).encode("utf-8")
-                            ).hexdigest()
-                        ):
-                            raise FieldEffectError("persistence")
-                    elif source_kind == "automatic_decision":
-                        projected_automatic = automatic_decisions.get(
-                            cast(str, source_identity)
-                        )
-                        if (
-                            projected_automatic is None
-                            or projected_automatic.decision_id != event_id
-                            or projected_automatic.decision_id != source_identity
-                            or projected_automatic.destination != destination
-                            or projected_automatic.occurred_at != occurred_at
-                            or origin != "automatic_policy"
-                            or projected_automatic.review_case_id != source_parent_id
-                            or projected_automatic.report_id != report_id
-                            or projected_automatic.to_json() != document
-                        ):
-                            raise FieldEffectError("persistence")
-                    elif source_kind == "cover_safeguard":
-                        if source_document is None:
-                            raise FieldEffectError("persistence")
-                        consideration = json.loads(source_document)
-                        if type(consideration) is not dict:
-                            raise FieldEffectError("persistence")
-                        reviewer_status = consideration.get("reviewer_status")
-                        event_keys = {
-                            "consideration_id",
-                            "decision_id",
-                            "kind",
-                            "occurred_at",
-                            "review_case_id",
-                            "schema_version",
-                        }
-                        if (
-                            set(raw) != event_keys
-                            or raw.get("schema_version")
-                            != "cover-consideration-event-v1"
-                            or raw.get("consideration_id") != source_identity
-                            or raw.get("kind")
-                            not in {
-                                "automatic_prepared",
-                                "owner_retry_prepared",
-                                "superseded",
-                                "selected",
-                                "kept_incumbent",
-                                "no_action",
-                                "stale",
-                            }
-                            or (
-                                raw.get("kind")
-                                in {"automatic_prepared", "owner_retry_prepared"}
-                                and reviewer_status
-                                not in {"completed", "unavailable", "failed"}
-                            )
-                            or state
-                            != (
-                                reviewer_status
-                                if raw.get("kind")
-                                in {"automatic_prepared", "owner_retry_prepared"}
-                                else raw.get("kind")
-                            )
-                            or (
-                                raw.get("kind") == "automatic_prepared"
-                                and (origin, projected_type)
-                                != ("automatic_pipeline", "metadata")
-                            )
-                            or (
-                                raw.get("kind") == "owner_retry_prepared"
-                                and (origin, projected_type)
-                                != ("owner_retry", "review")
-                            )
-                            or (
-                                raw.get("kind")
-                                in {"selected", "kept_incumbent", "no_action"}
-                                and (origin, projected_type) != ("human", "review")
-                            )
-                            or (
-                                raw.get("kind") in {"stale", "superseded"}
-                                and (origin, projected_type) != ("unknown", "safety")
-                            )
-                            or raw.get("occurred_at") != occurred_at
-                            or raw.get("review_case_id") != source_parent_id
-                            or _canonical_json(raw) != document
-                            or event_id
-                            != "cover_consideration_event_"
-                            + hashlib.sha256(document.encode("utf-8")).hexdigest()
-                        ):
-                            raise FieldEffectError("persistence")
-                    elif raw or document != "{}" or source_document is not None:
-                        raise FieldEffectError("persistence")
-                except (
-                    AutomaticDecisionError,
-                    HumanDecisionError,
-                    TypeError,
-                    ValueError,
-                ) as error:
-                    raise FieldEffectError("persistence") from error
-                event_title = scalar(title, nullable=True)
-                failure = scalar(raw.get("failure"), nullable=True)
-                if report_id is not None:
-                    scalar(report_id)
-                if search is not None and report_id is None:
-                    # The public renderer accepts a value-free historical row
-                    # without a report join.  It must not receive a current
-                    # connection/title pair that this immutable event did not
-                    # name.
-                    connection = None
-                # Every fact below leaves this loop from the document that
-                # was just checked against its own identity above, so an
-                # Activity row is a function of one immutable event and
-                # nothing else -- a later catalogue change cannot move it.
-                # The owner-facing words are composed one layer out, where the
-                # pinned report is already parsed; ``record`` is the closed
-                # private carrier the application consumes and removes, the
-                # same way ``connection`` and ``report_id`` are consumed there.
-                durable: dict[str, object] = {"source_kind": source_kind}
-                if source_kind == "field_effect":
-                    durable["pre_value"] = raw["pre_value"]
-                    durable["desired_value"] = raw["desired_value"]
-                elif source_kind == "human_decision":
-                    if not isinstance(decision, HumanDecision):
-                        raise FieldEffectError("persistence")
-                    durable["selected_value"] = decision.selected_value
-                    durable["target_fingerprint"] = decision.target_fingerprint
-                elif source_kind == "automatic_decision":
-                    if projected_automatic is None:
-                        raise FieldEffectError("persistence")
-                    automatic_report_document = report_documents.get(
-                        projected_automatic.report_id
-                    )
-                    if automatic_report_document is None:
-                        raise FieldEffectError("persistence")
-                    authority = automatic_authority.get(
-                        (
-                            projected_automatic.review_case_id,
-                            projected_automatic.report_id,
-                            projected_automatic.proposal_set_id,
-                            projected_automatic.resolved_policy_id,
-                        )
-                    )
-                    if authority is None:
-                        durable["source_kind"] = "degraded"
-                        durable["degraded_reason"] = AUTOMATIC_AUTHORITY_UNAVAILABLE
-                        append_event(
-                            {
-                                "connection": connection,
-                                "destination": destination,
-                                "event_id": event_id,
-                                "event_type": projected_type,
-                                "failure": None,
-                                "library": library,
-                                "occurred_at": occurred_at,
-                                "origin": origin,
-                                "report_id": report_id,
-                                "state": state,
-                                "work_id": work_id,
-                                **({"work_label": event_title} if event_title else {}),
-                                "record": durable,
-                            }
-                        )
-                        continue
-                    try:
-                        case, proposal, outcome = authority
-                        report = MetadataReport.from_json(automatic_report_document)
-                        if projected_automatic.outcome in {"candidate", "keep_current"}:
-                            selected_value = _automatic_decision_value(
-                                projected_automatic, case, report, proposal, outcome
-                            )
-                        else:
-                            _validate_automatic_decision_authority(
-                                projected_automatic, case, report, proposal, outcome
-                            )
-                            selected_value = None
-                    except FieldEffectError as error:
-                        # A retained decision can outlive the exact authority
-                        # aggregate it names. That is an event-local inability
-                        # to disclose its selected value, not a reason to hide
-                        # unrelated audit truth. Only the closed authority
-                        # binding refusal degrades; corrupt persistence still
-                        # reaches the outer fail-closed boundary.
-                        if error.code != "authority_binding":
-                            raise
-                        durable["source_kind"] = "degraded"
-                        durable["degraded_reason"] = AUTOMATIC_AUTHORITY_UNAVAILABLE
-                        append_event(
-                            {
-                                "connection": connection,
-                                "destination": destination,
-                                "event_id": event_id,
-                                "event_type": projected_type,
-                                "failure": None,
-                                "library": library,
-                                "occurred_at": occurred_at,
-                                "origin": origin,
-                                "report_id": report_id,
-                                "state": state,
-                                "work_id": work_id,
-                                **({"work_label": event_title} if event_title else {}),
-                                "record": durable,
-                            }
-                        )
-                        continue
-                    except (
-                        ReportValueError,
-                        ProposalValueError,
-                        RichMetadataPreviewError,
-                        ShadowOutcomeError,
-                        TypeError,
-                        ValueError,
-                    ) as error:
-                        raise FieldEffectError("persistence") from error
-                    durable["policy_category"] = projected_automatic.policy_category
-                    durable["policy_option"] = projected_automatic.policy_option
-                    durable["policy_generation"] = projected_automatic.policy_generation
-                    durable["outcome"] = projected_automatic.outcome
-                    durable["selected_value"] = selected_value
-                    durable["target_fingerprint"] = (
-                        projected_automatic.target_fingerprint
-                    )
-                elif source_kind == "field_effect_no_change":
-                    durable["target_fingerprint"] = self._connection.execute(
-                        "SELECT target_fingerprint FROM field_effect_no_changes WHERE decision_id=?",
-                        (source_identity,),
-                    ).fetchone()[0]
-                elif source_kind == "cover_safeguard":
-                    durable["kind"] = raw["kind"]
-                elif source_kind == "policy_transition":
-                    durable["generation"] = scalar(detail)
-                    durable["policy_changes"] = _policy_changes(
-                        policy_profiles, policy_from, policy_to
-                    )
-                if failure is not None:
-                    durable["failure"] = failure
-                if (
-                    type(occurred_at) is not int
-                    or not 0 <= occurred_at <= 253_402_300_799
-                ):
-                    raise FieldEffectError("persistence")
-                append_event(
-                    {
-                        "connection": connection,
-                        "destination": destination,
-                        "event_id": event_id,
-                        "event_type": projected_type,
-                        "failure": failure,
-                        "library": library,
-                        "occurred_at": occurred_at,
-                        "origin": origin,
-                        "report_id": report_id,
-                        "state": state,
-                        "work_id": work_id,
-                        **({"work_label": event_title} if event_title else {}),
-                        "record": durable,
-                    }
+            if search is None:
+                projected_events, report_documents, _ = self._project_activity_rows(
+                    rows,
+                    document_limit=document_limit,
+                    scalar_limit=scalar_limit,
+                    searched=False,
                 )
-            if search is not None:
+            else:
+                matched: list[tuple[dict[str, object], str | None]] = []
+                trailing: deque[tuple[dict[str, object], str | None]] = deque(
+                    maxlen=page_size
+                )
+                matched_count = 0
+                cursor = self._connection.execute(
+                    projection
+                    + columns
+                    + predicate
+                    + " ORDER BY occurred_at DESC,event_id DESC",
+                    parameters,
+                )
+                while batch := cursor.fetchmany(64):
+                    batch_events, batch_documents, reports = (
+                        self._project_activity_rows(
+                            batch,
+                            document_limit=document_limit,
+                            scalar_limit=scalar_limit,
+                            searched=True,
+                        )
+                    )
+                    for event in batch_events:
+                        report_id = event.get("report_id")
+                        report = (
+                            reports.get(report_id) if type(report_id) is str else None
+                        )
+                        if search not in activity_search_text(event, report):
+                            continue
+                        report_document = (
+                            batch_documents.get(report_id)
+                            if type(report_id) is str
+                            else None
+                        )
+                        retained = (event, report_document)
+                        if (page - 1) * page_size <= matched_count < page * page_size:
+                            matched.append(retained)
+                        trailing.append(retained)
+                        matched_count += 1
                 total = matched_count
                 page_count = max(1, (total + page_size - 1) // page_size)
                 selected_page = min(page, page_count)
-                projected_events = matched if selected_page == page else list(trailing)
+                selected = matched if selected_page == page else list(trailing)
+                projected_events = [event for event, _ in selected]
+                report_documents = {
+                    cast(str, event["report_id"]): document
+                    for event, document in selected
+                    if type(event.get("report_id")) is str and document is not None
+                }
             waiting = self._connection.execute(
                 "SELECT effect.connection_name,effect.destination,effect.library_name,effect.work_id,effect.state,"
                 "lineage.report_id FROM field_effects effect "
