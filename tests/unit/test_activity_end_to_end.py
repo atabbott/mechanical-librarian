@@ -27,11 +27,11 @@ from mechanical_librarian.application.field_effects import (
     AuthoritySnapshot,
     GuardedFieldApplication,
 )
-from mechanical_librarian.domain.field_effect import EffectAuthority
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
 )
+from mechanical_librarian.domain.field_effect import EffectAuthority
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
