@@ -1478,6 +1478,25 @@ def test_unicode_series_names_preserve_label_and_order_first_forms(
 @pytest.mark.parametrize(
     "markup",
     (
+        "<p>élan Cycle Book 2</p>",
+        "<p>ёлка Cycle Book 2</p>",
+        "<p>Book 2 of élan Cycle</p>",
+        "<p>Book 2 of ёлка Cycle</p>",
+    ),
+)
+def test_unicode_series_names_require_explicit_cased_or_numeric_tokens(
+    markup: str,
+) -> None:
+    claims = _extract(_single(_xhtml(markup))).claims
+    assert not {claim.field for claim in claims} & {
+        OpeningField.SERIES,
+        OpeningField.SERIES_ORDER,
+    }
+
+
+@pytest.mark.parametrize(
+    "markup",
+    (
         "<p>Series: a series of historical mysteries</p>",
         "<p>Book 2 of Clockwork Archive coming soon</p>",
         "<p>Book 2 of Clockwork Archive today!</p>",

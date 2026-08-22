@@ -416,8 +416,22 @@ _CONTEXTUAL_CREDITS = (
     ),
     (re.compile(rf"\bworkflow\s*[:\-]\s*{_CREDIT_NAME_TEXT}", re.I), "workflow"),
 )
-_SERIES_NAME_TOKEN = r"(?:[A-Z0-9]|[^\W_a-z])[\w'’(),!?.-]*"
-_SERIES_NAME_CONNECTOR = r"(?:a|an|and|at|in|of|on|or|the|to|with|&)"
+_SERIES_NAME_TOKEN = r"[^\W_][\w'’(),!?.-]*"
+_SERIES_NAME_CONNECTOR_WORDS = (
+    "a",
+    "an",
+    "and",
+    "at",
+    "in",
+    "of",
+    "on",
+    "or",
+    "the",
+    "to",
+    "with",
+    "&",
+)
+_SERIES_NAME_CONNECTOR = rf"(?:{'|'.join(_SERIES_NAME_CONNECTOR_WORDS)})"
 _SERIES_NAME = (
     rf"{_SERIES_NAME_TOKEN}(?:\s+(?:{_SERIES_NAME_TOKEN}|{_SERIES_NAME_CONNECTOR}))*"
 )
@@ -2606,6 +2620,16 @@ def _indicia_credits(
     )
 
 
+def _has_explicit_series_name_tokens(name: str) -> bool:
+    return all(
+        token.casefold() in _SERIES_NAME_CONNECTOR_WORDS
+        or token[0].isupper()
+        or token[0].istitle()
+        or token[0].isdigit()
+        for token in name.split()
+    )
+
+
 def _series_indicia(
     value: str, *, allow_name_first: bool = False
 ) -> tuple[str | None, str] | None:
@@ -2624,6 +2648,8 @@ def _series_indicia(
     )
     if membership is not None:
         name = membership.group("name").strip()
+        if not _has_explicit_series_name_tokens(name):
+            return None
         reserved = _SERIES_RESERVED_NAME_BOUNDARY.search(name)
         if reserved is not None and (
             reserved.lastgroup != "name_first" or membership.re is _SERIES_NAME_FIRST
@@ -2633,6 +2659,8 @@ def _series_indicia(
     labelled = _SERIES_LABEL.fullmatch(text)
     if labelled is not None:
         name = labelled.group("name").strip()
+        if not _has_explicit_series_name_tokens(name):
+            return None
         reserved = _SERIES_RESERVED_NAME_BOUNDARY.search(name)
         if reserved is not None and reserved.lastgroup != "name_first":
             return None
