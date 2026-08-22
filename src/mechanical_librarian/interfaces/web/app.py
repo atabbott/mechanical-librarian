@@ -38,7 +38,10 @@ from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.field_effects import GuardedApplicationError
-from mechanical_librarian.application.live_updates import LiveUpdateCapacityError
+from mechanical_librarian.application.live_updates import (
+    LiveUpdateCapacityError,
+    LiveUpdateSubscription,
+)
 from mechanical_librarian.application.metadata_policy import (
     MetadataPolicyApplicationError,
     PolicyTransition,
@@ -107,6 +110,27 @@ _FIELD_EFFECT_STATE_CONFLICT = frozenset(
 
 _Result = TypeVar("_Result")
 _SessionDependency: TypeAlias = Callable[[Request, str | None], str]
+
+
+class _LiveUpdateStreamingResponse(StreamingResponse):
+    """Release a reserved reader even when the response never reaches its body."""
+
+    def __init__(
+        self,
+        content: AsyncIterator[bytes],
+        subscription: LiveUpdateSubscription,
+        *,
+        media_type: str,
+        headers: dict[str, str],
+    ) -> None:
+        super().__init__(content, media_type=media_type, headers=headers)
+        self._subscription = subscription
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._subscription.close()
 
 
 class _LoginRequest(BaseModel):
@@ -2550,12 +2574,13 @@ def _register_live_update_route(
                 return False
             return True
 
-        return StreamingResponse(
+        return _LiveUpdateStreamingResponse(
             live_stream.stream_frames(
                 subscription,
                 channel.epoch,
                 still_authenticated=still_authenticated,
             ),
+            subscription,
             media_type="text/event-stream",
             headers={"X-Accel-Buffering": "no"},
         )
