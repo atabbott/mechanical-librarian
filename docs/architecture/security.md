@@ -245,6 +245,17 @@ high-entropy session and CSRF tokens. Expired session rows are removed during
 login, logout records revocation, and failed logins use a durable five-attempt
 per five-minute global throttle without retaining client addresses.
 
+ADR-0058's empty-volume setup state does not add an unauthenticated mutation
+path. Its setup login assets and fixed failure envelope occupy the existing
+login boundary; every wizard read or mutation requires a session minted only
+after verification against the owner-only bootstrap verifier, plus the ordinary
+CSRF and Origin checks for a mutation. That verifier is admitted only while
+`/data` is empty and no durable setup-completion record exists; the atomic
+handoff and restart stop reading it, permanently close setup routes, and return
+to the ordinary owner-session boundary. An unauthenticated client therefore
+cannot claim ownership, stage settings, complete setup, or reach a generic
+write route.
+
 The server receives a composed application boundary rather than a database or
 broad repository. Authentication, currentness, decisions, policy, preparation,
 Activity, guarded effects, recovery, and support execute as named application
