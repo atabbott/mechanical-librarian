@@ -167,11 +167,13 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "LIMIT 1",
                 (claimed_at, control[1] or ""),
             ).fetchone()
-            ordering = (
-                "updated_at DESC,ordinal"
-                if control[0] % 4 == 0
-                else "updated_at,ordinal"
-            )
+            # `ordinal` is the persisted discovery order for this cohort. A
+            # stage transition deliberately changes `updated_at`, so using it
+            # here makes an early work fall behind work still waiting at the
+            # preceding stage and turns first-ready latency into a full-stage
+            # drain. Ineligible rows are excluded above; every eligible
+            # successor therefore keeps its cohort position across stages.
+            ordering = "ordinal"
             work = (
                 None
                 if library is None

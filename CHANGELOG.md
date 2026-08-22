@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep each preparation cohort's persisted discovery order across every
+  eligible stage, so early works reach Library without waiting for a stage
+  drain; attention rows with complete provider evidence now precede currently
+  provider-limited rows without hiding either. (#826, #827)
+
 - Set the first-run and in-app settings authority: file-managed deployments
   remain unchanged, store-mode secrets are write-only and backup-protected, and
   only an empty `/data` volume may enter setup. (#762)

@@ -1095,16 +1095,23 @@ def test_thousand_work_three_library_backlog_is_bounded_and_fair(
     total = repository._connection.execute(
         "SELECT COUNT(*) FROM review_preparation_work"
     ).fetchone()
-    claimed = []
+    claimed: list[tuple[str, str]] = []
     for timestamp in range(40, 49):
         action = repository.claim_review_pipeline_action(timestamp)
         assert action is not None
-        claimed.append(action.library)
+        assert action.item_id is not None
+        claimed.append((action.library, action.item_id))
         repository.fail_review_pipeline_action(action, "failed", False, timestamp)
     repository.close()
     assert total == (1000,)
     for start in range(0, 9, 3):
-        assert set(claimed[start : start + 3]) == {item[0] for item in libraries}
+        assert {library for library, _ in claimed[start : start + 3]} == {
+            item[0] for item in libraries
+        }
+    for library, count in libraries:
+        assert [
+            item for claimed_library, item in claimed if claimed_library == library
+        ] == sorted(f"{library}-{index}" for index in range(count))[:3]
 
 
 def test_oversized_fairness_cursor_fails_closed(application_path: Path) -> None:
@@ -1124,7 +1131,7 @@ def test_oversized_fairness_cursor_fails_closed(application_path: Path) -> None:
     repository.close()
 
 
-def test_claims_age_backlog_and_reserve_every_fourth_for_recent_work(
+def test_claims_keep_discovery_order_across_normal_successor_stages(
     application_path: Path,
 ) -> None:
     repository = open_repository(application_path)
@@ -1135,36 +1142,29 @@ def test_claims_age_backlog_and_reserve_every_fourth_for_recent_work(
         discovery,
         1,
         "a" * 64,
-        (_entry("old", "1" * 64), _entry("recent", "2" * 64)),
+        (
+            _entry("first", "1" * 64),
+            _entry("second", "2" * 64),
+            _entry("third", "3" * 64),
+        ),
         12,
     )
-    repository._connection.execute(
-        "UPDATE review_preparation_work SET updated_at=10 WHERE item_id='old'"
-    )
-    repository._connection.execute(
-        "UPDATE review_preparation_work SET updated_at=20 WHERE item_id='recent'"
-    )
-    repository._connection.execute(
-        "UPDATE review_preparation_control SET claim_sequence=? WHERE singleton=1",
-        (1,),
-    )
-    repository._connection.commit()
-    aged = repository.claim_review_pipeline_action(30)
-    assert aged is not None
-    repository.fail_review_pipeline_action(aged, "failed", False, 31)
-    repository._connection.execute(
-        "UPDATE review_preparation_control SET claim_sequence=? WHERE singleton=1",
-        (4,),
-    )
-    repository._connection.execute(
-        "UPDATE review_preparation_work SET state='queued',updated_at=10 "
-        "WHERE item_id='old'"
-    )
-    repository._connection.commit()
-    recent = repository.claim_review_pipeline_action(32)
+    action = repository.claim_review_pipeline_action(13)
+    assert action is not None
+    observed = []
+    for timestamp in range(14, 18):
+        assert action is not None
+        observed.append((action.stage, action.item_id))
+        action = repository.advance_review_pipeline_action(
+            action, None, timestamp, True
+        )
     repository.close()
-    assert recent is not None
-    assert (aged.item_id, recent.item_id) == ("old", "recent")
+    assert observed == [
+        ("extraction", "first"),
+        ("provider", "first"),
+        ("proposal", "first"),
+        ("admission", "first"),
+    ]
 
 
 def test_advance_atomically_claims_recoverable_next_action(

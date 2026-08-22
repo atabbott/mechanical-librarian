@@ -486,7 +486,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     "'library',library_name,'recovery_attempt',recovery_attempt,"
                     "'schema_version','review-terminal-work-v1','status',failure_code,"
                     "'work_id',work_id),NULL,connection_name,library_name,item_id,NULL,"
-                    "1,'preparation unavailable','' FROM review_preparation_work "
+                    "1,0,'preparation unavailable','' FROM review_preparation_work "
                     "WHERE state='failed' AND failure_code IS NOT NULL AND NOT EXISTS ("
                     "SELECT 1 FROM current_review_packages p WHERE "
                     "p.connection_name=review_preparation_work.connection_name AND "
@@ -510,6 +510,20 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "CASE WHEN "
                 + _REVIEW_ATTENTION_SQL
                 + " THEN 0 ELSE 1 END AS attention_order,"
+                # A report's provider lanes are current evidence, not a
+                # second workflow state. Aggregate-only observations have no
+                # lanes, so the LEFT JOIN falls back to their own status.
+                # Provider completeness matters only inside the attention
+                # group: the no-attention lens remains alphabetical.
+                "CASE WHEN "
+                + _REVIEW_ATTENTION_SQL
+                + " AND EXISTS(SELECT 1 FROM json_each(mr.document,'$.providers') provider "
+                "LEFT JOIN json_each(provider.value,'$.lanes') lane ON 1 "
+                "WHERE COALESCE(json_extract(lane.value,'$.status'),"
+                "json_extract(provider.value,'$.status')) IN ("
+                "'authentication','authorization','rate_limited','unavailable',"
+                "'incomplete','malformed','oversized','candidate_limit_exceeded',"
+                "'query_limit_exceeded')) THEN 1 ELSE 0 END AS provider_order,"
                 "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) AS title_order,"
                 "COALESCE(rc.review_case_id,'') AS case_order "
                 + _CURRENT_LIBRARY_FROM_SQL
@@ -517,7 +531,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 + condition
                 + _REVIEW_SEARCH_SQL
                 + terminal_union
-                + ") ORDER BY attention_order,title_order,library_name,item_id,"
+                + ") ORDER BY attention_order,provider_order,title_order,library_name,item_id,"
                 "connection_name,case_order LIMIT ? OFFSET ?",
                 tuple(parameters),
             ).fetchall()
