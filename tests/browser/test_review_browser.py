@@ -791,6 +791,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 assert documents == initial_documents
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
                 page.locator(".workspace-detail").wait_for()
+                page.get_by_role(
+                    "heading", name="Which title should this work use?"
+                ).wait_for()
                 assert page.locator(".workspace-detail").evaluate(
                     "node => node === document.activeElement"
                 )
