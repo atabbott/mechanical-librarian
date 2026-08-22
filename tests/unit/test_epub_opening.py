@@ -1399,7 +1399,15 @@ def test_explicit_series_label_retains_an_unpositioned_membership() -> None:
     ] == [(OpeningField.SERIES, "Clockwork Archive")]
 
 
-@pytest.mark.parametrize("heading", ("Reading order", "Publication order"))
+@pytest.mark.parametrize(
+    "heading",
+    (
+        "Reading order",
+        "Publication order",
+        "Books in reading order",
+        "Clockwork Archive publication order",
+    ),
+)
 def test_order_heading_excludes_its_forward_series_scope(heading: str) -> None:
     report = _extract(
         _single(_xhtml(f"<h2>{heading}</h2><p>Book 2 of Clockwork Archive</p>"))
@@ -1426,12 +1434,29 @@ def test_closed_series_forms_preserve_name_first_and_internal_punctuation(
     )
 
 
+def test_closed_series_name_grammar_preserves_explicit_connectors_without_a_word_cap() -> (
+    None
+):
+    claims = _extract(_single(_xhtml("<p>Book 2 of A Song of Ice and Fire</p>"))).claims
+    assert [
+        (claim.field, claim.normalized_value)
+        for claim in claims
+        if claim.field in {OpeningField.SERIES, OpeningField.SERIES_ORDER}
+    ] == [
+        (OpeningField.SERIES_ORDER, "2"),
+        (OpeningField.SERIES, "A Song of Ice and Fire"),
+    ]
+
+
 @pytest.mark.parametrize(
     "markup",
     (
         "<p>Series: a series of historical mysteries</p>",
         "<p>Book 2 of Clockwork Archive coming soon</p>",
         "<p>Book 2 of Clockwork Archive today!</p>",
+        "<p>Book 2 of Clockwork Archive by Ada</p>",
+        "<p>Book 2 of Clockwork Archive for sale</p>",
+        "<p>Book 2 of Clockwork Archive continues</p>",
     ),
 )
 def test_series_trailing_clauses_are_rejected(markup: str) -> None:
@@ -1458,23 +1483,25 @@ def test_opening_fact_limit_keeps_a_series_pair_atomic() -> None:
     "markup",
     (
         "<p>Read Clockwork Archive Book 2.5</p>",
+        "<p>Buy Clockwork Archive Book 2.5</p>",
+        "<p>New Clockwork Archive Book 2.5</p>",
         "<p>Discover Clockwork Archive Volume 2.5</p>",
         "<p>Clockwork Archive Book II</p>",
         "<p>Clockwork Archive Book Two</p>",
         "<p>Clockwork Archive Book 2.5 revised</p>",
         "<p>Read Clockwork Archive Book 2.5 today</p>",
         "<h2>Clockwork Archive Book 2.5</h2>",
-        "<p>One Two Three Four Five Six Seven Book 2.5</p>",
     ),
     ids=(
         "read_prefix",
+        "buy_prefix",
+        "new_prefix",
         "discover_volume",
         "roman_order",
         "word_order",
         "revised_tail",
         "promotional_tail",
         "heading_element",
-        "long_lead_in",
     ),
 )
 def test_trailing_series_cue_variants_are_rejected(markup: str) -> None:

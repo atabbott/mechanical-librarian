@@ -947,6 +947,8 @@ class LocalClaim:
             ClaimKind.SUBTITLE,
             ClaimKind.CREATOR,
             ClaimKind.CONTRIBUTOR,
+            ClaimKind.SERIES,
+            ClaimKind.SERIES_SEQUENCE,
             ClaimKind.ISBN,
             ClaimKind.PUBLICATION_DATE,
             ClaimKind.DATE_EVENT,

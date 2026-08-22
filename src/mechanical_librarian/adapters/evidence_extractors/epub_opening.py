@@ -416,22 +416,21 @@ _CONTEXTUAL_CREDITS = (
     ),
     (re.compile(rf"\bworkflow\s*[:\-]\s*{_CREDIT_NAME_TEXT}", re.I), "workflow"),
 )
-_SERIES_NAME = r"[\w][\w &'’(),!?.-]*[\w)!?]"
+_SERIES_NAME_TOKEN = r"[A-Z0-9][\w'’(),!?.-]*"
+_SERIES_NAME_CONNECTOR = r"(?:a|an|and|at|in|of|on|or|the|to|with|&)"
+_SERIES_NAME = (
+    rf"{_SERIES_NAME_TOKEN}(?:\s+(?:{_SERIES_NAME_TOKEN}|{_SERIES_NAME_CONNECTOR}))*"
+)
 _SERIES_MEMBERSHIP = re.compile(
-    r"(?:book|volume|part)\s+(?P<sequence>[0-9]+(?:\.[0-9]+)?)\s+"
-    rf"(?:of|in)\s+(?:the\s+)?(?P<name>{_SERIES_NAME})",
-    re.I,
+    r"(?i:book|volume|part)\s+(?P<sequence>[0-9]+(?:\.[0-9]+)?)\s+"
+    rf"(?i:of|in)\s+(?:(?i:the)\s+)?(?P<name>{_SERIES_NAME})",
 )
 _SERIES_NAME_FIRST = re.compile(
-    rf"(?P<name>{_SERIES_NAME})\s+(?:book|volume|part)\s+"
+    rf"(?P<name>{_SERIES_NAME})\s+(?i:book|volume|part)\s+"
     r"(?P<sequence>[0-9]+(?:\.[0-9]+)?)",
-    re.I,
 )
-_SERIES_LABEL = re.compile(rf"series\s*:\s*(?P<name>{_SERIES_NAME})", re.I)
-_SERIES_TRAILING_AMBIGUITY = re.compile(
-    r"(?:^a\s+series\s+of\b.*|\b(?:available|coming\s+soon|now|revised|today)\b[!?.]*$)",
-    re.I,
-)
+_SERIES_LABEL = re.compile(rf"(?i:series)\s*:\s*(?P<name>{_SERIES_NAME})")
+_SERIES_NAME_FIRST_LEAD = re.compile(r"^(?:buy|discover|new|read)\b", re.I)
 _EBOOK_LABEL = re.compile(
     r"(?<![\w])(?:e[\s-]?book|epub|electronic|digital)(?![\w])",
     re.I,
@@ -449,7 +448,8 @@ _INDICIA_PROMOTION_NOTICE = re.compile(
     r"^\s*(?:advertisement|preview(?:\s+of\b.*)?|"
     r"sample(?:\s+(?:chapter|excerpt|of)\b.*)?|"
     r"also by(?:\b.*)?|other works? by(?:\b.*)?|"
-    r"(?:reading|publication)\s+order)\s*[:.!]?\s*$",
+    rf"(?:(?:(?:books?|volumes?|parts?)\s+in\s+)?(?:reading|publication)\s+order"
+    rf"|(?-i:{_SERIES_NAME})\s+(?:reading|publication)\s+order))\s*[:.!]?\s*$",
     re.I,
 )
 _CHARSET_PARAMETER = re.compile(
@@ -2617,18 +2617,13 @@ def _series_indicia(
     )
     if membership is not None:
         name = membership.group("name").strip()
-        if (
-            _SERIES_TRAILING_AMBIGUITY.search(name) is not None
-            or re.match(r"^(?:discover|read)\b", name, re.I) is not None
-            or len(name.split()) > 4
-        ):
+        if allow_name_first and _SERIES_NAME_FIRST_LEAD.match(name) is not None:
             return None
         return membership.group("sequence"), name
     labelled = _SERIES_LABEL.fullmatch(text)
     if labelled is not None:
         name = labelled.group("name").strip()
-        if _SERIES_TRAILING_AMBIGUITY.search(name) is None:
-            return None, name
+        return None, name
     return None
 
 

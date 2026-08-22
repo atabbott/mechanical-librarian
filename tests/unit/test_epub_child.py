@@ -35,6 +35,9 @@ from mechanical_librarian.adapters.evidence_extractors.epub_package_model import
 from mechanical_librarian.adapters.evidence_extractors.process import (
     run_epub_inspector_child,
 )
+from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.application.configuration import MediaMountConfiguration
+from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.epub_inspection import (
     DateEvent,
     DatePrecision,
@@ -970,6 +973,44 @@ def test_rear_indicia_retains_correlated_multiple_series_memberships() -> None:
     )
 
 
+def test_isolated_inspector_maps_rear_series_to_canonical_report_claims(
+    tmp_path: Path,
+) -> None:
+    request, _ = _bundle(
+        _xhtml("<p>All rights reserved</p><p>Book 2.5 of the Clockwork Archive</p>")
+    )
+    payload = request.source.read_at(0, request.source.length)
+    (tmp_path / "book.epub").write_bytes(payload)
+    inspection = composition._IsolatedEpubInspector(
+        CoverArtifactStore(tmp_path / "artifacts")
+    ).inspect(
+        MediaMountConfiguration("books", str(tmp_path), "/library", True),
+        "book.epub",
+        len(payload) + 1,
+    )
+    series_claims = tuple(
+        claim
+        for claim in inspection.claims
+        if claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
+    )
+    assert [(claim.kind, claim.canonical) for claim in series_claims] == [
+        (ClaimKind.SERIES_SEQUENCE, "2.5"),
+        (ClaimKind.SERIES, "Clockwork Archive"),
+    ]
+    assert all(claim.rear_provenance is not None for claim in series_claims)
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", "item-1", default_target_fields("Current title")
+        ),
+        file=FileFacts(0, "a" * 64, inspection.content_digest),
+        local_claims=inspection.claims,
+        local_reasons=("opening_matter",),
+        providers=(),
+    )
+    assert MetadataReport.from_json(report.to_json()) == report
+    assert str(tmp_path) not in report.to_json()
+
+
 @pytest.mark.parametrize(
     "markup",
     (
@@ -991,7 +1032,15 @@ def test_rear_indicia_rejects_prose_catalogue_and_trailing_series_ambiguity(
     )
 
 
-@pytest.mark.parametrize("heading", ("Reading order", "Publication order"))
+@pytest.mark.parametrize(
+    "heading",
+    (
+        "Reading order",
+        "Publication order",
+        "Books in reading order",
+        "Clockwork Archive publication order",
+    ),
+)
 def test_rear_order_heading_excludes_its_forward_series_scope(heading: str) -> None:
     request, (package, opening, _) = _bundle(
         _xhtml(
@@ -1024,6 +1073,38 @@ def test_rear_series_trailing_clauses_are_rejected(markup: str) -> None:
         fact.field in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
         for fact in facts
     )
+
+
+@pytest.mark.parametrize(
+    "markup",
+    (
+        "<p>Book 2 of A Song of Ice and Fire</p>",
+        "<p>Book 2 of Clockwork Archive by Ada</p>",
+        "<p>Book 2 of Clockwork Archive for sale</p>",
+        "<p>Book 2 of Clockwork Archive continues</p>",
+        "<p>Buy Clockwork Archive Book 2</p>",
+        "<p>New Clockwork Archive Book 2</p>",
+    ),
+)
+def test_rear_series_name_grammar_is_closed(markup: str) -> None:
+    request, (package, opening, _) = _bundle(
+        _xhtml("<p>All rights reserved</p>" + markup)
+    )
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        facts = child._rear_facts(request, package, opening, archive)
+    series = tuple(
+        (fact.field, fact.canonical_value)
+        for fact in facts
+        if fact.field
+        in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
+    )
+    if "A Song" in markup:
+        assert series == (
+            (EpubInspectionField.SERIES_SEQUENCE, "2"),
+            (EpubInspectionField.SERIES, "A Song of Ice and Fire"),
+        )
+    else:
+        assert series == ()
 
 
 def test_rear_fact_limit_keeps_a_series_pair_atomic() -> None:
