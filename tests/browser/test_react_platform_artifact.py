@@ -1355,6 +1355,21 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             )
             == "fixed"
         )
+
+        def attention_rail_clears_masthead() -> None:
+            # Visibility does not wait for the fixed rail's `top` calculation.
+            # Measure only after the masthead-to-rail clearance reaches its
+            # accepted layout state.
+            page.wait_for_function(
+                """() => {
+                  const masthead = document.querySelector('.masthead')
+                  const rail = document.querySelector('.attention-rail')
+                  return masthead !== null && rail !== null
+                    && rail.getBoundingClientRect().y >= masthead.getBoundingClientRect().bottom + 8
+                }"""
+            )
+
+        attention_rail_clears_masthead()
         assert page.locator(".attention-rail").bounding_box()["y"] >= (
             page.locator(".masthead").bounding_box()["y"]
             + page.locator(".masthead").bounding_box()["height"]
@@ -1370,14 +1385,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             == "fixed"
         )
         page.locator(".masthead").evaluate("node => { node.style.minHeight = '220px' }")
-        page.wait_for_function(
-            """() => {
-              const masthead = document.querySelector('.masthead')
-              const rail = document.querySelector('.attention-rail')
-              return masthead !== null && rail !== null
-                && rail.getBoundingClientRect().y >= masthead.getBoundingClientRect().bottom + 8
-            }"""
-        )
+        attention_rail_clears_masthead()
         assert page.evaluate("() => document.documentElement.scrollWidth") <= 900
         page.locator(".attention-rail header button").click()
 
@@ -1411,6 +1419,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_role("button", name="Attention queue").click()
         expect(page.locator(".attention-rail")).to_be_visible()
         expect(page.locator(".attention-rail")).to_be_focused()
+        attention_rail_clears_masthead()
         assert page.locator(".attention-rail").bounding_box()["y"] >= (
             page.locator(".masthead").bounding_box()["y"]
             + page.locator(".masthead").bounding_box()["height"]
