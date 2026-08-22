@@ -40,6 +40,23 @@ grant current behavior.
 - Use diagrams only where relationships are materially clearer than prose.
 - Add alternative text or textual explanation for diagrams.
 
+For a substantial new document or rewrite, choose one primary shape before
+writing:
+
+- a tutorial helps a reader learn by completing a guided result;
+- a how-to gives an experienced reader steps to a goal;
+- reference states exact facts, options, limits, and errors for lookup; and
+- explanation develops understanding of one bounded question or decision.
+
+Split and link when combining those shapes would obscure the reader's task.
+Write instructions as direct commands, put applicable conditions before the
+action, and put the common case before exceptions. Use present-tense active
+sentences where the actor matters. Keep one instruction or thought in a
+sentence when combining them creates ambiguity. Repeat a noun instead of using
+an unclear pronoun, keep `only` or `not` beside the words they modify, and keep
+articles or connecting words that make a sentence parse only one way. Prefer
+plain words and real symbols; remove filler without making the prose cryptic.
+
 ## Change rules
 
 - Behavior changes update documentation in the same pull request.
@@ -134,9 +151,11 @@ interfaces change faster than contracts.
 ## Documentation review checklist
 
 - Is the intended reader clear?
+- Does a substantial document have one clear primary shape?
 - Is the documented behavior implemented and tested?
 - Are failure and recovery paths included?
 - Are safety warnings proportionate and actionable?
 - Does the document reveal private information?
 - Is another document already authoritative?
+- Can any instruction or sentence be read in two materially different ways?
 - Will the document still be understandable without issue or chat context?

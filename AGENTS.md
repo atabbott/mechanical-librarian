@@ -24,6 +24,47 @@ is the ordered ledger of what is planned, not a rulebook.
 their own subject. Reading a reference you do not need costs the session more
 than it returns.
 
+## Waiting and asynchronous work
+
+Minimize model-level polling. After delegating, continue useful independent
+work while it exists. At a true dependency boundary, call `wait_agent` once
+with the longest practical timeout and let an agent message or completion wake
+the thread. If it times out without an event, enter another long wait unless
+there is a concrete reason to inspect or intervene. Do not insert short waits,
+agent-status reads, or agent-list calls merely to confirm that nothing changed.
+
+Let long-running commands block in the terminal until they exit when the tool
+supports it. For background processes, prefer process exit, shell `wait`, or a
+native watcher. For an external condition without a blocking primitive, use a
+small bounded script that polls locally and returns on change or timeout. Local
+process polling is preferable to repeated model turns that sleep and reread the
+same state.
+
+Do not spawn an agent or subagent merely to monitor a process or condition. When
+a small purpose-built watcher would avoid model wakeups, write it ad hoc in a
+task-specific temporary directory and run it in the terminal. It should remain
+silent while progress is healthy and return only on completion, meaningful
+state change, a diagnosed stall, or its explicit boundary. Choose its sampling
+interval and stall definition from the process being observed; a slow first run
+may warrant checking progress only every 20 minutes, while a shorter job may
+need a different bound. Remove the temporary watcher afterwards. Add a watcher
+to the repository only when it has a current repeated consumer.
+
+Starting a watcher does not make the coordinator idle. Continue useful
+independent work while the watcher runs. When that work is exhausted and the
+watched event is still required, stop active reasoning and enter one long
+blocking wait on the watcher session so process output or exit wakes the task.
+Do not return a final answer, repeatedly poll the session, or remain active as a
+scheduler while a required watcher is outstanding.
+
+After useful work is exhausted, emit no progress commentary announcing that a
+watcher is still running or that nothing has changed. Yield directly to the
+outstanding watcher session. The next model turn must be caused by watcher
+completion, failure, meaningful change, diagnosed stall, explicit boundary,
+new user input, or another genuinely actionable event. A native command is not
+suitable merely because it blocks: do not use a progress-printing watcher such
+as `gh pr checks --watch` or `gh run watch` as the model-facing wait.
+
 ## Product contract
 
 One self-contained container beside an existing library; Audiobookshelf first;
