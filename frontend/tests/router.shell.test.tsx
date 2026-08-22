@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -307,9 +307,8 @@ describe('Application shell', () => {
   })
 
   it('acknowledges a successful check once, then clears it and exposes a new incident', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.useFakeTimers()
     try {
-      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
       const connection = {
         connection: 'primary',
         code: 'unavailable' as const,
@@ -340,11 +339,21 @@ describe('Application shell', () => {
       }
       const { queryClient } = renderRoute('/library?lens=all', http)
 
-      await user.click(await screen.findByRole('button', { name: 'Check connection again' }))
-      expect(await screen.findByText('Library connection recovered')).toBeVisible()
+      await vi.waitFor(
+        () => expect(screen.getByRole('button', { name: 'Check connection again' })).toBeVisible(),
+        { interval: 0 },
+      )
+      const initialCheck = screen.getByRole('button', { name: 'Check connection again' })
+      initialCheck.focus()
+      expect(initialCheck).toHaveFocus()
+      fireEvent.click(initialCheck)
+      await vi.waitFor(
+        () => expect(screen.getByText('Library connection recovered')).toBeVisible(),
+        { interval: 0 },
+      )
       const dismiss = screen.getByRole('button', { name: 'Dismiss' })
       expect(dismiss).toHaveFocus()
-      await user.click(dismiss)
+      fireEvent.click(dismiss)
       expect(screen.queryByLabelText('Shared library connection status')).toBeNull()
       await act(async () => {
         await vi.advanceTimersByTimeAsync(16)
@@ -355,12 +364,25 @@ describe('Application shell', () => {
       await act(async () => {
         await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
       })
-      expect(await screen.findByText('Library connection needs attention')).toBeVisible()
-      await user.click(screen.getByRole('button', { name: 'Check connection again' }))
-      expect(await screen.findByText('Library connection recovered')).toBeVisible()
+      await vi.waitFor(
+        () => expect(screen.getByText('Library connection needs attention')).toBeVisible(),
+        { interval: 0 },
+      )
+      const repeatCheck = screen.getByRole('button', { name: 'Check connection again' })
+      repeatCheck.focus()
+      expect(repeatCheck).toHaveFocus()
+      fireEvent.click(repeatCheck)
+      await vi.waitFor(
+        () => expect(screen.getByText('Library connection recovered')).toBeVisible(),
+        { interval: 0 },
+      )
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(8_000)
+        await vi.advanceTimersByTimeAsync(7_999)
+      })
+      expect(screen.getByLabelText('Shared library connection status')).toBeVisible()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1)
       })
       expect(screen.queryByLabelText('Shared library connection status')).toBeNull()
       await act(async () => {
