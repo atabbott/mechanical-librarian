@@ -1494,6 +1494,13 @@ def test_unicode_series_names_require_explicit_cased_or_numeric_tokens(
     }
 
 
+def test_series_indicia_rejects_oversized_hostile_text_before_regex_matching() -> None:
+    text = "Book 2 of " + "and " * 250_000 + "tail"
+    started = time.monotonic()
+    assert opening._series_indicia(text) is None
+    assert time.monotonic() - started < 0.1
+
+
 @pytest.mark.parametrize(
     "markup",
     (

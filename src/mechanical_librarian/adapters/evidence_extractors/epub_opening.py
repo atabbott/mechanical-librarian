@@ -416,7 +416,6 @@ _CONTEXTUAL_CREDITS = (
     ),
     (re.compile(rf"\bworkflow\s*[:\-]\s*{_CREDIT_NAME_TEXT}", re.I), "workflow"),
 )
-_SERIES_NAME_TOKEN = r"[^\W_][\w'’(),!?.-]*"
 _SERIES_NAME_CONNECTOR_WORDS = (
     "a",
     "an",
@@ -431,7 +430,10 @@ _SERIES_NAME_CONNECTOR_WORDS = (
     "with",
     "&",
 )
-_SERIES_NAME_CONNECTOR = rf"(?:{'|'.join(_SERIES_NAME_CONNECTOR_WORDS)})"
+_SERIES_NAME_CONNECTOR = rf"(?:{'|'.join(_SERIES_NAME_CONNECTOR_WORDS)})(?=\s|$)"
+_SERIES_NAME_TOKEN = (
+    rf"(?!(?:{'|'.join(_SERIES_NAME_CONNECTOR_WORDS)})(?=\s|$))[^\W_][\w'’(),!?.-]*"
+)
 _SERIES_NAME = (
     rf"{_SERIES_NAME_TOKEN}(?:\s+(?:{_SERIES_NAME_TOKEN}|{_SERIES_NAME_CONNECTOR}))*"
 )
@@ -2642,6 +2644,8 @@ def _series_indicia(
     local-series correlation order.
     """
 
+    if len(value) > 280:
+        return None
     text = _SPACE.sub(" ", value).strip()
     membership = _SERIES_MEMBERSHIP.fullmatch(text) or (
         _SERIES_NAME_FIRST.fullmatch(text) if allow_name_first else None
