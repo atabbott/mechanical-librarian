@@ -469,7 +469,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
 
         page.route("**/*", fulfill)
         routes = (
-            ("/library?lens=all", "Every work, with exceptions first"),
+            ("/library?lens=all", "Works"),
             ("/attention", "Needs your attention"),
             (
                 "/review/case-1?field=title&subview=evidence",
@@ -1035,7 +1035,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         detail_workspace = page.locator(".workspace-detail")
         assert detail_workspace.get_by_role("button", name="Previous").count() == 0
         assert detail_workspace.get_by_role("button", name="Next").count() == 0
-        page.locator(".attention-toggle").click()
+        page.get_by_role("button", name="Attention queue").click()
         expect(page).to_have_url(
             "https://react-platform.invalid/library?lens=all&preview=case-1&attention=open"
         )
@@ -1086,7 +1086,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "hardcover-main" in sources.inner_text()
         assert "Work lookup · 1 bounded request" in sources.inner_text()
         capture_visual_proof("library-work-summary")
-        work_detail.get_by_role("button", name="Back to works").click()
+        page.get_by_role("button", name="Back to works").click()
         page.get_by_role("link", name="Needs attention", exact=True).click()
         expect(page.locator(".library-work-row")).to_have_count(5)
         page.get_by_role("link", name="No attention needed", exact=True).click()
@@ -1110,7 +1110,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             "2 consulted for this work"
             in work_detail.locator(".work-sources").inner_text()
         )
-        work_detail.get_by_role("button", name="Back to works").click()
+        page.get_by_role("button", name="Back to works").click()
         # Browsing is reversible: the same pager walks the bounded window back.
         page.get_by_role("button", name="\u2190 Previous").click()
         page.get_by_text("Catalogue-only work", exact=True).wait_for()
@@ -1244,7 +1244,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert compact_evidence.bounding_box()["height"] >= 44
         compact_evidence.click()
         expect(page.locator("#choice-evidence-current")).to_be_visible()
-        page.locator(".attention-toggle").click()
+        page.get_by_role("button", name="Attention queue").click()
         expect(page.locator(".attention-rail")).to_be_visible()
         expect(page.locator(".library-works")).to_be_visible()
         expect(page.locator(".workspace-detail")).to_be_visible()
@@ -1539,7 +1539,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
 
         before_navigation = documents
         page.get_by_role("link", name="Library", exact=True).click()
-        page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
+        page.get_by_role("heading", name="Works", exact=True).wait_for()
         page.locator(".attention-toggle").click()
         page.locator(".attention-rail h2").get_by_text(
             "Attention", exact=True
@@ -1566,7 +1566,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.go_back()
         page.locator(".attention-rail").wait_for()
         page.go_back()
-        page.get_by_role("heading", name="Every work, with exceptions first").wait_for()
+        page.get_by_role("heading", name="Works", exact=True).wait_for()
         for control in page.locator(
             ".lenses a, .library-pager button, .library-work-row"
         ).all():

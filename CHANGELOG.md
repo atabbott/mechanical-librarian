@@ -85,12 +85,14 @@
   choice is acknowledged at once and opens the next field from exact-case state;
   a recorded field can be revisited and changed until its effect leaves the
   reversible states. (#644, #635)
-- Make Library browsing reversible and every work reachable: the row is one
-  whole target, the bounded window walks both ways from a stated page, search
-  narrows as it is typed, and a work with no review case opens to its values
-  and its sources. Policy stops reporting an activation the owner never made,
-  names a fresh container's seeded profile the active baseline, and returns
-  every surface to a clean draft on exact revert. (#642, #643)
+- Make Library browsing reversible and every work reachable. Rows are whole
+  targets, the bounded window walks both ways, search narrows as it is typed,
+  and works without review cases open to their values and sources. All lenses
+  stay in one compact row without a redundant headline, while page-level Back
+  and Attention controls sit below the masthead and before the selected work. (#642)
+- Stop Policy reporting an activation the owner never made, name a fresh
+  container's seeded profile the active baseline, and return every surface to
+  a clean draft on exact revert. (#643)
 - Let the type gate catch a test that binds a double into a port the double
   does not satisfy. `arg-type` is enforced for `tests/` and `scripts/` rather
   than suppressed, re-arming the guards written against it — one passed

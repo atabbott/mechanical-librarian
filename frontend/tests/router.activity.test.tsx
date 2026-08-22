@@ -1416,7 +1416,7 @@ describe('Activity route', () => {
       await act(async () => {
         await router.navigate({ to: '/library', search: { lens: 'all' } })
       })
-      await screen.findByRole('heading', { name: 'Every work, with exceptions first' })
+      await screen.findByRole('heading', { level: 2, name: 'Works' })
       await act(async () => {
         await router.navigate({
           to: '/activity',

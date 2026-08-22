@@ -267,9 +267,9 @@ def test_a_change_in_one_tab_reaches_another_without_a_reload() -> None:
                 _closing_context(context),
             ):
                 _login(watcher, origin)
-                watcher.get_by_role(
-                    "heading", name="Every work, with exceptions first"
-                ).wait_for(timeout=8_000)
+                watcher.get_by_role("heading", name="Works", exact=True).wait_for(
+                    timeout=8_000
+                )
 
                 # One stream, opened by the shipped bundle itself, carrying the
                 # media type the contract publishes.
@@ -290,9 +290,7 @@ def test_a_change_in_one_tab_reaches_another_without_a_reload() -> None:
 
                 actor = context.new_page()
                 actor.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
-                actor.get_by_role(
-                    "heading", name="Every work, with exceptions first"
-                ).wait_for()
+                actor.get_by_role("heading", name="Works", exact=True).wait_for()
                 actor.get_by_role(
                     "button", name="Choose current value:", exact=False
                 ).first.click()
@@ -372,9 +370,9 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                 )
                 page.reload()
 
-                page.get_by_role(
-                    "heading", name="Every work, with exceptions first"
-                ).wait_for(timeout=8_000)
+                page.get_by_role("heading", name="Works", exact=True).wait_for(
+                    timeout=8_000
+                )
                 page.locator(".cm-library-handoff").wait_for(timeout=8_000)
                 page.get_by_text("Reconnecting", exact=False).wait_for(timeout=8_000)
                 _fits_every_width(page, ".cm-library-handoff")
