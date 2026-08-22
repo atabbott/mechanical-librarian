@@ -819,7 +819,10 @@ def test_activity_page_does_not_materialize_repeated_near_limit_cover_documents(
         cover_events = [
             event for event in page["events"] if event["destination"] == "cover"
         ]
-        assert 100 == len(cover_events)
+        # Repeated lifecycle observations are one immutable cover change in
+        # Activity; the page still must not materialise its near-limit private
+        # consideration document to select that one row.
+        assert 1 == len(cover_events)
         assert {"completed"} == {event["state"] for event in cover_events}
         serialized = json.dumps(page)
         assert len(serialized) < 100_000

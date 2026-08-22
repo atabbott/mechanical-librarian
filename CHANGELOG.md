@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Prove Activity's automatic-decision and no-change rows through the supported
+  report, policy, shadow-evaluation, admission, and scheduler path. Unqualified
+  policy remains unable to create an automatic decision or bypass authority.
+  (#789)
+
 - Make Activity one current row per immutable change while retaining its
   ordered write lifecycle behind the row's bounded details disclosure. Search,
   filters, date bounds, totals, and pagination now operate on those change rows
