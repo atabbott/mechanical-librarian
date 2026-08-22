@@ -1206,9 +1206,19 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
                     _COHORT_POLICY_CHANGES if destination == "policy" else []
                 ),
                 "evidence": [
-                    {"label": "Previous value", "value": "Not set"},
+                    {
+                        "label": "Previous value",
+                        "value": "Paper Moons: Larkspur"
+                        if destination == "title"
+                        else "Not set",
+                    },
                     {"label": "New value", "value": _COHORT_CHANGES[destination][2]},
-                    {"label": "Chosen by", "value": "Library owner"},
+                    {
+                        "label": "Chosen by",
+                        "value": "Automatic policy"
+                        if origin == "automatic_policy"
+                        else "Library owner",
+                    },
                 ],
                 "work_id": f"book-{index}",
                 "work_label": work,
