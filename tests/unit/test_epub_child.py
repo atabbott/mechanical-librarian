@@ -1082,8 +1082,13 @@ def test_rear_series_trailing_clauses_are_rejected(markup: str) -> None:
         "<p>Book 2 of Clockwork Archive by Ada</p>",
         "<p>Book 2 of Clockwork Archive for sale</p>",
         "<p>Book 2 of Clockwork Archive continues</p>",
+        "<p>Book 2 of Clockwork Archive By Ada</p>",
+        "<p>Book 2 of Clockwork Archive For Sale</p>",
+        "<p>Book 2 of Clockwork Archive Continues</p>",
         "<p>Buy Clockwork Archive Book 2</p>",
         "<p>New Clockwork Archive Book 2</p>",
+        "<p>Get Clockwork Archive Book 2</p>",
+        "<p>Start Clockwork Archive Book 2</p>",
     ),
 )
 def test_rear_series_name_grammar_is_closed(markup: str) -> None:

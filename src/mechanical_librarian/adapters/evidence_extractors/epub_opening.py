@@ -430,7 +430,13 @@ _SERIES_NAME_FIRST = re.compile(
     r"(?P<sequence>[0-9]+(?:\.[0-9]+)?)",
 )
 _SERIES_LABEL = re.compile(rf"(?i:series)\s*:\s*(?P<name>{_SERIES_NAME})")
-_SERIES_NAME_FIRST_LEAD = re.compile(r"^(?:buy|discover|new|read)\b", re.I)
+_SERIES_RESERVED_NAME_BOUNDARY = re.compile(
+    r"(?:(?P<name_first>^(?:buy|discover|get|new|read|start)\b)"
+    r"|^a\s+series\s+of\b"
+    rf"|\s+by\s+{_SERIES_NAME_TOKEN}(?:\s+(?:{_SERIES_NAME_TOKEN}|{_SERIES_NAME_CONNECTOR})){{0,3}}[!?.]*$"
+    r"|\s+(?:available|coming\s+soon|continues|for\s+sale|now|revised|today)[!?.]*$)",
+    re.I,
+)
 _EBOOK_LABEL = re.compile(
     r"(?<![\w])(?:e[\s-]?book|epub|electronic|digital)(?![\w])",
     re.I,
@@ -2617,12 +2623,17 @@ def _series_indicia(
     )
     if membership is not None:
         name = membership.group("name").strip()
-        if allow_name_first and _SERIES_NAME_FIRST_LEAD.match(name) is not None:
+        reserved = _SERIES_RESERVED_NAME_BOUNDARY.search(name)
+        if reserved is not None and (
+            reserved.lastgroup != "name_first" or membership.re is _SERIES_NAME_FIRST
+        ):
             return None
         return membership.group("sequence"), name
     labelled = _SERIES_LABEL.fullmatch(text)
     if labelled is not None:
         name = labelled.group("name").strip()
+        if _SERIES_RESERVED_NAME_BOUNDARY.search(name) is not None:
+            return None
         return None, name
     return None
 

@@ -1457,6 +1457,9 @@ def test_closed_series_name_grammar_preserves_explicit_connectors_without_a_word
         "<p>Book 2 of Clockwork Archive by Ada</p>",
         "<p>Book 2 of Clockwork Archive for sale</p>",
         "<p>Book 2 of Clockwork Archive continues</p>",
+        "<p>Book 2 of Clockwork Archive By Ada</p>",
+        "<p>Book 2 of Clockwork Archive For Sale</p>",
+        "<p>Book 2 of Clockwork Archive Continues</p>",
     ),
 )
 def test_series_trailing_clauses_are_rejected(markup: str) -> None:
@@ -1485,6 +1488,8 @@ def test_opening_fact_limit_keeps_a_series_pair_atomic() -> None:
         "<p>Read Clockwork Archive Book 2.5</p>",
         "<p>Buy Clockwork Archive Book 2.5</p>",
         "<p>New Clockwork Archive Book 2.5</p>",
+        "<p>Get Clockwork Archive Book 2.5</p>",
+        "<p>Start Clockwork Archive Book 2.5</p>",
         "<p>Discover Clockwork Archive Volume 2.5</p>",
         "<p>Clockwork Archive Book II</p>",
         "<p>Clockwork Archive Book Two</p>",
@@ -1496,6 +1501,8 @@ def test_opening_fact_limit_keeps_a_series_pair_atomic() -> None:
         "read_prefix",
         "buy_prefix",
         "new_prefix",
+        "get_prefix",
+        "start_prefix",
         "discover_volume",
         "roman_order",
         "word_order",
