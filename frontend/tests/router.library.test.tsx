@@ -34,9 +34,8 @@ describe('Library route', () => {
     'keeps primary Library navigation active for the %s lens',
     async (lens) => {
       renderRoute(`/library?lens=${lens}`)
-      expect(
-        await screen.findByRole('heading', { name: 'Every work, with exceptions first' }),
-      ).toBeVisible()
+      expect(await screen.findByRole('heading', { level: 2, name: 'Works' })).toBeVisible()
+      expect(screen.queryByText('Every work, with exceptions first')).toBeNull()
       expect(screen.getByRole('link', { name: 'Library' })).toHaveAttribute('aria-current', 'page')
     },
   )
@@ -47,6 +46,23 @@ describe('Library route', () => {
     const targets = document.querySelectorAll('[data-route-focus]')
     expect(targets).toHaveLength(1)
     expect(targets[0]).toHaveClass('selected-work-header')
+  })
+
+  it('puts compact selected-work navigation below the masthead and before the work', async () => {
+    renderRoute('/library?lens=all&preview=case-1&field=title')
+    const heading = await screen.findByRole('heading', { level: 2, name: 'A Book' })
+    const back = screen.getByRole('button', { name: 'Back to works' })
+    const attention = screen.getByRole('button', { name: 'Attention queue' })
+    const masthead = document.querySelector('.masthead')
+    if (!masthead) throw new Error('application fixture requires the masthead')
+
+    expect(masthead.compareDocumentPosition(back) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(back.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      attention.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 1, name: 'Library' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Attention \d+$/u })).toBeNull()
   })
 
   it('loads the critical library query and progressively reveals detail', async () => {
@@ -61,9 +77,7 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&q=title', http)
 
-    expect(
-      await screen.findByRole('heading', { name: 'Every work, with exceptions first' }),
-    ).toBeVisible()
+    expect(await screen.findByRole('heading', { level: 2, name: 'Works' })).toBeVisible()
     expect(http.getLibrary).toHaveBeenCalledWith(
       { lens: 'all', q: 'title' },
       expect.any(AbortSignal),
@@ -1658,9 +1672,7 @@ describe('Library route', () => {
     // A read taken for another reason discharges what the echo deferred, so
     // leaving costs nothing more.
     await user.click(screen.getByRole('button', { name: 'Back to works' }))
-    expect(
-      await screen.findByRole('heading', { name: 'Every work, with exceptions first' }),
-    ).toBeVisible()
+    expect(await screen.findByRole('heading', { level: 2, name: 'Works' })).toBeVisible()
     expect([libraryReads, attentionReads]).toEqual([4, 4])
   })
 
@@ -1741,9 +1753,7 @@ describe('Library route', () => {
     await user.click(await screen.findByRole('button', { name: /^A Book\./u }))
     expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Back to works' }))
-    expect(
-      await screen.findByRole('heading', { name: 'Every work, with exceptions first' }),
-    ).toBeVisible()
+    expect(await screen.findByRole('heading', { level: 2, name: 'Works' })).toBeVisible()
     expect([libraryReads, attentionReads]).toEqual([2, 2])
   })
 
@@ -2232,10 +2242,7 @@ describe('Library route', () => {
   it('uses non-animated rail movement when reduced motion is requested', async () => {
     const originalScrollTo = HTMLElement.prototype.scrollTo
     const scrollTo = vi.fn()
-    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
-      configurable: true,
-      value: scrollTo,
-    })
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: scrollTo })
     const original = window.matchMedia
     window.matchMedia = vi.fn((query: string) => ({
       matches: query === '(prefers-reduced-motion: reduce)',
@@ -2266,7 +2273,10 @@ describe('Library route', () => {
     const scrollLeft = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollLeft')
     const clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
     const scrollTo = vi.fn()
-    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: scrollTo })
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+      configurable: true,
+      value: scrollTo,
+    })
     Object.defineProperty(HTMLElement.prototype, 'scrollLeft', {
       configurable: true,
       get(this: HTMLElement) {

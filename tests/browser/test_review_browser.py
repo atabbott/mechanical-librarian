@@ -382,9 +382,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
             ):
                 _login(page, origin)
                 try:
-                    page.get_by_role(
-                        "heading", name="Every work, with exceptions first"
-                    ).wait_for(timeout=8_000)
+                    page.get_by_role("heading", name="Works", exact=True).wait_for(
+                        timeout=8_000
+                    )
                 except PlaywrightTimeoutError:
                     document = page.request.get(page.url)
                     pytest.fail(
@@ -783,9 +783,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 expect(activity_search).to_be_focused()
                 page.set_viewport_size({"width": 390, "height": 844})
                 page.get_by_role("link", name="Library", exact=True).click()
-                page.get_by_role(
-                    "heading", name="Every work, with exceptions first"
-                ).wait_for()
+                page.get_by_role("heading", name="Works", exact=True).wait_for()
                 settled_activity_requests = activity_requests
                 page.wait_for_timeout(5_500)
                 assert activity_requests == settled_activity_requests
@@ -893,9 +891,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 _closing_context(context),
             ):
                 _login(page, origin)
-                page.get_by_role(
-                    "heading", name="Every work, with exceptions first"
-                ).wait_for()
+                page.get_by_role("heading", name="Works", exact=True).wait_for()
 
                 # This is a closed presentation fixture, not a new automatic
                 # authority path: its projections retain the exact candidate

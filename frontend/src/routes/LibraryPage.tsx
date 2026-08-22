@@ -214,7 +214,7 @@ function WorkSources({
   )
 }
 
-function WorkSummary({ work, onBack }: { work: LibraryWorkView; onBack: () => void }) {
+function WorkSummary({ work }: { work: LibraryWorkView }) {
   const summary = work.summary
   return (
     <>
@@ -255,11 +255,6 @@ function WorkSummary({ work, onBack }: { work: LibraryWorkView; onBack: () => vo
         </dl>
       ) : null}
       <WorkSources outcomes={work.preparationOutcomes} />
-      <div className="work-summary-controls">
-        <button type="button" onClick={onBack}>
-          Back to works
-        </button>
-      </div>
     </>
   )
 }
@@ -1291,32 +1286,49 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
 
   return (
     <div className={`library-page variant-m-workspace${hasSelection ? ' has-selected-work' : ''}`}>
-      <header
-        className="library-header"
-        tabIndex={-1}
-        {...(search.preview || search.work ? {} : { 'data-route-focus': 'true' })}
-      >
-        <div>
-          <h1>Every work, with exceptions first</h1>
-        </div>
-        <button
-          className="attention-toggle"
-          type="button"
-          aria-expanded={search.attention === 'open'}
-          onClick={() =>
-            void navigate({
-              search: (current) => {
-                const next = { ...current }
-                if (next.attention === 'open') delete next.attention
-                else next.attention = 'open'
-                return next
-              },
-            })
-          }
+      <h1 className="sr-only">Library</h1>
+      {!hasSelection ? (
+        <header
+          className="library-header"
+          aria-label="Library controls"
+          tabIndex={-1}
+          data-route-focus="true"
         >
-          Attention <strong>{data.counts.attention}</strong>
-        </button>
-      </header>
+          <button
+            className="attention-toggle"
+            type="button"
+            aria-expanded={search.attention === 'open'}
+            onClick={() =>
+              void navigate({
+                search: (current) => {
+                  const next = { ...current }
+                  if (next.attention === 'open') delete next.attention
+                  else next.attention = 'open'
+                  return next
+                },
+              })
+            }
+          >
+            Attention <strong>{data.counts.attention}</strong>
+          </button>
+        </header>
+      ) : null}
+      {hasSelection && search.attention !== 'open' ? (
+        <div className="compact-workspace-controls">
+          <button type="button" onClick={clearSelection}>
+            Back to works
+          </button>
+          <button
+            type="button"
+            aria-label="Attention queue"
+            onClick={() =>
+              void navigate({ search: (current) => ({ ...current, attention: 'open' }) })
+            }
+          >
+            Attention queue <strong aria-hidden="true">{data.counts.attention}</strong>
+          </button>
+        </div>
+      ) : null}
       <PreparationNotice routeIdentity={routeIdentity} />
       <WriteReadyNotice />
       <div
@@ -1454,7 +1466,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             : {})}
         >
           {selectedWork ? (
-            <WorkSummary work={selectedWork} onBack={clearSelection} />
+            <WorkSummary work={selectedWork} />
           ) : !search.preview ? (
             <div className="library-selection">
               <h2>Choose a work</h2>
@@ -1936,19 +1948,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 </details>
               ) : null}
               <WorkSources comparison outcomes={selectedLibraryWork?.preparationOutcomes ?? []} />
-              <div className="compact-workspace-controls">
-                <button type="button" onClick={clearSelection}>
-                  Back to works
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void navigate({ search: (current) => ({ ...current, attention: 'open' }) })
-                  }
-                >
-                  Attention queue
-                </button>
-              </div>
             </>
           )}
         </section>

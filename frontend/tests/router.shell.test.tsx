@@ -312,10 +312,8 @@ describe('Application shell', () => {
       }
       renderRoute('/library?lens=all', http)
 
-      const heading = await screen.findByRole('heading', {
-        name: 'Every work, with exceptions first',
-      })
-      await waitFor(() => expect(heading.parentElement?.parentElement).toHaveFocus())
+      const controls = await screen.findByLabelText('Library controls')
+      await waitFor(() => expect(controls).toHaveFocus())
       const check = await screen.findByRole('button', { name: 'Check connection again' })
       check.focus()
       expect(check).toHaveFocus()
@@ -451,7 +449,7 @@ describe('Application shell', () => {
         <RouterProvider router={router} />
       </QueryClientProvider>,
     )
-    await screen.findByRole('heading', { name: 'Every work, with exceptions first' })
+    await screen.findByRole('heading', { level: 2, name: 'Works' })
     const before = vi.mocked(http.getLibrary).mock.calls.length
     const href = router.state.location.href
 
