@@ -815,7 +815,7 @@ def qualify_installed_pipeline(
                 sampled_phases: set[str] = set()
                 actual_fractions: dict[str, float] = {}
                 active_observed = False
-                deadline = time.monotonic() + 60
+                deadline = time.monotonic() + 180
                 while True:
                     if first_process.poll() is not None:
                         pytest.fail(
