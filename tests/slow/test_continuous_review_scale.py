@@ -40,7 +40,7 @@ class _WorkspaceProbe:
             if (
                 location.path == "/library"
                 and parameters.get("lens") == [lens]
-                and parameters.get("q") == ([] if query is None else [query])
+                and parameters.get("q") == (None if query is None else [query])
             ):
                 break
             if time.monotonic() >= deadline:
@@ -48,7 +48,7 @@ class _WorkspaceProbe:
             page.wait_for_timeout(100)
         assert location.path == "/library"
         assert parameters.get("lens") == [lens]
-        assert parameters.get("q") == ([] if query is None else [query])
+        assert parameters.get("q") == (None if query is None else [query])
         if preview is not None:
             assert parameters.get("preview") == [preview]
 
