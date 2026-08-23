@@ -356,6 +356,10 @@ class _CaseDetailResponse(_ClosedModel):
     writes_consented: bool
 
 
+class _CaseSuccessorResponse(_ClosedModel):
+    review_case_id: str | None
+
+
 class _EvidenceItem(_ClosedModel):
     candidate: str | None
     fact: str
@@ -1960,6 +1964,27 @@ def _register_case_and_effect_routes(
         _require_case_id(review_case_id)
         detail = _case_call(lambda: application.case_detail(review_case_id))
         return _CaseDetailResponse.model_validate(detail.to_data())
+
+    @app.get(
+        "/api/v1/review-cases/{review_case_id}/successor",
+        response_model=_CaseSuccessorResponse,
+        responses={
+            status: {"model": _ErrorResponse} for status in (400, 401, 404, 409, 422)
+        },
+    )
+    def case_successor(
+        review_case_id: str,
+        ml_session: str | None = Security(session_cookie),
+    ) -> _CaseSuccessorResponse:
+        _require_session(sessions, ml_session)
+        _require_case_id(review_case_id)
+        return _CaseSuccessorResponse.model_validate(
+            {
+                "review_case_id": _case_call(
+                    lambda: application.case_successor(review_case_id)
+                )
+            }
+        )
 
     @app.get(
         "/api/v1/review-cases/{review_case_id}/cover-considerations/{consideration_id}/images/{reference}",

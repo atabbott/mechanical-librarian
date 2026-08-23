@@ -177,6 +177,7 @@ export interface CoverConsiderationView {
 export interface CaseDetailView {
   id: string
   current: boolean
+  target: { connection: string; library: string; item: string; mediaKind: string }
   title: string
   authors: readonly string[]
   subtitle: string
@@ -411,6 +412,7 @@ export interface ReviewHttp {
   getLibrary(search: LibrarySearch, signal?: AbortSignal): Promise<LibraryView>
   getAttention(search: AttentionSearch, signal?: AbortSignal): Promise<AttentionView>
   getCaseDetail(reviewCaseId: string, signal?: AbortSignal): Promise<CaseDetailView>
+  getCaseSuccessor(reviewCaseId: string, signal?: AbortSignal): Promise<string | null>
   getEvidence(reviewCaseId: string, cursor?: string, signal?: AbortSignal): Promise<EvidenceView>
   getHistory(reviewCaseId: string, signal?: AbortSignal): Promise<HistoryView>
   retryCoverConsideration(
@@ -549,6 +551,19 @@ export class ReviewApiClient implements ReviewHttp {
   }
   async getCaseDetail(id: string, signal?: AbortSignal) {
     return mapCaseDetail(await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}`, signal))
+  }
+
+  async getCaseSuccessor(id: string, signal?: AbortSignal) {
+    const value = await this.read(
+      `/api/v1/review-cases/${encodeURIComponent(id)}/successor`,
+      signal,
+    )
+    if (typeof value !== 'object' || value === null || !('review_case_id' in value))
+      throw new ApiError(502, 'invalid_response')
+    const successor = value.review_case_id
+    if (successor !== null && typeof successor !== 'string')
+      throw new ApiError(502, 'invalid_response')
+    return successor
   }
   async getEvidence(id: string, cursor?: string, signal?: AbortSignal) {
     const p = new URLSearchParams({ limit: '50' })
@@ -1321,6 +1336,12 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
   return {
     id: stringValue(dto.review_case_id, 'review_case_id'),
     current: dto.current,
+    target: {
+      connection: stringValue(dto.target.connection, 'target_connection'),
+      library: stringValue(dto.target.library, 'target_library'),
+      item: stringValue(dto.target.item, 'target_item'),
+      mediaKind: stringValue(dto.target.media_kind, 'target_media_kind'),
+    },
     title: stringValue(dto.target.item, 'target_item'),
     authors: stringArray(dto.target.authors, 'target_authors'),
     subtitle: `${stringValue(dto.target.library, 'target_library')} · ${stringValue(dto.target.media_kind, 'target_media_kind')} · ${stringValue(dto.target.connection, 'target_connection')}`,

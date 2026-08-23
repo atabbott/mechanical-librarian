@@ -1057,6 +1057,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def review_case_exists(self, review_case_id: str) -> bool:
         return self._review_cases.review_case_exists(review_case_id)
 
+    def current_review_case_successor(self, review_case_id: str) -> str | None:
+        return self._review_cases.current_review_case_successor(review_case_id)
+
     def get_review_case(self, review_case_id: str) -> str:
         return self._review_cases.get_review_case(review_case_id)
 

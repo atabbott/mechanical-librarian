@@ -348,6 +348,35 @@ def test_login_case_evidence_history_and_logout_round_trip(
     assert denied.status_code == 401
 
 
+def test_case_successor_is_authenticated_bounded_and_serialized(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    path = f"/api/v1/review-cases/{web.case.review_case_id}/successor"
+    denied = web.client.get(path)
+    assert denied.status_code == 401
+
+    successor = "review_case_" + "d" * 64
+    web.repository.current_successor = successor
+    web.login()
+    resolved = web.client.get(path)
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json() == {"review_case_id": successor}
+
+    web.repository.current_successor = None
+    closed = web.client.get(path)
+    assert closed.status_code == 200
+    assert closed.json() == {"review_case_id": None}
+
+    web.repository.successor_failure = True
+    unavailable = web.client.get(path)
+    assert unavailable.status_code == 404
+    assert unavailable.json()["error"]["code"] == "unavailable"
+
+    malformed = web.client.get("/api/v1/review-cases/not-a-case/successor")
+    assert malformed.status_code == 404
+    assert malformed.json()["error"]["code"] == "not_found"
+
+
 def test_logout_persistence_failure_keeps_the_session_active(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
@@ -910,6 +939,7 @@ def test_openapi_is_deterministic_and_secret_free(
         # The live invalidation stream is a protected read like any other.
         ("get", "/api/v1/updates"),
         ("get", "/api/v1/review-cases/{review_case_id}"),
+        ("get", "/api/v1/review-cases/{review_case_id}/successor"),
         (
             "get",
             "/api/v1/review-cases/{review_case_id}/cover-considerations/{consideration_id}/images/{reference}",
@@ -963,6 +993,7 @@ def test_openapi_is_deterministic_and_secret_free(
     ] == {"200", "400", "401", "403", "404", "409", "413", "422", "503"}
     for path in (
         "/api/v1/review-cases/{review_case_id}",
+        "/api/v1/review-cases/{review_case_id}/successor",
         "/api/v1/review-cases/{review_case_id}/evidence",
         "/api/v1/review-cases/{review_case_id}/history",
     ):

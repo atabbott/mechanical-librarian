@@ -710,6 +710,143 @@ def test_sqlite_library_and_attention_queries_are_current_and_bounded() -> None:
         reopened.close()
 
 
+def test_sqlite_library_groups_attention_by_current_provider_completeness() -> None:
+    """Current report lanes rank attention without creating a second status."""
+
+    limited_statuses = {
+        ProviderStatus.AUTHENTICATION,
+        ProviderStatus.AUTHORIZATION,
+        ProviderStatus.RATE_LIMITED,
+        ProviderStatus.UNAVAILABLE,
+        ProviderStatus.INCOMPLETE,
+        ProviderStatus.MALFORMED,
+        ProviderStatus.OVERSIZED,
+        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+        ProviderStatus.QUERY_LIMIT_EXCEEDED,
+    }
+    complete_statuses = {
+        ProviderStatus.DISABLED,
+        ProviderStatus.INSUFFICIENT_INPUT,
+        ProviderStatus.NO_MATCH,
+    }
+
+    def report_for(
+        title: str,
+        item: str,
+        index: int,
+        status: ProviderStatus,
+        *,
+        actionable: bool = True,
+    ) -> MetadataReport:
+        source = _report(
+            title,
+            f"{index % 16:x}",
+            f"{(index + 10) % 16:x}",
+            actionable=actionable,
+        )
+        return MetadataReport.create(
+            target=TargetFacts(
+                source.target.connection,
+                source.target.library,
+                item,
+                source.target.fields,
+            ),
+            file=source.file,
+            local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=(ProviderObservation(f"provider-{index}", status),),
+        )
+
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "application.sqlite3")
+        reports = tuple(
+            report_for(
+                f"Alpha limited {status.value}",
+                f"limited-{index}",
+                index,
+                status,
+            )
+            for index, status in enumerate(sorted(limited_statuses, key=str))
+        ) + tuple(
+            report_for(
+                f"Zulu complete {status.value}",
+                f"complete-{index}",
+                index + len(limited_statuses),
+                status,
+            )
+            for index, status in enumerate(sorted(complete_statuses, key=str))
+        )
+        for report in reports:
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            repository.admit_review_case(proposal)
+
+        rows = repository.list_current_review_case_documents(None, 20, 0, True)
+        titles = [
+            cast(str, MetadataReport.from_json(report_document).target.fields[0].value)
+            for _, report_document in rows
+        ]
+        assert titles == sorted(
+            (title for title in titles if title.startswith("Zulu complete")),
+            key=str.casefold,
+        ) + sorted(
+            (title for title in titles if title.startswith("Alpha limited")),
+            key=str.casefold,
+        )
+
+        limited = report_for(
+            "Alpha reclassified", "reclassified", 30, ProviderStatus.UNAVAILABLE
+        )
+        complete = report_for("Zulu stable", "stable", 31, ProviderStatus.NO_MATCH)
+        for report in (limited, complete):
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            repository.admit_review_case(proposal)
+        before = repository.list_current_review_case_documents(None, 20, 0, True)
+        assert MetadataReport.from_json(before[-1][1]).target.item == "reclassified"
+
+        successor = report_for(
+            "Alpha reclassified", "reclassified", 32, ProviderStatus.NO_MATCH
+        )
+        repository.publish(successor, lambda: True)
+        successor_proposal = evaluate_report(successor)
+        repository.publish_proposal(successor_proposal)
+        repository.admit_review_case(successor_proposal)
+        after = repository.list_current_review_case_documents(None, 20, 0, True)
+        assert MetadataReport.from_json(after[0][1]).target.item == "reclassified"
+
+        for report in (
+            report_for(
+                "Zulu no attention",
+                "no-attention-limited",
+                33,
+                ProviderStatus.UNAVAILABLE,
+                actionable=False,
+            ),
+            report_for(
+                "Alpha no attention",
+                "no-attention-complete",
+                34,
+                ProviderStatus.NO_MATCH,
+                actionable=False,
+            ),
+        ):
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            repository.admit_review_case(proposal)
+        no_attention = repository.list_current_review_case_documents(
+            "no attention", 20, 0, False
+        )
+        assert [
+            MetadataReport.from_json(report_document).target.fields[0].value
+            for _, report_document in no_attention
+        ] == ["Alpha no attention", "Zulu no attention"]
+        repository.close()
+
+
 def test_sqlite_attention_keeps_manual_bibliographic_membership_field_local() -> None:
     with tempfile.TemporaryDirectory() as directory:
         repository = open_repository(Path(directory) / "application.sqlite3")

@@ -573,6 +573,42 @@ def test_restart_retires_removed_active_scope_before_any_orphan_claim(
     assert retired == ("completed_with_failures",)
 
 
+def test_delayed_work_remains_visible_recovers_when_due_and_retires_with_removed_scope(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+    discovery = repository.claim_review_pipeline_action(2)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery, 1, "a" * 64, (_entry("delayed", "b" * 64),), 3
+    )
+    work = repository.claim_review_pipeline_action(4)
+    assert work is not None
+    repository.fail_review_pipeline_action(work, "transient", True, 5)
+    progress = repository.review_pipeline_progress("primary", "fiction")
+    assert progress is not None
+    assert dict(progress.stages)["queued"] == 1
+    repository.hold_target_connection("primary", "unavailable", 6)
+    assert repository.target_connection_conditions()[0].affected == 1
+    check = repository.begin_target_connection_check("primary", 7)
+    assert check is not None
+    assert repository.finish_target_connection_check("primary", check.epoch, None, 8)
+    repository.recover_review_pipeline((("primary", "fiction", "lib-1", _PRODUCER),))
+    assert repository.claim_review_pipeline_action(14) is None
+    recovered = repository.claim_review_pipeline_action(15)
+    assert recovered is not None
+    assert recovered.item_id == "delayed"
+    repository.fail_review_pipeline_action(recovered, "transient", True, 16)
+    repository.recover_review_pipeline(())
+    retired = repository._connection.execute(
+        "SELECT state FROM review_preparation_work WHERE work_id=?",
+        (recovered.action_id,),
+    ).fetchone()
+    repository.close()
+    assert retired == ("stale",)
+
+
 def test_unexpected_owner_probe_durably_returns_to_paused(
     application_path: Path,
 ) -> None:
@@ -1095,16 +1131,149 @@ def test_thousand_work_three_library_backlog_is_bounded_and_fair(
     total = repository._connection.execute(
         "SELECT COUNT(*) FROM review_preparation_work"
     ).fetchone()
-    claimed = []
+    claimed: list[tuple[str, str]] = []
     for timestamp in range(40, 49):
         action = repository.claim_review_pipeline_action(timestamp)
         assert action is not None
-        claimed.append(action.library)
+        assert action.item_id is not None
+        claimed.append((action.library, action.item_id))
         repository.fail_review_pipeline_action(action, "failed", False, timestamp)
     repository.close()
     assert total == (1000,)
     for start in range(0, 9, 3):
-        assert set(claimed[start : start + 3]) == {item[0] for item in libraries}
+        assert {library for library, _ in claimed[start : start + 3]} == {
+            item[0] for item in libraries
+        }
+    for library, count in libraries:
+        assert [
+            item for claimed_library, item in claimed if claimed_library == library
+        ] == sorted(f"{library}-{index}" for index in range(count))[:3]
+
+
+def test_ordinal_claim_index_keeps_first_ready_cost_flat_across_cohort_sizes(
+    application_path: Path,
+) -> None:
+    """#826: the first eligible ordinal does not pay to sort its whole cohort."""
+
+    def first_ready_steps(count: int) -> tuple[int, tuple[tuple[object, ...], ...]]:
+        repository = open_repository(application_path.with_name(f"{count}.sqlite3"))
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+        discovery = repository.claim_review_pipeline_action(2)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "a" * 64,
+            tuple(
+                _entry(f"item-{index:04d}", f"{index:064x}") for index in range(count)
+            ),
+            3,
+        )
+        sql = (
+            "SELECT work_id FROM review_preparation_work WHERE state='queued' "
+            "AND library_name=? ORDER BY ordinal LIMIT 1"
+        )
+        plan = tuple(
+            repository._connection.execute("EXPLAIN QUERY PLAN " + sql, ("fiction",))
+        )
+        steps = 0
+
+        def count_steps() -> int:
+            nonlocal steps
+            steps += 1
+            return 0
+
+        repository._connection.set_progress_handler(count_steps, 1)
+        row = repository._connection.execute(sql, ("fiction",)).fetchone()
+        repository._connection.set_progress_handler(None, 0)
+        repository.close()
+        assert row is not None
+        return steps, plan
+
+    ten_steps, ten_plan = first_ready_steps(10)
+    thousand_steps, thousand_plan = first_ready_steps(1_000)
+
+    for plan in (ten_plan, thousand_plan):
+        assert any("review_preparation_work_aged_claim" in str(row) for row in plan)
+        assert not any("TEMP B-TREE" in str(row) for row in plan)
+    # A fixed first row has a fixed index walk. The generous bound leaves room
+    # for SQLite's version-specific setup without permitting cohort-size work.
+    assert thousand_steps <= ten_steps + 30
+
+
+def test_due_promotion_skips_a_large_delayed_prefix_with_bounded_vm_steps(
+    application_path: Path,
+) -> None:
+    """#826: future backoff rows never become a linear claim prefix."""
+
+    def claim_steps(count: int) -> int:
+        repository = open_repository(
+            application_path.with_name(f"delayed-{count}.sqlite3")
+        )
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+        discovery = repository.claim_review_pipeline_action(2)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "a" * 64,
+            tuple(
+                _entry(f"item-{index:04d}", f"{index:064x}") for index in range(count)
+            ),
+            3,
+        )
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET state='delayed',retry_not_before=100"
+        )
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET state='queued',retry_not_before=0 "
+            "WHERE ordinal=?",
+            (count - 1,),
+        )
+        repository._connection.commit()
+        steps = 0
+
+        def count_steps() -> int:
+            nonlocal steps
+            steps += 1
+            return 0
+
+        repository._connection.set_progress_handler(count_steps, 1)
+        action = repository.claim_review_pipeline_action(4)
+        repository._connection.set_progress_handler(None, 0)
+        repository.close()
+        assert action is not None
+        assert action.item_id == f"item-{count - 1:04d}"
+        return steps
+
+    ten_steps = claim_steps(10)
+    thousand_steps = claim_steps(1_000)
+    assert thousand_steps <= ten_steps + 80
+
+
+def test_former_updated_time_claim_index_requires_a_clean_rebuild(
+    application_path: Path,
+) -> None:
+    """#826: the exact-current schema rejects the predecessor without rewriting it."""
+
+    repository = open_repository(application_path)
+    repository.close()
+    connection = sqlite3.connect(application_path)
+    connection.execute("DROP INDEX review_preparation_work_aged_claim")
+    connection.execute(
+        "CREATE INDEX review_preparation_work_aged_claim "
+        "ON review_preparation_work(state,library_name,updated_at,ordinal)"
+    )
+    connection.commit()
+    connection.close()
+    before = application_path.read_bytes()
+
+    with pytest.raises(
+        MetadataReportError, match="database is unavailable or incompatible"
+    ):
+        open_repository(application_path, create=False)
+
+    assert application_path.read_bytes() == before
 
 
 def test_oversized_fairness_cursor_fails_closed(application_path: Path) -> None:
@@ -1124,7 +1293,7 @@ def test_oversized_fairness_cursor_fails_closed(application_path: Path) -> None:
     repository.close()
 
 
-def test_claims_age_backlog_and_reserve_every_fourth_for_recent_work(
+def test_claims_keep_discovery_order_across_normal_successor_stages(
     application_path: Path,
 ) -> None:
     repository = open_repository(application_path)
@@ -1135,36 +1304,29 @@ def test_claims_age_backlog_and_reserve_every_fourth_for_recent_work(
         discovery,
         1,
         "a" * 64,
-        (_entry("old", "1" * 64), _entry("recent", "2" * 64)),
+        (
+            _entry("first", "1" * 64),
+            _entry("second", "2" * 64),
+            _entry("third", "3" * 64),
+        ),
         12,
     )
-    repository._connection.execute(
-        "UPDATE review_preparation_work SET updated_at=10 WHERE item_id='old'"
-    )
-    repository._connection.execute(
-        "UPDATE review_preparation_work SET updated_at=20 WHERE item_id='recent'"
-    )
-    repository._connection.execute(
-        "UPDATE review_preparation_control SET claim_sequence=? WHERE singleton=1",
-        (1,),
-    )
-    repository._connection.commit()
-    aged = repository.claim_review_pipeline_action(30)
-    assert aged is not None
-    repository.fail_review_pipeline_action(aged, "failed", False, 31)
-    repository._connection.execute(
-        "UPDATE review_preparation_control SET claim_sequence=? WHERE singleton=1",
-        (4,),
-    )
-    repository._connection.execute(
-        "UPDATE review_preparation_work SET state='queued',updated_at=10 "
-        "WHERE item_id='old'"
-    )
-    repository._connection.commit()
-    recent = repository.claim_review_pipeline_action(32)
+    action = repository.claim_review_pipeline_action(13)
+    assert action is not None
+    observed = []
+    for timestamp in range(14, 18):
+        assert action is not None
+        observed.append((action.stage, action.item_id))
+        action = repository.advance_review_pipeline_action(
+            action, None, timestamp, True
+        )
     repository.close()
-    assert recent is not None
-    assert (aged.item_id, recent.item_id) == ("old", "recent")
+    assert observed == [
+        ("extraction", "first"),
+        ("provider", "first"),
+        ("proposal", "first"),
+        ("admission", "first"),
+    ]
 
 
 def test_advance_atomically_claims_recoverable_next_action(

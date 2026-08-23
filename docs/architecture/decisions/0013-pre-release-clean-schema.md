@@ -38,8 +38,12 @@ The #800 index change predates this revision and is the sole retrospective
 exception: #805 delivers and qualifies its adoption separately because #800 was
 already merged when the retained experiment established the preservation need.
 Later schema changes do not inherit that exception. #802 follows the ordinary
-same-change rule: its adoption accepts only the exact #805 schema and creates
-only reconstructible derived field facts.
+same-change rule: its `review-field-facts-v1` adoption accepts only the frozen
+exact #805 schema, adds reconstructible derived field-fact objects and delayed
+eligibility state, and atomically replaces that predecessor's historical
+`updated_at` claim index with the current ordinal and due-promotion indexes. It
+does not adopt #826's immediate predecessor, which already has the field-fact
+objects and remains clean-rebuild required.
 
 Compatibility requires a named present user need. Post-release migration and
 restore work is deferred to #57; this decision grants no general migration,

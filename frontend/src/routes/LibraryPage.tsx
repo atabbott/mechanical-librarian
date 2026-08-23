@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, SyntheticEvent } from 'react'
 
 import { displayValue } from '../api/http'
@@ -15,6 +15,7 @@ import type {
 import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
 import { fieldLabel, labelWords, opaqueSource } from '../labels'
+import { coalesceMilliseconds } from '../liveInvalidation'
 import { detailQuery, libraryRoute, PreparationNotice, useReviewContext } from '../router'
 import { WriteReadyNotice } from '../components/WriteReadyNotice'
 import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
@@ -23,6 +24,11 @@ import { ownerChoiceCount } from '../reviewChoiceCounts'
 
 type ReviewField = CaseDetailView['fields'][number]
 const searchNavigationDelay = 150
+// Live Library invalidation batches the documented fifty-work burst for 120 ms.
+// Keep each distinct subject from that bounded batch long enough to compare it
+// with the next bounded page read, but never treat a frame as selection
+// authority.
+const maxCoalescedSuccessorCandidates = 50
 const librarySearchIdentity = (search: object) =>
   JSON.stringify(Object.entries(search).sort(([left], [right]) => left.localeCompare(right)))
 // What the owner has chosen for one field and how far that choice has got.
@@ -762,7 +768,7 @@ function LibraryCoverChoicesContent({
 export default function LibraryPage({ data }: { data: LibraryView }) {
   const search = libraryRoute.useSearch()
   const navigate = useNavigate({ from: '/library' })
-  const { http } = useReviewContext()
+  const { http, updates } = useReviewContext()
   const currentSearch = useRef(search)
   const pendingSearchQuery = useRef<string | null>(null)
   const searchNavigation = useRef<Promise<void> | null>(null)
@@ -788,6 +794,22 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     library: string
     mediaKind: string
   } | null>(null)
+  const selectedTargetRef = useRef<{
+    caseId: string
+    connection: string
+    library: string
+    item: string
+  } | null>(null)
+  const selectedPreviewRef = useRef<string | undefined>(undefined)
+  const pendingSuccessorRef = useRef(new Set<string>())
+  const lineageGenerationRef = useRef(0)
+  const [activeLineageGeneration, setActiveLineageGeneration] = useState<number | null>(null)
+  const [lineageReconciliation, setLineageReconciliation] = useState<{
+    predecessor: string
+    selection: string
+    generation: number
+  } | null>(null)
+  const [successorGeneration, setSuccessorGeneration] = useState(0)
   const [frozenFieldOrders, setFrozenFieldOrders] = useState<
     Readonly<Record<string, readonly string[]>>
   >({})
@@ -817,6 +839,14 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const searchIdentity = librarySearchIdentity(search)
   const queryText = searchPending || typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
   const selectedReviewCaseId = search.preview ?? ''
+  useEffect(() => {
+    if (selectedPreviewRef.current !== search.preview) {
+      setActiveLineageGeneration(null)
+      setLineageReconciliation(null)
+    }
+    selectedPreviewRef.current = search.preview
+    pendingSuccessorRef.current.clear()
+  }, [search.preview])
   const invalidateSearch = useCallback(() => {
     ++searchGeneration.current
     pendingSearchQuery.current = null
@@ -873,6 +903,28 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     ...detailQuery(http, selectedReviewCaseId),
     enabled: Boolean(search.preview),
   })
+  const activeLineageReconciliation =
+    lineageReconciliation !== null &&
+    lineageReconciliation.predecessor === search.preview &&
+    lineageReconciliation.selection === search.preview &&
+    activeLineageGeneration === lineageReconciliation.generation
+  const lineageSuccessor = useQuery({
+    queryKey: [
+      'review-case-successor',
+      lineageReconciliation?.predecessor ?? null,
+      lineageReconciliation?.generation ?? null,
+    ],
+    queryFn: ({ signal }) =>
+      http.getCaseSuccessor(lineageReconciliation?.predecessor ?? '', signal),
+    enabled: activeLineageReconciliation,
+    retry: (failureCount) => activeLineageReconciliation && failureCount < 1,
+    retryDelay: coalesceMilliseconds,
+    retryOnMount: false,
+    refetchInterval: false,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+  })
   const attention = useInfiniteQuery({
     queryKey: ['attention', 'workspace', search.attentionCursor ?? null],
     initialPageParam: search.attentionCursor,
@@ -882,11 +934,27 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     staleTime: 15_000,
     retry: false,
   })
-  const attentionItems = attention.data?.pages.flatMap((page) => page.items) ?? []
-  const selectedIdentity = search.preview
-    ? (data.works.find((work) => work.reviewCaseId === search.preview) ??
-      attentionItems.find((item) => item.id === search.preview))
-    : undefined
+  const attentionItems = useMemo(
+    () => attention.data?.pages.flatMap((page) => page.items) ?? [],
+    [attention.data],
+  )
+  const selectedIdentity = useMemo(
+    () =>
+      search.preview
+        ? (data.works.find((work) => work.reviewCaseId === search.preview) ??
+          attentionItems.find((item) => item.id === search.preview) ??
+          (detail.data
+            ? {
+                id: detail.data.id,
+                title: detail.data.title,
+                authors: detail.data.authors,
+                library: detail.data.target.library,
+                mediaKind: detail.data.target.mediaKind,
+              }
+            : undefined))
+        : undefined,
+    [attentionItems, data.works, detail.data, search.preview],
+  )
   useEffect(() => {
     if (selectedIdentity && search.preview)
       selectedIdentityRef.current = {
@@ -897,6 +965,138 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         mediaKind: selectedIdentity.mediaKind,
       }
   }, [search.preview, selectedIdentity])
+  useEffect(() => {
+    if (search.preview && detail.data?.id === search.preview) {
+      selectedTargetRef.current = { caseId: search.preview, ...detail.data.target }
+      if (pendingSuccessorRef.current.size) setSuccessorGeneration((generation) => generation + 1)
+    }
+  }, [detail.data, search.preview])
+  useLayoutEffect(() => {
+    const reconciliation = lineageReconciliation
+    if (
+      !lineageSuccessor.isSuccess ||
+      reconciliation === null ||
+      reconciliation.selection !== search.preview ||
+      selectedPreviewRef.current !== reconciliation.selection ||
+      activeLineageGeneration !== reconciliation.generation
+    )
+      return
+    // A successful null is authoritative; only the query's single bounded
+    // retry treats transport failure as pending reconciliation.
+    queueMicrotask(() => {
+      setActiveLineageGeneration(null)
+      setLineageReconciliation(null)
+    })
+    if (
+      lineageSuccessor.data !== null &&
+      pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates
+    ) {
+      pendingSuccessorRef.current.add(lineageSuccessor.data)
+      setSuccessorGeneration((generation) => generation + 1)
+    }
+  }, [
+    activeLineageGeneration,
+    lineageReconciliation,
+    lineageSuccessor.data,
+    lineageSuccessor.isSuccess,
+    search.preview,
+  ])
+  useLayoutEffect(() => {
+    const reconciliation = lineageReconciliation
+    if (
+      !lineageSuccessor.isError ||
+      lineageSuccessor.failureCount < 2 ||
+      reconciliation === null ||
+      reconciliation.selection !== search.preview ||
+      activeLineageGeneration !== reconciliation.generation
+    )
+      return
+    queueMicrotask(() => {
+      setActiveLineageGeneration(null)
+      setLineageReconciliation(null)
+    })
+  }, [
+    activeLineageGeneration,
+    lineageReconciliation,
+    lineageSuccessor.failureCount,
+    lineageSuccessor.isError,
+    search.preview,
+  ])
+  useEffect(() => {
+    if (!updates || !search.preview) return
+    return updates.subscribe((update) => {
+      if (update.topic !== 'library') return
+      if (update.subject === null) {
+        const predecessor = search.preview
+        if (!predecessor) return
+        const generation = ++lineageGenerationRef.current
+        setActiveLineageGeneration(generation)
+        setLineageReconciliation({ predecessor, selection: predecessor, generation })
+        return
+      }
+      if (update.subject === search.preview) return
+      if (
+        pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates &&
+        !pendingSuccessorRef.current.has(update.subject)
+      ) {
+        pendingSuccessorRef.current.add(update.subject)
+        // Query structural sharing can make the next bounded Library read
+        // referentially identical after a no-match batch. Candidate arrival is
+        // itself the reason to reconcile that read once more.
+        setSuccessorGeneration((generation) => generation + 1)
+      }
+    })
+  }, [http, search.preview, updates])
+  useEffect(() => {
+    const selectedTarget = selectedTargetRef.current
+    const successorIds = [...pendingSuccessorRef.current]
+    if (
+      !selectedTarget ||
+      !successorIds.length ||
+      selectedTarget.caseId !== search.preview ||
+      data.works.some((work) => work.reviewCaseId === search.preview)
+    )
+      return
+    pendingSuccessorRef.current.clear()
+    void (async () => {
+      try {
+        const predecessor = await http.getCaseDetail(selectedTarget.caseId)
+        if (
+          predecessor.current ||
+          predecessor.target.connection !== selectedTarget.connection ||
+          predecessor.target.library !== selectedTarget.library ||
+          predecessor.target.item !== selectedTarget.item
+        )
+          return
+      } catch {
+        return
+      }
+      for (const successorId of successorIds) {
+        try {
+          const successor = await http.getCaseDetail(successorId)
+          if (
+            !successor.current ||
+            successor.target.connection !== selectedTarget.connection ||
+            successor.target.library !== selectedTarget.library ||
+            successor.target.item !== selectedTarget.item
+          )
+            continue
+          await navigate({
+            replace: true,
+            search: (current) =>
+              current.preview === selectedTarget.caseId
+                ? { ...current, preview: successor.id }
+                : current,
+          })
+          return
+        } catch {
+          // A case can disappear again between the bounded page read and its
+          // authoritative detail read. The remaining coalesced candidates may
+          // still name its replacement.
+        }
+      }
+    })()
+  }, [data.works, http, navigate, search.preview, successorGeneration])
   const completionIdentity = complete?.id === selectedReviewCaseId ? complete.identity : undefined
   const displayedIdentity = selectedIdentity ?? completionIdentity
   const primaryField = (field: ReviewField) => (field.inventoryRole ?? 'primary') === 'primary'
