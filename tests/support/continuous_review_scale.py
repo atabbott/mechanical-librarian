@@ -107,23 +107,44 @@ class _RouteMeasurements:
 def _sample_routes(
     client: httpx.Client, origin: str, phase: str, measurements: _RouteMeasurements
 ) -> None:
-    routes = {
-        "auth_session": "/api/v1/operations/status",
-        "library": "/api/v1/library?limit=10",
-        "attention": "/api/v1/attention?limit=10",
-        "activity": "/api/v1/activity?page=1&page_size=25",
-        "operations": "/api/v1/operations/status",
-        "preparation": "/api/v1/review-preparation",
+    route_sets = {
+        "route_view_compute": (
+            ("library_default", "/api/v1/library?limit=10"),
+            ("library_lens", "/api/v1/library?limit=1&lens=all"),
+            ("library_search", "/api/v1/library?limit=10&q=synthetic"),
+            ("attention", "/api/v1/attention?limit=10"),
+            ("activity_default", "/api/v1/activity?page=1&page_size=25"),
+            (
+                "activity_filter",
+                "/api/v1/activity?event_type=all&range_days=30&page=1&page_size=25",
+            ),
+            ("operations", "/api/v1/operations/status"),
+        ),
+        "observation_db_contention": (("preparation", "/api/v1/review-preparation"),),
     }
     for _ in range(_MEASUREMENT_SAMPLES):
-        for route, path in routes.items():
+        with httpx.Client(verify=False, trust_env=False) as disposable:
             started = time.monotonic()
-            try:
-                response = client.get(origin + path)
-            except httpx.TransportError:
-                response = httpx.Response(599)
-            measurements.observe(phase, route, response, time.monotonic() - started)
-            assert response.status_code < 500
+            response = disposable.post(
+                origin + "/api/v1/session/login",
+                headers={"Origin": origin},
+                json={"password": "synthetic password"},
+            )
+            measurements.observe(
+                phase, "foreground_session_gate", response, time.monotonic() - started
+            )
+            assert response.status_code == 200
+        for category, routes in route_sets.items():
+            for route, path in routes:
+                started = time.monotonic()
+                try:
+                    response = client.get(origin + path)
+                except httpx.TransportError:
+                    response = httpx.Response(599)
+                measurements.observe(
+                    phase, f"{category}:{route}", response, time.monotonic() - started
+                )
+                assert response.status_code < 500
 
 
 class _SharedRepository:
