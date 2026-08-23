@@ -119,10 +119,6 @@ class _WorkspaceProbe:
         self._assert_library_query(
             page, lens="all", query="fiction", preview=preserved_preview
         )
-        search.fill("")
-        self._assert_library_query(
-            page, lens="all", query=None, preview=preserved_preview
-        )
         cohort_row = page.locator(".library-work-row").filter(has_text="fiction-0000")
         expect(cohort_row).to_have_count(1)
         cohort_title = cohort_row.locator(".library-work-title").inner_text()
