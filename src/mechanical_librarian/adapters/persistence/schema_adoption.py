@@ -27,6 +27,7 @@ from mechanical_librarian.adapters.persistence.schema import (
     _REVIEW_CASE_FIELD_FACT_VALUES_SQL,
     _REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
     _REVIEW_CASE_FIELD_FACTS_SQL,
+    _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
     _SHADOW_OUTCOME_FIELD_FACT_VALUES_SQL,
     _SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL,
     _SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL,
@@ -447,6 +448,8 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
         )
         connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL)
         connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL)
+        connection.execute("DROP INDEX review_preparation_work_aged_claim")
+        connection.execute(_REVIEW_WORK_AGED_CLAIM_INDEX_SQL)
         recovery_required = True
         connection.commit()
         if binding is not None:

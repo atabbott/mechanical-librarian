@@ -22,6 +22,7 @@ from mechanical_librarian.adapters.persistence.schema import (
     _NO_UPDATE_SQL,
     _PROPOSAL_NO_UPDATE_SQL,
     _REVIEW_NO_UPDATE_SQL,
+    _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
 )
 from mechanical_librarian.adapters.persistence.schema_adoption import (
     _application_table_digest,
@@ -61,6 +62,11 @@ def _predecessor(root: Path) -> Path:
     repository.close()
     connection = sqlite3.connect(database)
     _drop_field_facts_projection(connection)
+    connection.execute("DROP INDEX review_preparation_work_aged_claim")
+    connection.execute(
+        "CREATE INDEX review_preparation_work_aged_claim "
+        "ON review_preparation_work(state,library_name,updated_at,ordinal)"
+    )
     connection.commit()
     connection.close()
     return database
@@ -172,9 +178,14 @@ def test_exact_predecessor_adopts_field_facts_without_changing_canonical_tables(
         "EXPLAIN QUERY PLAN " + _SHADOW_OUTCOME_HISTORY_SQL,
         ("review_case_1", 100),
     ).fetchall()
+    aged_claim = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' "
+        "AND name='review_preparation_work_aged_claim'"
+    ).fetchone()
     connection.close()
     assert any(_INDEXES[0] in str(row) for row in lineage_plan)
     assert any(_INDEXES[1] in str(row) for row in shadow_plan)
+    assert aged_claim == (_REVIEW_WORK_AGED_CLAIM_INDEX_SQL,)
 
     repository = open_repository(database, create=False)
     repository.close()
@@ -314,6 +325,35 @@ def test_projection_index_failure_rolls_back_tables_and_retains_verified_backup(
     }
     connection.close()
     assert not objects
+
+
+def test_claim_index_replacement_failure_rolls_back_and_retains_verified_backup(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    import mechanical_librarian.adapters.persistence.schema_adoption as adoption
+
+    database = _predecessor(tmp_path)
+    before = database.read_bytes()
+    backup = tmp_path / "backup.sqlite3"
+    monkeypatch.setattr(
+        adoption,
+        "_REVIEW_WORK_AGED_CLAIM_INDEX_SQL",
+        "CREATE INDEX invalid plan text",
+    )
+
+    with pytest.raises(MetadataReportError, match="failed safely"):
+        adopt_schema(database, backup, REVIEW_READ_INDEXES_V1)
+    assert backup.read_bytes() == before
+    connection = sqlite3.connect(database)
+    aged_claim = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' "
+        "AND name='review_preparation_work_aged_claim'"
+    ).fetchone()
+    connection.close()
+    assert aged_claim == (
+        "CREATE INDEX review_preparation_work_aged_claim "
+        "ON review_preparation_work(state,library_name,updated_at,ordinal)",
+    )
 
 
 def test_installed_module_command_adopts_a_generated_predecessor(
