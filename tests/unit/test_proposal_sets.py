@@ -6,6 +6,12 @@ from mechanical_librarian.application.proposal_sets import (
     CreateProposalSet,
     GetProposalSet,
     ProposalCurrentnessError,
+    ProposalEvaluationError,
+    ProposalInternalError,
+    ProposalMissingInputError,
+    ProposalPolicyError,
+    ProposalPublicationError,
+    ProposalRetainedDataError,
     ProposalSetError,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -17,7 +23,11 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     default_target_fields,
 )
-from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
+from mechanical_librarian.domain.proposal_set import (
+    ProposalOutcome,
+    ProposalValueError,
+    evaluate_report,
+)
 
 
 def _report() -> MetadataReport:
@@ -86,10 +96,138 @@ def test_currentness_precedes_publication_and_readback_is_exact() -> None:
 def test_stale_report_publishes_nothing() -> None:
     report = _report()
     repository = _Repository(report)
-    with pytest.raises(ProposalSetError):
+    with pytest.raises(ProposalCurrentnessError):
         CreateProposalSet(repository, lambda _: False).run(report.report_id)
     assert "publish" not in repository.events
     assert {} == repository.proposals
+
+
+@pytest.mark.parametrize(
+    ("configure", "expected"),
+    (
+        (
+            lambda repository: setattr(repository, "get", _raise(KeyError("report"))),
+            ProposalMissingInputError,
+        ),
+        (
+            lambda repository: setattr(
+                repository, "get", _raise(RuntimeError("store fault"))
+            ),
+            ProposalInternalError,
+        ),
+    ),
+    ids=("missing-report", "read-fault"),
+)
+def test_report_reopen_uses_closed_failure_taxonomy(
+    configure: Callable[[_Repository], None], expected: type[ProposalSetError]
+) -> None:
+    report = _report()
+    repository = _Repository(report)
+    configure(repository)
+    with pytest.raises(expected):
+        CreateProposalSet(repository, lambda _: True).run(report.report_id)
+    assert "publish" not in repository.events
+
+
+def test_malformed_report_is_retained_data() -> None:
+    report = _report()
+    repository = _Repository(report)
+    repository.get = lambda _report_id: "{}"  # type: ignore[assignment, method-assign]  # reason: this test fixes malformed stored report bytes at the repository boundary
+
+    with pytest.raises(ProposalRetainedDataError):
+        CreateProposalSet(repository, lambda _: True).run(report.report_id)
+    assert "publish" not in repository.events
+
+
+def test_report_identity_disagreement_is_retained_data() -> None:
+    report = _report()
+    repository = _Repository(report)
+    requested_id = "report_" + "c" * 64
+    repository.get = lambda _report_id: report.to_json()  # type: ignore[assignment]  # reason: this test fixes the stored report independently of the requested identity
+
+    with pytest.raises(ProposalRetainedDataError):
+        CreateProposalSet(repository, lambda _: True).run(requested_id)
+    assert "publish" not in repository.events
+
+
+@pytest.mark.parametrize(
+    ("service", "expected"),
+    (
+        (
+            lambda repository: CreateProposalSet(
+                repository,
+                lambda _: True,
+                resolve_policy_profile=_raise(RuntimeError("policy fault")),
+            ),
+            ProposalPolicyError,
+        ),
+        (
+            lambda repository: CreateProposalSet(
+                repository, _raise(RuntimeError("currentness fault"))
+            ),
+            ProposalInternalError,
+        ),
+        (
+            lambda repository: CreateProposalSet(repository, lambda _: True),
+            ProposalPublicationError,
+        ),
+    ),
+    ids=("policy", "currentness", "publication"),
+)
+def test_phase_faults_have_closed_types(
+    service: Callable[[_Repository], CreateProposalSet],
+    expected: type[ProposalSetError],
+) -> None:
+    report = _report()
+    repository = _Repository(report)
+    if expected is ProposalPublicationError:
+        repository.publish_proposal = _raise(RuntimeError("publication fault"))  # type: ignore[method-assign]  # reason: this test makes the publication port fail without changing earlier phases
+
+    with pytest.raises(expected):
+        service(repository).run(report.report_id)
+    assert "publish" not in repository.events or expected is ProposalPublicationError
+
+
+def test_evaluation_fault_is_closed_and_does_not_publish(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report = _report()
+    repository = _Repository(report)
+    monkeypatch.setattr(
+        "mechanical_librarian.application.proposal_sets.evaluate_report",
+        _raise(ProposalValueError("evaluation fault")),
+    )
+
+    with pytest.raises(ProposalEvaluationError):
+        CreateProposalSet(repository, lambda _: True).run(report.report_id)
+    assert "publish" not in repository.events
+
+
+def test_noncanonical_publication_readback_is_retained_data() -> None:
+    report = _report()
+    repository = _Repository(report)
+
+    def noncanonical(proposal_set) -> str:
+        repository.events.append("publish")
+        serialized = proposal_set.to_json() + " "
+        repository.proposals[proposal_set.proposal_set_id] = serialized
+        return serialized
+
+    repository.publish_proposal = noncanonical  # type: ignore[method-assign]  # reason: this test supplies a deliberately noncanonical retained document
+    with pytest.raises(ProposalRetainedDataError):
+        CreateProposalSet(repository, lambda _: True).run(report.report_id)
+
+
+def test_get_proposal_distinguishes_missing_and_malformed_retained_data() -> None:
+    report = _report()
+    repository = _Repository(report)
+    proposal_set_id = "proposal_set_" + "a" * 64
+
+    with pytest.raises(ProposalMissingInputError):
+        GetProposalSet(repository).run(proposal_set_id)
+    repository.proposals[proposal_set_id] = "{}"
+    with pytest.raises(ProposalRetainedDataError):
+        GetProposalSet(repository).run(proposal_set_id)
 
 
 def test_typed_currentness_failure_is_not_wrapped_as_publication_failure() -> None:
@@ -116,7 +254,7 @@ def test_typed_currentness_failure_is_not_wrapped_as_publication_failure() -> No
             ),
         ),
         (
-            "proposal currency check failed",
+            "proposal currentness check failed",
             lambda repository, fault: CreateProposalSet(repository, _raise(fault)),
         ),
     ),
@@ -128,11 +266,8 @@ def test_each_phase_before_publication_reports_itself_not_publication(
 ) -> None:
     """A phase that fails before publication no longer claims publication.
 
-    Policy resolution, evaluation and the currency check all ran inside the
-    block whose last resort said `proposal publication failed`, so an
-    injected resolver or a currency seam that raised reported a publication
-    that was never attempted -- and the repository proves it was not, since
-    nothing reached `publish` (#698).
+    An error in policy resolution or the currentness seam stops before the
+    repository receives a publication request (#698).
     """
     report = _report()
     fault = RuntimeError("seam is broken")

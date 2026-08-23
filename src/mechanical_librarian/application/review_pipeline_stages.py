@@ -39,6 +39,12 @@ from mechanical_librarian.application.metadata_report import (
 )
 from mechanical_librarian.application.proposal_sets import (
     ProposalCurrentnessError,
+    ProposalEvaluationError,
+    ProposalInternalError,
+    ProposalMissingInputError,
+    ProposalPolicyError,
+    ProposalPublicationError,
+    ProposalRetainedDataError,
     ProposalSetError,
 )
 from mechanical_librarian.application.provider_recovery_evidence import (
@@ -296,8 +302,21 @@ class ReviewPipelineStages:
             serialized = self._create_proposal_set(report_id, pipeline_repository)
         except ProposalCurrentnessError as error:
             raise ReviewPipelineError("stale") from error
-        except ProposalSetError as error:
+        except ProposalMissingInputError as error:
+            raise ReviewPipelineError("missing_required_input") from error
+        except ProposalRetainedDataError as error:
+            raise ReviewPipelineError("malformed_retained_data") from error
+        except (
+            ProposalPolicyError,
+            ProposalEvaluationError,
+            ProposalPublicationError,
+            ProposalInternalError,
+        ) as error:
             raise ReviewPipelineError("internal_failure") from error
+        except ProposalSetError as error:
+            raise ReviewPipelineError("unknown") from error
+        except Exception as error:
+            raise ReviewPipelineError("unknown") from error
         return ProposalSet.from_json(serialized).proposal_set_id
 
     def admit(

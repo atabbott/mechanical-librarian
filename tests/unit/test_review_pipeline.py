@@ -39,7 +39,16 @@ from mechanical_librarian.application.metadata_report import (
     TargetNotFoundError,
 )
 from mechanical_librarian.application.operations import StageTimer
-from mechanical_librarian.application.proposal_sets import ProposalCurrentnessError
+from mechanical_librarian.application.proposal_sets import (
+    ProposalCurrentnessError,
+    ProposalEvaluationError,
+    ProposalInternalError,
+    ProposalMissingInputError,
+    ProposalPolicyError,
+    ProposalPublicationError,
+    ProposalRetainedDataError,
+    ProposalSetError,
+)
 from mechanical_librarian.application.provider_recovery_evidence import (
     ProviderFailureObserver,
 )
@@ -63,6 +72,58 @@ from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
 from tests.support.review_cases import _report
 
 _PRODUCER = "f" * 64
+
+
+def _proposal_stages(
+    create_proposal_set: Callable[[str, ReviewPipelineRepository], str],
+) -> ReviewPipelineStages:
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    return ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=unreachable,
+        generate_report=unreachable,
+        create_proposal_set=create_proposal_set,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    (
+        (ProposalMissingInputError("missing"), "missing_required_input"),
+        (ProposalRetainedDataError("retained"), "malformed_retained_data"),
+        (ProposalCurrentnessError("stale"), "stale"),
+        (ProposalPolicyError("policy"), "internal_failure"),
+        (ProposalEvaluationError("evaluation"), "internal_failure"),
+        (ProposalPublicationError("publication"), "internal_failure"),
+        (ProposalInternalError("internal"), "internal_failure"),
+        (ProposalSetError("undeclared closed type"), "unknown"),
+        (RuntimeError("undeclared stage exception"), "unknown"),
+    ),
+)
+def test_proposal_stage_projects_only_closed_failure_codes(
+    failure: Exception, code: str
+) -> None:
+    stages = _proposal_stages(
+        lambda _report_id, _repository: (_ for _ in ()).throw(failure)
+    )
+
+    with pytest.raises(ReviewPipelineError) as raised:
+        stages.propose(cast("ReviewPipelineRepository", object()), "report-id")
+    assert raised.value.code == code
+    assert raised.value.__cause__ is failure
 
 
 @pytest.fixture
