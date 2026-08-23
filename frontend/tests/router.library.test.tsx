@@ -157,6 +157,45 @@ describe('Library route', () => {
     expect(screen.getByText('prep-0123456789abcdef')).toBeVisible()
   })
 
+  it('keeps a current case selectable while exposing its terminal preparation diagnostic', async () => {
+    const user = userEvent.setup()
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const current = {
+      ...firstWork,
+      preparation: {
+        attempt: 1,
+        diagnosticReference: 'prep-safe-0123456789abcdef',
+        provider: 'hardcover-main',
+        reason: 'A <script> hostile diagnostic remains safe.',
+        recovery: 'Scan again only after the source condition is corrected.',
+        recoveryAttempt: 0,
+        stage: 'provider',
+        status: 'failed',
+      },
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({
+        lens: 'all' as const,
+        page: 1,
+        counts: { attention: 1, all: 1, clear: 0 },
+        works: [current],
+      })),
+    }
+    renderRoute('/library?lens=all', http)
+
+    const card = await screen.findByRole('button', { name: /^A Book./u })
+    expect(card).not.toHaveClass('is-terminal')
+    expect(card).toHaveTextContent('A <script> hostile diagnostic remains safe.')
+    expect(screen.getByText('prep-safe-0123456789abcdef')).toBeVisible()
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
+    card.focus()
+    fireEvent.keyDown(card, { key: 'Enter' })
+    await user.click(card)
+    expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+  })
+
   it('keeps an open case-less work open when a search hides its card', async () => {
     const user = userEvent.setup()
     const firstWork = library.works[0]

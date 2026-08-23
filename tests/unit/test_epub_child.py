@@ -1035,6 +1035,30 @@ def test_isolated_inspector_maps_local_media_failures_to_unreadable_outcome(
     assert raised.value.outcome is EpubInspectionOutcome.UNAVAILABLE_SOURCE
 
 
+def test_isolated_inspector_maps_media_limit_to_parser_resource_outcome(
+    tmp_path: Path,
+) -> None:
+    inspector = composition._IsolatedEpubInspector(
+        CoverArtifactStore(tmp_path / "artifacts")
+    )
+    with (
+        patch.object(
+            composition,
+            "open_local_media",
+            side_effect=composition.LocalMediaLimitError(
+                "local media source exceeds its byte limit"
+            ),
+        ),
+        pytest.raises(ItemInspectionError) as raised,
+    ):
+        inspector.inspect(
+            MediaMountConfiguration("books", str(tmp_path), "/library", True),
+            "book.epub",
+            1,
+        )
+    assert raised.value.outcome is EpubInspectionOutcome.RESOURCE_LIMIT
+
+
 @pytest.mark.parametrize(
     "markup",
     (
