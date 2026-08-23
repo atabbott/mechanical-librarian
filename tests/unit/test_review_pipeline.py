@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import sqlite3
@@ -186,12 +185,13 @@ def test_proposal_stage_projects_only_closed_failure_codes(
 
 
 @pytest.mark.parametrize(
-    ("prepare", "report_id", "code"),
+    ("prepare", "expected_failure", "code", "proposal_count"),
     (
         (
             lambda repository, report: None,
-            lambda report: report.report_id,
+            ProposalMissingInputError,
             "missing_required_input",
+            0,
         ),
         (
             lambda repository, report: (
@@ -200,30 +200,61 @@ def test_proposal_stage_projects_only_closed_failure_codes(
                     "DROP TRIGGER metadata_reports_no_update"
                 ),
                 repository._connection.execute(
-                    "UPDATE metadata_reports SET document='{}',document_digest=? WHERE report_id=?",
-                    (hashlib.sha256(b"{}").hexdigest(), report.report_id),
+                    "UPDATE metadata_reports SET connection_name='other' WHERE report_id=?",
+                    (report.report_id,),
                 ),
             ),
-            lambda report: report.report_id,
+            ProposalRetainedDataError,
             "malformed_retained_data",
+            0,
         ),
         (
-            lambda repository, report: repository._connection.execute(
-                "DROP TABLE metadata_reports"
+            lambda repository, report: (
+                repository.publish(report, lambda: True),
+                repository._connection.execute(
+                    "DROP TRIGGER metadata_reports_no_update"
+                ),
+                repository._connection.execute(
+                    "UPDATE metadata_reports SET document_digest=? WHERE report_id=?",
+                    ("0" * 64, report.report_id),
+                ),
             ),
-            lambda report: report.report_id,
+            ProposalRetainedDataError,
+            "malformed_retained_data",
+            0,
+        ),
+        (
+            lambda repository, report: (
+                repository.publish(report, lambda: True),
+                repository._connection.set_authorizer(
+                    lambda action, table, *_: (
+                        sqlite3.SQLITE_DENY
+                        if action == sqlite3.SQLITE_READ and table == "metadata_reports"
+                        else sqlite3.SQLITE_OK
+                    )
+                ),
+            ),
+            ProposalInternalError,
             "internal_failure",
+            0,
+        ),
+        (
+            lambda repository, report: repository.publish(report, lambda: True),
+            None,
+            None,
+            1,
         ),
     ),
-    ids=("absent", "malformed", "persistence-fault"),
+    ids=("absent", "envelope", "digest", "persistence-fault", "valid"),
 )
-def test_sqlite_proposal_stage_keeps_input_absence_data_and_persistence_distinct(
+def test_sqlite_proposal_stage_keeps_input_failure_types_distinct(
     application_path: Path,
     prepare: Callable[[object, MetadataReport], object],
-    report_id: Callable[[MetadataReport], str],
-    code: str,
+    expected_failure: type[Exception] | None,
+    code: str | None,
+    proposal_count: int,
 ) -> None:
-    """The live adapter reaches the pipeline without publishing a proposal."""
+    """The live adapter classifies retained input before proposal publication."""
     repository = open_repository(application_path)
     report = _report()
     prepare(repository, report)
@@ -231,13 +262,20 @@ def test_sqlite_proposal_stage_keeps_input_absence_data_and_persistence_distinct
         lambda value, store: CreateProposalSet(store, lambda _: True).run(value)
     )
 
-    with pytest.raises(ReviewPipelineError) as raised:
-        stages.propose(repository, report_id(report))
+    if expected_failure is None:
+        assert (
+            stages.propose(repository, report.report_id)
+            == evaluate_report(report).proposal_set_id
+        )
+    else:
+        with pytest.raises(ReviewPipelineError) as raised:
+            stages.propose(repository, report.report_id)
+        assert raised.value.code == code
+        assert isinstance(raised.value.__cause__, expected_failure)
 
-    assert raised.value.code == code
     assert repository._connection.execute(
         "SELECT COUNT(*) FROM proposal_sets"
-    ).fetchone() == (0,)
+    ).fetchone() == (proposal_count,)
     repository.close()
 
 

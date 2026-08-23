@@ -241,16 +241,17 @@ class SQLiteReportRepository(ConnectionScoped):
         """Read proposal input without collapsing absence into a store fault."""
         try:
             row = self._connection.execute(
-                "SELECT document FROM metadata_reports WHERE report_id=?",
+                "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
                 (report_id,),
             ).fetchone()
         except sqlite3.Error as error:
             raise MetadataReportError("persisted report is unavailable") from error
         if row is None:
             raise ReportNotFoundError("persisted report is unavailable")
-        if len(row) != 1 or type(row[0]) is not str:
-            raise ReportValueError("persisted report is invalid")
-        return row[0]
+        try:
+            return _validate_report_row(row)
+        except MetadataReportError as error:
+            raise ReportValueError("persisted report is invalid") from error
 
     def current_optional(
         self, connection: str, library: str, item: str, file_identity: str
