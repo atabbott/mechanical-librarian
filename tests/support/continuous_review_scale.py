@@ -504,7 +504,11 @@ def qualify_installed_pipeline(
                     f"{index + 10_001:064x}",
                 ),
                 local_claims=local_claims,
-                local_reasons=("no_opening_claims",),
+                local_reasons=(
+                    ("opening_matter_title",)
+                    if local_claims
+                    else ("no_opening_claims",)
+                ),
                 providers=(),
             )
             reports[report.report_id] = report
