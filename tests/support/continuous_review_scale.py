@@ -69,6 +69,61 @@ _REVIEW_SERVER_START_SECONDS = 60
 # for the discrimination -- so these bound a race, never a defect.
 _REVIEW_SERVER_PORT_ATTEMPTS = 3
 _REVIEW_SERVER_PORT_WAIT_SECONDS = 10
+_MEASUREMENT_SAMPLES = 20
+
+
+class _RouteMeasurements:
+    """Path-free HTTP timing aggregates for the installed contention control."""
+
+    def __init__(self) -> None:
+        self._values: dict[str, dict[str, list[float]]] = {}
+        self._errors: dict[str, dict[str, int]] = {}
+
+    def observe(
+        self, phase: str, route: str, response: httpx.Response, elapsed: float
+    ) -> None:
+        self._values.setdefault(phase, {}).setdefault(route, []).append(elapsed * 1_000)
+        if response.status_code >= 500:
+            errors = self._errors.setdefault(phase, {})
+            errors[route] = errors.get(route, 0) + 1
+
+    def receipt(self) -> dict[str, dict[str, dict[str, float | int]]]:
+        result: dict[str, dict[str, dict[str, float | int]]] = {}
+        for phase, routes in self._values.items():
+            result[phase] = {}
+            for route, values in routes.items():
+                ordered = sorted(values)
+                percentile = ordered[round((len(ordered) - 1) * 0.95)]
+                result[phase][route] = {
+                    "n": len(ordered),
+                    "p50_ms": round(ordered[len(ordered) // 2], 3),
+                    "p95_ms": round(percentile, 3),
+                    "max_ms": round(max(ordered), 3),
+                    "5xx_or_transport": self._errors.get(phase, {}).get(route, 0),
+                }
+        return result
+
+
+def _sample_routes(
+    client: httpx.Client, origin: str, phase: str, measurements: _RouteMeasurements
+) -> None:
+    routes = {
+        "auth_session": "/api/v1/operations/status",
+        "library": "/api/v1/library?limit=10",
+        "attention": "/api/v1/attention?limit=10",
+        "activity": "/api/v1/activity?page=1&page_size=25",
+        "operations": "/api/v1/operations/status",
+        "preparation": "/api/v1/review-preparation",
+    }
+    for _ in range(_MEASUREMENT_SAMPLES):
+        for route, path in routes.items():
+            started = time.monotonic()
+            try:
+                response = client.get(origin + path)
+            except httpx.TransportError:
+                response = httpx.Response(599)
+            measurements.observe(phase, route, response, time.monotonic() - started)
+            assert response.status_code < 500
 
 
 class _SharedRepository:
@@ -207,6 +262,7 @@ def qualify_installed_pipeline(
     *,
     expected_total: int,
     memory_ceiling_kib: int | None = None,
+    receipt_path: Path | None = None,
 ) -> None:
     # `closing` is entered first so it exits last, which is the order
     # `addCleanup(fixture.close)` gave the fixture under `TestCase`: the
@@ -576,6 +632,7 @@ def qualify_installed_pipeline(
         )
         second_process = _start_review_server(review_port, arguments, origin)
         peak_rss_kib = 0
+        measurements = _RouteMeasurements()
         try:
             with httpx.Client(verify=False, trust_env=False) as client:
                 login = client.post(
@@ -584,6 +641,8 @@ def qualify_installed_pipeline(
                     json={"password": "synthetic password"},
                 )
                 assert login.status_code == 200, login.text
+                phase_thresholds = (("early", 0.05), ("peak", 0.45), ("late", 0.85))
+                sampled_phases: set[str] = set()
                 deadline = time.monotonic() + 60
                 while True:
                     if second_process.poll() is not None:
@@ -607,6 +666,13 @@ def qualify_installed_pipeline(
                         continue
                     assert status.status_code == 200, status.text
                     projection = status.json()
+                    total = sum(item["total"] for item in projection["libraries"])
+                    checked = sum(item["checked"] for item in projection["libraries"])
+                    fraction = checked / total if total else 0
+                    for phase, threshold in phase_thresholds:
+                        if phase not in sampled_phases and fraction >= threshold:
+                            _sample_routes(client, origin, phase, measurements)
+                            sampled_phases.add(phase)
                     if (
                         not projection["active"]
                         and len(projection["libraries"]) == 3
@@ -619,6 +685,8 @@ def qualify_installed_pipeline(
                     if time.monotonic() >= deadline:
                         pytest.fail("installed reconciliation did not complete")
                     time.sleep(0.02)
+                assert sampled_phases == {"early", "peak", "late"}
+                _sample_routes(client, origin, "quiescent", measurements)
             assert (
                 sum(item["total"] for item in projection["libraries"]) == expected_total
             )
@@ -644,6 +712,36 @@ def qualify_installed_pipeline(
         assert work_count == expected_total
         assert tuple(media.iterdir()) == ()
         assert tuple(artifacts.iterdir()) == ()
+        receipt = {
+            "schema": "m27-828-candidate-v2",
+            "works": expected_total,
+            "phases": measurements.receipt(),
+            "throughput_works_per_second": round(
+                expected_total / processing_elapsed, 3
+            ),
+            "rss_kib_max": peak_rss_kib,
+            "starvation_control": "passed",
+            "fairness": "passed",
+            "pacing": "passed",
+            "restart": "passed",
+        }
+        budgets: dict[str, dict[str, float]] = {}
+        for phase in ("quiescent", "early", "peak", "late"):
+            for _route, values in receipt["phases"][phase].items():
+                assert values["n"] >= _MEASUREMENT_SAMPLES
+                assert values["5xx_or_transport"] == 0
+                if phase != "quiescent":
+                    baseline = receipt["phases"]["quiescent"][_route]["p95_ms"]
+                    budget = max(float(baseline) * 2, 2_000)
+                    budgets.setdefault(phase, {})[_route] = budget
+                    assert float(values["p95_ms"]) <= budget
+        receipt["p95_budgets_ms"] = budgets
+        assert receipt["throughput_works_per_second"] >= 5
+        assert receipt["rss_kib_max"] < 524_288
+        if receipt_path is not None:
+            receipt_path.write_text(
+                json.dumps(receipt, indent=2) + "\n", encoding="utf-8"
+            )
 
 
 class _ServerExited(AssertionError):

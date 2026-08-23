@@ -82,7 +82,10 @@ The continuous-review slow qualifier advances 2,000 deterministic synthetic
 works through the installed process, then its restart. It is the scale control
 for preparation throughput, fair claims, pacing, restart recovery, and RSS.
 Its synthetic fixture and installed process never use a live library, provider,
-or private work identity.
+or private work identity. The retained receipt contains only phase and
+route-class sample counts, p50/p95/max, 5xx/transport totals, computed
+quiescent-relative budgets, throughput, and RSS; it never records routes,
+identifiers, paths, SQL, credentials, or request values.
 
 The same source job runs the frontend on the exact pinned Node and npm
 toolchain; [what merging proves](../../CONTRIBUTING.md#what-merging-proves)
