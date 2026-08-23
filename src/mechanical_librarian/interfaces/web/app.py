@@ -609,6 +609,7 @@ class _ActivityEvent(_ClosedModel):
     library: str = Field(max_length=512)
     occurred_at: int | None = None
     origin: str = Field(max_length=512)
+    result: str = Field(default="Recorded", max_length=512)
     state: str = Field(max_length=512)
     work_label: str = Field(default="Recorded work", max_length=512)
     work_id: str = Field(max_length=512)

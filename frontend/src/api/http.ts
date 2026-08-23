@@ -267,6 +267,7 @@ export interface ActivityEventView {
   occurred_at: number | null
   origin: string
   policy_changes: readonly ActivityPolicyChangeView[]
+  result: string
   state: string
   work_id: string
   work_label: string
@@ -1070,6 +1071,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
         }),
         library: stringValue(event.library, 'activity_event_library'),
         origin: stringValue(event.origin, 'activity_event_origin'),
+        result: stringValue(event.result, 'activity_event_result'),
         state: stringValue(event.state, 'activity_event_state'),
         work_id: stringValue(event.work_id, 'activity_work_id'),
         work_label:

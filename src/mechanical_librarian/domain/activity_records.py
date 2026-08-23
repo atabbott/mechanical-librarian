@@ -40,7 +40,12 @@ from mechanical_librarian.domain.readable_activity import (
     value_text,
 )
 
-__all__ = ["ACTIVITY_CATEGORIES", "activity_search_text", "readable_activity_event"]
+__all__ = [
+    "ACTIVITY_CATEGORIES",
+    "activity_result_label",
+    "activity_search_text",
+    "readable_activity_event",
+]
 
 ACTIVITY_CATEGORIES = ("owner", "automatic", "policy", "recovery")
 # The write lifecycle states that are still moving or already closed without
@@ -59,6 +64,32 @@ _CATEGORIES = {
     "safety": "recovery",
     "unknown": "recovery",
 }
+
+_RESULT_LABELS = {
+    "accept": "Accepted",
+    "keep_current": "Kept current",
+    "reject": "Rejected",
+    "completed": "Cover advice completed",
+    "unavailable": "Cover advice unavailable",
+    "failed": "Cover advice failed safely",
+    "selected": "Owner cover choice recorded",
+    "retry": "Manual cover retry",
+    "no_change_required": "No change required",
+    "applying": "Applying",
+    "claimed": "Preparing",
+    "planned": "Planned",
+    "reconciling": "Checking",
+    "retryable": "Waiting safely",
+    "verified": "Verified",
+    "stale": "Stale",
+    "superseded": "Superseded",
+    "abandoned": "Stopped safely",
+}
+
+
+def activity_result_label(state: str) -> str:
+    """Return the closed owner-visible result word for one durable state."""
+    return _RESULT_LABELS.get(state, "Recorded")
 
 
 def _reported_value(report: MetadataReport | None, destination: str) -> object:
@@ -334,6 +365,7 @@ def readable_activity_event(
     event["change"] = change.compact
     event["change_detail"] = change.sentence
     event["evidence"] = facts
+    event["result"] = activity_result_label(state)
 
 
 def activity_search_text(
@@ -347,7 +379,7 @@ def activity_search_text(
         "work_id",
         "library",
         "destination",
-        "state",
+        "result",
         "work_label",
         "detail",
         "field_label",

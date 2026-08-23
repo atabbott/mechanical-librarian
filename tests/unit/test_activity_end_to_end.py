@@ -51,6 +51,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.proposal_evidence import _claim, _fields, _provider
 from tests.support.proposal_evidence import _report as _proposal_report
 from tests.unit.test_field_effects import (  # noqa: F401
@@ -63,7 +64,6 @@ from tests.unit.test_field_effects import (  # noqa: F401
     envelope,
     metadata_report,
 )
-from tests.unit.test_shadow_outcome_persistence import _automatic_no_change_inputs
 
 
 def _ledger(environment: _EffectEnvironment) -> list[dict[str, object]]:

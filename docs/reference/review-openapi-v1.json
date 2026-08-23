@@ -243,6 +243,12 @@
             "title": "Policy Changes",
             "type": "array"
           },
+          "result": {
+            "default": "Recorded",
+            "maxLength": 512,
+            "title": "Result",
+            "type": "string"
+          },
           "state": {
             "maxLength": 512,
             "title": "State",
