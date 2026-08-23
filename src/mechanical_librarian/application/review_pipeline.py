@@ -344,6 +344,8 @@ class ReviewPreparationPipeline:
         self,
         *,
         repository_factory: Callable[[], ReviewPipelineRepository],
+        observation_repository_factory: Callable[[], ReviewPipelineRepository]
+        | None = None,
         libraries: tuple[tuple[str, str, str, str], ...],
         discover: Callable[[str, str], tuple[int, str, tuple[CatalogueEntry, ...]]],
         extract: Callable[
@@ -369,6 +371,11 @@ class ReviewPreparationPipeline:
         if not libraries or len(libraries) != len(set(libraries)):
             raise ReviewPipelineError("configuration")
         self._repository_factory = repository_factory
+        self._observation_repository_factory = (
+            repository_factory
+            if observation_repository_factory is None
+            else observation_repository_factory
+        )
         self._libraries = {
             (connection, library): (library_id, producer_fingerprint)
             for connection, library, library_id, producer_fingerprint in libraries
@@ -387,6 +394,8 @@ class ReviewPreparationPipeline:
         self._timing = timing or StageTimer(None)
         self._draining = threading.Event()
         self._claim_lock = threading.Lock()
+        self._observation_lock = threading.RLock()
+        self._observation_repository: ReviewPipelineRepository | None = None
 
     @property
     def libraries(self) -> tuple[tuple[str, str, str], ...]:
@@ -447,6 +456,16 @@ class ReviewPreparationPipeline:
 
     def status(self) -> tuple[tuple[PipelineProgress | None, ...], bool]:
         libraries = tuple(sorted(self._libraries))
+        with self._observation_lock:
+            if self._observation_repository is not None:
+                try:
+                    return self._observation_repository.review_pipeline_status(
+                        libraries
+                    )
+                except ReviewPipelineError:
+                    raise
+                except Exception as error:
+                    raise ReviewPipelineError("persistence") from error
         repository = self._open_repository()
         try:
             try:
@@ -503,6 +522,14 @@ class ReviewPreparationPipeline:
         self._announce("preparation", None)
 
     def connection_conditions(self) -> tuple[TargetConnectionCondition, ...]:
+        with self._observation_lock:
+            if self._observation_repository is not None:
+                try:
+                    return self._observation_repository.target_connection_conditions()
+                except ReviewPipelineError:
+                    raise
+                except Exception as error:
+                    raise ReviewPipelineError("persistence") from error
         repository = self._open_repository()
         try:
             return repository.target_connection_conditions()
@@ -518,6 +545,26 @@ class ReviewPreparationPipeline:
             raise ReviewPipelineError("persistence") from error
         finally:
             repository.close()
+
+    def open_observation(self) -> None:
+        """Validate the foreground preparation reader before workers start."""
+        with self._observation_lock:
+            if self._observation_repository is None:
+                try:
+                    self._observation_repository = (
+                        self._observation_repository_factory()
+                    )
+                except ReviewPipelineError:
+                    raise
+                except Exception as error:
+                    raise ReviewPipelineError("persistence") from error
+
+    def close_observation(self) -> None:
+        """Release the foreground reader after the preparation lanes stop."""
+        with self._observation_lock:
+            if self._observation_repository is not None:
+                self._observation_repository.close()
+                self._observation_repository = None
 
     def check_connection(self, connection: str) -> bool:
         """One owner-triggered, epoch-bound connection check.
@@ -976,25 +1023,30 @@ class ReviewPreparationSupervisor:
         if self._threads:
             return
         self._stop.clear()
-        if self._recovery_resume is not None:
-            self._recovery_resume()
-        resume = getattr(self._pipeline, "resume_claiming", None)
-        if resume is not None:
-            resume()
-        self._pipeline.recover()
-        self._schedule_due()
-        self._threads = tuple(
-            threading.Thread(
-                target=self._run,
-                args=(lane,),
-                name=f"review-preparation-{lane}",
-                daemon=True,
+        self._pipeline.open_observation()
+        try:
+            if self._recovery_resume is not None:
+                self._recovery_resume()
+            resume = getattr(self._pipeline, "resume_claiming", None)
+            if resume is not None:
+                resume()
+            self._pipeline.recover()
+            self._schedule_due()
+            self._threads = tuple(
+                threading.Thread(
+                    target=self._run,
+                    args=(lane,),
+                    name=f"review-preparation-{lane}",
+                    daemon=True,
+                )
+                for lane in range(2)
             )
-            for lane in range(2)
-        )
-        for thread in self._threads:
-            thread.start()
-        self._wake.set()
+            for thread in self._threads:
+                thread.start()
+            self._wake.set()
+        except Exception:
+            self._pipeline.close_observation()
+            raise
 
     def begin_drain(self) -> None:
         """Close claim admission and wake workers without waiting."""
@@ -1019,6 +1071,7 @@ class ReviewPreparationSupervisor:
         if self._on_stop is not None:
             self._on_stop()
             self._on_stop = None
+        self._pipeline.close_observation()
 
     def request(self, connection: str, library: str) -> PipelineProgress:
         if self._pipeline.paused():

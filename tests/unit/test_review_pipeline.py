@@ -403,6 +403,39 @@ def test_pipeline_preflight_is_once_per_cycle_and_recovery_retains_qualification
     assert checks == ["primary", "primary"]
 
 
+def test_preopened_observation_survives_delete_journal_writer(
+    application_path: Path,
+) -> None:
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: open_repository(application_path),
+        observation_repository_factory=lambda: open_repository(
+            application_path, cross_thread=True
+        ),
+        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+    )
+    pipeline.open_observation()
+    writer = sqlite3.connect(application_path, isolation_level=None)
+    try:
+        writer.execute("BEGIN IMMEDIATE")
+        writer.execute(
+            "UPDATE review_preparation_control SET updated_at=1 WHERE singleton=1"
+        )
+        assert pipeline.status() == ((None,), False)
+        assert pipeline.connection_conditions() == ()
+        with pytest.raises(MetadataReportError):
+            open_repository(application_path)
+    finally:
+        writer.rollback()
+        writer.close()
+        pipeline.close_observation()
+
+
 def test_composed_currentness_preserves_target_connection_errors(
     application_path: Path,
 ) -> None:
