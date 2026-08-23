@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from playwright.sync_api import Browser, Page, expect, sync_playwright
 
@@ -56,14 +58,14 @@ class _WorkspaceProbe:
 
         page = self._page
         page.get_by_role("link", name="All", exact=True).click()
-        page.wait_for_url("**/library?lens=all")
+        expect(page).to_have_url(re.compile(r".*/library\?lens=all$"))
         search = page.get_by_role(
             "searchbox", name="Search title, author, identifier, library, or format"
         )
         search.fill("fiction")
-        page.wait_for_url("**/library?lens=all&q=fiction")
+        expect(page).to_have_url(re.compile(r".*/library\?lens=all&q=fiction$"))
         search.fill("")
-        page.wait_for_url("**/library?lens=all")
+        expect(page).to_have_url(re.compile(r".*/library\?lens=all$"))
         page.locator(".library-work-row").first.click()
         page.goto(f"{origin}/library?lens=all&preview={review_case_id}&field=title")
         page.get_by_role("heading", name="Which title should this work use?").wait_for()
