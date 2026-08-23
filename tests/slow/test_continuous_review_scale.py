@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -32,18 +33,20 @@ class _WorkspaceProbe:
     def _assert_library_query(
         page: Page, *, lens: str, query: str | None, preview: str | None
     ) -> None:
-        page.wait_for_function(
-            """({lens, query}) => {
-                const location = new URL(window.location.href)
-                return location.pathname === '/library'
-                    && location.searchParams.get('lens') === lens
-                    && (query === null
-                        ? !location.searchParams.has('q')
-                        : location.searchParams.get('q') === query)
-            }""",
-            arg={"lens": lens, "query": query},
-        )
-        parameters = parse_qs(urlparse(page.url).query)
+        deadline = time.monotonic() + 5
+        while True:
+            location = urlparse(page.url)
+            parameters = parse_qs(location.query)
+            if (
+                location.path == "/library"
+                and parameters.get("lens") == [lens]
+                and parameters.get("q") == ([] if query is None else [query])
+            ):
+                break
+            if time.monotonic() >= deadline:
+                break
+            page.wait_for_timeout(100)
+        assert location.path == "/library"
         assert parameters.get("lens") == [lens]
         assert parameters.get("q") == ([] if query is None else [query])
         if preview is not None:
