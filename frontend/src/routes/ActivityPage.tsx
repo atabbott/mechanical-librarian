@@ -157,7 +157,9 @@ function ActivityTransitions({ eventId }: { eventId: string }) {
     <ol className="cm-activity-transitions" aria-label="Recorded lifecycle transitions">
       {query.data.events.map((transition) => (
         <li key={transition.event_id}>
-          <time>{dateParts(transition.occurred_at).time}</time>
+          <time>
+            {dateParts(transition.occurred_at).day} · {dateParts(transition.occurred_at).time}
+          </time>
           <span>{stateLabel(transition.state)}</span>
         </li>
       ))}

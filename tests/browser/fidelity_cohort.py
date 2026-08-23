@@ -1599,6 +1599,8 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         }
     if path == "/api/v1/activity":
         return _activity(query)
+    if path.startswith("/api/v1/activity/") and path.endswith("/transitions"):
+        return {"events": [], "has_more": False}
     raise AssertionError(f"unexpected API target: {target}")
 
 

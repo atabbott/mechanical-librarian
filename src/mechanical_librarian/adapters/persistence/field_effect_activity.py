@@ -1695,7 +1695,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         )
         group_identity = (
             "CASE WHEN source_kind='field_effect' THEN source_parent_id "
-            "ELSE coalesce(source_identity,event_id) END"
+            "ELSE event_id END"
         )
         projection = (
             "WITH raw_activity_events("

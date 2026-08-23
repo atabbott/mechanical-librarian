@@ -706,9 +706,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 capture_visual_proof("activity-automatic-values")
                 automatic_row.get_by_role("button", name="Hide details").click()
                 capture_visual_proof("activity-labels")
-                assert page.locator(".cm-activity-ledger").evaluate(
-                    "node => node.previousElementSibling?.classList.contains('cm-activity-status')"
-                )
+                ledger_box = activity_ledger.bounding_box()
+                first_row_box = activity_ledger.locator("article").first.bounding_box()
+                assert ledger_box is not None and first_row_box is not None
+                # Compact Activity prioritises the searchable ledger: its first
+                # row is reachable without crossing a long recovery summary.
+                assert first_row_box["y"] < 844
                 long_activity_title = page.locator(".cm-activity-work > strong").filter(
                     has_text=LONG_TITLE
                 )
