@@ -15,6 +15,7 @@ import type {
 import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
 import { fieldLabel, labelWords, opaqueSource } from '../labels'
+import { coalesceMilliseconds } from '../liveInvalidation'
 import { detailQuery, libraryRoute, PreparationNotice, useReviewContext } from '../router'
 import { WriteReadyNotice } from '../components/WriteReadyNotice'
 import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
@@ -801,7 +802,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   } | null>(null)
   const selectedPreviewRef = useRef<string | undefined>(undefined)
   const pendingSuccessorRef = useRef(new Set<string>())
-  const pendingLineageLookupRef = useRef<string | null>(null)
+  const lineageGenerationRef = useRef(0)
+  const [activeLineageGeneration, setActiveLineageGeneration] = useState<number | null>(null)
+  const [lineageReconciliation, setLineageReconciliation] = useState<{
+    predecessor: string
+    selection: string
+    generation: number
+  } | null>(null)
   const [successorGeneration, setSuccessorGeneration] = useState(0)
   const [frozenFieldOrders, setFrozenFieldOrders] = useState<
     Readonly<Record<string, readonly string[]>>
@@ -833,9 +840,12 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const queryText = searchPending || typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
   const selectedReviewCaseId = search.preview ?? ''
   useEffect(() => {
+    if (selectedPreviewRef.current !== search.preview) {
+      setActiveLineageGeneration(null)
+      setLineageReconciliation(null)
+    }
     selectedPreviewRef.current = search.preview
     pendingSuccessorRef.current.clear()
-    pendingLineageLookupRef.current = null
   }, [search.preview])
   const invalidateSearch = useCallback(() => {
     ++searchGeneration.current
@@ -893,6 +903,28 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     ...detailQuery(http, selectedReviewCaseId),
     enabled: Boolean(search.preview),
   })
+  const activeLineageReconciliation =
+    lineageReconciliation !== null &&
+    lineageReconciliation.predecessor === search.preview &&
+    lineageReconciliation.selection === search.preview &&
+    activeLineageGeneration === lineageReconciliation.generation
+  const lineageSuccessor = useQuery({
+    queryKey: [
+      'review-case-successor',
+      lineageReconciliation?.predecessor ?? null,
+      lineageReconciliation?.generation ?? null,
+    ],
+    queryFn: ({ signal }) =>
+      http.getCaseSuccessor(lineageReconciliation?.predecessor ?? '', signal),
+    enabled: activeLineageReconciliation,
+    retry: (failureCount) => activeLineageReconciliation && failureCount < 1,
+    retryDelay: coalesceMilliseconds,
+    retryOnMount: false,
+    refetchInterval: false,
+    refetchOnMount: false,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+  })
   const attention = useInfiniteQuery({
     queryKey: ['attention', 'workspace', search.attentionCursor ?? null],
     initialPageParam: search.attentionCursor,
@@ -939,6 +971,57 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       if (pendingSuccessorRef.current.size) setSuccessorGeneration((generation) => generation + 1)
     }
   }, [detail.data, search.preview])
+  useLayoutEffect(() => {
+    const reconciliation = lineageReconciliation
+    if (
+      !lineageSuccessor.isSuccess ||
+      reconciliation === null ||
+      reconciliation.selection !== search.preview ||
+      selectedPreviewRef.current !== reconciliation.selection ||
+      activeLineageGeneration !== reconciliation.generation
+    )
+      return
+    // A successful null is authoritative; only the query's single bounded
+    // retry treats transport failure as pending reconciliation.
+    queueMicrotask(() => {
+      setActiveLineageGeneration(null)
+      setLineageReconciliation(null)
+    })
+    if (
+      lineageSuccessor.data !== null &&
+      pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates
+    ) {
+      pendingSuccessorRef.current.add(lineageSuccessor.data)
+      setSuccessorGeneration((generation) => generation + 1)
+    }
+  }, [
+    activeLineageGeneration,
+    lineageReconciliation,
+    lineageSuccessor.data,
+    lineageSuccessor.isSuccess,
+    search.preview,
+  ])
+  useLayoutEffect(() => {
+    const reconciliation = lineageReconciliation
+    if (
+      !lineageSuccessor.isError ||
+      lineageSuccessor.failureCount < 2 ||
+      reconciliation === null ||
+      reconciliation.selection !== search.preview ||
+      activeLineageGeneration !== reconciliation.generation
+    )
+      return
+    queueMicrotask(() => {
+      setActiveLineageGeneration(null)
+      setLineageReconciliation(null)
+    })
+  }, [
+    activeLineageGeneration,
+    lineageReconciliation,
+    lineageSuccessor.failureCount,
+    lineageSuccessor.isError,
+    search.preview,
+  ])
   useEffect(() => {
     if (!updates || !search.preview) return
     return updates.subscribe((update) => {
@@ -946,27 +1029,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       if (update.subject === null) {
         const predecessor = search.preview
         if (!predecessor) return
-        if (pendingLineageLookupRef.current === predecessor) return
-        pendingLineageLookupRef.current = predecessor
-        void (async () => {
-          try {
-            const successor = await http.getCaseSuccessor(predecessor)
-            if (
-              successor !== null &&
-              selectedPreviewRef.current === predecessor &&
-              pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates
-            ) {
-              pendingSuccessorRef.current.add(successor)
-              setSuccessorGeneration((generation) => generation + 1)
-            }
-          } catch {
-            // A null-subject invalidation is advisory; a failed bounded lookup
-            // must not replace the owner’s selected case with a guess.
-          } finally {
-            if (pendingLineageLookupRef.current === predecessor)
-              pendingLineageLookupRef.current = null
-          }
-        })()
+        const generation = ++lineageGenerationRef.current
+        setActiveLineageGeneration(generation)
+        setLineageReconciliation({ predecessor, selection: predecessor, generation })
         return
       }
       if (update.subject === search.preview) return

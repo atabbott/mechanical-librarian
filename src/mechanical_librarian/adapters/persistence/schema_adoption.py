@@ -9,6 +9,7 @@ import sqlite3
 import stat
 import struct
 import sys
+import time
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.binding import (
@@ -79,7 +80,9 @@ def _encode_value(value: object) -> bytes:
     raise MetadataReportError("database is unavailable or incompatible")
 
 
-def _application_table_digest(connection: sqlite3.Connection) -> str:
+def _application_table_digest(
+    connection: sqlite3.Connection, adoption_boundary: int | None = None
+) -> str:
     """Digest every application value in stable physical table order."""
     digest = hashlib.sha256()
     table_names = sorted(
@@ -93,6 +96,13 @@ def _application_table_digest(connection: sqlite3.Connection) -> str:
         digest.update(encoded_name)
         quoted = '"' + table_name.replace('"', '""') + '"'
         for row in connection.execute(f"SELECT * FROM {quoted} NOT INDEXED"):
+            if (
+                table_name == "review_preparation_work"
+                and adoption_boundary is not None
+                and row[14] == "queued"
+                and row[17] > adoption_boundary
+            ):
+                row = (*row[:14], "delayed", *row[15:])
             digest.update(len(row).to_bytes(4, "big"))
             for value in row:
                 encoded = _encode_value(value)
@@ -365,6 +375,7 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
     if database.parent != backup.parent or database.name == backup.name:
         raise MetadataReportError("schema adoption backup path is invalid")
 
+    adoption_boundary = -1
     descriptor = -1
     parent_descriptor = -1
     binding: _LinuxDatabaseBinding | None = None
@@ -419,6 +430,7 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
         connection.execute("PRAGMA synchronous=FULL")
         connection.execute("PRAGMA busy_timeout=0")
         connection.execute("BEGIN EXCLUSIVE")
+        adoption_boundary = int(time.time())
         try:
             _validate_schema(connection)
         except MetadataReportError:
@@ -432,7 +444,10 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
             return {"plan": plan, "status": "already-current"}
 
         _validate_canonical_documents(connection)
-        before = _application_table_digest(connection)
+        # The predecessor stored retry backoff as queued work. The current
+        # claimant only considers queued rows, so preserve a still-future
+        # backoff at this one explicit adoption boundary.
+        before = _application_table_digest(connection, adoption_boundary)
         backup_identity, backup_digest = _copy_verified_backup(
             source_descriptor, parent_descriptor, backup.name
         )
@@ -475,8 +490,12 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
             "INSERT INTO review_preparation_work_rebuilt("
             + columns
             + ") SELECT "
-            + columns
-            + " FROM review_preparation_work"
+            + columns.replace(
+                "stage,state,attempt",
+                "stage,CASE WHEN state='queued' AND retry_not_before>? THEN 'delayed' ELSE state END,attempt",
+            )
+            + " FROM review_preparation_work",
+            (adoption_boundary,),
         )
         connection.execute("DROP TABLE review_preparation_work")
         connection.execute(_REVIEW_WORK_SQL)

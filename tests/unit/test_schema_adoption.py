@@ -29,6 +29,7 @@ from mechanical_librarian.adapters.persistence.schema_adoption import (
     _application_table_digest,
     adopt_schema,
 )
+from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.schema_adoption import (
     REVIEW_FIELD_FACTS_V1 as REVIEW_READ_INDEXES_V1,
@@ -79,6 +80,51 @@ def _predecessor(root: Path) -> Path:
     root.chmod(0o700)
     database = root / "application.sqlite3"
     repository = open_repository(database)
+    repository.close()
+    connection = sqlite3.connect(database)
+    _freeze_review_field_facts_predecessor(connection)
+    connection.commit()
+    connection.close()
+    return database
+
+
+def _predecessor_with_retry_backoff(root: Path, retry_not_before: int) -> Path:
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root.chmod(0o700)
+    database = root / "application.sqlite3"
+    repository = open_repository(database)
+    producer = "f" * 64
+    repository.request_review_scan("primary", "books", "lib-1", producer, 1)
+    discovery = repository.claim_review_pipeline_action(2)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery,
+        1,
+        "a" * 64,
+        (
+            CatalogueEntry(
+                "primary",
+                "books",
+                "lib-1",
+                "item-1",
+                1,
+                "Synthetic work",
+                ("Example Author",),
+                True,
+                False,
+                "singular-supported",
+                "b" * 64,
+                "/item-1.epub",
+                "epub",
+                "books",
+            ),
+        ),
+        3,
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET state='queued',retry_not_before=?",
+        (retry_not_before,),
+    )
     repository.close()
     connection = sqlite3.connect(database)
     _freeze_review_field_facts_predecessor(connection)
@@ -222,6 +268,32 @@ def test_exact_current_is_a_verified_noop_without_creating_a_backup(
     } == adopt_schema(database, backup, REVIEW_READ_INDEXES_V1)
     assert database.read_bytes() == before
     assert not backup.exists()
+
+
+@pytest.mark.parametrize(
+    ("retry_not_before", "expected_state"),
+    ((0, "queued"), (10, "queued"), (12, "delayed")),
+)
+def test_exact_predecessor_preserves_retry_backoff_at_adoption_boundary(
+    tmp_path: Path, monkeypatch: MonkeyPatch, retry_not_before: int, expected_state: str
+) -> None:
+    database = _predecessor_with_retry_backoff(tmp_path, retry_not_before)
+    backup = tmp_path / "backup.sqlite3"
+    monkeypatch.setattr(
+        "mechanical_librarian.adapters.persistence.schema_adoption.time.time",
+        lambda: 10,
+    )
+
+    assert {"plan": REVIEW_READ_INDEXES_V1, "status": "adopted"} == adopt_schema(
+        database, backup, REVIEW_READ_INDEXES_V1
+    )
+
+    connection = sqlite3.connect(database)
+    row = connection.execute(
+        "SELECT state,retry_not_before FROM review_preparation_work"
+    ).fetchone()
+    connection.close()
+    assert row == (expected_state, retry_not_before)
 
 
 def test_unrecognized_schema_and_existing_backup_fail_without_mutation(
@@ -644,9 +716,11 @@ def test_postvalidation_path_replacement_cannot_report_success(
     real_digest = adoption._application_table_digest
     calls = 0
 
-    def replace_after_second_digest(connection: sqlite3.Connection) -> str:
+    def replace_after_second_digest(
+        connection: sqlite3.Connection, adoption_boundary: int | None = None
+    ) -> str:
         nonlocal calls
-        result = real_digest(connection)
+        result = real_digest(connection, adoption_boundary)
         calls += 1
         if calls == 2:
             database.rename(displaced)
