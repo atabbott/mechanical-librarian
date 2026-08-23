@@ -60,7 +60,7 @@ def test_unresponsive_installed_server_reports_the_deadline_it_reached(
         process.wait(timeout=10)
 
 
-def test_installed_pipeline_reconciles_representative_cohort_across_restart() -> None:
+def test_installed_pipeline_reconciles_then_restarts_completed_cohort() -> None:
     qualify_installed_pipeline(
         {"fiction": 4, "history": 20, "science": 20},
         expected_total=45,

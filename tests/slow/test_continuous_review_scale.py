@@ -178,7 +178,9 @@ class _WorkspaceProbe:
         assert self.failures == []
 
 
-def test_installed_pipeline_reconciles_two_thousand_fairly_across_restart() -> None:
+def test_installed_pipeline_reconciles_two_thousand_then_restarts_completed_cohort() -> (
+    None
+):
     workspace = _WorkspaceProbe()
     try:
         qualify_installed_pipeline(

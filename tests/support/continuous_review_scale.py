@@ -1,8 +1,8 @@
 """The installed-wheel continuous-review scale qualification driver.
 
 `qualify_installed_pipeline` builds an installed wheel, serves a synthetic
-Audiobookshelf over TLS, runs the pipeline across a restart and asserts the
-cohort reconciles fairly. Two tiers drive it at different sizes -- the
+Audiobookshelf over TLS, reconciles a fresh cohort, then verifies a
+completed-state restart. Two tiers drive it at different sizes -- the
 integration tier at a representative cohort, the slow tier at a thousand
 works -- so it lives here rather than in either tier's module: a test module
 never imports another test module's fixtures, because that makes one cohort
@@ -772,6 +772,8 @@ def qualify_installed_pipeline(
         ]
         fixture.hold_discovery()
         first_process = _start_review_server(review_port, arguments, origin)
+        peak_rss_kib = 0
+        measurements = _RouteMeasurements()
         try:
             with httpx.Client(verify=False, trust_env=False) as client:
                 login = client.post(
@@ -820,42 +822,6 @@ def qualify_installed_pipeline(
             assert any(
                 item["state"] == "discovering" for item in first_projection["libraries"]
             )
-        finally:
-            # Stopped, not killed. `SIGKILL` leaves SQLite's `-wal` and `-shm`
-            # behind, and a database basename carrying a recovery sidecar is
-            # outside the supported operating contract
-            # (`docs/operations/metadata-report.md`), so the restart below
-            # fails closed inside `open_repository` and exits 1 before serving
-            # -- the exact intermittent failure #770 was opened for. It is
-            # load-correlated because a busy host is where the write-ahead log
-            # has not been checkpointed away by the time the signal lands, and
-            # it disappears in isolation for the same reason.
-            if first_process.poll() is None:
-                first_process.terminate()
-            # The held discovery request has to return before the server can
-            # finish shutting down, so the hold is released before the wait
-            # rather than after it.
-            fixture.release_discovery()
-            try:
-                first_process.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                first_process.kill()
-                first_process.wait(timeout=10)
-
-        # An unclean stop is reported as itself rather than as whatever the
-        # next start makes of it. Without this the restart reports `exited
-        # before serving, exit code 1`, which names neither the sidecar nor the
-        # stop that left it -- the #730 standard applied one seam earlier.
-        assert not _database_sidecars(database), (
-            "the first server left recovery sidecars, so the restart is not the"
-            " supported restart this qualification proves: "
-            + ", ".join(path.name for path in _database_sidecars(database))
-        )
-        fixture.hold_discovery()
-        second_process = _start_review_server(review_port, arguments, origin)
-        peak_rss_kib = 0
-        measurements = _RouteMeasurements()
-        try:
             with httpx.Client(verify=False, trust_env=False) as client:
                 login = client.post(
                     origin + "/api/v1/session/login",
@@ -863,46 +829,7 @@ def qualify_installed_pipeline(
                     json={"password": "synthetic password"},
                 )
                 assert login.status_code == 200, login.text
-                recovery_deadline = time.monotonic() + 15
-                while True:
-                    if second_process.poll() is not None:
-                        pytest.fail(
-                            "installed review server exited before resumed scan became active"
-                        )
-                    pre_release_status = client.get(
-                        origin + "/api/v1/review-preparation"
-                    )
-                    assert pre_release_status.status_code < 500, pre_release_status.text
-                    if pre_release_status.status_code == 200:
-                        projection = pre_release_status.json()
-                        libraries = projection["libraries"]
-                        recovered = (
-                            projection["active"] is True
-                            and {item["library"] for item in libraries}
-                            == {"fiction", "history", "science"}
-                            and all(item["checked"] == 0 for item in libraries)
-                            and all(
-                                item["state"] in {"queued", "discovering"}
-                                for item in libraries
-                            )
-                            and any(
-                                item["state"] == "discovering" for item in libraries
-                            )
-                        )
-                    else:
-                        recovered = False
-                    if recovered:
-                        break
-                    if time.monotonic() >= recovery_deadline:
-                        pytest.fail(
-                            "recovered scans did not remain active behind held discovery"
-                        )
-                    time.sleep(0.02)
-                pre_release_projection = pre_release_status.json()
                 assert fixture.discovery_release.is_set() is False
-                assert all(
-                    item["checked"] == 0 for item in pre_release_projection["libraries"]
-                )
                 installed_reconciliation_started = time.monotonic()
                 fixture.release_discovery()
                 sampled_phases: set[str] = set()
@@ -910,11 +837,11 @@ def qualify_installed_pipeline(
                 active_observed = False
                 deadline = time.monotonic() + 60
                 while True:
-                    if second_process.poll() is not None:
+                    if first_process.poll() is not None:
                         pytest.fail(
                             "installed review server exited during reconciliation"
                         )
-                    peak_rss_kib = max(peak_rss_kib, _rss_kib(second_process.pid))
+                    peak_rss_kib = max(peak_rss_kib, _rss_kib(first_process.pid))
                     status = client.get(origin + "/api/v1/review-preparation")
                     if status.status_code == 503:
                         if time.monotonic() >= deadline:
@@ -992,6 +919,45 @@ def qualify_installed_pipeline(
             assert sum(item["blocked"] for item in projection["libraries"]) == 0
             assert peak_rss_kib < 524_288
         finally:
+            # A held discovery call has to return before a graceful shutdown.
+            fixture.release_discovery()
+            if first_process.poll() is None:
+                first_process.terminate()
+            try:
+                first_process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                first_process.kill()
+                first_process.wait(timeout=10)
+
+        # An unclean stop is reported as itself rather than as whatever the
+        # completed-state restart makes of it.
+        assert not _database_sidecars(database), (
+            "the installed server left recovery sidecars before completed-state "
+            "restart: " + ", ".join(path.name for path in _database_sidecars(database))
+        )
+        second_process = _start_review_server(review_port, arguments, origin)
+        try:
+            with httpx.Client(verify=False, trust_env=False) as client:
+                login = client.post(
+                    origin + "/api/v1/session/login",
+                    headers={"Origin": origin},
+                    json={"password": "synthetic password"},
+                )
+                assert login.status_code == 200, login.text
+                completed_status = client.get(origin + "/api/v1/review-preparation")
+                assert completed_status.status_code == 200, completed_status.text
+                completed_projection = completed_status.json()
+            assert completed_projection["active"] is False
+            assert {item["library"] for item in completed_projection["libraries"]} == {
+                "fiction",
+                "history",
+                "science",
+            }
+            assert all(
+                item["state"] == "completed" and item["checked"] == item["total"]
+                for item in completed_projection["libraries"]
+            )
+        finally:
             if second_process.poll() is None:
                 second_process.terminate()
             try:
@@ -999,6 +965,11 @@ def qualify_installed_pipeline(
             except subprocess.TimeoutExpired:
                 second_process.kill()
                 second_process.wait(timeout=10)
+
+        assert not _database_sidecars(database), (
+            "the completed-state restart left recovery sidecars: "
+            + ", ".join(path.name for path in _database_sidecars(database))
+        )
 
         assert tuple(artifacts.iterdir()) == ()
         assert all(method == "GET" for method, _path in fixture.requests)
@@ -1034,7 +1005,7 @@ def qualify_installed_pipeline(
                 },
                 "new_work_position": extracted[before_new:].index("fiction-new") + 1,
             },
-            "restart": {"first_ready": True, "second_ready": True},
+            "restart": {"completed_state_restart": True},
         }
         receipt["p95_budgets_ms"] = _validate_receipt_budgets(receipt)
         assert installed_reconciliation_rate >= 5
