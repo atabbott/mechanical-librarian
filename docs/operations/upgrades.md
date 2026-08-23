@@ -37,15 +37,20 @@ The command accepts no SQL or configuration. It either verifies an already
 current database without creating the requested backup, or validates the exact
 predecessor, creates and verifies the non-overwriting `0600` backup, and adds
 the two derived field-fact tables, their triggers, and measured index in one
-transaction. From that frozen predecessor it also atomically replaces the
-historical `updated_at` review-preparation claim index with the current ordinal
-and due-promotion indexes, and rebuilds only the operational work row to add
-its delayed eligibility state. It reconstructs the facts from canonical
-ReviewCase and shadow-outcome documents without changing a canonical row. The #826 immediate predecessor
-already contains those field-fact objects and is rejected; it requires a clean
-rebuild rather than this older plan. Any other schema,
-sidecar, stale private binding, integrity failure, live database authority,
-path replacement, backup collision, or backup-content change fails closed.
+transaction. From that frozen predecessor it captures one exclusive adoption
+boundary, atomically replaces the historical `updated_at` review-preparation
+claim index with the current ordinal and due-promotion indexes, and rebuilds
+operational work rows only: a legacy `queued` row with `retry_not_before`
+strictly greater than that boundary becomes `delayed`; zero or due (`<=`
+boundary) values remain `queued`. The digest preserves every other
+operational-row field and proves this is the plan's only allowed translation.
+The adoption remains exact-predecessor and fail-closed. It reconstructs the
+facts from canonical ReviewCase and shadow-outcome documents without changing a
+canonical row. The #826 immediate predecessor already contains those field-fact
+objects and is rejected; it requires a clean rebuild rather than this older
+plan. Any other schema, sidecar, stale private binding, integrity failure, live
+database authority, path replacement, backup collision, or backup-content
+change fails closed.
 Keep both clone and backup until the new build has started and its measured
 behavior is accepted.
 
