@@ -863,28 +863,7 @@ def qualify_installed_pipeline(
                     json={"password": "synthetic password"},
                 )
                 assert login.status_code == 200, login.text
-                workspace = client.get(origin + "/library")
-                assert workspace.status_code == 200, workspace.text
-                build_identity = re.search(
-                    r'data-build-identity="([0-9a-f]{64})"', workspace.text
-                )
-                browser_csrf = re.search(
-                    r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', workspace.text
-                )
-                assert build_identity is not None
-                assert browser_csrf is not None
-                action_headers = {
-                    "Origin": origin,
-                    "x-csrf-token": browser_csrf.group(1),
-                    "x-ml-build-identity": build_identity.group(1),
-                }
-                for library in ("fiction", "history", "science"):
-                    requested = client.post(
-                        origin + f"/api/v1/review-preparation/primary/{library}/scan",
-                        headers=action_headers,
-                    )
-                    assert requested.status_code == 202, requested.text
-                admission_deadline = time.monotonic() + 15
+                recovery_deadline = time.monotonic() + 15
                 while True:
                     if second_process.poll() is not None:
                         pytest.fail(
@@ -894,17 +873,33 @@ def qualify_installed_pipeline(
                         origin + "/api/v1/review-preparation"
                     )
                     assert pre_release_status.status_code < 500, pre_release_status.text
-                    if (
-                        pre_release_status.status_code == 200
-                        and fixture.discovery_started.is_set()
-                    ):
+                    if pre_release_status.status_code == 200:
+                        projection = pre_release_status.json()
+                        libraries = projection["libraries"]
+                        recovered = (
+                            projection["active"] is True
+                            and {item["library"] for item in libraries}
+                            == {"fiction", "history", "science"}
+                            and all(item["checked"] == 0 for item in libraries)
+                            and all(
+                                item["state"] in {"queued", "discovering"}
+                                for item in libraries
+                            )
+                            and any(
+                                item["state"] == "discovering" for item in libraries
+                            )
+                        )
+                    else:
+                        recovered = False
+                    if recovered:
                         break
-                    if time.monotonic() >= admission_deadline:
+                    if time.monotonic() >= recovery_deadline:
                         pytest.fail(
-                            "accepted scans did not reach held discovery before release"
+                            "recovered scans did not remain active behind held discovery"
                         )
                     time.sleep(0.02)
                 pre_release_projection = pre_release_status.json()
+                assert fixture.discovery_release.is_set() is False
                 assert all(
                     item["checked"] == 0 for item in pre_release_projection["libraries"]
                 )
