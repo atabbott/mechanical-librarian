@@ -711,10 +711,31 @@ def qualify_installed_pipeline(
                     json={"password": "synthetic password"},
                 )
                 assert login.status_code == 200, login.text
-                at_zero = client.get(origin + "/api/v1/review-preparation")
-                assert at_zero.status_code == 200, at_zero.text
-                assert at_zero.json()["active"] is True
-                assert sum(item["checked"] for item in at_zero.json()["libraries"]) == 0
+                zero_deadline = time.monotonic() + 15
+                while True:
+                    if second_process.poll() is not None:
+                        pytest.fail(
+                            "installed review server exited before resumed scan became active"
+                        )
+                    at_zero = client.get(origin + "/api/v1/review-preparation")
+                    assert at_zero.status_code < 500, at_zero.text
+                    if at_zero.status_code == 200:
+                        zero_projection = at_zero.json()
+                        if (
+                            zero_projection["active"] is True
+                            and sum(
+                                item["checked"] for item in zero_projection["libraries"]
+                            )
+                            == 0
+                            and fixture.discovery_started.is_set()
+                        ):
+                            break
+                    if time.monotonic() >= zero_deadline:
+                        pytest.fail(
+                            "resumed scan did not become active at zero progress before "
+                            "discovery release"
+                        )
+                    time.sleep(0.02)
                 installed_reconciliation_started = time.monotonic()
                 fixture.release_discovery()
                 phase_thresholds = (("early", 0.05), ("peak", 0.45), ("late", 0.85))
