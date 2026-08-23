@@ -429,12 +429,51 @@ def test_preopened_observation_survives_delete_journal_writer(
         )
         assert pipeline.status() == ((None,), False)
         assert pipeline.connection_conditions() == ()
+        with pytest.raises(ReviewPipelineError, match="persistence"):
+            pipeline.request("primary", "fiction")
+        assert pipeline.progress("primary", "fiction") is None
         with pytest.raises(MetadataReportError):
             open_repository(application_path)
     finally:
         writer.rollback()
         writer.close()
         pipeline.close_observation()
+
+
+def test_lifecycle_foreground_request_uses_one_clean_atomic_pause_boundary(
+    application_path: Path,
+) -> None:
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: open_repository(application_path),
+        observation_repository_factory=lambda: open_repository(
+            application_path, cross_thread=True
+        ),
+        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 10,
+    )
+    pipeline.open_observation()
+    try:
+        requested = pipeline.request("primary", "fiction")
+        assert requested.state == "queued"
+        assert pipeline.progress("primary", "fiction") == requested
+        pipeline.set_paused(True)
+        with pytest.raises(ReviewPipelineError, match="paused"):
+            pipeline.request("primary", "fiction")
+    finally:
+        pipeline.close_observation()
+
+    reopened = open_repository(application_path)
+    try:
+        assert reopened.review_pipeline_progress("primary", "fiction") == requested
+        assert reopened.review_pipeline_paused()
+    finally:
+        reopened.close()
 
 
 def test_composed_currentness_preserves_target_connection_errors(
@@ -3661,14 +3700,27 @@ def test_supervisor_restart_opens_a_fresh_observation() -> None:
     ]
 
 
-def test_observation_reads_share_one_reentrant_lock_and_actions_keep_their_factory() -> (
+def test_lifecycle_foreground_controls_share_one_reentrant_lock_and_workers_keep_their_factory() -> (
     None
 ):
     status_entered = threading.Event()
     release_status = threading.Event()
     conditions_called = threading.Event()
+    request_called = threading.Event()
     regular_opens = 0
     observation_opens = 0
+    progress = PipelineProgress(
+        "review_scan_" + "a" * 64,
+        "primary",
+        "fiction",
+        "queued",
+        0,
+        0,
+        0,
+        0,
+        False,
+        1,
+    )
 
     class ObservationRepository:
         def review_pipeline_status(self, *_):
@@ -3679,6 +3731,13 @@ def test_observation_reads_share_one_reentrant_lock_and_actions_keep_their_facto
         def target_connection_conditions(self):
             conditions_called.set()
             return ()
+
+        def request_review_scan(self, *_):
+            request_called.set()
+            return progress
+
+        def review_pipeline_progress(self, *_):
+            return progress
 
         def close(self) -> None:
             return None
@@ -3710,20 +3769,103 @@ def test_observation_reads_share_one_reentrant_lock_and_actions_keep_their_facto
     pipeline.open_observation()
     status_thread = threading.Thread(target=pipeline.status)
     conditions_thread = threading.Thread(target=pipeline.connection_conditions)
+    request_thread = threading.Thread(
+        target=lambda: pipeline.request("primary", "fiction")
+    )
     status_thread.start()
     assert status_entered.wait(1)
     conditions_thread.start()
+    request_thread.start()
     assert not conditions_called.wait(0.1)
+    assert not request_called.wait(0.1)
     release_status.set()
     status_thread.join(timeout=1)
     conditions_thread.join(timeout=1)
+    request_thread.join(timeout=1)
     assert not status_thread.is_alive()
     assert not conditions_thread.is_alive()
+    assert not request_thread.is_alive()
     assert conditions_called.is_set()
+    assert request_called.is_set()
+    assert pipeline.progress("primary", "fiction") == progress
     assert pipeline.run_next() is False
     pipeline.close_observation()
 
     assert observation_opens == 1
+    assert regular_opens == 1
+
+
+def test_foreground_control_holds_observation_through_close_then_falls_back() -> None:
+    request_started = threading.Event()
+    release_request = threading.Event()
+    close_started = threading.Event()
+    regular_opens = 0
+    progress = PipelineProgress(
+        "review_scan_" + "b" * 64,
+        "primary",
+        "fiction",
+        "queued",
+        0,
+        0,
+        0,
+        0,
+        False,
+        1,
+    )
+
+    class ObservationRepository:
+        closed = 0
+
+        def request_review_scan(self, *_):
+            request_started.set()
+            assert release_request.wait(2)
+            return progress
+
+        def review_pipeline_progress(self, *_):
+            return progress
+
+        def close(self) -> None:
+            self.closed += 1
+            close_started.set()
+
+    observation = ObservationRepository()
+    fallback = _ConcurrentRepository([])
+
+    def regular_factory() -> ReviewPipelineRepository:
+        nonlocal regular_opens
+        regular_opens += 1
+        return cast(ReviewPipelineRepository, fallback)
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=regular_factory,
+        observation_repository_factory=lambda: cast(
+            ReviewPipelineRepository, observation
+        ),
+        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+    )
+    pipeline.open_observation()
+    request = threading.Thread(target=lambda: pipeline.request("primary", "fiction"))
+    request.start()
+    assert request_started.wait(1)
+    closing = threading.Thread(target=pipeline.close_observation)
+    closing.start()
+    assert not close_started.wait(0.1)
+    release_request.set()
+    request.join(timeout=1)
+    closing.join(timeout=1)
+    assert not request.is_alive()
+    assert not closing.is_alive()
+    assert observation.closed == 1
+
+    assert pipeline.progress("primary", "fiction") is None
+    pipeline.close_observation()
+    assert observation.closed == 1
     assert regular_opens == 1
 
 

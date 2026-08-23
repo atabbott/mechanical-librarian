@@ -5,7 +5,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
@@ -37,6 +37,9 @@ _STAGES = (
     "admission",
     "projection",
 )
+
+
+_ForegroundResult = TypeVar("_ForegroundResult")
 
 
 def _unconfigured_connection_check(_connection: str) -> None:
@@ -416,43 +419,53 @@ class ReviewPreparationPipeline:
         except Exception as error:
             raise ReviewPipelineError("persistence") from error
 
+    def _with_foreground_repository(
+        self, call: Callable[[ReviewPipelineRepository], _ForegroundResult]
+    ) -> _ForegroundResult:
+        """Run one owner control against the lifecycle-owned handle when present."""
+        with self._observation_lock:
+            repository = self._observation_repository
+            if repository is not None:
+                try:
+                    return call(repository)
+                except ReviewPipelineError:
+                    raise
+                except Exception as error:
+                    raise ReviewPipelineError("persistence") from error
+            repository = self._open_repository()
+            try:
+                try:
+                    return call(repository)
+                except ReviewPipelineError:
+                    raise
+                except Exception as error:
+                    raise ReviewPipelineError("persistence") from error
+            finally:
+                repository.close()
+
     def request(self, connection: str, library: str) -> PipelineProgress:
         selected = self._libraries.get((connection, library))
         if selected is None:
             raise ReviewPipelineError("library")
         library_id, producer_fingerprint = selected
-        repository = self._open_repository()
-        try:
-            try:
-                progress = repository.request_review_scan(
-                    connection,
-                    library,
-                    library_id,
-                    producer_fingerprint,
-                    self._clock(),
-                )
-            except ReviewPipelineError:
-                raise
-            except Exception as error:
-                raise ReviewPipelineError("persistence") from error
-        finally:
-            repository.close()
+        progress = self._with_foreground_repository(
+            lambda repository: repository.request_review_scan(
+                connection,
+                library,
+                library_id,
+                producer_fingerprint,
+                self._clock(),
+            )
+        )
         self._announce("preparation", None)
         return progress
 
     def progress(self, connection: str, library: str) -> PipelineProgress | None:
         if (connection, library) not in self._libraries:
             raise ReviewPipelineError("library")
-        repository = self._open_repository()
-        try:
-            try:
-                return repository.review_pipeline_progress(connection, library)
-            except ReviewPipelineError:
-                raise
-            except Exception as error:
-                raise ReviewPipelineError("persistence") from error
-        finally:
-            repository.close()
+        return self._with_foreground_repository(
+            lambda repository: repository.review_pipeline_progress(connection, library)
+        )
 
     def status(self) -> tuple[tuple[PipelineProgress | None, ...], bool]:
         libraries = tuple(sorted(self._libraries))
@@ -1074,8 +1087,6 @@ class ReviewPreparationSupervisor:
         self._pipeline.close_observation()
 
     def request(self, connection: str, library: str) -> PipelineProgress:
-        if self._pipeline.paused():
-            raise ReviewPipelineError("paused")
         progress = self._pipeline.request(connection, library)
         with self._schedule_lock:
             self._schedule_waiting_for_action = False
