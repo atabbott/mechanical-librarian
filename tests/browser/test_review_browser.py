@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -844,6 +845,260 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 page.get_by_role("heading", name="Activity and recovery").wait_for()
                 assert documents == (initial_documents + 2)
                 assert errors == []
+            browser.close()
+
+
+def test_browser_workspace_survives_delete_journal_writer_contention() -> None:
+    """Representative browser contention, not a 5/45/85-work scale claim."""
+
+    class DeleteJournalWriter:
+        def __init__(self, database: Path) -> None:
+            self._database = database
+            self._ready = threading.Event()
+            self._begin = threading.Event()
+            self._started = threading.Event()
+            self._release = threading.Event()
+            self._completed = threading.Event()
+            self._stopped = threading.Event()
+            self._updated_at = 0
+            self.errors: list[BaseException] = []
+            self._thread = threading.Thread(target=self._run)
+            self._thread.start()
+            assert self._ready.wait(5), "DELETE/FULL writer did not open"
+
+        def hold(self, updated_at: int) -> None:
+            self._started.clear()
+            self._completed.clear()
+            self._release.clear()
+            self._updated_at = updated_at
+            self._begin.set()
+            assert self._started.wait(5), "writer did not hold its journal transaction"
+
+        def release(self) -> None:
+            self._release.set()
+
+        def completed(self) -> None:
+            assert self._completed.wait(5), "writer did not complete boundedly"
+
+        def close(self) -> None:
+            self._stopped.set()
+            self._release.set()
+            self._begin.set()
+            self._thread.join(5)
+            assert not self._thread.is_alive()
+            assert self.errors == []
+
+        def _run(self) -> None:
+            connection = None
+            try:
+                connection = sqlite3.connect(self._database, isolation_level=None)
+                assert connection.execute("PRAGMA journal_mode=DELETE").fetchone() == (
+                    "delete",
+                )
+                connection.execute("PRAGMA synchronous=FULL")
+                assert connection.execute("PRAGMA synchronous").fetchone() == (2,)
+                connection.execute("PRAGMA busy_timeout=5000")
+                assert connection.execute("PRAGMA busy_timeout").fetchone() == (5_000,)
+                self._ready.set()
+                while True:
+                    self._begin.wait()
+                    self._begin.clear()
+                    if self._stopped.is_set():
+                        return
+                    connection.execute("BEGIN IMMEDIATE")
+                    connection.execute(
+                        "UPDATE review_preparation_control "
+                        "SET updated_at=? WHERE singleton=1",
+                        (self._updated_at,),
+                    )
+                    self._started.set()
+                    if not self._release.wait(5):
+                        raise AssertionError("browser request did not release writer")
+                    self._release.clear()
+                    connection.execute("COMMIT")
+                    self._completed.set()
+            except BaseException as error:
+                self.errors.append(error)
+                self._ready.set()
+                self._started.set()
+                self._completed.set()
+            finally:
+                if connection is not None:
+                    connection.close()
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        database = root / "review.sqlite3"
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        errors: list[str] = []
+        failures: list[tuple[str, int]] = []
+        composed: list[Any] = []
+
+        def capture_composition(app: Any) -> None:
+            application = app.state.review_application
+            # The fixture carries persisted provider facts only. It has no
+            # provider preparation or target-writing adapter to exercise.
+            assert application._preparation is None
+            assert type(application._field_application) is _BrowserActivityApplication
+            composed.append(application)
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 390, "height": 844},
+            )
+            page = context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on(
+                "console",
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            page.on(
+                "response",
+                lambda response: (
+                    failures.append((response.url, response.status))
+                    if response.status >= 500
+                    else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=database,
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    on_app=capture_composition,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                assert len(composed) == 1
+                writer = DeleteJournalWriter(database)
+                try:
+                    _login(page, origin)
+                    page.get_by_role("heading", name="Works", exact=True).wait_for()
+
+                    # A DELETE/FULL writer is already holding an updated
+                    # preparation-control row while the Library reads navigate,
+                    # filter, search, and select this exact current case.
+                    writer.hold(1_001)
+                    page.get_by_role("link", name="All", exact=True).click()
+                    page.wait_for_url("**/library?lens=all")
+                    search = page.get_by_role(
+                        "searchbox",
+                        name="Search title, author, identifier, library, or format",
+                    )
+                    search.fill("Mistborn")
+                    page.wait_for_url("**/library?lens=all&q=Mistborn")
+                    work = page.locator(".library-work-row").filter(has_text="Mistborn")
+                    expect(work).to_be_visible()
+                    assert "lens=all" in page.url
+                    assert "q=Mistborn" in page.url
+                    work.click()
+                    page.get_by_role(
+                        "heading", name="Which title should this work use?"
+                    ).wait_for()
+                    assert "lens=all" in page.url
+                    assert "q=Mistborn" in page.url
+                    assert f"preview={case_id}" in page.url
+                    expect(work).to_have_attribute("aria-current", "true")
+                    writer.release()
+                    writer.completed()
+
+                    # The decision starts its HTTP POST while the writer owns
+                    # the rollback journal; request start releases it, so the
+                    # durable decision and the authoritative refresh both finish.
+                    writer.hold(1_002)
+                    released_decision_writer = threading.Event()
+
+                    def release_on_decision(request) -> None:
+                        if request.method == "POST" and request.url.endswith(
+                            "/decisions"
+                        ):
+                            released_decision_writer.set()
+                            writer.release()
+
+                    page.on("request", release_on_decision)
+                    with page.expect_response(
+                        lambda response: response.url.endswith("/decisions")
+                    ) as decision_response:
+                        page.get_by_role(
+                            "button", name="Choose current value:", exact=False
+                        ).click()
+                    assert decision_response.value.status == 200
+                    assert released_decision_writer.is_set()
+                    writer.completed()
+                    page.get_by_text(
+                        "Decision recorded from the authoritative case.", exact=True
+                    ).wait_for()
+
+                    # A later exact-current revisit and the Activity type filter
+                    # both read through a fresh DELETE-journal writer window.
+                    writer.hold(1_003)
+                    released_revisit_writer = threading.Event()
+
+                    def release_on_revisit(request) -> None:
+                        if request.url.endswith(f"/api/v1/review-cases/{case_id}"):
+                            released_revisit_writer.set()
+                            writer.release()
+
+                    page.on("request", release_on_revisit)
+                    with page.expect_response(
+                        lambda response: response.url.endswith(
+                            f"/api/v1/review-cases/{case_id}"
+                        )
+                    ) as revisit_response:
+                        page.goto(
+                            f"{origin}/library?lens=all&preview={case_id}&field=title"
+                        )
+                    revisit = revisit_response.value
+                    assert revisit.status == 200
+                    assert released_revisit_writer.is_set()
+                    writer.completed()
+                    readback = revisit.json()
+                    assert readback["current"] is True
+                    assert readback["writes_consented"] is False
+                    page.get_by_role(
+                        "heading", name="Which title should this work use?"
+                    ).wait_for()
+                    expect(
+                        page.get_by_role(
+                            "button", name="Title Decision recorded", exact=True
+                        )
+                    ).to_have_attribute("aria-current", "true")
+                    expect(
+                        page.get_by_role(
+                            "button", name="Choose current value:", exact=False
+                        )
+                    ).to_have_attribute("aria-pressed", "true")
+                    with page.expect_response(
+                        lambda response: "/api/v1/activity?" in response.url
+                    ):
+                        page.get_by_role("link", name="Activity", exact=True).click()
+                    with page.expect_response(
+                        lambda response: "event_type=review" in response.url
+                    ):
+                        page.get_by_role(
+                            "button", name="Owner choices", exact=True
+                        ).click()
+                    expect(
+                        page.get_by_role("button", name="Owner choices", exact=True)
+                    ).to_have_attribute("aria-pressed", "true")
+                    expect(
+                        page.get_by_role("button", name="Owner choices", exact=True)
+                    ).to_be_focused()
+                    assert errors == []
+                    assert failures == []
+                finally:
+                    writer.close()
             browser.close()
 
 
