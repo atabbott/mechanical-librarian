@@ -37,6 +37,7 @@ from mechanical_librarian.adapters.evidence_extractors.process import (
 )
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.application.configuration import MediaMountConfiguration
+from mechanical_librarian.application.metadata_report import ItemInspectionError
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.epub_inspection import (
     DateEvent,
@@ -1009,6 +1010,29 @@ def test_isolated_inspector_maps_rear_series_to_canonical_report_claims(
     )
     assert MetadataReport.from_json(report.to_json()) == report
     assert str(tmp_path) not in report.to_json()
+
+
+@pytest.mark.parametrize(
+    "fault",
+    (composition.LocalMediaError("media unavailable"), OSError("I/O unavailable")),
+    ids=("local-media", "os-error"),
+)
+def test_isolated_inspector_maps_local_media_failures_to_unreadable_outcome(
+    tmp_path: Path, fault: OSError
+) -> None:
+    inspector = composition._IsolatedEpubInspector(
+        CoverArtifactStore(tmp_path / "artifacts")
+    )
+    with (
+        patch.object(composition, "open_local_media", side_effect=fault),
+        pytest.raises(ItemInspectionError) as raised,
+    ):
+        inspector.inspect(
+            MediaMountConfiguration("books", str(tmp_path), "/library", True),
+            "book.epub",
+            1,
+        )
+    assert raised.value.outcome is EpubInspectionOutcome.UNAVAILABLE_SOURCE
 
 
 @pytest.mark.parametrize(

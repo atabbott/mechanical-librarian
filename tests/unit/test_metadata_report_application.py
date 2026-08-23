@@ -816,8 +816,44 @@ def test_duplicate_occurrences_are_serialized_in_source_order_and_replay_stably(
     assert MetadataReport.from_json(report.to_json()).to_json() == report.to_json()
 
 
-def test_unsupported_media_precedes_inspector_provider_and_repository() -> None:
-    target = FakeTarget([TargetSnapshot("audiobook", "Audio", ())])
+@pytest.mark.parametrize(
+    ("target", "mount", "file_index"),
+    (
+        (FakeTarget([TargetSnapshot("audiobook", "Audio", ())]), None, 0),
+        (
+            FakeTarget(
+                [
+                    TargetSnapshot(
+                        "ebook",
+                        "Ebook",
+                        (TargetFile("a" * 64, "book.epub", "epub"),),
+                    )
+                ]
+            ),
+            MediaMountConfiguration("books", "/media", "/library", True),
+            1,
+        ),
+        (
+            FakeTarget(
+                [
+                    TargetSnapshot(
+                        "ebook",
+                        "Ebook",
+                        (TargetFile("a" * 64, "book.pdf", "pdf"),),
+                    )
+                ]
+            ),
+            MediaMountConfiguration("books", "/media", "/library", True),
+            0,
+        ),
+    ),
+    ids=("absent-mount", "invalid-selection", "non-epub"),
+)
+def test_unsupported_media_precedes_inspector_provider_and_repository(
+    target: FakeTarget,
+    mount: MediaMountConfiguration | None,
+    file_index: int,
+) -> None:
     inspector = FakeInspector(InspectionResult("c" * 64, ()))
     activity: list[str] = []
     repository = FakeReportRepository()
@@ -836,11 +872,11 @@ def test_unsupported_media_precedes_inspector_provider_and_repository() -> None:
         library=LibraryConfiguration(
             "audio", "primary", "library-id", "audiobook", None, ("catalogue",)
         ),
-        mount=None,
+        mount=mount,
         limits=ReportLimits(),
     )
     with pytest.raises(UnsupportedMediaError):
-        service.run("item-1", 0)
+        service.run("item-1", file_index)
     assert activity == []
     assert inspector.inspections == 0
 

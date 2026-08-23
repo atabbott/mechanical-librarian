@@ -36,6 +36,7 @@ from mechanical_librarian.application.metadata_report import (
     CurrentnessError,
     ItemInspectionError,
     TargetNotFoundError,
+    UnsupportedMediaError,
 )
 from mechanical_librarian.application.proposal_sets import (
     ProposalCurrentnessError,
@@ -214,6 +215,8 @@ class ReviewPipelineStages:
         self._recover_artifacts()
         try:
             serialized = self._generate_report(action, claim_next, pipeline_repository)
+        except UnsupportedMediaError as error:
+            raise ReviewPipelineError("unsupported_media") from error
         except CredentialError as error:
             raise self._credential_failure(error, action) from error
         except (CurrentnessError, TargetNotFoundError) as error:

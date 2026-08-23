@@ -630,7 +630,11 @@ class _IsolatedEpubInspector:
             raise
         except MetadataReportError:
             raise
-        except (LocalMediaError, OSError, ValueError) as error:
+        except (LocalMediaError, OSError) as error:
+            raise ItemInspectionError(
+                EpubInspectionOutcome.UNAVAILABLE_SOURCE
+            ) from error
+        except ValueError as error:
             raise ItemInspectionError("EPUB inspection failed") from error
         finally:
             if opened is not None:

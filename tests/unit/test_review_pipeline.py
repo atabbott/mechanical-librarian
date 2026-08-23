@@ -35,8 +35,10 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.metadata_report import (
     CredentialError,
+    ItemInspectionError,
     MetadataReportError,
     TargetNotFoundError,
+    UnsupportedMediaError,
 )
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.application.proposal_sets import (
@@ -62,6 +64,7 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.application.review_pipeline_stages import ReviewPipelineStages
 from mechanical_librarian.application.review_web import BrowseReviewLibrary
+from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderObservation,
@@ -97,6 +100,60 @@ def _proposal_stages(
         discovery_lock=threading.Lock(),
         clock=lambda: 7,
     )
+
+
+@pytest.mark.parametrize(
+    ("failure", "code"),
+    (
+        (UnsupportedMediaError("unsupported"), "unsupported_media"),
+        (
+            ItemInspectionError(EpubInspectionOutcome.UNAVAILABLE_SOURCE),
+            "unreadable_media",
+        ),
+        (ItemInspectionError(EpubInspectionOutcome.RESOURCE_LIMIT), "parser_refused"),
+        (
+            ItemInspectionError(EpubInspectionOutcome.INTERNAL_FAILURE),
+            "internal_failure",
+        ),
+        (ItemInspectionError(), "unknown"),
+    ),
+    ids=("unsupported", "unreadable", "parser-refused", "internal", "unknown"),
+)
+def test_extraction_stage_projects_only_declared_failure_boundaries(
+    failure: Exception, code: str
+) -> None:
+    def unreachable(*_arguments: object, **_keywords: object) -> None:
+        raise AssertionError
+
+    stages = ReviewPipelineStages(
+        configuration=ApplicationConfiguration((), (), (), ()),
+        catalogue=unreachable,
+        catalogue_reader=cast("CatalogueReader", unreachable),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=lambda: None,
+        generate_report=lambda *_: (_ for _ in ()).throw(failure),
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=cast("ProviderFailureObserver", unreachable),
+        drain_outbox=unreachable,
+        discovery_lock=threading.Lock(),
+        clock=lambda: 7,
+    )
+
+    with (
+        patch.object(stages, "_require_eligible_entry"),
+        pytest.raises(ReviewPipelineError) as raised,
+    ):
+        stages.extract(
+            cast("ReviewPipelineRepository", object()),
+            cast("PipelineAction", object()),
+            False,
+        )
+    assert raised.value.code == code
+    assert raised.value.__cause__ is failure
 
 
 @pytest.mark.parametrize(
