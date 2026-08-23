@@ -357,12 +357,14 @@ def compose_audiobookshelf_field_effect_target(
                 connection.endpoint,
                 connection.secret_file,
                 configuration.limits.timeout_seconds,
+                plain_http=connection.plain_http,
             )
             if credentials is None
             else target_client_token(
                 connection.endpoint,
                 credentials["target:" + connection.name],
                 configuration.limits.timeout_seconds,
+                plain_http=connection.plain_http,
             )
         ),
         endpoint=connection.endpoint,
@@ -388,12 +390,14 @@ def compose_audiobookshelf_field_effect_capabilities(
                 connection.endpoint,
                 connection.secret_file,
                 configuration.limits.timeout_seconds,
+                plain_http=connection.plain_http,
             )
             if credentials is None
             else target_client_token(
                 connection.endpoint,
                 credentials["target:" + connection.name],
                 configuration.limits.timeout_seconds,
+                plain_http=connection.plain_http,
             )
         ),
         endpoint=connection.endpoint,
@@ -1061,12 +1065,14 @@ def run_metadata_report_loaded(
                 connection.endpoint,
                 connection.secret_file,
                 configuration.limits.timeout_seconds,
+                plain_http=connection.plain_http,
             )
             if credentials is None
             else target_client_token(
                 connection.endpoint,
                 credentials["target:" + connection.name],
                 configuration.limits.timeout_seconds,
+                plain_http=connection.plain_http,
             )
         ),
         endpoint=connection.endpoint,
@@ -1211,6 +1217,7 @@ def _require_report_current_loaded(
             connection.endpoint,
             connection.secret_file,
             configuration.limits.timeout_seconds,
+            plain_http=connection.plain_http,
         ),
         endpoint=connection.endpoint,
         library_id=library.library_id,
@@ -1346,6 +1353,7 @@ def create_review_pipeline(
             clients[name].endpoint,
             clients[name].secret_file,
             configuration.limits.timeout_seconds,
+            plain_http=clients[name].plain_http,
         ),
         mounts=mounts,
         maximum_bytes=configuration.limits.target_response_bytes,
@@ -1458,6 +1466,7 @@ def create_review_pipeline(
                 connection.endpoint,
                 connection.secret_file,
                 configuration.limits.timeout_seconds,
+                plain_http=connection.plain_http,
             ),
             endpoint=connection.endpoint,
             library_id=library.library_id,
@@ -1743,6 +1752,7 @@ def run_catalogue(
             clients[name].endpoint,
             clients[name].secret_file,
             configuration.limits.timeout_seconds,
+            plain_http=clients[name].plain_http,
         ),
         mounts=mounts,
         maximum_bytes=configuration.limits.target_response_bytes,

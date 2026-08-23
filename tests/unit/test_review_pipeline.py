@@ -436,7 +436,7 @@ def test_composed_currentness_preserves_target_connection_errors(
                 patch.object(
                     composition,
                     "target_client",
-                    side_effect=lambda *_args: httpx.Client(
+                    side_effect=lambda *_args, **_kwargs: httpx.Client(
                         transport=httpx.MockTransport(
                             lambda _request: httpx.Response(status)  # noqa: B023 - closure is created and consumed within this iteration
                         )
@@ -465,7 +465,7 @@ def test_composed_currentness_preserves_target_connection_errors(
         patch.object(
             composition,
             "target_client",
-            side_effect=lambda *_args: httpx.Client(
+            side_effect=lambda *_args, **_kwargs: httpx.Client(
                 transport=httpx.MockTransport(
                     lambda _request: (_ for _ in ()).throw(
                         httpx.ConnectError("offline")
@@ -494,7 +494,7 @@ def test_composed_currentness_preserves_target_connection_errors(
         patch.object(
             composition,
             "target_client",
-            side_effect=lambda *_args: httpx.Client(
+            side_effect=lambda *_args, **_kwargs: httpx.Client(
                 transport=httpx.MockTransport(lambda _request: httpx.Response(404))
             ),
         ),

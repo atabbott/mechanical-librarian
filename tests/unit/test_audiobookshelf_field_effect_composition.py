@@ -111,10 +111,14 @@ def test_canary_capabilities_read_the_secret_file_only_without_credentials() -> 
         assert "from-token" == built.call_args.kwargs["client_factory"]()
 
     file.assert_called_once_with(
-        "http://127.0.0.1:8080", "/target", configuration.limits.timeout_seconds
+        "http://127.0.0.1:8080",
+        "/target",
+        configuration.limits.timeout_seconds,
+        plain_http=False,
     )
     token.assert_called_once_with(
         "http://127.0.0.1:8080",
         "synthetic-token",
         configuration.limits.timeout_seconds,
+        plain_http=False,
     )

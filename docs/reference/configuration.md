@@ -102,6 +102,35 @@ provider names are unique. Each library refers to exactly one target connection
 and lists its provider connections explicitly; duplicate references are
 invalid. List order has no priority meaning and is canonicalized by name.
 
+## Target transport
+
+A connection `endpoint` is one exact origin with no path, query, fragment, or
+credentials. HTTPS endpoints always use full hostname and certificate
+verification; there is no verification-disable option. A plain `http://`
+endpoint is accepted for `localhost`/loopback without further declaration.
+
+Any other plain-HTTP endpoint — typically a container name or private address
+on the same Compose network or LAN, such as `http://audiobookshelf:13378` —
+requires the connection's explicit opt-in:
+
+```json
+{
+  "name": "primary",
+  "adapter": "audiobookshelf",
+  "endpoint": "http://audiobookshelf:13378",
+  "secret_file": "/run/secrets/audiobookshelf-token",
+  "plain_http": true
+}
+```
+
+`plain_http` defaults to `false` and is scoped to its one connection. Under
+it, the connection's API token and library metadata cross that network
+segment in cleartext, so declare it only for a segment you control end to
+end. It changes nothing else: credential attachment stays same-origin on the
+same closed routes, and it is rejected on a non-`http://` endpoint so a
+stale opt-in cannot linger after the endpoint moves to HTTPS
+([ADR-0059](../architecture/decisions/0059-explicit-plain-http-target-connections.md)).
+
 ## Sparse policy overrides
 
 The built-in metadata policy needs no configuration. A library may instead

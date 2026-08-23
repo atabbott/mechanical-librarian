@@ -19,6 +19,11 @@
           "title": "Name",
           "type": "string"
         },
+        "plain_http": {
+          "default": false,
+          "title": "Plain Http",
+          "type": "boolean"
+        },
         "secret_file": {
           "maxLength": 1024,
           "minLength": 1,

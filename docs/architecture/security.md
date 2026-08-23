@@ -369,7 +369,12 @@ owner-recovery state with no automatic reload loop.
 Secret material is read only in infrastructure and represented nowhere in the
 report, catalogue, or manifest. Target authorization is attached only to the
 configured origin's exact library, library-items, and current-item GET route
-shapes used by the selected operation. Provider authorization is attached only
+shapes used by the selected operation. Target transport is HTTPS with full
+certificate verification, with no verification-disable option. Plain HTTP is
+admitted only to loopback, or under the connection's explicit `plain_http`
+opt-in for one declared local endpoint (ADR-0059); the opt-in widens no other
+origin, route, or credential bound and is rejected on a non-`http://`
+endpoint so it cannot outlive an endpoint's upgrade. Provider authorization is attached only
 to the fixed HTTPS Hardcover GraphQL URL. Open Library has no secret; its
 operational contact appears only in the User-Agent of requests to the fixed
 metadata and Covers origins. HTTP clients ignore ambient proxy/environment

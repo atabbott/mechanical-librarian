@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Admit a plain-HTTP Audiobookshelf endpoint beyond loopback only under the
+  connection's explicit `plain_http` opt-in, so same-network container and LAN
+  deployments connect without a TLS sidecar. HTTPS verification stays strict
+  and undisableable, and every other origin bound is unchanged. (#844)
+
 - Explain terminal preparation failures safely in Library and authenticated
   operational evidence. (#831)
 

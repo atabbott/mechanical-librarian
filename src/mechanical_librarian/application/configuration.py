@@ -128,10 +128,20 @@ class TargetConnectionConfiguration:
     endpoint: str
     secret_file: str
     adapter: str = "audiobookshelf"
+    plain_http: bool = False
 
     def __post_init__(self) -> None:
         _name(self.name, "target connection name")
-        if self.adapter != "audiobookshelf" or type(self.endpoint) is not str:
+        if (
+            self.adapter != "audiobookshelf"
+            or type(self.endpoint) is not str
+            or type(self.plain_http) is not bool
+        ):
+            raise ConfigurationError("target connection is invalid")
+        # The opt-in is meaningful only for an actually plain endpoint; a
+        # retained flag on an HTTPS endpoint would silently hold the weaker
+        # posture open after an operator upgrades the connection.
+        if self.plain_http and not self.endpoint.startswith("http://"):
             raise ConfigurationError("target connection is invalid")
         _absolute_path(self.secret_file, "target secret file")
 

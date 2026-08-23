@@ -80,6 +80,7 @@ class ConnectionInput(_Closed):
     adapter: Literal["audiobookshelf"]
     endpoint: Annotated[StrictStr, Field(min_length=1, max_length=2048)]
     secret_file: BoundedAbsolutePath
+    plain_http: StrictBool = False
 
 
 class _ProviderInput(_Closed):

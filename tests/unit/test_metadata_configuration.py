@@ -26,6 +26,7 @@ from mechanical_librarian.infrastructure.security.credentials import (
     hardcover_client,
     read_secret,
     target_client,
+    target_client_token,
 )
 
 # `ConfigurationInput.model_validate` and `load_configuration_file` never open a
@@ -656,3 +657,130 @@ def test_hardcover_raw_token_is_confined_to_the_exact_graphql_post() -> None:
     assert "Bearer synthetic-provider-token" == requests[0].headers.get("authorization")
     assert requests[1].headers.get("authorization") is None
     assert requests[2].headers.get("authorization") is None
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    (
+        "http://audiobookshelf:13378",
+        "http://abs.lan:13378",
+        "http://192.168.1.20:13378",
+        "http://[fd00::20]:13378",
+    ),
+    ids=("container_name", "lan_name", "private_ipv4", "unique_local_ipv6"),
+)
+def test_target_plain_http_stays_confined_to_loopback_by_default(
+    endpoint: str,
+) -> None:
+    with pytest.raises(CredentialError):
+        target_client_token(endpoint, "token-value", 5)
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    (
+        "http://localhost:13378",
+        "http://127.0.0.1:13378",
+        "http://[::1]:13378",
+        "https://library.invalid",
+    ),
+    ids=("localhost", "loopback_ipv4", "loopback_ipv6", "https"),
+)
+def test_target_loopback_http_and_https_need_no_opt_in(endpoint: str) -> None:
+    target_client_token(endpoint, "token-value", 5).close()
+
+
+def test_target_plain_http_opt_in_admits_a_local_cleartext_endpoint() -> None:
+    requests: list[httpx.Request] = []
+    transport = httpx.MockTransport(
+        lambda request: requests.append(request) or httpx.Response(200)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
+    )
+    client = target_client_token(
+        "http://audiobookshelf:13378", "token-value", 5, plain_http=True
+    )
+    # Replace only the transport for this structural authorization test.
+    client._transport = transport
+    client.get("http://audiobookshelf:13378/api/items/item-1")
+    client.get("http://other:13378/api/items/item-1")
+    client.get("https://audiobookshelf:13378/api/items/item-1")
+    client.close()
+    assert requests[0].headers.get("authorization") == "Bearer token-value"
+    assert requests[1].headers.get("authorization") is None
+    assert requests[2].headers.get("authorization") is None
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    (
+        "http://audiobookshelf:13378/base",
+        "http://audiobookshelf:13378?query=1",
+        "http://audiobookshelf:13378#fragment",
+        "http://owner:secret@audiobookshelf:13378",
+        "ftp://audiobookshelf:13378",
+    ),
+    ids=("path", "query", "fragment", "userinfo", "scheme"),
+)
+def test_target_plain_http_opt_in_widens_no_other_origin_bound(endpoint: str) -> None:
+    with pytest.raises(CredentialError):
+        target_client_token(endpoint, "token-value", 5, plain_http=True)
+
+
+def test_connection_plain_http_is_explicit_and_scheme_bound() -> None:
+    connection = TargetConnectionConfiguration(
+        "primary",
+        "http://audiobookshelf:13378",
+        "/run/secrets/target",
+        plain_http=True,
+    )
+    assert connection.plain_http is True
+    assert (
+        TargetConnectionConfiguration(
+            "primary", "https://library.invalid", "/run/secrets/target"
+        ).plain_http
+        is False
+    )
+    with pytest.raises(ConfigurationError):
+        TargetConnectionConfiguration(
+            "primary",
+            "https://library.invalid",
+            "/run/secrets/target",
+            plain_http=True,
+        )
+    with pytest.raises(ConfigurationError):
+        TargetConnectionConfiguration(
+            "primary",
+            "http://audiobookshelf:13378",
+            "/run/secrets/target",
+            plain_http="true",  # type: ignore[arg-type]  # reason: the non-bool opt-in is exactly what this refusal covers.
+        )
+
+
+def test_configured_plain_http_loads_explicitly_and_defaults_to_false() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        source = _source(root)
+        source["connections"][1].update(
+            {"endpoint": "http://audiobookshelf:13378", "plain_http": True}
+        )
+        path = root / "config.json"
+        path.write_text(json.dumps(source), encoding="utf-8")
+        configuration = load_configuration_file(path)
+        by_name = {value.name: value for value in configuration.connections}
+        assert by_name["primary"].plain_http is True
+        assert by_name["secondary"].plain_http is False
+
+        source["connections"][1]["endpoint"] = "https://primary.invalid"
+        path.write_text(json.dumps(source), encoding="utf-8")
+        with pytest.raises(ConfigurationError):
+            load_configuration_file(path)
+
+
+def test_generated_schema_declares_the_plain_http_opt_in() -> None:
+    properties = json.loads(configuration_schema_json())["$defs"]["ConnectionInput"][
+        "properties"
+    ]
+    assert properties["plain_http"] == {
+        "default": False,
+        "title": "Plain Http",
+        "type": "boolean",
+    }

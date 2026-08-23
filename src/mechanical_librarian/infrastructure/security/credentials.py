@@ -75,15 +75,25 @@ def read_secret(path_value: str) -> str:
 
 
 def target_client(
-    endpoint: str, secret_file: str, timeout_seconds: int
+    endpoint: str,
+    secret_file: str,
+    timeout_seconds: int,
+    *,
+    plain_http: bool = False,
 ) -> httpx.Client:
-    return target_client_token(endpoint, read_secret(secret_file), timeout_seconds)
+    return target_client_token(
+        endpoint, read_secret(secret_file), timeout_seconds, plain_http=plain_http
+    )
 
 
 def target_client_token(
-    endpoint: str, token: str, timeout_seconds: int
+    endpoint: str,
+    token: str,
+    timeout_seconds: int,
+    *,
+    plain_http: bool = False,
 ) -> httpx.Client:
-    if not _target_origin_allowed(endpoint):
+    if not _target_origin_allowed(endpoint, plain_http=plain_http):
         raise CredentialError("target endpoint is invalid")
     return httpx.Client(
         base_url=endpoint.rstrip("/"),
@@ -206,7 +216,7 @@ class _HardcoverAuth(httpx.Auth):
         yield request
 
 
-def _target_origin_allowed(value: str) -> bool:
+def _target_origin_allowed(value: str, *, plain_http: bool = False) -> bool:
     try:
         parsed = urlsplit(value)
         if (
@@ -220,7 +230,12 @@ def _target_origin_allowed(value: str) -> bool:
             return False
         if parsed.scheme == "https":
             return True
-        return parsed.scheme == "http" and (
+        if parsed.scheme != "http":
+            return False
+        # ``plain_http`` is the connection's validated explicit opt-in for a
+        # cleartext local endpoint; without it, plain HTTP stays confined to
+        # loopback where the transport never leaves the host.
+        return plain_http or (
             parsed.hostname == "localhost"
             or ipaddress.ip_address(parsed.hostname).is_loopback
         )
