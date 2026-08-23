@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import re
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 from playwright.sync_api import Browser, Page, expect, sync_playwright
@@ -27,6 +27,27 @@ class _WorkspaceProbe:
     def close(self) -> None:
         self._browser.close()
         self._playwright.stop()
+
+    @staticmethod
+    def _assert_library_query(
+        page: Page, *, query: str | None, preview: str | None
+    ) -> None:
+        page.wait_for_function(
+            """({query}) => {
+                const location = new URL(window.location.href)
+                return location.pathname === '/library'
+                    && location.searchParams.get('lens') === 'all'
+                    && (query === null
+                        ? !location.searchParams.has('q')
+                        : location.searchParams.get('q') === query)
+            }""",
+            arg={"query": query},
+        )
+        parameters = parse_qs(urlparse(page.url).query)
+        assert parameters.get("lens") == ["all"]
+        assert parameters.get("q") == ([] if query is None else [query])
+        if preview is not None:
+            assert parameters.get("preview") == [preview]
 
     def observe(self, phase: str, origin: str, review_case_id: str) -> None:
         if self._page is None:
@@ -57,15 +78,16 @@ class _WorkspaceProbe:
             self._page.wait_for_url(f"{origin}/library")
 
         page = self._page
+        preserved_preview = review_case_id if phase != "early" else None
         page.get_by_role("link", name="All", exact=True).click()
-        expect(page).to_have_url(re.compile(r".*/library\?lens=all$"))
+        self._assert_library_query(page, query=None, preview=preserved_preview)
         search = page.get_by_role(
             "searchbox", name="Search title, author, identifier, library, or format"
         )
         search.fill("fiction")
-        expect(page).to_have_url(re.compile(r".*/library\?lens=all&q=fiction$"))
+        self._assert_library_query(page, query="fiction", preview=preserved_preview)
         search.fill("")
-        expect(page).to_have_url(re.compile(r".*/library\?lens=all$"))
+        self._assert_library_query(page, query=None, preview=preserved_preview)
         page.locator(".library-work-row").first.click()
         page.goto(f"{origin}/library?lens=all&preview={review_case_id}&field=title")
         page.get_by_role("heading", name="Which title should this work use?").wait_for()
