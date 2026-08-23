@@ -52,7 +52,6 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
-from tests.support.epub_packages import epub_bytes
 from tests.support.ports import ReservedPort
 from tests.support.tls import synthetic_tls_identity
 
@@ -307,34 +306,6 @@ class _AudiobookshelfFixture:
         self.summaries["fiction"].append(summary)
         self.details["fiction-new"] = detail
         return summary, detail
-
-    def materialize_media(self, media: Path) -> None:
-        """Give the installed process the deterministic files its API names."""
-
-        payload = epub_bytes()
-        title_candidate = epub_bytes(
-            package=b"""<?xml version="1.0" encoding="UTF-8"?>
-<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="identifier" version="3.0">
-  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="identifier">fiction-0000</dc:identifier><dc:title>fiction-0000</dc:title></metadata>
-  <manifest><item id="opening" href="opening.xhtml" media-type="application/xhtml+xml"/></manifest>
-  <spine><itemref idref="opening"/></spine>
-</package>""",
-            include_default_content=False,
-            extra_entries=(
-                (
-                    "EPUB/opening.xhtml",
-                    b"""<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><section epub:type="titlepage"><h1>Exact evaluator candidate</h1></section></body></html>""",
-                    8,
-                ),
-            ),
-        )
-        for item, detail in self.details.items():
-            value = title_candidate if item == "fiction-0000" else payload
-            (media / f"{item}.epub").write_bytes(value)
-            file_metadata = detail["media"]["ebookFile"]["metadata"]
-            assert type(file_metadata) is dict
-            file_metadata["size"] = len(value)
 
     def hold_discovery(self) -> None:
         self.discovery_started.clear()
@@ -730,7 +701,6 @@ def qualify_installed_pipeline(
         # above remains a control for fairness and recovery only; carrying its
         # scan rows into this child would turn the installed qualifier into a
         # no-change restart rather than a real 2,000-work reconciliation.
-        fixture.materialize_media(media)
         database = root / "installed.sqlite3"
         catalogue = root / "installed-catalogue.sqlite3"
         command = shutil.which("mechanical-librarian")
