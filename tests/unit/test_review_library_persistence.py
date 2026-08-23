@@ -430,6 +430,115 @@ def test_terminal_failed_work_is_library_only_and_safe() -> None:
     assert "credential unavailable" not in json.dumps(item)
 
 
+def test_real_sqlite_progress_reconciles_mixed_terminal_and_active_work() -> None:
+    """A stale item is terminally blocked beside failed, ready, and active work.
+
+    The persisted state is deliberately mixed in one current scan: progress is
+    a projection over the durable work rows, not a story reconstructed from a
+    single pipeline transition.  Stale stays in the failed bucket and names no
+    separate retry or recovery work.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        database = Path(directory) / "review.sqlite"
+        repository = open_repository(database)
+        repository.request_review_scan("primary", "fiction", "lib-1", "f" * 64, 10)
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        from mechanical_librarian.application.catalogue import CatalogueEntry
+
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "a" * 64,
+            tuple(
+                CatalogueEntry(
+                    "primary",
+                    "fiction",
+                    "lib-1",
+                    f"item-{ordinal}",
+                    ordinal,
+                    f"Synthetic {ordinal}",
+                    (),
+                    True,
+                    False,
+                    "singular-supported",
+                    f"{ordinal + 1:064x}",
+                    f"/synthetic-{ordinal}.epub",
+                    "epub",
+                    "/media",
+                )
+                for ordinal in range(4)
+            ),
+            12,
+        )
+        active = repository.claim_review_pipeline_action(13)
+        assert active is not None
+        assert active.stage == "extraction"
+        report = _report()
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        review_case_id = json.loads(repository.admit_review_case(proposal))[
+            "review_case_id"
+        ]
+
+        with sqlite3.connect(database) as connection:
+            work_ids = [
+                row[0]
+                for row in connection.execute(
+                    "SELECT work_id FROM review_preparation_work "
+                    "WHERE scan_id=? ORDER BY ordinal",
+                    (active.scan_id,),
+                )
+            ]
+            assert len(work_ids) == 4
+            active_state = connection.execute(
+                "SELECT state FROM review_preparation_work WHERE work_id=?",
+                (work_ids[0],),
+            ).fetchone()
+            connection.executemany(
+                "UPDATE review_preparation_work "
+                "SET stage=?,state=?,failure_code=?,review_case_id=?,updated_at=? "
+                "WHERE work_id=?",
+                (
+                    ("provider", "stale", "stale", None, 14, work_ids[1]),
+                    ("proposal", "failed", "failed", None, 14, work_ids[2]),
+                    ("complete", "complete", None, review_case_id, 14, work_ids[3]),
+                ),
+            )
+            stale = connection.execute(
+                "SELECT state,recovery_attempt FROM review_preparation_work WHERE work_id=?",
+                (work_ids[1],),
+            ).fetchone()
+
+        progress = repository.review_pipeline_progress("primary", "fiction")
+        repository.close()
+
+    assert progress is not None
+    assert active_state == ("running",)
+    assert (progress.total, progress.checked, progress.ready, progress.blocked) == (
+        4,
+        3,
+        1,
+        2,
+    )
+    assert dict(progress.stages) == {
+        "queued": 0,
+        "extracting": 1,
+        "providers": 0,
+        "proposals": 0,
+        "admission": 0,
+        "projection": 0,
+        "ready": 1,
+        "failed": 2,
+    }
+    assert progress.checked == progress.ready + progress.blocked
+    assert progress.total == sum(count for _stage, count in progress.stages)
+    # Stale is terminally blocked: it remains in place, has no retry count,
+    # and this read path creates no manual retry or recovery work.
+    assert stale == ("stale", 0)
+
+
 @pytest.mark.parametrize(
     ("status", "reason", "recovery"),
     (
