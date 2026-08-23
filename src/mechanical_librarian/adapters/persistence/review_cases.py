@@ -38,6 +38,7 @@ module would silently stop the interleave from happening.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Callable
 from typing import cast
@@ -377,6 +378,44 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             raise MetadataReportError(
                 "review case availability is unavailable"
             ) from error
+
+    def current_review_case_successor(self, review_case_id: str) -> str | None:
+        """Read the current case for this exact persisted target lineage."""
+        try:
+            if re.fullmatch(r"review_case_[0-9a-f]{64}", review_case_id) is None:
+                raise MetadataReportError("review case is unavailable")
+            row = self._connection.execute(
+                "SELECT document FROM review_cases WHERE review_case_id=?",
+                (review_case_id,),
+            ).fetchone()
+            if row is None or type(row[0]) is not str:
+                raise MetadataReportError("review case is unavailable")
+            target = ReviewCase.from_json(row[0]).target
+            current = self._connection.execute(
+                "SELECT lineage.review_case_id,successor.document "
+                "FROM current_review_case_lineages lineage LEFT JOIN review_cases successor "
+                "ON successor.review_case_id=lineage.review_case_id "
+                "WHERE lineage.connection_name=? AND lineage.library_name=? AND lineage.item_id=?",
+                (target["connection"], target["library"], target["item"]),
+            ).fetchone()
+            if current is None or current[0] is None:
+                return None
+            if (
+                type(current[0]) is not str
+                or re.fullmatch(r"review_case_[0-9a-f]{64}", current[0]) is None
+                or type(current[1]) is not str
+            ):
+                raise MetadataReportError("review case is unavailable")
+            successor = ReviewCase.from_json(current[1])
+            if successor.review_case_id != current[0] or (
+                successor.target["connection"],
+                successor.target["library"],
+                successor.target["item"],
+            ) != (target["connection"], target["library"], target["item"]):
+                raise MetadataReportError("review case is unavailable")
+            return None if current[0] == review_case_id else current[0]
+        except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
+            raise MetadataReportError("review case is unavailable") from error
 
     def get_review_case(self, review_case_id: str) -> str:
         try:

@@ -39,8 +39,9 @@ predecessor, creates and verifies the non-overwriting `0600` backup, and adds
 the two derived field-fact tables, their triggers, and measured index in one
 transaction. From that frozen predecessor it also atomically replaces the
 historical `updated_at` review-preparation claim index with the current ordinal
-index. It reconstructs the facts from canonical ReviewCase and shadow-outcome
-documents without changing a canonical row. The #826 immediate predecessor
+and due-promotion indexes, and rebuilds only the operational work row to add
+its delayed eligibility state. It reconstructs the facts from canonical
+ReviewCase and shadow-outcome documents without changing a canonical row. The #826 immediate predecessor
 already contains those field-fact objects and is rejected; it requires a clean
 rebuild rather than this older plan. Any other schema,
 sidecar, stale private binding, integrity failure, live database authority,

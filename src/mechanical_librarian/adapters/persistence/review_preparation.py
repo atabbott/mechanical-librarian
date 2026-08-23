@@ -128,6 +128,14 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 or re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", control[1]) is None
             ):
                 raise MetadataReportError("review preparation control is invalid")
+            # Promote due work before the eligible library/ordinal claim. The
+            # due index bounds this transition even when a cohort begins with
+            # many delayed rows.
+            self._connection.execute(
+                "UPDATE review_preparation_work SET state='queued',updated_at=? "
+                "WHERE state='delayed' AND retry_not_before<=?",
+                (claimed_at, claimed_at),
+            )
             scan = self._connection.execute(
                 "SELECT scan_id,connection_name,library_name,library_id,producer_fingerprint "
                 "FROM review_preparation_scans WHERE state='queued' "
@@ -161,11 +169,10 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
                 "WHERE s.scan_id=review_preparation_work.scan_id "
                 "AND s.state='processing') "
-                "AND retry_not_before<=? "
                 "GROUP BY library_name "
                 "ORDER BY CASE WHEN library_name>? THEN 0 ELSE 1 END,library_name "
                 "LIMIT 1",
-                (claimed_at, control[1] or ""),
+                (control[1] or "",),
             ).fetchone()
             # `ordinal` is the persisted discovery order for this cohort. A
             # stage transition deliberately changes `updated_at`, so using it
@@ -197,12 +204,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
                     "WHERE s.scan_id=review_preparation_work.scan_id "
                     "AND s.state='processing') "
-                    "AND retry_not_before<=? "
                     f"ORDER BY {ordering} LIMIT 1",
-                    (
-                        library[0],
-                        claimed_at,
-                    ),
+                    (library[0],),
                 ).fetchone()
             )
             if work is not None:
@@ -246,7 +249,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "WHERE state='processing' AND NOT EXISTS("
                 "SELECT 1 FROM review_preparation_work w "
                 "WHERE w.scan_id=review_preparation_scans.scan_id "
-                "AND w.state IN ('queued','running'))"
+                "AND w.state IN ('queued','delayed','running'))"
             ).fetchall()
             for scan_id, rescan_requested in scans:
                 pending_manual_return = self._has_pending_field_effect_manual_return(
@@ -322,6 +325,11 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         transaction = self._transaction("claim_review_pipeline_work")
         try:
             transaction.begin()
+            self._connection.execute(
+                "UPDATE review_preparation_work SET state='queued',updated_at=? "
+                "WHERE work_id=? AND state='delayed' AND retry_not_before<=?",
+                (claimed_at, work_id, claimed_at),
+            )
             work = self._connection.execute(
                 "SELECT work_id,scan_id,stage,attempt,connection_name,library_name,library_id,"
                 "producer_fingerprint,catalogue_generation,catalogue_fingerprint,item_id,"
@@ -335,9 +343,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 "AND lineage.review_case_id=review_preparation_work.review_case_id),"
                 "(SELECT generation FROM metadata_policy_state WHERE singleton=1) "
                 "FROM review_preparation_work WHERE work_id=? AND state='queued' "
-                "AND retry_not_before<=? AND EXISTS(SELECT 1 FROM review_preparation_scans s "
+                "AND EXISTS(SELECT 1 FROM review_preparation_scans s "
                 "WHERE s.scan_id=review_preparation_work.scan_id AND s.state='processing')",
-                (work_id, claimed_at),
+                (work_id,),
             ).fetchone()
             if work is None:
                 transaction.commit()
@@ -1021,7 +1029,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             updated = self._connection.execute(
                 "UPDATE review_preparation_work SET "
                 "stage=CASE WHEN recovery_attempt<2 THEN 'extraction' ELSE 'proposal' END,"
-                "state='queued',attempt=0,recovery_attempt=recovery_attempt+1,"
+                "state=CASE WHEN recovery_attempt<2 THEN 'delayed' ELSE 'queued' END,attempt=0,recovery_attempt=recovery_attempt+1,"
                 "retry_not_before=CASE WHEN recovery_attempt<2 THEN ? "
                 "ELSE 0 END,report_id=?,proposal_set_id=NULL,review_case_id=NULL,"
                 "failure_code='transient',failure_root=NULL,"
@@ -1161,7 +1169,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             if code == "transient" and retryable:
                 updated = self._connection.execute(
                     "UPDATE review_preparation_work SET stage='extraction',"
-                    "state=CASE WHEN recovery_attempt<2 THEN 'queued' ELSE 'failed' END,"
+                    "state=CASE WHEN recovery_attempt<2 THEN 'delayed' ELSE 'failed' END,"
                     "attempt=0,recovery_attempt=recovery_attempt+1,"
                     "retry_not_before=CASE WHEN recovery_attempt<2 THEN ? ELSE 0 END,"
                     "report_id=NULL,recovery_source_report_id=NULL,"

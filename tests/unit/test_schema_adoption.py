@@ -57,11 +57,18 @@ def _drop_field_facts_projection(connection: sqlite3.Connection) -> None:
 
 def _freeze_review_field_facts_predecessor(connection: sqlite3.Connection) -> None:
     _drop_field_facts_projection(connection)
+    connection.execute("DROP INDEX review_preparation_work_due_promotion")
     connection.execute("DROP INDEX review_preparation_work_aged_claim")
     connection.execute(
         "CREATE INDEX review_preparation_work_aged_claim "
         "ON review_preparation_work(state,library_name,updated_at,ordinal)"
     )
+    connection.execute("PRAGMA writable_schema=ON")
+    connection.execute(
+        "UPDATE sqlite_master SET sql=replace(sql,\"'queued','delayed','running'\",\"'queued','running'\") "
+        "WHERE type='table' AND name='review_preparation_work'"
+    )
+    connection.execute("PRAGMA writable_schema=OFF")
     # Every malformed-document test starts from the one frozen schema the
     # offline plan accepts, so its later rejection proves canonical validation.
     _validate_review_field_facts_predecessor_schema(connection)

@@ -799,7 +799,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     library: string
     item: string
   } | null>(null)
+  const selectedPreviewRef = useRef<string | undefined>(undefined)
   const pendingSuccessorRef = useRef(new Set<string>())
+  const pendingLineageLookupRef = useRef<string | null>(null)
   const [successorGeneration, setSuccessorGeneration] = useState(0)
   const [frozenFieldOrders, setFrozenFieldOrders] = useState<
     Readonly<Record<string, readonly string[]>>
@@ -830,6 +832,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const searchIdentity = librarySearchIdentity(search)
   const queryText = searchPending || typedQuery.echo === urlQuery ? typedQuery.text : urlQuery
   const selectedReviewCaseId = search.preview ?? ''
+  useEffect(() => {
+    selectedPreviewRef.current = search.preview
+    pendingSuccessorRef.current.clear()
+    pendingLineageLookupRef.current = null
+  }, [search.preview])
   const invalidateSearch = useCallback(() => {
     ++searchGeneration.current
     pendingSearchQuery.current = null
@@ -927,21 +934,42 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       }
   }, [search.preview, selectedIdentity])
   useEffect(() => {
-    if (search.preview && detail.data?.current)
+    if (search.preview && detail.data?.id === search.preview) {
       selectedTargetRef.current = { caseId: search.preview, ...detail.data.target }
+      if (pendingSuccessorRef.current.size) setSuccessorGeneration((generation) => generation + 1)
+    }
   }, [detail.data, search.preview])
   useEffect(() => {
     if (!updates || !search.preview) return
     return updates.subscribe((update) => {
-      const selectedTarget = selectedTargetRef.current
-      if (
-        update.topic !== 'library' ||
-        update.subject === null ||
-        update.subject === search.preview ||
-        selectedTarget === null ||
-        selectedTarget.caseId !== search.preview
-      )
+      if (update.topic !== 'library') return
+      if (update.subject === null) {
+        const predecessor = search.preview
+        if (!predecessor) return
+        if (pendingLineageLookupRef.current === predecessor) return
+        pendingLineageLookupRef.current = predecessor
+        void (async () => {
+          try {
+            const successor = await http.getCaseSuccessor(predecessor)
+            if (
+              successor !== null &&
+              selectedPreviewRef.current === predecessor &&
+              pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates
+            ) {
+              pendingSuccessorRef.current.add(successor)
+              setSuccessorGeneration((generation) => generation + 1)
+            }
+          } catch {
+            // A null-subject invalidation is advisory; a failed bounded lookup
+            // must not replace the owner’s selected case with a guess.
+          } finally {
+            if (pendingLineageLookupRef.current === predecessor)
+              pendingLineageLookupRef.current = null
+          }
+        })()
         return
+      }
+      if (update.subject === search.preview) return
       if (
         pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates &&
         !pendingSuccessorRef.current.has(update.subject)
@@ -953,7 +981,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         setSuccessorGeneration((generation) => generation + 1)
       }
     })
-  }, [search.preview, updates])
+  }, [http, search.preview, updates])
   useEffect(() => {
     const selectedTarget = selectedTargetRef.current
     const successorIds = [...pendingSuccessorRef.current]

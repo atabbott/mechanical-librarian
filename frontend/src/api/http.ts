@@ -402,6 +402,7 @@ export interface ReviewHttp {
   getLibrary(search: LibrarySearch, signal?: AbortSignal): Promise<LibraryView>
   getAttention(search: AttentionSearch, signal?: AbortSignal): Promise<AttentionView>
   getCaseDetail(reviewCaseId: string, signal?: AbortSignal): Promise<CaseDetailView>
+  getCaseSuccessor(reviewCaseId: string, signal?: AbortSignal): Promise<string | null>
   getEvidence(reviewCaseId: string, cursor?: string, signal?: AbortSignal): Promise<EvidenceView>
   getHistory(reviewCaseId: string, signal?: AbortSignal): Promise<HistoryView>
   retryCoverConsideration(
@@ -535,6 +536,19 @@ export class ReviewApiClient implements ReviewHttp {
   }
   async getCaseDetail(id: string, signal?: AbortSignal) {
     return mapCaseDetail(await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}`, signal))
+  }
+
+  async getCaseSuccessor(id: string, signal?: AbortSignal) {
+    const value = await this.read(
+      `/api/v1/review-cases/${encodeURIComponent(id)}/successor`,
+      signal,
+    )
+    if (typeof value !== 'object' || value === null || !('review_case_id' in value))
+      throw new ApiError(502, 'invalid_response')
+    const successor = value.review_case_id
+    if (successor !== null && typeof successor !== 'string')
+      throw new ApiError(502, 'invalid_response')
+    return successor
   }
   async getEvidence(id: string, cursor?: string, signal?: AbortSignal) {
     const p = new URLSearchParams({ limit: '50' })

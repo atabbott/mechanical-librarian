@@ -1120,6 +1120,27 @@
         "title": "_CaseDetailResponse",
         "type": "object"
       },
+      "_CaseSuccessorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "review_case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Review Case Id"
+          }
+        },
+        "required": [
+          "review_case_id"
+        ],
+        "title": "_CaseSuccessorResponse",
+        "type": "object"
+      },
       "_ChoiceContext": {
         "additionalProperties": false,
         "properties": {
@@ -8125,6 +8146,90 @@
           }
         ],
         "summary": "Case History"
+      }
+    },
+    "/api/v1/review-cases/{review_case_id}/successor": {
+      "get": {
+        "operationId": "case_successor_api_v1_review_cases__review_case_id__successor_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_case_id",
+            "required": true,
+            "schema": {
+              "title": "Review Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_CaseSuccessorResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Case Successor"
       }
     },
     "/api/v1/review-preparation": {

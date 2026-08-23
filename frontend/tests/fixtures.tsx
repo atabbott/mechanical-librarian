@@ -87,6 +87,7 @@ export const createHttp = (): ReviewHttp => ({
   getLibrary: vi.fn(async () => library),
   getAttention: vi.fn(async () => ({ total: 0, items: [] })),
   getCaseDetail: vi.fn(async () => detail),
+  getCaseSuccessor: vi.fn(async () => null),
   getEvidence: vi.fn(async () => ({ schema_version: 'review-case-evidence-v2', review_case_id: 'case-1', items: [], next_cursor: null })),
   getHistory: vi.fn(async () => ({ schema_version: 'review-case-history-v1', review_case_id: 'case-1', items: [], next_cursor: null })),
   retryCoverConsideration: vi.fn(async () => { throw new Error('not configured') }),

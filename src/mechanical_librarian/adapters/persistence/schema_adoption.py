@@ -28,6 +28,10 @@ from mechanical_librarian.adapters.persistence.schema import (
     _REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
     _REVIEW_CASE_FIELD_FACTS_SQL,
     _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
+    _REVIEW_WORK_DUE_PROMOTION_INDEX_SQL,
+    _REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL,
+    _REVIEW_WORK_RECENT_CLAIM_INDEX_SQL,
+    _REVIEW_WORK_SQL,
     _SHADOW_OUTCOME_FIELD_FACT_VALUES_SQL,
     _SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL,
     _SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL,
@@ -407,7 +411,11 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
             source_descriptor,
             binding.require_current if binding is not None else None,
         )
-        connection.execute("PRAGMA foreign_keys=ON")
+        # The one frozen predecessor has a narrower CHECK on preparation work.
+        # Its adoption rebuilds that derived operational row in the same
+        # exclusive transaction, so SQLite must not check child references
+        # during the table swap; every reference is checked immediately after.
+        connection.execute("PRAGMA foreign_keys=OFF")
         connection.execute("PRAGMA synchronous=FULL")
         connection.execute("PRAGMA busy_timeout=0")
         connection.execute("BEGIN EXCLUSIVE")
@@ -449,9 +457,46 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
         connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL)
         connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL)
         connection.execute("DROP INDEX review_preparation_work_aged_claim")
+        connection.execute("DROP INDEX review_preparation_work_recent_claim")
+        connection.execute("DROP INDEX review_preparation_work_lineage_history")
+        connection.execute(
+            _REVIEW_WORK_SQL.replace(
+                "review_preparation_work (", "review_preparation_work_rebuilt (", 1
+            )
+        )
+        columns = (
+            "work_id,scan_id,ordinal,connection_name,library_name,library_id,item_id,"
+            "file_identity,source_revision,source_fingerprint,producer_fingerprint,"
+            "catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,"
+            "retry_not_before,report_id,recovery_source_report_id,proposal_set_id,"
+            "review_case_id,failure_code,failure_root,updated_at"
+        )
+        connection.execute(
+            "INSERT INTO review_preparation_work_rebuilt("
+            + columns
+            + ") SELECT "
+            + columns
+            + " FROM review_preparation_work"
+        )
+        connection.execute("DROP TABLE review_preparation_work")
+        connection.execute(_REVIEW_WORK_SQL)
+        connection.execute(
+            "INSERT INTO review_preparation_work("
+            + columns
+            + ") SELECT "
+            + columns
+            + " FROM review_preparation_work_rebuilt"
+        )
+        connection.execute("DROP TABLE review_preparation_work_rebuilt")
         connection.execute(_REVIEW_WORK_AGED_CLAIM_INDEX_SQL)
+        connection.execute(_REVIEW_WORK_DUE_PROMOTION_INDEX_SQL)
+        connection.execute(_REVIEW_WORK_RECENT_CLAIM_INDEX_SQL)
+        connection.execute(_REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL)
         recovery_required = True
         connection.commit()
+        connection.execute("PRAGMA foreign_keys=ON")
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise SchemaAdoptionRecoveryRequired
         if binding is not None:
             binding.require_current()
         _validate_schema(connection)
