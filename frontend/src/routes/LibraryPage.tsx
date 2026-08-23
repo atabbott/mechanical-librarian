@@ -800,6 +800,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     item: string
   } | null>(null)
   const pendingSuccessorRef = useRef(new Set<string>())
+  const [successorGeneration, setSuccessorGeneration] = useState(0)
   const [frozenFieldOrders, setFrozenFieldOrders] = useState<
     Readonly<Record<string, readonly string[]>>
   >({})
@@ -941,8 +942,16 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         selectedTarget.caseId !== search.preview
       )
         return
-      if (pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates)
+      if (
+        pendingSuccessorRef.current.size < maxCoalescedSuccessorCandidates &&
+        !pendingSuccessorRef.current.has(update.subject)
+      ) {
         pendingSuccessorRef.current.add(update.subject)
+        // Query structural sharing can make the next bounded Library read
+        // referentially identical after a no-match batch. Candidate arrival is
+        // itself the reason to reconcile that read once more.
+        setSuccessorGeneration((generation) => generation + 1)
+      }
     })
   }, [search.preview, updates])
   useEffect(() => {
@@ -994,7 +1003,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         }
       }
     })()
-  }, [data.works, http, navigate, search.preview])
+  }, [data.works, http, navigate, search.preview, successorGeneration])
   const completionIdentity = complete?.id === selectedReviewCaseId ? complete.identity : undefined
   const displayedIdentity = selectedIdentity ?? completionIdentity
   const primaryField = (field: ReviewField) => (field.inventoryRole ?? 'primary') === 'primary'

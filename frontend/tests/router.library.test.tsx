@@ -1762,6 +1762,43 @@ describe('Library route', () => {
     expect(http.getCaseDetail).not.toHaveBeenCalledWith('case-2')
   })
 
+  it('reconciles a later provider-retry successor after an unchanged no-match batch without looping', async () => {
+    const { http, libraryReads, router, updates } = renderLaterPageProviderRetry()
+    const detailReads = (id: string) =>
+      vi.mocked(http.getCaseDetail).mock.calls.filter(([requested]) => requested === id).length
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    await act(async () => {
+      updates.announce({ sequence: 76, subject: 'case-3', topic: 'library' })
+    })
+    await waitFor(() => expect(libraryReads()).toBe(2))
+    await waitFor(() => expect(detailReads('case-3')).toBe(1))
+    expect(detailReads('case-1')).toBe(2)
+    await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    expect(libraryReads()).toBe(2)
+    expect(detailReads('case-1')).toBe(2)
+    expect(detailReads('case-3')).toBe(1)
+
+    await act(async () => {
+      updates.announce({ sequence: 77, subject: 'case-2', topic: 'library' })
+    })
+    await waitFor(() =>
+      expect(router.state.location.search).toEqual({
+        lens: 'needs_attention',
+        cursor: 'later-page',
+        preview: 'case-2',
+        field: 'title',
+      }),
+    )
+    expect(await screen.findByRole('heading', { level: 2, name: 'Recovered work' })).toBeVisible()
+    await waitFor(() => expect(libraryReads()).toBe(3))
+    expect(detailReads('case-1')).toBe(3)
+    expect(detailReads('case-3')).toBe(1)
+    // One read proves target identity before navigation; the other is the
+    // ordinary selected-case query for the replacement URL.
+    expect(detailReads('case-2')).toBe(2)
+  })
+
   it('acts on every Library announcement except the echo of its own decision', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]
