@@ -721,7 +721,7 @@ def qualify_installed_pipeline(
                 "manual-browser-case",
                 default_target_fields("manual-browser-case"),
             ),
-            file=FileFacts(0, "manual-browser-file", "f" * 64),
+            file=FileFacts(0, "e" * 64, "f" * 64),
             local_claims=(
                 LocalClaim.create(
                     kind=ClaimKind.TITLE,
