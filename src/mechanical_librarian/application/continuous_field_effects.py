@@ -135,6 +135,9 @@ class ContinuousFieldEffectRepository(Protocol):
         page: int,
         page_size: int,
     ) -> dict[str, object]: ...
+    def field_effect_activity_transitions(
+        self, event_id: str, after_sequence: int | None = None, limit: int = 20
+    ) -> tuple[dict[str, object], ...]: ...
     def pending_field_effect_manual_returns(
         self,
         limit: int,
@@ -1055,6 +1058,16 @@ class ContinuousGuardedApplication:
             "schema_version": "continuous-field-activity-v2",
             "provider_recovery": provider_recovery,
         }
+
+    def activity_transitions(
+        self, event_id: str, after_sequence: int | None = None
+    ) -> dict[str, object]:
+        transitions = self._repository.field_effect_activity_transitions(
+            event_id, after_sequence
+        )
+        if len(transitions) > 21:
+            raise GuardedApplicationError("activity")
+        return {"events": list(transitions[:20]), "has_more": len(transitions) > 20}
 
     def _capability_readiness(
         self,

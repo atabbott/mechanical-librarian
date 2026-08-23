@@ -198,6 +198,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         consent_envelope_identity: Callable[[str], str],
         update_field_effect: Callable[[FieldEffectOperation, str], None],
         record_field_effect_event: Callable[[FieldEffectOperation, str, int], None],
+        field_effect_event_documents: Callable[[str], tuple[str, ...]],
         current_cover_policy_reference: Callable[[], str | None],
         current_cover_replay_reference: Callable[[], str | None],
     ) -> None:
@@ -210,6 +211,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self._consent_envelope_identity = consent_envelope_identity
         self._update_field_effect = update_field_effect
         self._record_field_effect_event = record_field_effect_event
+        self._field_effect_event_documents = field_effect_event_documents
         self._cover_policy_reference = current_cover_policy_reference
         self._cover_replay_reference = current_cover_replay_reference
 
@@ -935,6 +937,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # still has a 100-row public maximum and invokes it once.
         if len(rows) > 100:
             raise FieldEffectError("persistence")
+        # A grouped field-effect row stands for its complete immutable
+        # lifecycle. Admit it only after the existing bounded canonical
+        # validator accepts every transition, rather than trusting the latest
+        # row's JSON shape while an earlier transition is inconsistent.
+        try:
+            for plan_id in {row[15] for row in rows if row[13] == "field_effect"}:
+                if type(plan_id) is not str:
+                    raise FieldEffectError("persistence")
+                self._field_effect_event_documents(plan_id)
+        except FieldEffectError as error:
+            raise FieldEffectError("persistence") from error
         dependency_limit = 64 if searched else 100
         report_ids = sorted({row[6] for row in rows if row[6] is not None})
         report_rows = (
@@ -1188,6 +1201,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "cover_safeguard",
                 "policy_transition",
             }:
+                raise FieldEffectError("persistence")
+            change_id = source_parent_id if source_kind == "field_effect" else event_id
+            if type(change_id) is not str or not change_id or len(change_id) > 128:
                 raise FieldEffectError("persistence")
             if source_document is not None and (
                 type(source_document) is not str
@@ -1455,6 +1471,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     durable["degraded_reason"] = AUTOMATIC_AUTHORITY_UNAVAILABLE
                     projected_events.append(
                         {
+                            "change_id": change_id,
                             "connection": connection,
                             "destination": destination,
                             "event_id": event_id,
@@ -1496,6 +1513,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     durable["degraded_reason"] = AUTOMATIC_AUTHORITY_UNAVAILABLE
                     projected_events.append(
                         {
+                            "change_id": change_id,
                             "connection": connection,
                             "destination": destination,
                             "event_id": event_id,
@@ -1545,6 +1563,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 raise FieldEffectError("persistence")
             projected_events.append(
                 {
+                    "change_id": change_id,
+                    **(
+                        {"transition_id": change_id}
+                        if source_kind == "field_effect"
+                        else {}
+                    ),
                     "connection": connection,
                     "destination": destination,
                     "event_id": event_id,
@@ -1688,10 +1712,35 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             where.append("event_type=?")
             parameters.append(event_type)
         predicate = " WHERE " + " AND ".join(where)
+        columns = (
+            "event_id,connection,destination,library,occurred_at,origin,report_id,state,"
+            "work_id,document,event_type,title,detail,source_kind,source_document,"
+            "source_parent_id,source_sequence,source_identity,policy_from,policy_to,source_valid"
+        )
+        group_identity = (
+            "CASE WHEN source_kind='field_effect' THEN source_parent_id "
+            "ELSE event_id END"
+        )
         projection = (
-            "WITH activity_events(event_id,connection,destination,library,occurred_at,origin,report_id,state,work_id,document,event_type,title,detail,source_kind,source_document,source_parent_id,source_sequence,source_identity,policy_from,policy_to,source_valid) AS ("
+            "WITH raw_activity_events("
+            + columns
+            + ") AS ("
             + cast(str, events)
-            + ") "
+            + "), ranked_activity_events AS (SELECT raw_activity_events.*, "
+            "row_number() OVER (PARTITION BY source_kind,"
+            + group_identity
+            + " ORDER BY CASE WHEN source_kind='field_effect' THEN source_sequence END DESC, "
+            "occurred_at DESC,event_id DESC) AS activity_rank, "
+            "min(source_valid) OVER (PARTITION BY source_kind,"
+            + group_identity
+            + ") AS group_valid FROM raw_activity_events), "
+            "activity_events("
+            + columns
+            + ") AS (SELECT "
+            + columns.replace(
+                "source_valid", "CASE WHEN group_valid=1 THEN source_valid ELSE 0 END"
+            )
+            + " FROM ranked_activity_events WHERE activity_rank=1) "
         )
 
         def waiting_scalar(value: object, *, nullable: bool = False) -> str | None:
@@ -1868,6 +1917,68 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         except FieldEffectError:
             transaction.rollback()
             raise
+
+    def field_effect_activity_transitions(
+        self, event_id: str, after_sequence: int | None = None, limit: int = 20
+    ) -> tuple[dict[str, object], ...]:
+        """Return the bounded immutable lifecycle for one grouped effect row."""
+        if (
+            type(event_id) is not str
+            or not event_id
+            or len(event_id) > 128
+            or (
+                after_sequence is not None
+                and (type(after_sequence) is not int or after_sequence < 1)
+            )
+            or limit not in {10, 20}
+        ):
+            raise FieldEffectError("invalid_activity_query")
+        transaction = self._transaction(
+            "field_effect_activity_transitions", deferred=True
+        )
+        try:
+            transaction.begin()
+            row = self._connection.execute(
+                "SELECT plan_id FROM field_effect_events WHERE event_id=? "
+                "UNION SELECT plan_id FROM field_effects WHERE plan_id=?",
+                (event_id, event_id),
+            ).fetchone()
+            if row is None:
+                transaction.commit()
+                return ()
+            documents = self._field_effect_event_documents(row[0])
+            transitions = tuple(json.loads(document) for document in documents)
+            if any(
+                type(item) is not dict
+                or type(item.get("event_id")) is not str
+                or type(item.get("occurred_at")) is not int
+                or type(item.get("state")) is not str
+                or type(item.get("sequence")) is not int
+                for item in transitions
+            ):
+                raise FieldEffectError("persistence")
+            result = tuple(
+                {
+                    "event_id": item["event_id"],
+                    "occurred_at": item["occurred_at"],
+                    "state": item["state"],
+                    "sequence": item["sequence"],
+                }
+                for item in transitions
+                if after_sequence is None or item["sequence"] > after_sequence
+            )[: limit + 1]
+            transaction.commit()
+            return result
+        except (
+            FieldEffectError,
+            json.JSONDecodeError,
+            RecursionError,
+            sqlite3.Error,
+            TypeError,
+            ValueError,
+        ) as error:
+            transaction.rollback()
+            raise FieldEffectError("persistence") from error
 
     def claim_field_effect(
         self, plan_id: str, expected_state: str, claim_token: str, claimed_at: int

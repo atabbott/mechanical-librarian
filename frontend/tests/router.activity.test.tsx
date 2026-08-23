@@ -939,6 +939,120 @@ describe('Activity route', () => {
     expect(screen.queryByText('Previous value')).toBeNull()
   })
 
+  it('reaches every bounded lifecycle transition and recovers a disclosure read', async () => {
+    const user = userEvent.setup()
+    const transitions = Array.from({ length: 25 }, (_, index) => ({
+      event_id: `transition-${String(index + 1)}`,
+      occurred_at: index + 1,
+      sequence: index + 1,
+      state: index === 24 ? 'verified' : 'planned',
+    }))
+    let failFirst = true
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => activity({ events: [{ event_id: 'lifecycle', transition_id: 'effect_plan_' + 'a'.repeat(64) }] })),
+      getActivityTransitions: vi.fn(async (_eventId: string, afterSequence?: number) => {
+        if (failFirst) {
+          failFirst = false
+          throw new ApiError(503, 'unavailable')
+        }
+        const start = afterSequence ?? 0
+        const events = transitions.slice(start, start + 20)
+        return { events, has_more: start + events.length < transitions.length }
+      }),
+    }
+    renderRoute('/activity', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Details' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Recorded transitions could not be loaded.',
+    )
+    await user.click(screen.getByRole('button', { name: 'Try again' }))
+    const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
+    expect(lifecycle.querySelectorAll('li')).toHaveLength(21)
+    await user.click(screen.getByRole('button', { name: 'Load more transitions' }))
+    await waitFor(() => expect(lifecycle.querySelectorAll('li')).toHaveLength(25))
+    expect(http.getActivityTransitions).toHaveBeenLastCalledWith(
+      'effect_plan_' + 'a'.repeat(64),
+      20,
+    )
+  })
+
+  it('keeps an open lifecycle disclosure through a refreshed latest event', async () => {
+    const user = userEvent.setup()
+    const transitionId = 'effect_plan_' + 'b'.repeat(64)
+    const transitions = (start: number, count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        event_id: `transition-${String(start + index)}`,
+        occurred_at: start + index,
+        sequence: start + index,
+        state: 'planned',
+      }))
+    let current = activity({
+      events: [{ change_id: 'stable-change', event_id: 'latest-event', transition_id: transitionId }],
+    })
+    let continuationFailures = 0
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => current),
+      getActivityTransitions: vi.fn(async (_eventId: string, afterSequence?: number) => {
+        if (afterSequence === undefined) return { events: transitions(1, 20), has_more: true }
+        if (afterSequence === 20) return { events: transitions(21, 2), has_more: true }
+        ++continuationFailures
+        throw new ApiError(503, 'unavailable')
+      }),
+    }
+    const { queryClient } = renderRoute('/activity', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Details' }))
+    const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
+    await user.click(screen.getByRole('button', { name: 'Load more transitions' }))
+    await waitFor(() => expect(lifecycle.querySelectorAll('li')).toHaveLength(23))
+    await user.click(screen.getByRole('button', { name: 'Load more transitions' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'More recorded transitions could not be loaded.',
+    )
+    const disclosure = screen.getByRole('button', { name: 'Hide details' })
+    disclosure.focus()
+
+    current = activity({
+      events: [{ change_id: 'stable-change', event_id: 'new-latest-event', transition_id: transitionId }],
+    })
+    await queryClient.invalidateQueries({ queryKey: ['activity'] })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Hide details' })).toHaveFocus())
+    expect(lifecycle.querySelectorAll('li')).toHaveLength(23)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'More recorded transitions could not be loaded.',
+    )
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible()
+    expect(continuationFailures).toBe(1)
+  })
+
+  it('does not request lifecycle transitions for human, policy, or no-change rows', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivityTransitions: vi.fn(async () => ({ events: [], has_more: false })),
+      getActivity: vi.fn(async () =>
+        activity({
+          events: [
+            { event_id: 'human-row', origin: 'human' },
+            { event_id: 'policy-row', category: 'policy', origin: 'policy' },
+            { event_id: 'no-change-row', state: 'no_change_required' },
+          ],
+        }),
+      ),
+    }
+    renderRoute('/activity', http)
+
+    for (const button of await screen.findAllByRole('button', { name: 'Details' }))
+      await user.click(button)
+
+    expect(http.getActivityTransitions).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('never says no action is required while its own prepared work awaits consent', async () => {
     const http: ReviewHttp = {
       ...createHttp(),

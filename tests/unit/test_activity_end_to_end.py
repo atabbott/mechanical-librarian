@@ -360,8 +360,23 @@ def test_only_a_verified_write_claims_audiobookshelf_confirmed_it(
     effects.service.apply(planned.plan.plan_id)
 
     writes = [event for event in _ledger(effects) if event["event_type"] != "policy"]
-    states = {str(event["state"]) for event in writes}
+    assert [str(event["state"]) for event in writes] == ["verified"]
+    assert [event["change_id"] for event in writes] == [planned.plan.plan_id]
+    transitions = effects.repository.field_effect_activity_transitions(
+        str(writes[0]["event_id"])
+    )
+    states = {str(event["state"]) for event in transitions}
     assert "verified" in states and len(states) > 1
+    assert [event["sequence"] for event in transitions] == list(
+        range(1, len(transitions) + 1)
+    )
+    continued = effects.repository.field_effect_activity_transitions(
+        str(writes[0]["event_id"]), after_sequence=2
+    )
+    assert [event["sequence"] for event in continued] == [3, 4]
+    assert transitions == effects.repository.field_effect_activity_transitions(
+        planned.plan.plan_id
+    )
     assert {str(event["change"]) for event in writes} == {
         "Paper Moons: Larkspur → Paper Moons over Larkspur Station"
     }

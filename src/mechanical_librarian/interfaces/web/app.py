@@ -55,6 +55,7 @@ from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
     FieldEffectError,
+    valid_activity_transition_id,
 )
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyError
 from mechanical_librarian.interfaces.web import live_stream, review_frontend
@@ -597,6 +598,7 @@ class _ActivityEvent(_ClosedModel):
     # seeing the arrow (#636).
     category: Literal["owner", "automatic", "policy", "recovery"] = "recovery"
     change: str = Field(default="Recorded", max_length=512)
+    change_id: str = Field(default="recorded-change", max_length=128)
     change_detail: str = Field(default="Recorded", max_length=512)
     destination: str = Field(max_length=512)
     diagnostic: _ActivityDiagnostic | None = None
@@ -614,8 +616,21 @@ class _ActivityEvent(_ClosedModel):
     occurred_at: int | None = None
     origin: str = Field(max_length=512)
     state: str = Field(max_length=512)
+    transition_id: str | None = Field(default=None, max_length=128)
     work_label: str = Field(default="Recorded work", max_length=512)
     work_id: str = Field(max_length=512)
+
+
+class _ActivityTransition(_ClosedModel):
+    event_id: str = Field(max_length=128)
+    occurred_at: int
+    sequence: int = Field(ge=1)
+    state: str = Field(max_length=512)
+
+
+class _ActivityTransitions(_ClosedModel):
+    events: list[_ActivityTransition] = Field(max_length=20)
+    has_more: bool = False
 
 
 class _ActivitySuspension(_ClosedModel):
@@ -2123,6 +2138,23 @@ def _register_case_and_effect_routes(
                     page_size=page_size,
                 )
             )
+        )
+
+    @app.get(
+        "/api/v1/activity/{event_id}/transitions",
+        response_model=_ActivityTransitions,
+        responses={status: {"model": _ErrorResponse} for status in (401, 422, 503)},
+    )
+    def activity_transitions(
+        event_id: str,
+        after_sequence: int | None = Query(default=None, ge=1),
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> dict[str, object]:
+        _require_session(sessions, ml_session)
+        if not valid_activity_transition_id(event_id):
+            raise HTTPException(status_code=422, detail={"code": "invalid"})
+        return field_effect_call(
+            lambda: application.activity_transitions(event_id, after_sequence)
         )
 
     @app.post(

@@ -161,6 +161,12 @@
             "title": "Change Detail",
             "type": "string"
           },
+          "change_id": {
+            "default": "recorded-change",
+            "maxLength": 128,
+            "title": "Change Id",
+            "type": "string"
+          },
           "destination": {
             "maxLength": 512,
             "title": "Destination",
@@ -247,6 +253,18 @@
             "maxLength": 512,
             "title": "State",
             "type": "string"
+          },
+          "transition_id": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transition Id"
           },
           "work_id": {
             "maxLength": 512,
@@ -657,6 +675,61 @@
           "updated_at"
         ],
         "title": "_ActivitySuspension",
+        "type": "object"
+      },
+      "_ActivityTransition": {
+        "additionalProperties": false,
+        "properties": {
+          "event_id": {
+            "maxLength": 128,
+            "title": "Event Id",
+            "type": "string"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "sequence": {
+            "minimum": 1.0,
+            "title": "Sequence",
+            "type": "integer"
+          },
+          "state": {
+            "maxLength": 512,
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "occurred_at",
+          "sequence",
+          "state"
+        ],
+        "title": "_ActivityTransition",
+        "type": "object"
+      },
+      "_ActivityTransitions": {
+        "additionalProperties": false,
+        "properties": {
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityTransition"
+            },
+            "maxItems": 20,
+            "title": "Events",
+            "type": "array"
+          },
+          "has_more": {
+            "default": false,
+            "title": "Has More",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "title": "_ActivityTransitions",
         "type": "object"
       },
       "_ActivityWaiting": {
@@ -4953,6 +5026,87 @@
           }
         ],
         "summary": "Revoke Guarded Activity"
+      }
+    },
+    "/api/v1/activity/{event_id}/transitions": {
+      "get": {
+        "operationId": "activity_transitions_api_v1_activity__event_id__transitions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Sequence"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ActivityTransitions"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Activity Transitions"
       }
     },
     "/api/v1/attention": {

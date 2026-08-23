@@ -299,6 +299,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     operation, kind, occurred_at
                 )
             ),
+            field_effect_event_documents=(
+                lambda plan_id: self.field_effect_event_documents(plan_id)
+            ),
             current_cover_policy_reference=(
                 lambda: self._current_cover_policy_reference
             ),
@@ -662,6 +665,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             occurred_after=occurred_after,
             page=page,
             page_size=page_size,
+        )
+
+    def field_effect_activity_transitions(
+        self, event_id: str, after_sequence: int | None = None, limit: int = 20
+    ) -> tuple[dict[str, object], ...]:
+        return self._field_effect_activity.field_effect_activity_transitions(
+            event_id, after_sequence, limit
         )
 
     def record_field_effect(

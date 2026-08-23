@@ -265,6 +265,10 @@ _SHAPES: tuple[tuple[str, object, object, str], ...] = (
     ("language", "en", "en-GB", "10"),
     ("subtitle", "A Novel", "A Novel of the Outer Approach", "11"),
     ("isbn", None, "9780060512750", "12"),
+    ("title", "Paper Moons over Larkspur Station", "Paper Moons: Revised", "15"),
+    ("authors", ["Ursula K. Le Guin", "雨の地図"], ["雨の地図"], "16"),
+    ("tags", ["annotated", "signed"], ["annotated", "signed", "archive"], "17"),
+    ("description", LONG_DESCRIPTION, "A shorter final catalogue note.", "18"),
 )
 
 

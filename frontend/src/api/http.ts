@@ -257,6 +257,8 @@ export interface ActivityEventView {
   change: string
   /** The same change as a whole sentence, for a reader who hears the row. */
   change_detail: string
+  /** Stable grouped identity for a change whose latest transition may move. */
+  change_id: string
   destination: string
   diagnostic?: ActivityDiagnosticView | null
   event_id: string
@@ -269,8 +271,19 @@ export interface ActivityEventView {
   origin: string
   policy_changes: readonly ActivityPolicyChangeView[]
   state: string
+  transition_id?: string
   work_id: string
   work_label: string
+}
+export interface ActivityTransitionView {
+  event_id: string
+  occurred_at: number
+  sequence: number
+  state: string
+}
+export interface ActivityTransitionsView {
+  events: readonly ActivityTransitionView[]
+  has_more: boolean
 }
 export interface ActivitySearch {
   q?: string
@@ -427,6 +440,11 @@ export interface ReviewHttp {
   getPolicyTransition(signal?: AbortSignal): Promise<PolicyTransitionView | null>
   policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T>
   getActivity(search?: ActivitySearch, signal?: AbortSignal): Promise<ActivityView>
+  getActivityTransitions(
+    eventId: string,
+    afterSequence?: number,
+    signal?: AbortSignal,
+  ): Promise<ActivityTransitionsView>
   activityCommand(
     path: string,
     body?: unknown,
@@ -661,6 +679,39 @@ export class ReviewApiClient implements ReviewHttp {
       p.set('page_size', String(search.pageSize))
     }
     return mapActivity(await this.read(`/api/v1/activity${p.size ? `?${p}` : ''}`, signal))
+  }
+
+  async getActivityTransitions(
+    eventId: string,
+    afterSequence?: number,
+    signal?: AbortSignal,
+  ): Promise<ActivityTransitionsView> {
+    const query = afterSequence === undefined ? '' : `?after_sequence=${String(afterSequence)}`
+    const data = await this.read(
+      `/api/v1/activity/${encodeURIComponent(eventId)}/transitions${query}`,
+      signal,
+    )
+    if (
+      !record(data) ||
+      typeof data.has_more !== 'boolean' ||
+      !Array.isArray(data.events) ||
+      data.events.length > 20 ||
+      !data.events.every(
+        (event) =>
+          record(event) &&
+          typeof event.event_id === 'string' &&
+          Number.isSafeInteger(event.occurred_at) &&
+          typeof event.sequence === 'number' &&
+          Number.isSafeInteger(event.sequence) &&
+          event.sequence >= 1 &&
+          typeof event.state === 'string',
+      )
+    )
+      throw new ApiError(502, 'invalid_activity_response')
+    return {
+      events: data.events as ActivityTransitionView[],
+      has_more: data.has_more,
+    }
   }
   async activityCommand(
     path: string,
@@ -1062,6 +1113,10 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
         category: category as ActivityCategory,
         change: stringValue(event.change, 'activity_event_change'),
         change_detail: stringValue(event.change_detail, 'activity_event_change_detail'),
+        change_id:
+          event.change_id === undefined
+            ? stringValue(event.event_id, 'activity_event_id')
+            : stringValue(event.change_id, 'activity_change_id'),
         field_label: stringValue(event.field_label, 'activity_event_field_label'),
         policy_changes: policyChanges.map((item) => {
           if (!record(item)) throw new ApiError(502, 'invalid_activity_policy_change')
@@ -1086,6 +1141,9 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
         library: stringValue(event.library, 'activity_event_library'),
         origin: stringValue(event.origin, 'activity_event_origin'),
         state: stringValue(event.state, 'activity_event_state'),
+        ...(event.transition_id === undefined || event.transition_id === null
+          ? {}
+          : { transition_id: stringValue(event.transition_id, 'activity_transition_id') }),
         work_id: stringValue(event.work_id, 'activity_work_id'),
         work_label:
           event.work_label === undefined

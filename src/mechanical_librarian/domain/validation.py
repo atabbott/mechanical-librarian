@@ -27,6 +27,8 @@ This module imports nothing from the project, so any layer may depend on it.
 from __future__ import annotations
 
 from collections.abc import Callable
+from re import Pattern
+from typing import cast
 
 FieldCheck = Callable[[object], bool]
 
@@ -38,6 +40,11 @@ def exact_type(expected: type) -> FieldCheck:
 
 boolean = exact_type(bool)
 text = exact_type(str)
+
+
+def matching(pattern: Pattern[str]) -> FieldCheck:
+    """Accept exact text whose whole value matches one closed pattern."""
+    return lambda value: text(value) and pattern.fullmatch(cast(str, value)) is not None
 
 
 def literal(expected: object) -> FieldCheck:

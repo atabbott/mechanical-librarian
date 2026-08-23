@@ -66,6 +66,10 @@ _CONTENT_OVERFLOW = """
     // `getComputedStyle` still answers with the padding it would have had.
     // A surface that hides at a breakpoint is not a surface that overflows.
     if (node.getClientRects().length === 0) continue;
+    const permittedScroller = node.matches('.cm-activity-filters') &&
+      getComputedStyle(node).overflowX === 'auto' &&
+      node.scrollWidth > node.clientWidth;
+    if (permittedScroller) continue;
     worst = Math.max(worst, node.scrollWidth - node.clientWidth);
     const style = getComputedStyle(node);
     const right = node.getBoundingClientRect().right -
@@ -76,6 +80,33 @@ _CONTENT_OVERFLOW = """
   return worst;
 }
 """
+
+
+def _activity_surface_order(
+    page: Page, *, width: int, semantic: list[str], visual: list[str]
+) -> None:
+    """Keep Activity's semantic order separate from its responsive layout."""
+    page.set_viewport_size({"width": width, "height": 844})
+    order = page.evaluate(
+        """() => {
+          const root = document.querySelector('.cm-activity-route');
+          if (root === null) return null;
+          const name = (node) => node.className;
+          const children = [...root.children].filter((node) =>
+            node.matches('.cm-page-heading, .cm-activity-ledger, .cm-write-consent, .cm-activity-status, .connection-notice, .activity-command-status')
+          );
+          return {
+            dom: children.map(name),
+            visual: children
+              .map((node, index) => ({ index, name: name(node), order: Number(getComputedStyle(node).order) }))
+              .sort((left, right) => left.order - right.order || left.index - right.index)
+              .map((item) => item.name),
+          };
+        }"""
+    )
+    assert order is not None
+    assert order["dom"] == semantic
+    assert order["visual"] == visual
 
 
 # The same measurement, reported as the node that lost rather than as the
@@ -93,6 +124,10 @@ _WORST_OVERFLOWING_NODE = r"""
       ? '.' + node.className.trim().split(/\s+/).join('.') : '');
   for (const node of [root, ...root.querySelectorAll('*')]) {
     if (node.getClientRects().length === 0) continue;
+    const permittedScroller = node.matches('.cm-activity-filters') &&
+      getComputedStyle(node).overflowX === 'auto' &&
+      node.scrollWidth > node.clientWidth;
+    if (permittedScroller) continue;
     if (node.scrollWidth - node.clientWidth > worst) {
       worst = node.scrollWidth - node.clientWidth;
       where = name(node) + ' scrolls its own content (' +
@@ -384,6 +419,39 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                 page.goto(f"{origin}/activity")
                 page.get_by_role("heading", name="Activity and recovery").wait_for()
                 page.locator(".cm-write-consent").wait_for(timeout=8_000)
+                page.get_by_role("button", name="Enable writes").wait_for(timeout=8_000)
+                consent_semantic = [
+                    "cm-page-heading",
+                    "cm-activity-ledger",
+                    "cm-write-consent is-off",
+                    "cm-activity-status",
+                    "activity-command-status",
+                ]
+                _activity_surface_order(
+                    page,
+                    width=1440,
+                    semantic=consent_semantic,
+                    visual=[
+                        "cm-page-heading",
+                        "cm-write-consent is-off",
+                        "cm-activity-status",
+                        "cm-activity-ledger",
+                        "activity-command-status",
+                    ],
+                )
+                _activity_surface_order(
+                    page,
+                    width=390,
+                    semantic=consent_semantic,
+                    visual=[
+                        "cm-page-heading",
+                        "cm-activity-ledger",
+                        "cm-write-consent is-off",
+                        "cm-activity-status",
+                        "activity-command-status",
+                    ],
+                )
+                page.set_viewport_size({"width": 1440, "height": 900})
                 _fits_every_width(page, ".cm-write-consent")
                 _fits_every_width(page, ".cm-activity-status")
                 # The Activity row gained two flexible columns and a policy
@@ -428,6 +496,60 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                 _an_open_record_survives_a_viewport_change(page)
                 _reflows_at_two_hundred_percent_zoom(page)
                 _long_values_stay_inside_the_narrowest_card(page)
+                page.route(
+                    "**/api/v1/review-preparation",
+                    lambda route: route.fulfill(
+                        json={
+                            "schema_version": "review-preparation-v1",
+                            "active": True,
+                            "actionable": False,
+                            "paused": True,
+                            "libraries": [],
+                            "connections": [
+                                {
+                                    "connection": "primary",
+                                    "code": "unavailable",
+                                    "state": "paused",
+                                    "affected": 2,
+                                    "updated_at": 1,
+                                }
+                            ],
+                        }
+                    ),
+                )
+                page.reload()
+                page.locator(".connection-notice").wait_for(timeout=8_000)
+                semantic = [
+                    "cm-page-heading",
+                    "cm-activity-ledger",
+                    "cm-activity-status",
+                    "connection-notice is-paused",
+                    "activity-command-status",
+                ]
+                _activity_surface_order(
+                    page,
+                    width=1440,
+                    semantic=semantic,
+                    visual=[
+                        "cm-page-heading",
+                        "connection-notice is-paused",
+                        "cm-activity-status",
+                        "cm-activity-ledger",
+                        "activity-command-status",
+                    ],
+                )
+                _activity_surface_order(
+                    page,
+                    width=390,
+                    semantic=semantic,
+                    visual=[
+                        "cm-page-heading",
+                        "cm-activity-ledger",
+                        "cm-activity-status",
+                        "connection-notice is-paused",
+                        "activity-command-status",
+                    ],
+                )
 
 
 def _an_open_record_survives_a_viewport_change(page: Page) -> None:

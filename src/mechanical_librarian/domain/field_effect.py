@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass, replace
 from typing import Literal, Self
 
+from mechanical_librarian.domain.validation import matching
+
 
 class FieldEffectError(ValueError):
     def __init__(self, code: str) -> None:
@@ -78,6 +80,12 @@ _TRANSITIONS = {
 }
 _HEX = re.compile(r"[0-9a-f]{64}")
 _IDENTITY = re.compile(r"[a-z][a-z0-9_-]{0,127}")
+_ACTIVITY_TRANSITION_ID = matching(re.compile(r"effect_(?:event|plan)_[0-9a-f]{64}"))
+
+
+def valid_activity_transition_id(value: object) -> bool:
+    """Accept one immutable field-effect event or stable plan identity."""
+    return _ACTIVITY_TRANSITION_ID(value)
 
 
 def canonical_json(value: object) -> str:

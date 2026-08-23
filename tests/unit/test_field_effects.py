@@ -412,62 +412,108 @@ def test_activity_fetches_one_current_report_document_for_repeated_events(
     )
 
 
+def _activity_fixture_operation(
+    index: int, occurred_at: int
+) -> tuple[FieldEffectOperation, str, str]:
+    """Build one canonical planned operation for bounded Activity fixtures."""
+    identity = f"{index:064x}"
+    authority = EffectAuthority(
+        "human_decision_" + identity,
+        "review_case_" + "b" * 64,
+        "d" * 64,
+        "fake_service",
+        "human",
+        "candidate",
+        None,
+        None,
+    )
+    consent = EffectConsent.create(
+        connection="primary",
+        library="books",
+        destination="title",
+        envelope_identity="e" * 64,
+        granted_at=0,
+    )
+    operation = FieldEffectOperation(
+        FieldEffectPlan.create(
+            connection="primary",
+            library="books",
+            work_id=f"book-{index}",
+            destination="title",
+            pre_value="old",
+            desired_value="new",
+            target_fingerprint="d" * 64,
+            target_version="version-1",
+            dependency_digests=(DEPENDENCY,),
+            authority=authority,
+            consent=consent,
+            capability_digest=CAPABILITY,
+            created_at=occurred_at,
+        ),
+        updated_at=occurred_at,
+    )
+    event = {
+        "attempt": operation.attempt,
+        "decision_id": authority.decision_id,
+        "desired_value": operation.plan.desired_value,
+        "destination": operation.plan.destination,
+        "failure": operation.failure,
+        "kind": operation.state,
+        "occurred_at": operation.updated_at,
+        "origin": authority.origin,
+        "plan_id": operation.plan.plan_id,
+        "pre_value": operation.plan.pre_value,
+        "schema_version": "field-effect-event-v1",
+        "sequence": 1,
+        "state": operation.state,
+    }
+    event_id = (
+        "effect_event_"
+        + hashlib.sha256(
+            json.dumps(event, separators=(",", ":"), sort_keys=True).encode()
+        ).hexdigest()
+    )
+    return (
+        operation,
+        event_id,
+        json.dumps(
+            {**event, "event_id": event_id}, separators=(",", ":"), sort_keys=True
+        ),
+    )
+
+
 def test_activity_search_projects_dependency_maps_per_cursor_batch(
     effects: _EffectEnvironment, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Search retains no dependency map beyond its 64-row cursor batch (#787)."""
     for index in range(193):
-        identity = f"{index:064x}"
-        plan_id = "effect_plan_" + identity
-        event_core = {
-            "attempt": 0,
-            "decision_id": "human_decision_" + "a" * 64,
-            "desired_value": "new",
-            "destination": "title",
-            "failure": None,
-            "kind": "planned",
-            "occurred_at": 1_000_000 + index,
-            "origin": "human",
-            "plan_id": plan_id,
-            "pre_value": "old",
-            "schema_version": "field-effect-event-v1",
-            "sequence": 1,
-            "state": "planned",
-        }
-        event_id = (
-            "effect_event_"
-            + hashlib.sha256(
-                json.dumps(event_core, separators=(",", ":"), sort_keys=True).encode()
-            ).hexdigest()
+        operation, event_id, event_document = _activity_fixture_operation(
+            index, 1_000_000 + index
         )
         effects.repository._connection.execute(
             "INSERT INTO field_effects(plan_id,decision_id,connection_name,library_name,work_id,destination,state,attempt,updated_at,document) VALUES(?,?,?,?,?,?,?,?,?,?)",
             (
-                plan_id,
-                event_core["decision_id"],
-                "primary",
-                "books",
-                f"book-{index}",
-                "title",
-                "planned",
-                0,
-                event_core["occurred_at"],
-                "{}",
+                operation.plan.plan_id,
+                operation.plan.authority.decision_id,
+                operation.plan.connection,
+                operation.plan.library,
+                operation.plan.work_id,
+                operation.plan.destination,
+                operation.state,
+                operation.attempt,
+                operation.updated_at,
+                json.dumps(operation.to_data(), separators=(",", ":"), sort_keys=True),
             ),
         )
         effects.repository._connection.execute(
             "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,document) VALUES(?,?,?,?,?,?)",
             (
                 event_id,
-                plan_id,
+                operation.plan.plan_id,
                 1,
                 "planned",
-                event_core["occurred_at"],
-                json.dumps(
-                    {**event_core, "event_id": event_id},
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ),
+                operation.updated_at,
+                event_document,
             ),
         )
     effects.repository._connection.commit()
@@ -507,55 +553,37 @@ def test_activity_page_bounds_filters_and_clamps_the_append_only_ledger(
     effects: _EffectEnvironment,
 ) -> None:
     for index in range(101):
-        identity = f"{index:064x}"
-        plan_id = "effect_plan_" + identity
         occurred_at = 1_000_000 + index
-        event_core = {
-            "attempt": 0,
-            "decision_id": "human_decision_" + "a" * 64,
-            "desired_value": "new",
-            "destination": "title",
-            "failure": None,
-            "kind": "planned",
-            "occurred_at": occurred_at,
-            "origin": "human",
-            "plan_id": plan_id,
-            "pre_value": "old",
-            "schema_version": "field-effect-event-v1",
-            "sequence": 1,
-            "state": "planned",
-        }
-        event_id = (
-            "effect_event_"
-            + hashlib.sha256(
-                json.dumps(event_core, separators=(",", ":"), sort_keys=True).encode()
-            ).hexdigest()
-        )
-        event_document = json.dumps(
-            {**event_core, "event_id": event_id},
-            separators=(",", ":"),
-            sort_keys=True,
+        operation, event_id, event_document = _activity_fixture_operation(
+            index, occurred_at
         )
         effects.repository._connection.execute(
             "INSERT INTO field_effects(plan_id,decision_id,connection_name,library_name,work_id,"
             "destination,state,attempt,updated_at,document) VALUES(?,?,?,?,?,?,?,?,?,?)",
             (
-                plan_id,
-                "human_decision_" + "a" * 64,
-                "primary",
-                "books",
-                f"book-{index}",
-                "title",
-                "planned",
-                0,
-                occurred_at,
-                "{}",
+                operation.plan.plan_id,
+                operation.plan.authority.decision_id,
+                operation.plan.connection,
+                operation.plan.library,
+                operation.plan.work_id,
+                operation.plan.destination,
+                operation.state,
+                operation.attempt,
+                operation.updated_at,
+                json.dumps(operation.to_data(), separators=(",", ":"), sort_keys=True),
             ),
         )
         effects.repository._connection.execute(
             "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,document) "
             "VALUES(?,?,?,?,?,?)",
-            (event_id, plan_id, 1, "planned", occurred_at, event_document),
+            (
+                event_id,
+                operation.plan.plan_id,
+                1,
+                "planned",
+                occurred_at,
+                event_document,
+            ),
         )
     effects.repository._connection.commit()
     first = effects.repository.field_effect_activity_page(
@@ -765,12 +793,13 @@ def test_activity_page_rejects_an_oversized_current_waiting_report(
     assert not effects.repository._connection.in_transaction
 
 
-def test_activity_page_rejects_a_valid_field_event_that_disagrees_with_columns(
+def test_activity_page_rejects_an_earlier_valid_field_event_that_disagrees_with_columns(
     effects: _EffectEnvironment,
 ) -> None:
     plan = _plan(effects, suffix="1")
+    assert effects.service.apply(plan.plan.plan_id).state == "verified"
     row = effects.repository._connection.execute(
-        "SELECT event_id,document FROM field_effect_events WHERE plan_id=?",
+        "SELECT event_id,document FROM field_effect_events WHERE plan_id=? AND sequence=1",
         (plan.plan.plan_id,),
     ).fetchone()
     raw = json.loads(row[1])
@@ -791,6 +820,214 @@ def test_activity_page_rejects_a_valid_field_event_that_disagrees_with_columns(
             page=1,
             page_size=25,
         )
+
+
+def test_activity_rejects_a_canonical_event_with_other_operation_authority(
+    effects: _EffectEnvironment,
+) -> None:
+    operation = _plan(effects, suffix="7")
+    effects.service.apply(operation.plan.plan_id)
+    rows = effects.repository._connection.execute(
+        "SELECT event_id,document FROM field_effect_events WHERE plan_id=? "
+        "ORDER BY sequence",
+        (operation.plan.plan_id,),
+    ).fetchall()
+    original_event_id, original_document = rows[0]
+    latest_event_id = rows[-1][0]
+    corrupted = json.loads(original_document)
+    corrupted["decision_id"] = "human_decision_" + "f" * 64
+    corrupted.pop("event_id")
+    replacement_event_id = (
+        "effect_event_"
+        + hashlib.sha256(
+            json.dumps(corrupted, separators=(",", ":"), sort_keys=True).encode()
+        ).hexdigest()
+    )
+    replacement_document = json.dumps(
+        {**corrupted, "event_id": replacement_event_id},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    effects.repository._connection.execute("DROP TRIGGER field_effect_events_no_update")
+    effects.repository._connection.execute(
+        "UPDATE field_effect_events SET event_id=?,document=? WHERE event_id=?",
+        (replacement_event_id, replacement_document, original_event_id),
+    )
+    effects.repository._connection.commit()
+
+    with pytest.raises(FieldEffectError, match="^invalid_event$"):
+        effects.repository.field_effect_event_documents(operation.plan.plan_id)
+    with pytest.raises(FieldEffectError, match="^persistence$"):
+        effects.repository.field_effect_activity_page(
+            search=None,
+            event_type="all",
+            occurred_after=0,
+            page=1,
+            page_size=25,
+        )
+    with pytest.raises(FieldEffectError, match="^persistence$"):
+        effects.repository.field_effect_activity_transitions(latest_event_id)
+
+
+@pytest.mark.parametrize(
+    "failure", (FieldEffectError("invalid_event"), sqlite3.OperationalError("locked"))
+)
+def test_activity_transitions_rolls_back_canonical_reader_failures(
+    effects: _EffectEnvironment,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+) -> None:
+    operation = _plan(effects, suffix="8")
+
+    def fail(_: str) -> tuple[str, ...]:
+        raise failure
+
+    monkeypatch.setattr(
+        effects.repository._field_effect_activity, "_field_effect_event_documents", fail
+    )
+    event_id = effects.repository._connection.execute(
+        "SELECT event_id FROM field_effect_events WHERE plan_id=?",
+        (operation.plan.plan_id,),
+    ).fetchone()[0]
+    with pytest.raises(FieldEffectError, match="^persistence$"):
+        effects.repository.field_effect_activity_transitions(event_id)
+    assert not effects.repository._connection.in_transaction
+
+
+def test_activity_transitions_nested_read_scope_keeps_its_outer_transaction(
+    effects: _EffectEnvironment,
+) -> None:
+    operation = _plan(effects, suffix="9")
+    event_id = effects.repository._connection.execute(
+        "SELECT event_id FROM field_effect_events WHERE plan_id=?",
+        (operation.plan.plan_id,),
+    ).fetchone()[0]
+    outer = effects.repository._field_effect_activity._transaction("outer")
+    outer.begin()
+    try:
+        assert ["planned"] == [
+            event["state"]
+            for event in effects.repository.field_effect_activity_transitions(event_id)
+        ]
+        assert effects.repository._connection.in_transaction
+    finally:
+        outer.rollback()
+
+
+def test_activity_transitions_hold_one_snapshot_across_a_lifecycle_append(
+    effects: _EffectEnvironment,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    operation = _plan(effects, suffix="a")
+    event_id = effects.repository._connection.execute(
+        "SELECT event_id FROM field_effect_events WHERE plan_id=?",
+        (operation.plan.plan_id,),
+    ).fetchone()[0]
+    reader = effects.repository._field_effects
+    original = reader.get_field_effect
+    writer_started = threading.Event()
+    writer_finished = threading.Event()
+    writer_failures: list[Exception] = []
+
+    def event_document(
+        current: FieldEffectOperation, kind: str, sequence: int
+    ) -> tuple[str, str]:
+        event = {
+            "attempt": current.attempt,
+            "decision_id": current.plan.authority.decision_id,
+            "desired_value": current.plan.desired_value,
+            "destination": current.plan.destination,
+            "failure": current.failure,
+            "kind": kind,
+            "occurred_at": current.updated_at,
+            "origin": current.plan.authority.origin,
+            "plan_id": current.plan.plan_id,
+            "pre_value": current.plan.pre_value,
+            "schema_version": "field-effect-event-v1",
+            "sequence": sequence,
+            "state": kind,
+        }
+        event_id = (
+            "effect_event_"
+            + hashlib.sha256(
+                json.dumps(event, separators=(",", ":"), sort_keys=True).encode()
+            ).hexdigest()
+        )
+        return event_id, json.dumps(
+            {**event, "event_id": event_id}, separators=(",", ":"), sort_keys=True
+        )
+
+    claimed = operation.transition(
+        "claimed", at=operation.updated_at + 1, claim_token="a" * 64
+    )
+    applying = claimed.transition("applying", at=claimed.updated_at + 1)
+    verified = applying.transition("verified", at=applying.updated_at + 1)
+
+    def append_lifecycle() -> None:
+        connection = sqlite3.connect(effects.database_path, isolation_level=None)
+        try:
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("PRAGMA busy_timeout=5000")
+            connection.execute("BEGIN IMMEDIATE")
+            writer_started.set()
+            connection.execute(
+                "UPDATE field_effects SET state=?,attempt=?,updated_at=?,document=? WHERE plan_id=?",
+                (
+                    verified.state,
+                    verified.attempt,
+                    verified.updated_at,
+                    json.dumps(
+                        verified.to_data(), separators=(",", ":"), sort_keys=True
+                    ),
+                    verified.plan.plan_id,
+                ),
+            )
+            for sequence, current in enumerate((claimed, applying, verified), 2):
+                next_event_id, document = event_document(
+                    current, current.state, sequence
+                )
+                connection.execute(
+                    "INSERT INTO field_effect_events(event_id,plan_id,sequence,kind,occurred_at,document) VALUES(?,?,?,?,?,?)",
+                    (
+                        next_event_id,
+                        current.plan.plan_id,
+                        sequence,
+                        current.state,
+                        current.updated_at,
+                        document,
+                    ),
+                )
+            connection.commit()
+        except Exception as error:  # noqa: BLE001 - test worker preserves its failure
+            writer_failures.append(error)
+        finally:
+            connection.close()
+            writer_finished.set()
+
+    writer = threading.Thread(target=append_lifecycle)
+
+    def interleave(plan_id: str) -> FieldEffectOperation:
+        persisted = original(plan_id)
+        writer.start()
+        assert writer_started.wait(1)
+        return persisted
+
+    monkeypatch.setattr(reader, "get_field_effect", interleave)
+    transitions = effects.repository.field_effect_activity_transitions(event_id)
+    monkeypatch.setattr(reader, "get_field_effect", original)
+    writer.join(5)
+    assert not writer.is_alive()
+    assert writer_finished.is_set()
+    assert writer_failures == []
+    assert [(1, "planned")] == [
+        (event["sequence"], event["state"]) for event in transitions
+    ]
+    assert ["planned", "claimed", "applying", "verified"] == [
+        json.loads(document)["state"]
+        for document in effects.repository.field_effect_event_documents(
+            operation.plan.plan_id
+        )
+    ]
 
 
 def test_unused_continuous_consent_survives_exact_schema_validation(

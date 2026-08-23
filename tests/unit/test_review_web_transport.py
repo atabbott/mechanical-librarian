@@ -154,6 +154,30 @@ def test_trust_boundary_failures_match_declared_api_statuses(
     assert bad_origin.json()["error"]["code"] == "origin"
 
 
+def test_activity_transition_transport_rejects_malformed_ids_and_guards_persistence(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    web.login()
+    application = web.client.app.state.review_application
+    valid_id = "effect_event_" + "a" * 64
+    with patch.object(
+        application,
+        "activity_transitions",
+        side_effect=FieldEffectError("persistence"),
+    ) as transitions:
+        malformed = web.client.get("/api/v1/activity/not-a-transition/transitions")
+        assert malformed.status_code == 422
+        assert malformed.json()["error"]["code"] == "invalid"
+        transitions.assert_not_called()
+
+        unavailable = web.client.get(
+            f"/api/v1/activity/{valid_id}/transitions?after_sequence=7"
+        )
+        assert unavailable.status_code == 503
+        assert unavailable.json()["error"]["code"] == "persistence"
+        transitions.assert_called_once_with(valid_id, 7)
+
+
 def test_host_header_cannot_relabel_a_routed_path_as_a_health_probe(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
@@ -894,6 +918,7 @@ def test_openapi_is_deterministic_and_secret_free(
     }
     assert protected_operations == {
         ("get", "/api/v1/activity"),
+        ("get", "/api/v1/activity/{event_id}/transitions"),
         ("post", "/api/v1/activity/consent"),
         ("post", "/api/v1/activity/{connection}/{library}/revoke"),
         ("get", "/api/v1/attention"),

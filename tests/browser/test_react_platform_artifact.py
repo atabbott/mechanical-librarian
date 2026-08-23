@@ -122,6 +122,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
     documents = 0
     fail_activity_once = False
     activity_failures = 0
+    transition_failures = 0
     ambiguous_decisions = 0
     fail_policy_persistently = False
     description_mode = False
@@ -131,7 +132,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
     failed_requests: list[tuple[str, str, str | None]] = []
 
     def fulfill(route: Route) -> None:
-        nonlocal activity_failures, ambiguous_decisions, documents
+        nonlocal activity_failures, ambiguous_decisions, documents, transition_failures
         nonlocal connection_state, return_automatic_requests
         parsed = urlsplit(route.request.url)
         path = parsed.path
@@ -204,14 +205,27 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     body=json.dumps(rich_payload("/api/v1/activity")),
                 )
                 return
+            if path.startswith("/api/v1/activity/") and path.endswith("/transitions"):
+                if transition_failures == 0:
+                    transition_failures += 1
+                    route.fulfill(status=503, body="")
+                    return
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(rich_payload(route.request.url)),
+                )
+                return
             payload = rich_payload(route.request.url)
-            if path == "/api/v1/review-preparation" and connection_state == "recovered":
+            if path == "/api/v1/review-preparation" and connection_state != "paused":
                 preparation = cast("dict[str, object]", payload)
                 conditions = cast("list[dict[str, object]]", preparation["connections"])
                 conditions[0] = {
                     **conditions[0],
-                    "state": "recovered",
-                    "affected": 0,
+                    "state": connection_state,
+                    "affected": 0
+                    if connection_state == "recovered"
+                    else conditions[0]["affected"],
                     "updated_at": 2,
                 }
             if description_mode and path == "/api/v1/review-cases/case-1":
@@ -551,11 +565,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         page.evaluate("() => document.documentElement.scrollWidth")
                         <= width
                     )
-                    assert check.evaluate(
-                        "node => { const box = node.getBoundingClientRect(); "
-                        "const top = document.elementFromPoint(box.x + box.width / 2, "
-                        "box.y + box.height / 2); return top === node || node.contains(top); }"
-                    )
+                    if path != "/activity":
+                        assert check.evaluate(
+                            "node => { const box = node.getBoundingClientRect(); "
+                            "const top = document.elementFromPoint(box.x + box.width / 2, "
+                            "box.y + box.height / 2); return top === node || node.contains(top); }"
+                        )
                     # The masthead now carries a status message whose width is
                     # its text, and this cohort's stream ends immediately, so
                     # the degraded notice is present on every route here.
@@ -666,6 +681,136 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     == 0
                 )
                 activity_ledger = page.locator(".cm-activity-ledger")
+                prior_viewport = page.viewport_size
+                assert prior_viewport is not None
+
+                def assert_compact_activity_priority(
+                    state: str, ledger=activity_ledger
+                ) -> None:
+                    page.set_viewport_size({"width": 320, "height": 844})
+                    assert page.viewport_size == {"width": 320, "height": 844}
+                    page.evaluate("() => window.scrollTo(0, 0)")
+                    heading = page.locator(".cm-page-heading")
+                    ledger_heading = ledger.locator(".cm-activity-ledger-heading")
+                    controls = ledger.locator(".cm-activity-tools")
+                    filters = controls.locator(".cm-activity-filters")
+                    first_row = ledger.locator("article").first
+                    notice = page.get_by_label("Shared library connection status")
+                    for locator in (
+                        heading,
+                        ledger_heading,
+                        controls,
+                        filters,
+                        first_row,
+                        notice,
+                    ):
+                        expect(locator).to_be_visible()
+                    heading_box = heading.bounding_box()
+                    ledger_heading_box = ledger_heading.bounding_box()
+                    controls_box = controls.bounding_box()
+                    first_row_box = first_row.bounding_box()
+                    notice_box = notice.bounding_box()
+                    assert (
+                        heading_box is not None
+                        and ledger_heading_box is not None
+                        and controls_box is not None
+                        and first_row_box is not None
+                        and notice_box is not None
+                    )
+                    assert (
+                        heading_box["y"]
+                        < ledger_heading_box["y"]
+                        < controls_box["y"]
+                        < first_row_box["y"]
+                        < notice_box["y"]
+                    ), state
+                    assert first_row_box["y"] < 844, state
+                    assert (
+                        min(first_row_box["y"] + first_row_box["height"], 844)
+                        - max(first_row_box["y"], 0)
+                        >= 24
+                    ), state
+                    assert filters.evaluate(
+                        "node => node.scrollWidth > node.clientWidth"
+                    ), state
+                    filters_box = filters.bounding_box()
+                    assert filters_box is not None and filters_box["height"] <= 48, (
+                        state
+                    )
+                    assert filters.evaluate(
+                        """node => {
+                          const parent = node.parentElement;
+                          if (parent === null) return false;
+                          const rail = node.getBoundingClientRect();
+                          const tools = parent.getBoundingClientRect();
+                          return rail.left >= tools.left && rail.right <= tools.right;
+                        }"""
+                    ), state
+                    chips = filters.get_by_role("button")
+                    assert chips.count() == 5, state
+                    assert (
+                        filters.locator("button[aria-pressed='true']").count() == 1
+                    ), state
+                    for index in range(chips.count()):
+                        chip_box = chips.nth(index).bounding_box()
+                        assert (
+                            chip_box is not None
+                            and min(chip_box["width"], chip_box["height"]) >= 44
+                        ), state
+                    chips.first.focus()
+                    for _ in range(chips.count() - 1):
+                        page.keyboard.press("Tab")
+                    expect(chips.last).to_be_focused()
+                    assert filters.evaluate(
+                        """node => {
+                          const last = node.querySelector('button:last-child');
+                          if (last === null) return false;
+                          const rail = node.getBoundingClientRect();
+                          const chip = last.getBoundingClientRect();
+                          return chip.right > rail.left && chip.left < rail.right;
+                        }"""
+                    ), state
+                    assert chips.last.evaluate(
+                        """node => {
+                          const style = getComputedStyle(node);
+                          return style.outlineStyle === 'solid' &&
+                            parseFloat(style.outlineWidth) >= 3 &&
+                            parseFloat(style.outlineOffset) <= 0;
+                        }"""
+                    ), state
+                    expect(
+                        ledger.get_by_text(
+                            "One record for review decisions, policy changes, safeguards, writes, and verification.",
+                            exact=True,
+                        )
+                    ).to_be_visible()
+                    expect(ledger.get_by_text("Date range", exact=True)).to_be_visible()
+                    expect(
+                        controls.get_by_role("searchbox", name="Search activity")
+                    ).to_be_visible()
+                    assert page.evaluate(
+                        "() => document.documentElement.scrollWidth <= 320"
+                    ), state
+
+                try:
+                    assert_compact_activity_priority("paused")
+                    for connection_state in ("checking",):
+                        page.reload()
+                        page.get_by_role("heading", name="Activity ledger").wait_for()
+                        assert_compact_activity_priority(connection_state)
+                    connection_state = "paused"
+                    page.reload()
+                    page.get_by_role("heading", name="Activity ledger").wait_for()
+                    page.get_by_label("Shared library connection status").get_by_role(
+                        "button", name="Check connection again"
+                    ).click()
+                    page.get_by_text(
+                        "Library connection recovered", exact=True
+                    ).wait_for()
+                    assert_compact_activity_priority("recovered")
+                finally:
+                    page.set_viewport_size(prior_viewport)
+                connection_state = "paused"
                 for work, label in (
                     ("Equal automatic title", "No change required"),
                     ("Synthetic completed cover advice", "Cover advice completed"),
@@ -683,6 +828,21 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     "The Glass Orchard", exact=True
                 ).locator("xpath=ancestor::article")
                 automatic_row.get_by_role("button", name="Details").click()
+                expect(automatic_row.get_by_role("alert")).to_contain_text(
+                    "Recorded transitions could not be loaded."
+                )
+                capture_visual_proof("activity-transition-error")
+                automatic_row.get_by_role("button", name="Try again").click()
+                automatic_row.get_by_role(
+                    "button", name="Load more transitions"
+                ).wait_for()
+                automatic_row.get_by_role(
+                    "button", name="Load more transitions"
+                ).click()
+                expect(
+                    automatic_row.get_by_role("button", name="Load more transitions")
+                ).to_have_count(0)
+                capture_visual_proof("activity-transition-disclosure")
                 expect(
                     automatic_row.get_by_text("Previous value", exact=True)
                 ).to_be_visible()
@@ -706,9 +866,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 capture_visual_proof("activity-automatic-values")
                 automatic_row.get_by_role("button", name="Hide details").click()
                 capture_visual_proof("activity-labels")
-                assert page.locator(".cm-activity-ledger").evaluate(
-                    "node => node.previousElementSibling?.classList.contains('cm-activity-status')"
-                )
+                ledger_box = activity_ledger.bounding_box()
+                first_row_box = activity_ledger.locator("article").first.bounding_box()
+                assert ledger_box is not None and first_row_box is not None
+                # Compact Activity prioritises the searchable ledger: its first
+                # row is reachable without crossing a long recovery summary.
+                assert first_row_box["y"] < 844
                 long_activity_title = page.locator(".cm-activity-work > strong").filter(
                     has_text=LONG_TITLE
                 )
@@ -950,7 +1113,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     "Activity state refreshed from the authoritative server."
                 ).wait_for()
             stage[0] = f"direct-route:{path}:document-count"
-            assert documents == (before_entry + (2 if path == "/activity" else 1))
+            assert documents == (before_entry + (4 if path == "/activity" else 1))
 
         for case_id, label, retry in (
             ("case-1", "Advisory visual review complete", False),
