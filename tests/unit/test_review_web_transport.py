@@ -27,6 +27,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.operations import support_preparation_incidents
 from mechanical_librarian.application.review_web import (
     OwnerSessionService,
     ReviewWebError,
@@ -73,14 +74,15 @@ def test_operational_status_and_support_are_authenticated_bounded_surfaces(
     web.repository.operational_snapshot = lambda: {
         "signals": [
             {
-                "kind": "backup_failure",
-                "cause": "backup",
-                "scope": "field",
-                "connection": "primary",
-                "library": "fiction",
-                "category": None,
-                "work_id": "book-1",
-                "field": "title",
+                "attempt": 1,
+                "cause": "preparation_failure",
+                "code": "unreadable_media",
+                "diagnostic_reference": "prep-0123456789abcdef",
+                "kind": "owner_action_required",
+                "path": "/private/book.epub",
+                "scope": "work",
+                "stage": "extraction",
+                "work_id": "private-book-1",
             }
         ]
     }
@@ -98,6 +100,12 @@ def test_operational_status_and_support_are_authenticated_bounded_surfaces(
                     "status": "degraded",
                     "secret": "never-export",
                 },
+            ),
+            (
+                "operational_incidents",
+                lambda: support_preparation_incidents(
+                    web.repository.operational_snapshot()
+                ),
             ),
         )
     )
@@ -122,12 +130,25 @@ def test_operational_status_and_support_are_authenticated_bounded_surfaces(
     preview = web.client.get("/api/v1/operations/support/preview")
     assert preview.status_code == 200
     assert "never-export" not in preview.text
+    assert "/private/book.epub" not in preview.text
+    support_incident = preview.json()["payload"]["sections"]["operational_incidents"][
+        "incidents"
+    ][0]
+    status_incident = status.json()["incidents"][0]
+    assert support_incident == {
+        key: status_incident[key]
+        for key in ("attempt", "code", "diagnostic_reference", "stage")
+    }
     exported = web.client.post(
         "/api/v1/operations/support/export",
         headers={**web.origin, "x-csrf-token": session["csrf_token"]},
     )
     assert exported.status_code == 200
     assert "never-export" not in exported.text
+    assert (
+        exported.json()["sections"]["operational_incidents"]
+        == preview.json()["payload"]["sections"]["operational_incidents"]
+    )
     web.repository.operational_snapshot = lambda: (_ for _ in ()).throw(
         FieldEffectError("persistence")
     )

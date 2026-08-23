@@ -119,6 +119,9 @@ def _operational_signal(
     work_id: str | None = None,
     field: str | None = None,
     diagnostic_reference: str | None = None,
+    stage: str | None = None,
+    code: str | None = None,
+    attempt: int | None = None,
 ) -> dict[str, object]:
     value: dict[str, object] = {
         "category": category,
@@ -132,6 +135,12 @@ def _operational_signal(
     }
     if diagnostic_reference is not None:
         value["diagnostic_reference"] = diagnostic_reference
+    if stage is not None:
+        value["stage"] = stage
+    if code is not None:
+        value["code"] = code
+    if attempt is not None:
+        value["attempt"] = attempt
     return value
 
 
@@ -2220,6 +2229,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         diagnostic_reference=preparation_failure_reference(
                             work_id, stage, attempt, recovery_attempt, code
                         ),
+                        stage=stage,
+                        code=code,
+                        attempt=attempt,
                     )
                 )
             rows = self._connection.execute(

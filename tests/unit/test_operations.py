@@ -22,6 +22,7 @@ from mechanical_librarian.application.operations import (
     StageTimer,
     StageTiming,
     aggregate_incidents,
+    support_preparation_incidents,
 )
 from mechanical_librarian.bootstrap import container
 from mechanical_librarian.domain.field_effect import (
@@ -299,6 +300,61 @@ def test_support_preview_and_export_are_bounded_and_redacted_again() -> None:
     assert b"do-not-export" not in exported
     assert b"/new/private/path" not in exported
     assert json.loads(exported)["sections"]["runtime"]["status"] == "[redacted]"
+
+
+def test_support_preparation_incidents_match_status_and_exclude_private_values() -> (
+    None
+):
+    snapshot: dict[str, object] = {
+        "signals": [
+            {
+                "attempt": 2,
+                "code": "parser_refused",
+                "diagnostic_reference": "prep-0123456789abcdef",
+                "kind": "owner_action_required",
+                "cause": "preparation_failure",
+                "scope": "work",
+                "stage": "extraction",
+                "work_id": "private-item-id",
+                "provider": "private-provider",
+                "path": "/private/media/book.epub",
+            },
+            {
+                "kind": "automatic_recovery",
+                "cause": "in_progress",
+                "scope": "work",
+                "work_id": "retrying-private-item",
+            },
+        ]
+    }
+    timings = Mock()
+    timings.list.return_value = ()
+    status = OperationalStatus(snapshot=lambda: snapshot, timings=timings).status()
+    bundle = SupportBundle(
+        (("operational_incidents", lambda: support_preparation_incidents(snapshot)),)
+    )
+
+    preview = bundle.preview()
+    exported = json.loads(bundle.export())
+    status_incident = next(
+        incident
+        for incident in cast(list[dict[str, object]], status["incidents"])
+        if incident["diagnostic_reference"] is not None
+    )
+    support_incident = preview["payload"]["sections"]["operational_incidents"][
+        "incidents"
+    ][0]
+    assert support_incident == {
+        key: status_incident[key]
+        for key in ("attempt", "code", "diagnostic_reference", "stage")
+    }
+    assert (
+        exported["sections"]["operational_incidents"]
+        == preview["payload"]["sections"]["operational_incidents"]
+    )
+    encoded = json.dumps(exported)
+    for private in ("private-item-id", "private-provider", "/private/media/book.epub"):
+        assert private not in encoded
 
 
 def test_support_rejects_oversize_and_depth() -> None:

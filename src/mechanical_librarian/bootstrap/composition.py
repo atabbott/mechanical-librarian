@@ -2042,7 +2042,10 @@ def run_review_server(
                 private_root / "stage-timings.json",
                 enabled=review.diagnostic_timings_enabled,
             )
-            from mechanical_librarian.application.operations import StageTimer
+            from mechanical_librarian.application.operations import (
+                StageTimer,
+                support_preparation_incidents,
+            )
 
             timing = StageTimer(timing_store)
             provider_recovery = SQLiteProviderRecoveryStore.open(
@@ -2080,6 +2083,12 @@ def run_review_server(
                             "schema_state": "exact_current",
                             "timing_records": len(timing_store.list()),
                         },
+                    ),
+                    (
+                        "operational_incidents",
+                        lambda: support_preparation_incidents(
+                            repository.operational_snapshot()
+                        ),
                     ),
                 )
             )

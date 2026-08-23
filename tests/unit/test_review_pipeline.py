@@ -666,6 +666,10 @@ def test_delayed_work_remains_visible_recovers_when_due_and_retires_with_removed
         "SELECT state FROM review_preparation_work WHERE work_id=?",
         (recovered.action_id,),
     ).fetchone()
+    assert not any(
+        "diagnostic_reference" in signal
+        for signal in repository.operational_snapshot()["signals"]
+    )
     repository.close()
     assert retired == ("stale",)
 
@@ -2949,6 +2953,19 @@ def test_projection_crash_rolls_back_staged_shadow_outcome_before_requeue(
         assert ("failed", "unknown") == observer._connection.execute(
             "SELECT state,failure_code FROM review_preparation_work"
         ).fetchone()
+        incident = next(
+            signal
+            for signal in cast(
+                "list[dict[str, object]]", observer.operational_snapshot()["signals"]
+            )
+            if signal["cause"] == "preparation_failure"
+        )
+        assert {
+            "attempt": 1,
+            "code": "unknown",
+            "stage": "projection",
+        }.items() <= incident.items()
+        assert str(incident["diagnostic_reference"]).startswith("prep-")
     finally:
         observer.close()
 
