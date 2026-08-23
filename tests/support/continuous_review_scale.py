@@ -377,6 +377,31 @@ def _assert_distinct_phase_fractions(actual_fractions: dict[str, float]) -> None
         _assert_phase_fraction(phase, fraction)
 
 
+def _installed_timeout_diagnostics(
+    elapsed: float,
+    sampled_phases: set[str],
+    libraries: list[dict[str, object]],
+) -> str:
+    """Format the bounded aggregate state retained by an installed timeout."""
+
+    return repr(
+        {
+            "elapsed_seconds": round(elapsed, 3),
+            "sampled_phases": sorted(sampled_phases),
+            "libraries": [
+                {
+                    "library": library["library"],
+                    "state": library["state"],
+                    "total": library["total"],
+                    "checked": library["checked"],
+                    "blocked": library["blocked"],
+                }
+                for library in libraries
+            ],
+        }
+    )
+
+
 def qualify_installed_pipeline(
     counts: dict[str, int],
     *,
@@ -827,12 +852,26 @@ def qualify_installed_pipeline(
                         if time.monotonic() >= deadline:
                             with closing(sqlite3.connect(database)) as connection:
                                 observed = connection.execute(
-                                    "SELECT library_name,state,total FROM review_preparation_scans "
+                                    "SELECT library_name,state,total,checked,blocked "
+                                    "FROM review_preparation_scans "
                                     "ORDER BY library_name"
                                 ).fetchall()
                             pytest.fail(
                                 "installed reconciliation status remained unavailable: "
-                                + repr(observed)
+                                + _installed_timeout_diagnostics(
+                                    time.monotonic() - installed_reconciliation_started,
+                                    sampled_phases,
+                                    [
+                                        {
+                                            "library": library,
+                                            "state": state,
+                                            "total": total,
+                                            "checked": checked,
+                                            "blocked": blocked,
+                                        }
+                                        for library, state, total, checked, blocked in observed
+                                    ],
+                                )
                             )
                         time.sleep(0.02)
                         continue
@@ -882,7 +921,14 @@ def qualify_installed_pipeline(
                     ):
                         break
                     if time.monotonic() >= deadline:
-                        pytest.fail("installed reconciliation did not complete")
+                        pytest.fail(
+                            "installed reconciliation did not complete: "
+                            + _installed_timeout_diagnostics(
+                                time.monotonic() - installed_reconciliation_started,
+                                sampled_phases,
+                                cast(list[dict[str, object]], projection["libraries"]),
+                            )
+                        )
                     time.sleep(0.02)
                 assert sampled_phases == {"early", "peak", "late"}
                 _assert_distinct_phase_fractions(actual_fractions)
