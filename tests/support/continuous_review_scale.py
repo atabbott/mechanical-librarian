@@ -475,17 +475,15 @@ def qualify_installed_pipeline(
             index = int(action.file_identity or "0", 16)
             local_claims = (
                 (
-                    LocalClaim(
-                        "local_" + f"{index:064x}",
-                        ClaimKind.TITLE,
-                        "Synthetic reviewed title",
-                        "Synthetic reviewed title",
-                        "Synthetic reviewed title",
-                        "not_applicable",
-                        "opening_matter",
-                        "not_applicable",
-                        "not_applicable",
-                        ClaimScope.WORK,
+                    LocalClaim.create(
+                        kind=ClaimKind.TITLE,
+                        observed="Exact evaluator candidate",
+                        canonical="Exact evaluator candidate",
+                        excerpt="Exact evaluator candidate",
+                        applicability="not_applicable",
+                        checksum="not_applicable",
+                        applicability_basis="not_applicable",
+                        scope=ClaimScope.WORK,
                     ),
                 )
                 if action.item_id == "fiction-0000"
