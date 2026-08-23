@@ -299,6 +299,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     operation, kind, occurred_at
                 )
             ),
+            field_effect_event_documents=(
+                lambda plan_id: self.field_effect_event_documents(plan_id)
+            ),
             current_cover_policy_reference=(
                 lambda: self._current_cover_policy_reference
             ),

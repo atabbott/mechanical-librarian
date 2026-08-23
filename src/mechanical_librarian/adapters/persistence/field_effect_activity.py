@@ -198,6 +198,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         consent_envelope_identity: Callable[[str], str],
         update_field_effect: Callable[[FieldEffectOperation, str], None],
         record_field_effect_event: Callable[[FieldEffectOperation, str, int], None],
+        field_effect_event_documents: Callable[[str], tuple[str, ...]],
         current_cover_policy_reference: Callable[[], str | None],
         current_cover_replay_reference: Callable[[], str | None],
     ) -> None:
@@ -210,6 +211,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self._consent_envelope_identity = consent_envelope_identity
         self._update_field_effect = update_field_effect
         self._record_field_effect_event = record_field_effect_event
+        self._field_effect_event_documents = field_effect_event_documents
         self._cover_policy_reference = current_cover_policy_reference
         self._cover_replay_reference = current_cover_replay_reference
 
@@ -943,7 +945,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             for plan_id in {row[15] for row in rows if row[13] == "field_effect"}:
                 if type(plan_id) is not str:
                     raise FieldEffectError("persistence")
-                self._field_effect_lifecycle_documents(plan_id)
+                self._field_effect_event_documents(plan_id)
         except FieldEffectError as error:
             raise FieldEffectError("persistence") from error
         dependency_limit = 64 if searched else 100
@@ -1573,97 +1575,6 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
         return projected_events, report_documents, reports
 
-    def _field_effect_lifecycle_documents(self, plan_id: str) -> tuple[str, ...]:
-        """Read one bounded lifecycle only after every immutable event agrees."""
-        try:
-            rows = self._connection.execute(
-                "SELECT event.event_id,event.sequence,event.kind,event.occurred_at,event.document,"
-                "effect.decision_id,effect.destination FROM field_effect_events event "
-                "JOIN field_effects effect ON effect.plan_id=event.plan_id "
-                "WHERE event.plan_id=? ORDER BY event.sequence ASC",
-                (plan_id,),
-            ).fetchall()
-        except sqlite3.Error as error:
-            raise FieldEffectError("persistence") from error
-        if not rows or len(rows) > 100:
-            raise FieldEffectError("persistence")
-        event_keys = {
-            "attempt",
-            "decision_id",
-            "desired_value",
-            "destination",
-            "event_id",
-            "failure",
-            "kind",
-            "occurred_at",
-            "origin",
-            "plan_id",
-            "pre_value",
-            "schema_version",
-            "sequence",
-            "state",
-        }
-        documents: list[str] = []
-        try:
-            for expected_sequence, row in enumerate(rows, 1):
-                (
-                    event_id,
-                    sequence,
-                    kind,
-                    occurred_at,
-                    document,
-                    decision_id,
-                    destination,
-                ) = row
-                if (
-                    type(event_id) is not str
-                    or type(sequence) is not int
-                    or type(kind) is not str
-                    or type(occurred_at) is not int
-                    or type(document) is not str
-                    or not 2 <= len(document.encode("utf-8")) <= 131_072
-                    or type(decision_id) is not str
-                    or type(destination) is not str
-                ):
-                    raise FieldEffectError("persistence")
-                raw = json.loads(document)
-                if (
-                    type(raw) is not dict
-                    or set(raw) != event_keys
-                    or raw.get("schema_version") != "field-effect-event-v1"
-                    or raw.get("event_id") != event_id
-                    or raw.get("plan_id") != plan_id
-                    or raw.get("decision_id") != decision_id
-                    or raw.get("destination") != destination
-                    or raw.get("sequence") != sequence
-                    or raw.get("kind") != kind
-                    or raw.get("state") != kind
-                    or raw.get("occurred_at") != occurred_at
-                    or sequence != expected_sequence
-                    or type(raw.get("sequence")) is not int
-                    or type(raw.get("occurred_at")) is not int
-                    or type(raw.get("attempt")) is not int
-                    or not 0 <= raw["attempt"] <= 3
-                    or raw.get("failure") not in FIELD_EFFECT_FAILURES
-                    or canonical_effect_json(raw) != document
-                    or event_id
-                    != "effect_event_"
-                    + hashlib.sha256(
-                        canonical_effect_json(
-                            {
-                                key: value
-                                for key, value in raw.items()
-                                if key != "event_id"
-                            }
-                        ).encode()
-                    ).hexdigest()
-                ):
-                    raise FieldEffectError("persistence")
-                documents.append(document)
-        except (json.JSONDecodeError, TypeError, ValueError) as error:
-            raise FieldEffectError("persistence") from error
-        return tuple(documents)
-
     def field_effect_activity_page(
         self,
         *,
@@ -2017,7 +1928,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ).fetchone()
             if row is None:
                 return ()
-            documents = self._field_effect_lifecycle_documents(row[0])
+            documents = self._field_effect_event_documents(row[0])
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
         except (FieldEffectError, json.JSONDecodeError, TypeError, ValueError) as error:

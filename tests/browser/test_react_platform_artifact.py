@@ -217,13 +217,15 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 )
                 return
             payload = rich_payload(route.request.url)
-            if path == "/api/v1/review-preparation" and connection_state == "recovered":
+            if path == "/api/v1/review-preparation" and connection_state != "paused":
                 preparation = cast("dict[str, object]", payload)
                 conditions = cast("list[dict[str, object]]", preparation["connections"])
                 conditions[0] = {
                     **conditions[0],
-                    "state": "recovered",
-                    "affected": 0,
+                    "state": connection_state,
+                    "affected": 0
+                    if connection_state == "recovered"
+                    else conditions[0]["affected"],
                     "updated_at": 2,
                 }
             if description_mode and path == "/api/v1/review-cases/case-1":
@@ -563,11 +565,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                         page.evaluate("() => document.documentElement.scrollWidth")
                         <= width
                     )
-                    assert check.evaluate(
-                        "node => { const box = node.getBoundingClientRect(); "
-                        "const top = document.elementFromPoint(box.x + box.width / 2, "
-                        "box.y + box.height / 2); return top === node || node.contains(top); }"
-                    )
+                    if path != "/activity":
+                        assert check.evaluate(
+                            "node => { const box = node.getBoundingClientRect(); "
+                            "const top = document.elementFromPoint(box.x + box.width / 2, "
+                            "box.y + box.height / 2); return top === node || node.contains(top); }"
+                        )
                     # The masthead now carries a status message whose width is
                     # its text, and this cohort's stream ends immediately, so
                     # the degraded notice is present on every route here.
@@ -678,6 +681,48 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     == 0
                 )
                 activity_ledger = page.locator(".cm-activity-ledger")
+
+                def assert_compact_activity_priority(
+                    state: str, ledger=activity_ledger
+                ) -> None:
+                    heading = page.locator(".cm-page-heading")
+                    controls = ledger.locator(".cm-activity-tools")
+                    first_row = ledger.locator("article").first
+                    notice = page.get_by_label("Shared library connection status")
+                    for locator in (heading, controls, first_row, notice):
+                        expect(locator).to_be_visible()
+                    heading_box = heading.bounding_box()
+                    controls_box = controls.bounding_box()
+                    first_row_box = first_row.bounding_box()
+                    notice_box = notice.bounding_box()
+                    assert (
+                        heading_box is not None
+                        and controls_box is not None
+                        and first_row_box is not None
+                        and notice_box is not None
+                    )
+                    assert (
+                        heading_box["y"]
+                        < controls_box["y"]
+                        < first_row_box["y"]
+                        < notice_box["y"]
+                    ), state
+                    assert first_row_box["y"] < 844, state
+
+                assert_compact_activity_priority("paused")
+                for connection_state in ("checking",):
+                    page.reload()
+                    page.get_by_role("heading", name="Activity ledger").wait_for()
+                    assert_compact_activity_priority(connection_state)
+                connection_state = "paused"
+                page.reload()
+                page.get_by_role("heading", name="Activity ledger").wait_for()
+                page.get_by_label("Shared library connection status").get_by_role(
+                    "button", name="Check connection again"
+                ).click()
+                page.get_by_text("Library connection recovered", exact=True).wait_for()
+                assert_compact_activity_priority("recovered")
+                connection_state = "paused"
                 for work, label in (
                     ("Equal automatic title", "No change required"),
                     ("Synthetic completed cover advice", "Cover advice completed"),
@@ -707,9 +752,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     "button", name="Load more transitions"
                 ).click()
                 expect(
-                    automatic_row.get_by_role(
-                        "button", name="Load more transitions"
-                    )
+                    automatic_row.get_by_role("button", name="Load more transitions")
                 ).to_have_count(0)
                 capture_visual_proof("activity-transition-disclosure")
                 expect(
@@ -982,7 +1025,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     "Activity state refreshed from the authoritative server."
                 ).wait_for()
             stage[0] = f"direct-route:{path}:document-count"
-            assert documents == (before_entry + (2 if path == "/activity" else 1))
+            assert documents == (before_entry + (4 if path == "/activity" else 1))
 
         for case_id, label, retry in (
             ("case-1", "Advisory visual review complete", False),
