@@ -1393,6 +1393,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 assert page.url == url_before_focus
             if scheme == "dark":
                 page.get_by_role("button", name="Use light mode").click()
+        page.set_viewport_size({"width": 1440, "height": 900})
         capture_visual_proof("library-work-summary")
         page.get_by_role("link", name="Needs attention", exact=True).click()
         expect(page.locator(".library-work-row")).to_have_count(5)
