@@ -34,6 +34,7 @@ export const library: LibraryView = {
 export const detail: CaseDetailView = {
   id: 'case-1',
   current: true,
+  target: { connection: 'local', library: 'Books', item: 'A Book', mediaKind: 'ebook' },
   title: 'A Book',
   authors: [],
   subtitle: 'Books · local',

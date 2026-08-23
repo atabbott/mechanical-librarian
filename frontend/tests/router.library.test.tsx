@@ -1640,6 +1640,67 @@ describe('Library route', () => {
     await waitFor(() => expect([libraryReads, attentionReads]).toEqual([2, 2]))
   })
 
+  it('follows a later-page provider-retry successor without borrowing another work\'s update', async () => {
+    const predecessor = { ...detail, id: 'case-1', current: true }
+    const successor: CaseDetailView = {
+      ...detail,
+      id: 'case-2',
+      current: true,
+      title: 'Recovered work',
+      fields: detail.fields.map((field) => ({ ...field, needsAttention: false })),
+    }
+    const unrelated: CaseDetailView = {
+      ...detail,
+      id: 'case-3',
+      target: { ...detail.target, item: 'Other work' },
+      title: 'Other work',
+    }
+    let libraryReads = 0
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () =>
+        ++libraryReads === 1
+          ? { ...library, lens: 'needs_attention' as const }
+          : {
+              ...library,
+              lens: 'needs_attention' as const,
+              counts: { attention: 0, all: 1, clear: 1 },
+              works: [],
+            },
+      ),
+      getCaseDetail: vi.fn(async (id: string) =>
+        id === 'case-2' ? successor : id === 'case-3' ? unrelated : predecessor,
+      ),
+    }
+    const updates = createLiveStream()
+    const { router } = renderRoute(
+      '/library?lens=needs_attention&cursor=later-page&preview=case-1&field=title',
+      http,
+      updates,
+    )
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    await act(async () => {
+      updates.announce({ sequence: 76, subject: 'case-3', topic: 'library' })
+    })
+    expect(router.state.location.search.preview).toBe('case-1')
+    await act(async () => {
+      updates.announce({ sequence: 77, subject: 'case-2', topic: 'library' })
+    })
+
+    await waitFor(() =>
+      expect(router.state.location.search).toEqual({
+        lens: 'needs_attention',
+        cursor: 'later-page',
+        preview: 'case-2',
+        field: 'title',
+      }),
+    )
+    expect(await screen.findByRole('heading', { level: 2, name: 'Recovered work' })).toBeVisible()
+    expect(http.getCaseDetail).toHaveBeenCalledWith('case-2')
+    await waitFor(() => expect(libraryReads).toBe(2))
+  })
+
   it('acts on every Library announcement except the echo of its own decision', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]

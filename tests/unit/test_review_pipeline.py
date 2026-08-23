@@ -1114,6 +1114,82 @@ def test_thousand_work_three_library_backlog_is_bounded_and_fair(
         ] == sorted(f"{library}-{index}" for index in range(count))[:3]
 
 
+def test_ordinal_claim_index_keeps_first_ready_cost_flat_across_cohort_sizes(
+    application_path: Path,
+) -> None:
+    """#826: the first eligible ordinal does not pay to sort its whole cohort."""
+
+    def first_ready_steps(count: int) -> tuple[int, tuple[tuple[object, ...], ...]]:
+        repository = open_repository(application_path.with_name(f"{count}.sqlite3"))
+        repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
+        discovery = repository.claim_review_pipeline_action(2)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "a" * 64,
+            tuple(
+                _entry(f"item-{index:04d}", f"{index:064x}") for index in range(count)
+            ),
+            3,
+        )
+        sql = (
+            "SELECT work_id FROM review_preparation_work WHERE state='queued' "
+            "AND library_name=? AND retry_not_before<=? ORDER BY ordinal LIMIT 1"
+        )
+        plan = tuple(
+            repository._connection.execute("EXPLAIN QUERY PLAN " + sql, ("fiction", 4))
+        )
+        steps = 0
+
+        def count_steps() -> int:
+            nonlocal steps
+            steps += 1
+            return 0
+
+        repository._connection.set_progress_handler(count_steps, 1)
+        row = repository._connection.execute(sql, ("fiction", 4)).fetchone()
+        repository._connection.set_progress_handler(None, 0)
+        repository.close()
+        assert row is not None
+        return steps, plan
+
+    ten_steps, ten_plan = first_ready_steps(10)
+    thousand_steps, thousand_plan = first_ready_steps(1_000)
+
+    for plan in (ten_plan, thousand_plan):
+        assert any("review_preparation_work_aged_claim" in str(row) for row in plan)
+        assert not any("TEMP B-TREE" in str(row) for row in plan)
+    # A fixed first row has a fixed index walk. The generous bound leaves room
+    # for SQLite's version-specific setup without permitting cohort-size work.
+    assert thousand_steps <= ten_steps + 30
+
+
+def test_former_updated_time_claim_index_requires_a_clean_rebuild(
+    application_path: Path,
+) -> None:
+    """#826: the exact-current schema rejects the predecessor without rewriting it."""
+
+    repository = open_repository(application_path)
+    repository.close()
+    connection = sqlite3.connect(application_path)
+    connection.execute("DROP INDEX review_preparation_work_aged_claim")
+    connection.execute(
+        "CREATE INDEX review_preparation_work_aged_claim "
+        "ON review_preparation_work(state,library_name,updated_at,ordinal)"
+    )
+    connection.commit()
+    connection.close()
+    before = application_path.read_bytes()
+
+    with pytest.raises(
+        MetadataReportError, match="database is unavailable or incompatible"
+    ):
+        open_repository(application_path, create=False)
+
+    assert application_path.read_bytes() == before
+
+
 def test_oversized_fairness_cursor_fails_closed(application_path: Path) -> None:
     repository = open_repository(application_path)
     repository._connection.execute("PRAGMA ignore_check_constraints=ON")

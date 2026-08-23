@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate } from '@tanstack/react-router'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, SyntheticEvent } from 'react'
 
 import { displayValue } from '../api/http'
@@ -762,7 +762,7 @@ function LibraryCoverChoicesContent({
 export default function LibraryPage({ data }: { data: LibraryView }) {
   const search = libraryRoute.useSearch()
   const navigate = useNavigate({ from: '/library' })
-  const { http } = useReviewContext()
+  const { http, updates } = useReviewContext()
   const currentSearch = useRef(search)
   const pendingSearchQuery = useRef<string | null>(null)
   const searchNavigation = useRef<Promise<void> | null>(null)
@@ -788,6 +788,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     library: string
     mediaKind: string
   } | null>(null)
+  const selectedTargetRef = useRef<{
+    caseId: string
+    connection: string
+    library: string
+    item: string
+  } | null>(null)
+  const pendingSuccessorRef = useRef<string | null>(null)
   const [frozenFieldOrders, setFrozenFieldOrders] = useState<
     Readonly<Record<string, readonly string[]>>
   >({})
@@ -882,11 +889,27 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     staleTime: 15_000,
     retry: false,
   })
-  const attentionItems = attention.data?.pages.flatMap((page) => page.items) ?? []
-  const selectedIdentity = search.preview
-    ? (data.works.find((work) => work.reviewCaseId === search.preview) ??
-      attentionItems.find((item) => item.id === search.preview))
-    : undefined
+  const attentionItems = useMemo(
+    () => attention.data?.pages.flatMap((page) => page.items) ?? [],
+    [attention.data],
+  )
+  const selectedIdentity = useMemo(
+    () =>
+      search.preview
+        ? (data.works.find((work) => work.reviewCaseId === search.preview) ??
+          attentionItems.find((item) => item.id === search.preview) ??
+          (detail.data
+            ? {
+                id: detail.data.id,
+                title: detail.data.title,
+                authors: detail.data.authors,
+                library: detail.data.target.library,
+                mediaKind: detail.data.target.mediaKind,
+              }
+            : undefined))
+        : undefined,
+    [attentionItems, data.works, detail.data, search.preview],
+  )
   useEffect(() => {
     if (selectedIdentity && search.preview)
       selectedIdentityRef.current = {
@@ -897,6 +920,56 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         mediaKind: selectedIdentity.mediaKind,
       }
   }, [search.preview, selectedIdentity])
+  useEffect(() => {
+    if (search.preview && detail.data?.current)
+      selectedTargetRef.current = { caseId: search.preview, ...detail.data.target }
+  }, [detail.data, search.preview])
+  useEffect(() => {
+    if (!updates || !search.preview) return
+    return updates.subscribe((update) => {
+      const selectedTarget = selectedTargetRef.current
+      if (
+        update.topic !== 'library' ||
+        update.subject === null ||
+        update.subject === search.preview ||
+        selectedTarget === null ||
+        selectedTarget.caseId !== search.preview
+      )
+        return
+      pendingSuccessorRef.current = update.subject
+    })
+  }, [search.preview, updates])
+  useEffect(() => {
+    const selectedTarget = selectedTargetRef.current
+    const successorId = pendingSuccessorRef.current
+    if (
+      !selectedTarget ||
+      !successorId ||
+      selectedTarget.caseId !== search.preview ||
+      data.works.some((work) => work.reviewCaseId === search.preview)
+    )
+      return
+    pendingSuccessorRef.current = null
+    void http
+      .getCaseDetail(successorId)
+      .then((successor) => {
+        if (
+          !successor.current ||
+          successor.target.connection !== selectedTarget.connection ||
+          successor.target.library !== selectedTarget.library ||
+          successor.target.item !== selectedTarget.item
+        )
+          return
+        void navigate({
+          replace: true,
+          search: (current) =>
+            current.preview === selectedTarget.caseId
+              ? { ...current, preview: successor.id }
+              : current,
+        })
+      })
+      .catch(() => undefined)
+  }, [data.works, http, navigate, search.preview])
   const completionIdentity = complete?.id === selectedReviewCaseId ? complete.identity : undefined
   const displayedIdentity = selectedIdentity ?? completionIdentity
   const primaryField = (field: ReviewField) => (field.inventoryRole ?? 'primary') === 'primary'

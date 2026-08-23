@@ -283,7 +283,7 @@ _REVIEW_ABSENCES_SQL = (
 )
 _REVIEW_WORK_AGED_CLAIM_INDEX_SQL = (
     "CREATE INDEX review_preparation_work_aged_claim "
-    "ON review_preparation_work(state,library_name,updated_at,ordinal)"
+    "ON review_preparation_work(state,library_name,ordinal)"
 )
 _REVIEW_WORK_RECENT_CLAIM_INDEX_SQL = (
     "CREATE INDEX review_preparation_work_recent_claim "

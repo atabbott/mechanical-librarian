@@ -12,6 +12,11 @@ the installed v10 contract: its persisted decisions can disagree. It is rejected
 at bootstrap and requires a clean rebuild; `review-field-facts-v1` cannot adopt
 it.
 
+The pre-release review-preparation claim index now orders each library's queued
+cohort by its persisted discovery ordinal. Earlier state with the former
+updated-time claim index is rejected at bootstrap and requires a clean rebuild;
+there is no adoption plan because this change is not a reconstructible object.
+
 ## Offline derived-schema adoption
 
 Stop the container before adoption and retain the original volume as rollback.

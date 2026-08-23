@@ -177,6 +177,7 @@ export interface CoverConsiderationView {
 export interface CaseDetailView {
   id: string
   current: boolean
+  target: { connection: string; library: string; item: string; mediaKind: string }
   title: string
   authors: readonly string[]
   subtitle: string
@@ -1273,6 +1274,12 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
   return {
     id: stringValue(dto.review_case_id, 'review_case_id'),
     current: dto.current,
+    target: {
+      connection: stringValue(dto.target.connection, 'target_connection'),
+      library: stringValue(dto.target.library, 'target_library'),
+      item: stringValue(dto.target.item, 'target_item'),
+      mediaKind: stringValue(dto.target.media_kind, 'target_media_kind'),
+    },
     title: stringValue(dto.target.item, 'target_item'),
     authors: stringArray(dto.target.authors, 'target_authors'),
     subtitle: `${stringValue(dto.target.library, 'target_library')} · ${stringValue(dto.target.media_kind, 'target_media_kind')} · ${stringValue(dto.target.connection, 'target_connection')}`,

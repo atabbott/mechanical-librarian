@@ -5,7 +5,8 @@
 - Keep each preparation cohort's persisted discovery order across every
   eligible stage, so early works reach Library without waiting for a stage
   drain; attention rows with complete provider evidence now precede currently
-  provider-limited rows without hiding either. (#826, #827)
+  provider-limited rows without hiding either. Existing pre-release review
+  state requires a clean rebuild because its claim index changed. (#826, #827)
 
 - Keep one retained Activity event with unavailable automatic authority from
   taking down the ledger. The row explains its bounded limitation while valid
