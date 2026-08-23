@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 import threading
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -323,6 +324,75 @@ def test_newer_report_immediately_makes_case_historical() -> None:
         newer = _report("New", "c", "d")
         repository.publish(newer, lambda: True)
         assert not json.loads(repository.get_review_case(case_id))["current"]
+        repository.close()
+
+
+def test_current_review_case_successor_reads_only_the_rightful_current_case() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        first = _report()
+        repository.publish(first, lambda: True)
+        first_set = _actionable(first)
+        repository.publish_proposal(first_set)
+        predecessor = json.loads(repository.admit_review_case(first_set))[
+            "review_case_id"
+        ]
+        successor_report = _report("Changed", "c", "d")
+        repository.publish(successor_report, lambda: True)
+        successor_set = _actionable(successor_report)
+        repository.publish_proposal(successor_set)
+        successor = json.loads(repository.admit_review_case(successor_set))[
+            "review_case_id"
+        ]
+
+        assert repository.current_review_case_successor(predecessor) == successor
+        assert repository.current_review_case_successor(successor) is None
+        with pytest.raises(MetadataReportError):
+            repository.current_review_case_successor("review_case_" + "0" * 64)
+        with pytest.raises(MetadataReportError):
+            repository.current_review_case_successor("review_case_" + "0" * 65)
+
+        repository._connection.execute("PRAGMA foreign_keys=OFF")
+        repository._connection.execute(
+            "UPDATE current_review_case_lineages SET review_case_id=?", ("x" * 129,)
+        )
+        repository._connection.execute("PRAGMA foreign_keys=ON")
+        with pytest.raises(MetadataReportError):
+            repository.current_review_case_successor(predecessor)
+        repository.close()
+
+
+def test_current_review_case_successor_rejects_a_wrong_target_identity() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        report = _report()
+        repository.publish(report, lambda: True)
+        proposal = _actionable(report)
+        repository.publish_proposal(proposal)
+        predecessor = json.loads(repository.admit_review_case(proposal))[
+            "review_case_id"
+        ]
+        other_report = MetadataReport.create(
+            target=replace(report.target, item="item-2"),
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=report.providers,
+        )
+        repository.publish(other_report, lambda: True)
+        other_set = _actionable(other_report)
+        repository.publish_proposal(other_set)
+        other_case = json.loads(repository.admit_review_case(other_set))[
+            "review_case_id"
+        ]
+        repository._connection.execute("PRAGMA foreign_keys=OFF")
+        repository._connection.execute(
+            "UPDATE current_review_case_lineages SET review_case_id=? WHERE item_id='item-1'",
+            (other_case,),
+        )
+        repository._connection.execute("PRAGMA foreign_keys=ON")
+        with pytest.raises(MetadataReportError):
+            repository.current_review_case_successor(predecessor)
         repository.close()
 
 

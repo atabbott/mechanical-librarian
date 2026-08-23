@@ -22,11 +22,14 @@ from mechanical_librarian.adapters.persistence.schema import (
     _NO_UPDATE_SQL,
     _PROPOSAL_NO_UPDATE_SQL,
     _REVIEW_NO_UPDATE_SQL,
+    _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
+    _validate_review_field_facts_predecessor_schema,
 )
 from mechanical_librarian.adapters.persistence.schema_adoption import (
     _application_table_digest,
     adopt_schema,
 )
+from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.schema_adoption import (
     REVIEW_FIELD_FACTS_V1 as REVIEW_READ_INDEXES_V1,
@@ -53,6 +56,25 @@ def _drop_field_facts_projection(connection: sqlite3.Connection) -> None:
     connection.execute("DROP TABLE review_case_field_facts")
 
 
+def _freeze_review_field_facts_predecessor(connection: sqlite3.Connection) -> None:
+    _drop_field_facts_projection(connection)
+    connection.execute("DROP INDEX review_preparation_work_due_promotion")
+    connection.execute("DROP INDEX review_preparation_work_aged_claim")
+    connection.execute(
+        "CREATE INDEX review_preparation_work_aged_claim "
+        "ON review_preparation_work(state,library_name,updated_at,ordinal)"
+    )
+    connection.execute("PRAGMA writable_schema=ON")
+    connection.execute(
+        "UPDATE sqlite_master SET sql=replace(sql,\"'queued','delayed','running'\",\"'queued','running'\") "
+        "WHERE type='table' AND name='review_preparation_work'"
+    )
+    connection.execute("PRAGMA writable_schema=OFF")
+    # Every malformed-document test starts from the one frozen schema the
+    # offline plan accepts, so its later rejection proves canonical validation.
+    _validate_review_field_facts_predecessor_schema(connection)
+
+
 def _predecessor(root: Path) -> Path:
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     root.chmod(0o700)
@@ -60,7 +82,52 @@ def _predecessor(root: Path) -> Path:
     repository = open_repository(database)
     repository.close()
     connection = sqlite3.connect(database)
-    _drop_field_facts_projection(connection)
+    _freeze_review_field_facts_predecessor(connection)
+    connection.commit()
+    connection.close()
+    return database
+
+
+def _predecessor_with_retry_backoff(root: Path, retry_not_before: int) -> Path:
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    root.chmod(0o700)
+    database = root / "application.sqlite3"
+    repository = open_repository(database)
+    producer = "f" * 64
+    repository.request_review_scan("primary", "books", "lib-1", producer, 1)
+    discovery = repository.claim_review_pipeline_action(2)
+    assert discovery is not None
+    repository.complete_review_discovery(
+        discovery,
+        1,
+        "a" * 64,
+        (
+            CatalogueEntry(
+                "primary",
+                "books",
+                "lib-1",
+                "item-1",
+                1,
+                "Synthetic work",
+                ("Example Author",),
+                True,
+                False,
+                "singular-supported",
+                "b" * 64,
+                "/item-1.epub",
+                "epub",
+                "books",
+            ),
+        ),
+        3,
+    )
+    repository._connection.execute(
+        "UPDATE review_preparation_work SET state='queued',retry_not_before=?",
+        (retry_not_before,),
+    )
+    repository.close()
+    connection = sqlite3.connect(database)
+    _freeze_review_field_facts_predecessor(connection)
     connection.commit()
     connection.close()
     return database
@@ -86,7 +153,7 @@ def _predecessor_with_case(root: Path) -> tuple[Path, str, str, str]:
     case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
     repository.close()
     connection = sqlite3.connect(database)
-    _drop_field_facts_projection(connection)
+    _freeze_review_field_facts_predecessor(connection)
     connection.commit()
     connection.close()
     return database, report.report_id, proposal.proposal_set_id, str(case_id)
@@ -126,7 +193,7 @@ def _predecessor_with_decision(root: Path) -> Path:
     repository.record_human_decision(decision)
     repository.close()
     connection = sqlite3.connect(database)
-    _drop_field_facts_projection(connection)
+    _freeze_review_field_facts_predecessor(connection)
     connection.commit()
     connection.close()
     return database
@@ -172,9 +239,14 @@ def test_exact_predecessor_adopts_field_facts_without_changing_canonical_tables(
         "EXPLAIN QUERY PLAN " + _SHADOW_OUTCOME_HISTORY_SQL,
         ("review_case_1", 100),
     ).fetchall()
+    aged_claim = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' "
+        "AND name='review_preparation_work_aged_claim'"
+    ).fetchone()
     connection.close()
     assert any(_INDEXES[0] in str(row) for row in lineage_plan)
     assert any(_INDEXES[1] in str(row) for row in shadow_plan)
+    assert aged_claim == (_REVIEW_WORK_AGED_CLAIM_INDEX_SQL,)
 
     repository = open_repository(database, create=False)
     repository.close()
@@ -196,6 +268,32 @@ def test_exact_current_is_a_verified_noop_without_creating_a_backup(
     } == adopt_schema(database, backup, REVIEW_READ_INDEXES_V1)
     assert database.read_bytes() == before
     assert not backup.exists()
+
+
+@pytest.mark.parametrize(
+    ("retry_not_before", "expected_state"),
+    ((0, "queued"), (10, "queued"), (12, "delayed")),
+)
+def test_exact_predecessor_preserves_retry_backoff_at_adoption_boundary(
+    tmp_path: Path, monkeypatch: MonkeyPatch, retry_not_before: int, expected_state: str
+) -> None:
+    database = _predecessor_with_retry_backoff(tmp_path, retry_not_before)
+    backup = tmp_path / "backup.sqlite3"
+    monkeypatch.setattr(
+        "mechanical_librarian.adapters.persistence.schema_adoption.time.time",
+        lambda: 10,
+    )
+
+    assert {"plan": REVIEW_READ_INDEXES_V1, "status": "adopted"} == adopt_schema(
+        database, backup, REVIEW_READ_INDEXES_V1
+    )
+
+    connection = sqlite3.connect(database)
+    row = connection.execute(
+        "SELECT state,retry_not_before FROM review_preparation_work"
+    ).fetchone()
+    connection.close()
+    assert row == (expected_state, retry_not_before)
 
 
 def test_unrecognized_schema_and_existing_backup_fail_without_mutation(
@@ -314,6 +412,35 @@ def test_projection_index_failure_rolls_back_tables_and_retains_verified_backup(
     }
     connection.close()
     assert not objects
+
+
+def test_claim_index_replacement_failure_rolls_back_and_retains_verified_backup(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    import mechanical_librarian.adapters.persistence.schema_adoption as adoption
+
+    database = _predecessor(tmp_path)
+    before = database.read_bytes()
+    backup = tmp_path / "backup.sqlite3"
+    monkeypatch.setattr(
+        adoption,
+        "_REVIEW_WORK_AGED_CLAIM_INDEX_SQL",
+        "CREATE INDEX invalid plan text",
+    )
+
+    with pytest.raises(MetadataReportError, match="failed safely"):
+        adopt_schema(database, backup, REVIEW_READ_INDEXES_V1)
+    assert backup.read_bytes() == before
+    connection = sqlite3.connect(database)
+    aged_claim = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type='index' "
+        "AND name='review_preparation_work_aged_claim'"
+    ).fetchone()
+    connection.close()
+    assert aged_claim == (
+        "CREATE INDEX review_preparation_work_aged_claim "
+        "ON review_preparation_work(state,library_name,updated_at,ordinal)",
+    )
 
 
 def test_installed_module_command_adopts_a_generated_predecessor(
@@ -589,9 +716,11 @@ def test_postvalidation_path_replacement_cannot_report_success(
     real_digest = adoption._application_table_digest
     calls = 0
 
-    def replace_after_second_digest(connection: sqlite3.Connection) -> str:
+    def replace_after_second_digest(
+        connection: sqlite3.Connection, adoption_boundary: int | None = None
+    ) -> str:
         nonlocal calls
-        result = real_digest(connection)
+        result = real_digest(connection, adoption_boundary)
         calls += 1
         if calls == 2:
             database.rename(displaced)

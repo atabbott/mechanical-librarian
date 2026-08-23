@@ -534,6 +534,9 @@ class ReviewApplication:
 
         return self.serialized(read)
 
+    def case_successor(self, review_case_id: str) -> str | None:
+        return self.serialized(lambda: self._cases.successor(review_case_id))
+
     def evidence(
         self, review_case_id: str, limit: int, cursor: str | None
     ) -> dict[str, object]:

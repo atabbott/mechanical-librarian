@@ -40,6 +40,14 @@ describe('Library route', () => {
     },
   )
 
+  it('does not query successor lineage without a preview selection', async () => {
+    const getCaseSuccessor = vi.fn<ReviewHttp['getCaseSuccessor']>()
+    renderRoute('/library?lens=all', { ...createHttp(), getCaseSuccessor })
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'Works' })).toBeVisible()
+    expect(getCaseSuccessor).not.toHaveBeenCalled()
+  })
+
   it('keeps the selected-work header as the only Library route-focus target', async () => {
     renderRoute('/library?lens=all&preview=case-1&field=title')
     expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
@@ -257,7 +265,9 @@ describe('Library route', () => {
       'hide both',
     )
     await screen.findByText('No exact-current works match this search and lens.')
-    expect(await screen.findByRole('heading', { level: 2, name: 'Second observation' })).toBeVisible()
+    expect(
+      await screen.findByRole('heading', { level: 2, name: 'Second observation' }),
+    ).toBeVisible()
     await waitFor(() =>
       expect(router.state.location.search).toMatchObject({
         lens: 'all',
@@ -1640,6 +1650,464 @@ describe('Library route', () => {
     await waitFor(() => expect([libraryReads, attentionReads]).toEqual([2, 2]))
   })
 
+  const renderLaterPageProviderRetry = () => {
+    const predecessor = { ...detail, id: 'case-1', current: true }
+    const successor: CaseDetailView = {
+      ...detail,
+      id: 'case-2',
+      current: true,
+      title: 'Recovered work',
+      fields: detail.fields.map((field) => ({ ...field, needsAttention: false })),
+    }
+    const unrelated: CaseDetailView = {
+      ...detail,
+      id: 'case-3',
+      target: { ...detail.target, item: 'Other work' },
+      title: 'Other work',
+    }
+    let libraryReads = 0
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () =>
+        ++libraryReads === 1
+          ? {
+              ...library,
+              lens: 'needs_attention' as const,
+              works: library.works.map((work) => ({
+                ...work,
+                preparationOutcomes: [
+                  {
+                    providerRequests: 1,
+                    laneKind: 'work',
+                    provider: 'catalogue',
+                    reason: 'Provider retry is awaiting its next permitted request.',
+                    status: 'rate_limited',
+                  },
+                ],
+              })),
+            }
+          : {
+              ...library,
+              lens: 'needs_attention' as const,
+              counts: { attention: 0, all: 1, clear: 1 },
+              works: [],
+            },
+      ),
+      getCaseDetail: vi.fn(async (id: string) =>
+        id === 'case-2'
+          ? successor
+          : id === 'case-3'
+            ? unrelated
+            : libraryReads > 1
+              ? { ...predecessor, current: false }
+              : predecessor,
+      ),
+    }
+    const updates = createLiveStream()
+    const { router } = renderRoute(
+      '/library?lens=needs_attention&cursor=later-page&preview=case-1&field=title',
+      http,
+      updates,
+    )
+    return { http, libraryReads: () => libraryReads, router, updates }
+  }
+
+  it('follows an off-page successor named by a null-subject invalidation', async () => {
+    const predecessor = { ...detail, id: 'case-1', current: true }
+    const successor = { ...detail, id: 'case-2', current: true, title: 'Null-subject successor' }
+    let stale = false
+    const updates = createLiveStream()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => (stale ? { ...library, works: [] } : library)),
+      getCaseDetail: vi.fn(async (id: string) =>
+        id === 'case-2' ? successor : { ...predecessor, current: !stale },
+      ),
+      getCaseSuccessor: vi.fn(async () => (stale ? 'case-2' : null)),
+    }
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+
+    stale = true
+    await act(async () => {
+      updates.announce({ sequence: 76, subject: null, topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+
+    expect(http.getCaseSuccessor).toHaveBeenCalledTimes(1)
+    expect(await screen.findByRole('heading', { name: 'Null-subject successor' })).toBeVisible()
+    expect(http.getCaseSuccessor).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
+    expect(router.state.location.search.preview).toBe('case-2')
+  })
+
+  it('retries a failed null-subject lineage lookup with the invalidated Library query', async () => {
+    const predecessor = { ...detail, id: 'case-1', current: true }
+    const successor = { ...detail, id: 'case-2', current: true, title: 'Retried successor' }
+    let stale = false
+    const updates = createLiveStream()
+    const getCaseSuccessor = vi
+      .fn<ReviewHttp['getCaseSuccessor']>()
+      .mockRejectedValueOnce(new Error('synthetic transport failure'))
+      .mockResolvedValueOnce('case-2')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => (stale ? { ...library, works: [] } : library)),
+      getCaseDetail: vi.fn(async (id: string) =>
+        id === 'case-2' ? successor : { ...predecessor, current: !stale },
+      ),
+      getCaseSuccessor,
+    }
+    const { router } = renderRoute(
+      '/library?lens=all&preview=case-1&field=title',
+      http,
+      updates,
+    )
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+
+    stale = true
+    await act(async () => {
+      updates.announce({ sequence: 78, subject: null, topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+
+    expect(await screen.findByRole('heading', { name: 'Retried successor' })).toBeVisible()
+    await waitFor(() => expect(getCaseSuccessor).toHaveBeenCalledTimes(2))
+    expect(router.state.location.search.preview).toBe('case-2')
+  })
+
+  it('clears a null-subject reconciliation after an authoritative no-successor result', async () => {
+    const updates = createLiveStream()
+    const getCaseSuccessor = vi.fn<ReviewHttp['getCaseSuccessor']>().mockResolvedValue(null)
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({ ...library })),
+      getCaseSuccessor,
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+
+    await act(async () => {
+      updates.announce({ sequence: 79, subject: null, topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds * 2))
+      window.dispatchEvent(new Event('focus'))
+      window.dispatchEvent(new Event('online'))
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+
+    expect(getCaseSuccessor).toHaveBeenCalledTimes(1)
+  })
+
+  it('retires an exhausted null-subject cycle across focus, reconnect, and selection re-enable', async () => {
+    const first = { ...detail, id: 'case-1', current: true }
+    const second = { ...detail, id: 'case-2', current: true, title: 'New selection' }
+    const updates = createLiveStream()
+    const getCaseSuccessor = vi
+      .fn<ReviewHttp['getCaseSuccessor']>()
+      .mockRejectedValueOnce(new Error('first synthetic transport failure'))
+      .mockRejectedValueOnce(new Error('second synthetic transport failure'))
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async (id: string) => (id === 'case-2' ? second : first)),
+      getCaseSuccessor,
+    }
+    const { queryClient, router } = renderRoute(
+      '/library?lens=all&preview=case-1&field=title',
+      http,
+      updates,
+    )
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+
+    await act(async () => {
+      updates.announce({ sequence: 80, subject: null, topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds * 2 + 40))
+    })
+    await waitFor(() => expect(getCaseSuccessor).toHaveBeenCalledTimes(2))
+
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+      window.dispatchEvent(new Event('online'))
+      await router.navigate({
+        to: '/library',
+        search: { lens: 'all', preview: 'case-2', field: 'title' },
+      })
+      await router.navigate({
+        to: '/library',
+        search: { lens: 'all', preview: 'case-1', field: 'title' },
+      })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds * 2 + 40))
+    })
+
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+    await waitFor(() => expect(getCaseSuccessor).toHaveBeenCalledTimes(2))
+
+    cleanup()
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    )
+    await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    expect(getCaseSuccessor).toHaveBeenCalledTimes(2)
+  })
+
+  it('retires a mid-flight null-subject generation when its selection leaves and returns', async () => {
+    const first = { ...detail, id: 'case-1', current: true }
+    const second = { ...detail, id: 'case-2', current: true, title: 'New selection' }
+    const updates = createLiveStream()
+    let rejectLookup: ((reason: Error) => void) | undefined
+    const getCaseSuccessor = vi
+      .fn<ReviewHttp['getCaseSuccessor']>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<string | null>((_resolve, reject) => {
+            rejectLookup = reject
+          }),
+      )
+      .mockResolvedValueOnce('case-2')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async (id: string) => (id === 'case-2' ? second : first)),
+      getCaseSuccessor,
+    }
+    const { router } = renderRoute(
+      '/library?lens=all&preview=case-1&field=title',
+      http,
+      updates,
+    )
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+
+    updates.announce({ sequence: 83, subject: null, topic: 'library' })
+    await waitFor(() => expect(getCaseSuccessor).toHaveBeenCalledTimes(1))
+    await act(async () => {
+      await router.navigate({
+        to: '/library',
+        search: { lens: 'all', preview: 'case-2', field: 'title' },
+      })
+      await router.navigate({
+        to: '/library',
+        search: { lens: 'all', preview: 'case-1', field: 'title' },
+      })
+      rejectLookup?.(new Error('stale transport failure'))
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds * 2 + 40))
+    })
+
+    expect(router.state.location.search.preview).toBe('case-1')
+    expect(getCaseSuccessor).toHaveBeenCalledTimes(1)
+  })
+
+  it('starts a fresh bounded cycle when a later null-subject invalidation repeats its predecessor', async () => {
+    const successor = { ...detail, id: 'case-2', current: true, title: 'Later successor' }
+    let stale = false
+    const updates = createLiveStream()
+    const getCaseSuccessor = vi
+      .fn<ReviewHttp['getCaseSuccessor']>()
+      .mockRejectedValueOnce(new Error('first synthetic transport failure'))
+      .mockRejectedValueOnce(new Error('second synthetic transport failure'))
+      .mockRejectedValueOnce(new Error('third synthetic transport failure'))
+      .mockResolvedValueOnce('case-2')
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => (stale ? { ...library, works: [] } : library)),
+      getCaseDetail: vi.fn(async (id: string) =>
+        id === 'case-2' ? successor : { ...detail, id: 'case-1', current: !stale },
+      ),
+      getCaseSuccessor,
+    }
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
+    expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+
+    await act(async () => {
+      updates.announce({ sequence: 81, subject: null, topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds * 2 + 40))
+    })
+    await waitFor(() => expect(getCaseSuccessor).toHaveBeenCalledTimes(2))
+
+    stale = true
+    await act(async () => {
+      updates.announce({ sequence: 82, subject: null, topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+
+    expect(await screen.findByRole('heading', { name: 'Later successor' })).toBeVisible()
+    expect(getCaseSuccessor).toHaveBeenCalledTimes(4)
+    expect(router.state.location.search.preview).toBe('case-2')
+  })
+
+  it('reconciles a buffered successor after deferred detail proves its predecessor historical', async () => {
+    const predecessor = { ...detail, id: 'case-1', current: false }
+    const successor = { ...detail, id: 'case-2', current: true, title: 'Deferred successor' }
+    let stale = false
+    let resolveInitial: ((value: typeof predecessor) => void) | undefined
+    const initial = new Promise<typeof predecessor>((resolve) => {
+      resolveInitial = resolve
+    })
+    let firstDetail = true
+    const updates = createLiveStream()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => (stale ? { ...library, works: [] } : library)),
+      getCaseDetail: vi.fn(async (id: string) => {
+        if (id === 'case-2') return successor
+        if (firstDetail) {
+          firstDetail = false
+          return initial
+        }
+        return predecessor
+      }),
+      getCaseSuccessor: vi.fn(async () => (stale ? 'case-2' : null)),
+    }
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
+    await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalled())
+
+    stale = true
+    await act(async () => {
+      updates.announce({ sequence: 77, subject: null, topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+    resolveInitial?.(predecessor)
+
+    expect(await screen.findByRole('heading', { name: 'Deferred successor' })).toBeVisible()
+    expect(router.state.location.search.preview).toBe('case-2')
+  })
+
+  it('buffers a named successor until deferred detail establishes the selected predecessor', async () => {
+    const predecessor = { ...detail, id: 'case-1', current: false }
+    const successor = { ...detail, id: 'case-2', current: true, title: 'Buffered successor' }
+    let stale = false
+    let resolveInitial: ((value: typeof predecessor) => void) | undefined
+    const initial = new Promise<typeof predecessor>((resolve) => {
+      resolveInitial = resolve
+    })
+    let firstDetail = true
+    const updates = createLiveStream()
+    const getCaseSuccessor = vi.fn(async () => null)
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => (stale ? { ...library, works: [] } : library)),
+      getCaseDetail: vi.fn(async (id: string) => {
+        if (id === 'case-2') return successor
+        if (firstDetail) {
+          firstDetail = false
+          return initial
+        }
+        return predecessor
+      }),
+      getCaseSuccessor,
+    }
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
+    await waitFor(() =>
+      expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal)),
+    )
+
+    stale = true
+    await act(async () => {
+      updates.announce({ sequence: 78, subject: 'case-2', topic: 'library' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+    resolveInitial?.(predecessor)
+
+    expect(await screen.findByRole('heading', { name: 'Buffered successor' })).toBeVisible()
+    expect(router.state.location.search.preview).toBe('case-2')
+    expect(getCaseSuccessor).not.toHaveBeenCalled()
+  })
+
+  it('follows a rightful later-page provider-retry successor when an unrelated frame arrives last', async () => {
+    const { http, libraryReads, router, updates } = renderLaterPageProviderRetry()
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    await act(async () => {
+      updates.announce({ sequence: 76, subject: 'case-2', topic: 'library' })
+      updates.announce({ sequence: 77, subject: 'case-3', topic: 'library' })
+    })
+
+    await waitFor(() =>
+      expect(router.state.location.search).toEqual({
+        lens: 'needs_attention',
+        cursor: 'later-page',
+        preview: 'case-2',
+        field: 'title',
+      }),
+    )
+    expect(await screen.findByRole('heading', { level: 2, name: 'Recovered work' })).toBeVisible()
+    expect(http.getCaseDetail).toHaveBeenCalledWith('case-2')
+    expect(http.getCaseDetail).not.toHaveBeenCalledWith('case-3')
+    await waitFor(() => expect(libraryReads()).toBe(2))
+  })
+
+  it('inspects every coalesced later-page provider-retry candidate until it finds the rightful successor', async () => {
+    const { http, libraryReads, router, updates } = renderLaterPageProviderRetry()
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    await act(async () => {
+      updates.announce({ sequence: 76, subject: 'case-3', topic: 'library' })
+      updates.announce({ sequence: 77, subject: 'case-2', topic: 'library' })
+    })
+
+    await waitFor(() =>
+      expect(router.state.location.search).toEqual({
+        lens: 'needs_attention',
+        cursor: 'later-page',
+        preview: 'case-2',
+        field: 'title',
+      }),
+    )
+    expect(await screen.findByRole('heading', { level: 2, name: 'Recovered work' })).toBeVisible()
+    expect(http.getCaseDetail).toHaveBeenCalledWith('case-3')
+    expect(http.getCaseDetail).toHaveBeenCalledWith('case-2')
+    await waitFor(() => expect(libraryReads()).toBe(2))
+  })
+
+  it('keeps a later-page provider-retry selection when no coalesced candidate has its target', async () => {
+    const { http, libraryReads, router, updates } = renderLaterPageProviderRetry()
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    await act(async () => {
+      updates.announce({ sequence: 76, subject: 'case-3', topic: 'library' })
+    })
+
+    await waitFor(() => expect(libraryReads()).toBe(2))
+    await waitFor(() => expect(http.getCaseDetail).toHaveBeenCalledWith('case-3'))
+    expect(router.state.location.search.preview).toBe('case-1')
+    expect(http.getCaseDetail).not.toHaveBeenCalledWith('case-2')
+  })
+
+  it('reconciles a later provider-retry successor after an unchanged no-match batch without looping', async () => {
+    const { http, libraryReads, router, updates } = renderLaterPageProviderRetry()
+    const detailReads = (id: string) =>
+      vi.mocked(http.getCaseDetail).mock.calls.filter(([requested]) => requested === id).length
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    await act(async () => {
+      updates.announce({ sequence: 76, subject: 'case-3', topic: 'library' })
+    })
+    await waitFor(() => expect(libraryReads()).toBe(2))
+    await waitFor(() => expect(detailReads('case-3')).toBe(1))
+    expect(detailReads('case-1')).toBe(2)
+    await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    expect(libraryReads()).toBe(2)
+    expect(detailReads('case-1')).toBe(2)
+    expect(detailReads('case-3')).toBe(1)
+
+    await act(async () => {
+      updates.announce({ sequence: 77, subject: 'case-2', topic: 'library' })
+    })
+    await waitFor(() =>
+      expect(router.state.location.search).toEqual({
+        lens: 'needs_attention',
+        cursor: 'later-page',
+        preview: 'case-2',
+        field: 'title',
+      }),
+    )
+    expect(await screen.findByRole('heading', { level: 2, name: 'Recovered work' })).toBeVisible()
+    await waitFor(() => expect(libraryReads()).toBe(3))
+    expect(detailReads('case-1')).toBe(3)
+    expect(detailReads('case-3')).toBe(1)
+    // One read proves target identity before navigation; the other is the
+    // ordinary selected-case query for the replacement URL.
+    expect(detailReads('case-2')).toBe(2)
+  })
+
   it('acts on every Library announcement except the echo of its own decision', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]
@@ -2315,7 +2783,10 @@ describe('Library route', () => {
   it('uses non-animated rail movement when reduced motion is requested', async () => {
     const originalScrollTo = HTMLElement.prototype.scrollTo
     const scrollTo = vi.fn()
-    Object.defineProperty(HTMLElement.prototype, 'scrollTo', { configurable: true, value: scrollTo })
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+      configurable: true,
+      value: scrollTo,
+    })
     const original = window.matchMedia
     window.matchMedia = vi.fn((query: string) => ({
       matches: query === '(prefers-reduced-motion: reduce)',
@@ -2353,18 +2824,23 @@ describe('Library route', () => {
     Object.defineProperty(HTMLElement.prototype, 'scrollLeft', {
       configurable: true,
       get(this: HTMLElement) {
-        return this.classList.contains('field-filmstrip') ? 40 : Number(scrollLeft?.get?.call(this) ?? 0)
+        return this.classList.contains('field-filmstrip')
+          ? 40
+          : Number(scrollLeft?.get?.call(this) ?? 0)
       },
     })
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
       configurable: true,
       get(this: HTMLElement) {
-        return this.classList.contains('field-filmstrip') ? 300 : Number(clientWidth?.get?.call(this) ?? 0)
+        return this.classList.contains('field-filmstrip')
+          ? 300
+          : Number(clientWidth?.get?.call(this) ?? 0)
       },
     })
-    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
-      if (this.classList.contains('field-filmstrip'))
-        return { left: 240, width: 300 } as DOMRect
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.classList.contains('field-filmstrip')) return { left: 240, width: 300 } as DOMRect
       if (this.getAttribute('aria-current') === 'true') return { left: 540, width: 100 } as DOMRect
       return originalRect.call(this)
     })
