@@ -483,10 +483,7 @@ describe('Activity route', () => {
   ])('keeps the protected ledger row truthful for %s work', async (_name, current, rowStatus) => {
     const http: ReviewHttp = {
       ...createHttp(),
-      getActivity: vi.fn(async () => activity({
-        ...current,
-        events: current.events.map((event) => ({ ...event })),
-      })),
+      getActivity: vi.fn(async () => activity(current)),
     }
     renderRoute('/activity', http)
 
