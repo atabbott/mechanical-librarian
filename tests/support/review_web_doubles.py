@@ -88,6 +88,7 @@ _LibraryRow = tuple[
     tuple[str, ...],
     tuple[str, ...],
     str | None,
+    int,
 ]
 
 
@@ -142,6 +143,7 @@ class FakeReviewRepository:
         self.library_suspensions: dict[str, tuple[str, ...]] = {}
         self.library_shadow_abstentions: dict[str, tuple[str, ...]] = {}
         self.library_terminal_documents: dict[str, str] = {}
+        self.library_attention_counts: dict[str, int] = {}
 
     def review_case_ready_at(self, review_case_id: str) -> int | None:
         if review_case_id != self.case.review_case_id:
@@ -507,6 +509,19 @@ class FakeReviewRepository:
                 else self.library_shadow_abstentions.get(case_id, ()),
                 self.library_terminal_documents.get(
                     MetadataReport.from_json(report_document).target.item
+                ),
+                0
+                if case_id is None
+                else self.library_attention_counts.get(
+                    case_id,
+                    sum(
+                        self._field_attention(
+                            ReviewCase.from_json(cast(str, case_document)), proposal
+                        )
+                        for proposal in ReviewCase.from_json(
+                            cast(str, case_document)
+                        ).proposals
+                    ),
                 ),
             )
             for case_id, case_document, report_document in identified

@@ -1467,7 +1467,7 @@ def test_library_reads_the_three_trailing_columns_its_row_declares(
 ) -> None:
     """`suspended`, `shadow_abstention` and `terminal` reach the reader.
 
-    `ReviewLibrarySnapshot.rows` declares seven columns and the double
+    `ReviewLibrarySnapshot.rows` declares eight columns and the double
     emitted five, so `library()` padded the last three with `()` and `None`
     behind four `len(row)` guards. Every assertion below therefore held on
     padding the reader invented rather than on anything a repository said
@@ -1491,6 +1491,8 @@ def test_library_reads_the_three_trailing_columns_its_row_declares(
     web.repository.library_automatic_attention[successor_case.review_case_id] = (
         "series",
     )
+    web.repository.library_attention_counts[web.case.review_case_id] = 0
+    web.repository.library_attention_counts[successor_case.review_case_id] = 3
     web.repository.library_terminal_documents["item-2"] = json.dumps(
         {
             "attempt": 2,
@@ -1515,7 +1517,7 @@ def test_library_reads_the_three_trailing_columns_its_row_declares(
     # `title` is the one field this fixture leaves unresolved. Suspending it
     # on the first work retires its attention; on the second work an abstained
     # `subtitle` and a safety-suspended `series` each add one that no proposal
-    # asks for.
+    # asks for. The eighth column is the persisted authoritative count.
     assert items["item-1"]["attention_count"] == 0
     assert items["item-1"]["attention_state"] == "no_attention_needed"
     assert items["item-2"]["attention_count"] == 3

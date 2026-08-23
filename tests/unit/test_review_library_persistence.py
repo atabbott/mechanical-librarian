@@ -15,9 +15,27 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from mechanical_librarian.adapters.field_effect_fakes import (
+    FakeAuthorityCurrentness,
+    FakeBackupReadiness,
+    FakeCapabilityObserver,
+    FakeConsentCurrentness,
+    FakeDependencyCurrentness,
+    FakeForwardReevaluation,
+    FakePreclaimHook,
+    FakeTargetService,
+    PrivateCoverRecoveryStore,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
+)
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
+from mechanical_librarian.application.field_effects import (
+    CapabilityObservation,
+    GuardedFieldApplication,
 )
 from mechanical_librarian.application.review_application import (
     ReviewApplication,
@@ -33,9 +51,11 @@ from mechanical_librarian.application.review_web import (
 )
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
+    FieldEffectError,
     FieldEffectOperation,
     FieldEffectPlan,
 )
+from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -69,6 +89,42 @@ from tests.unit.test_bibliographic_bundles import (
 from tests.unit.test_bibliographic_bundles import (
     _source as _bibliographic_source,
 )
+
+
+def _field_effect_application(
+    repository: SQLiteMetadataReportRepository, directory: Path
+) -> tuple[
+    GuardedFieldApplication,
+    FakeTargetService,
+    FakeAuthorityCurrentness,
+    FakeCapabilityObserver,
+    FakeConsentCurrentness,
+]:
+    target = FakeTargetService()
+    authority = FakeAuthorityCurrentness()
+    capabilities = FakeCapabilityObserver("c" * 64)
+    consent = FakeConsentCurrentness(repository.field_effect_consent_envelope_identity)
+    return (
+        GuardedFieldApplication(
+            repository,
+            target,
+            FakeBackupReadiness(),
+            capabilities,
+            authority,
+            FakeDependencyCurrentness(),
+            consent,
+            PrivateCoverRecoveryStore(directory / "recovery", lambda _: b"cover"),
+            FakeForwardReevaluation(),
+            lambda: 10,
+            FakePreclaimHook(),
+            FakePreclaimHook(),
+            FakePreclaimHook(),
+        ),
+        target,
+        authority,
+        capabilities,
+        consent,
+    )
 
 
 def test_terminal_provider_taxonomy_projects_closed_safe_outcomes() -> None:
@@ -654,13 +710,13 @@ def test_sqlite_library_and_attention_queries_are_current_and_bounded() -> None:
         assert len(queue) == 1
         assert queue[0][2] == "title"
         assert repository.count_current_attention_fields(None) == 1
-        repository.suspend_field_effect_capability(
+        assert repository.suspend_field_effect_capability(
             scope="destination",
             connection="primary",
             destination="title",
             reason="field_unavailable",
             changed_at=1,
-        )
+        ) == (unresolved_case_id,)
         assert repository.count_current_review_cases(None) == (2, 0)
         assert repository.count_current_attention_fields(None) == 0
         assert repository.list_current_attention_documents(None, 10, 0) == ()
@@ -672,13 +728,13 @@ def test_sqlite_library_and_attention_queries_are_current_and_bounded() -> None:
             observed_at=2,
         )
         assert repository.count_current_review_cases(None) == (2, 1)
-        repository.suspend_field_effect_capability(
+        assert repository.suspend_field_effect_capability(
             scope="connection",
             connection="primary",
             destination="title",
             reason="connection_unavailable",
             changed_at=2,
-        )
+        ) == (unresolved_case_id,)
         assert repository.count_current_review_cases(None) == (2, 0)
         assert repository.count_current_attention_fields(None) == 0
         repository.clear_field_effect_capability_suspension(
@@ -691,12 +747,22 @@ def test_sqlite_library_and_attention_queries_are_current_and_bounded() -> None:
         assert repository.count_current_review_cases(None) == (2, 1)
         assert repository.count_current_attention_fields("STRASSE") == 1
         assert len(repository.list_current_attention_documents("ångström", 10, 0)) == 1
-        repository.suspend_field_effect_capability(
+        assert repository.suspend_field_effect_capability(
             scope="destination",
             connection="primary",
             destination="title",
             reason="insufficient_permission",
             changed_at=4,
+        ) == (unresolved_case_id,)
+        assert (
+            repository.suspend_field_effect_capability(
+                scope="destination",
+                connection="primary",
+                destination="title",
+                reason="insufficient_permission",
+                changed_at=5,
+            )
+            == ()
         )
         repository.close()
         reopened = open_repository(database, create=False)
@@ -708,6 +774,330 @@ def test_sqlite_library_and_attention_queries_are_current_and_bounded() -> None:
         assert reopened.count_current_review_cases("STRASSE") == (1, 0)
         assert reopened.count_current_review_cases("NOVELS") == (1, 0)
         reopened.close()
+
+
+@pytest.mark.parametrize(
+    (
+        "scope",
+        "decide_sibling",
+        "via_reconcile",
+        "successful",
+        "interleave",
+        "inline_ambiguous",
+    ),
+    (
+        ("destination", False, False, False, False, False),
+        ("destination", True, False, False, False, False),
+        ("connection", False, False, False, False, False),
+        ("destination", False, True, False, False, False),
+        ("destination", True, False, True, False, False),
+        ("connection", False, False, False, True, False),
+        ("destination", False, False, False, False, True),
+    ),
+)
+def test_suspension_announces_only_changed_persisted_library_cases(
+    scope: str,
+    decide_sibling: bool,
+    via_reconcile: bool,
+    successful: bool,
+    interleave: bool,
+    inline_ambiguous: bool,
+) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        repository = open_repository(root / "application.sqlite3")
+        trigger_source = _bibliographic_report(
+            current_title="Suspension trigger",
+            providers=(
+                _bibliographic_source(
+                    "catalogue", "edition-1", titles=(), series="A series"
+                ),
+            ),
+        )
+        source = MetadataReport.create(
+            target=TargetFacts(
+                trigger_source.target.connection,
+                trigger_source.target.library,
+                "suspension-trigger",
+                trigger_source.target.fields,
+            ),
+            file=FileFacts(
+                2,
+                "e" * 64,
+                "f" * 64,
+                trigger_source.file.format,
+            ),
+            local_claims=trigger_source.local_claims,
+            local_reasons=trigger_source.local_reasons,
+            providers=trigger_source.providers,
+            cover_sources=trigger_source.cover_sources,
+        )
+        if scope == "destination":
+            sibling = _bibliographic_report(
+                current_title="Mistborn Secret History",
+                providers=(
+                    _bibliographic_source(
+                        "catalogue", "edition-1", titles=(), series="Mistborn"
+                    ),
+                ),
+            )
+            sibling_destination = "series"
+        else:
+            sibling_source = _report(title="Connection sibling", content_digest="c")
+            sibling = MetadataReport.create(
+                target=TargetFacts(
+                    source.target.connection,
+                    source.target.library,
+                    "connection-sibling",
+                    tuple(
+                        TargetField(
+                            TargetDestination.AUTHORS,
+                            TargetFieldState.VALUE,
+                            ("Connection sibling",),
+                        )
+                        if field.destination is TargetDestination.AUTHORS
+                        else field
+                        for field in sibling_source.target.fields
+                    ),
+                ),
+                file=FileFacts(3, "c" * 64, "d" * 64),
+                local_claims=sibling_source.local_claims,
+                local_reasons=sibling_source.local_reasons,
+                providers=sibling_source.providers,
+                cover_sources=sibling_source.cover_sources,
+            )
+            sibling_destination = "title"
+
+        def admit_and_decide(
+            report: MetadataReport, idempotency_key: str
+        ) -> tuple[str, HumanDecision, dict[str, object]]:
+            repository.publish(report, lambda: True)
+            proposal = evaluate_report(report)
+            repository.publish_proposal(proposal)
+            review_case_id = json.loads(repository.admit_review_case(proposal))[
+                "review_case_id"
+            ]
+            assert type(review_case_id) is str
+            fields = InspectCurrentReviewCase(repository).run(review_case_id)["fields"]
+            field = next(
+                cast("dict[str, object]", value)
+                for value in cast("list[object]", fields)
+                if cast("dict[str, object]", value)["destination"] == "series"
+            )
+            selected = cast("list[object]", field["proposed_values"])[0]
+            acknowledgement = RecordHumanDecision(repository, clock=lambda: 1).run(
+                review_case_id,
+                proposal_id=str(field["proposal_id"]),
+                target_fingerprint=str(field["target_fingerprint"]),
+                destination="series",
+                actor="owner",
+                outcome="accept",
+                selected_value=cast("dict[str, object]", selected),
+                idempotency_key=idempotency_key,
+            )
+            document = repository.find_human_decision(
+                HumanDecision.idempotency_digest_for(idempotency_key)
+            )
+            assert document is not None
+            return review_case_id, HumanDecision.from_json(document), acknowledgement
+
+        trigger_case_id, trigger_decision, acknowledgement = admit_and_decide(
+            source, "suspension-trigger-decision-0001"
+        )
+        repository.publish(sibling, lambda: True)
+        sibling_proposal = evaluate_report(sibling)
+        repository.publish_proposal(sibling_proposal)
+        sibling_case_id: str | None = None
+        if not interleave:
+            sibling_case_id = json.loads(
+                repository.admit_review_case(sibling_proposal)
+            )["review_case_id"]
+            assert type(sibling_case_id) is str
+            assert sibling_case_id != trigger_case_id
+        if decide_sibling:
+            assert sibling_case_id is not None
+            fields = InspectCurrentReviewCase(repository).run(sibling_case_id)["fields"]
+            field = next(
+                cast("dict[str, object]", value)
+                for value in cast("list[object]", fields)
+                if cast("dict[str, object]", value)["destination"]
+                == sibling_destination
+            )
+            RecordHumanDecision(repository, clock=lambda: 1).run(
+                sibling_case_id,
+                proposal_id=str(field["proposal_id"]),
+                target_fingerprint=str(field["target_fingerprint"]),
+                destination=sibling_destination,
+                actor="owner",
+                outcome="accept",
+                selected_value=cast("dict[str, object]", field["proposed_values"][0]),
+                idempotency_key="suspension-sibling-decision-0001",
+            )
+
+        application, target, authority, capabilities, consent = (
+            _field_effect_application(repository, root)
+        )
+        if interleave:
+            observe = capabilities.observe
+
+            def admit_sibling_during_capability_observation(
+                plan: FieldEffectPlan,
+            ) -> object:
+                nonlocal sibling_case_id
+                sibling_case_id = json.loads(
+                    repository.admit_review_case(sibling_proposal)
+                )["review_case_id"]
+                assert type(sibling_case_id) is str
+                return observe(plan)
+
+        authority.bind(
+            trigger_decision,
+            connection=source.target.connection,
+            library=source.target.library,
+            work_id=source.target.item,
+            target_version="version-1",
+            source="persisted_review_case",
+        )
+        consent.allow(
+            connection=source.target.connection,
+            library=source.target.library,
+            destination="series",
+        )
+        operation = application.plan(
+            trigger_decision,
+            connection=source.target.connection,
+            library=source.target.library,
+            work_id=source.target.item,
+            destination="series",
+            pre_value=None,
+            desired_value=trigger_decision.selected_value,
+            target_fingerprint=trigger_decision.target_fingerprint,
+            target_version="version-1",
+            dependency_digests=("d" * 64,),
+            capability_digest="c" * 64,
+        )
+        assert operation is not None
+        target.seed(operation.plan)
+        if via_reconcile:
+
+            def lose_verification(_: object) -> None:
+                target.unavailable_scope_next = "destination"
+                target.unavailable_reason_next = "field_unavailable"
+
+            target.after_apply = lose_verification
+            assert application.apply(operation.plan.plan_id).state == "reconciling"
+            repository.clear_field_effect_capability_suspension(
+                scope="destination",
+                connection=source.target.connection,
+                destination="series",
+                reason="field_unavailable",
+                observed_at=11,
+            )
+        if not successful and not inline_ambiguous:
+            target.unavailable_scope_next = (
+                "connection" if scope == "connection" else "destination"
+            )
+            target.unavailable_reason_next = (
+                "connection_unavailable"
+                if scope == "connection"
+                else "field_unavailable"
+            )
+        service = ContinuousGuardedApplication(
+            repository,
+            {(source.target.connection, source.target.library): application},
+            {(source.target.connection, source.target.library): capabilities},
+            authority,
+            ((source.target.connection, source.target.library),),
+            lambda: 2,
+            lambda *_: None,
+        )
+        announcements: list[tuple[str, str | None]] = []
+        service.attach_updates(
+            lambda topic, subject: announcements.append((topic, subject))
+        )
+        browse = BrowseReviewLibrary(repository)
+        expected_before = () if decide_sibling or interleave else (sibling_case_id,)
+        assert browse.attention(search=None, limit=10, cursor=None)["total"] == len(
+            expected_before
+        )
+        assert (
+            repository._field_effects._current_attention_review_case_ids(
+                source.target.connection,
+                None if scope == "connection" else "series",
+            )
+            == expected_before
+        )
+        if inline_ambiguous:
+            target.ambiguous_next = "pre"
+
+            def suspend_targeted_reconciliation(_: FieldEffectPlan) -> None:
+                target.unavailable_scope_next = "destination"
+                target.unavailable_reason_next = "field_unavailable"
+
+            # The recovery hook sits immediately after the ambiguous apply has
+            # persisted its targeted reconciliation and before the inline
+            # action claims it. It proves that this retryable suspension came
+            # from reconciliation rather than either of the ordinary reads.
+            application._recovery_hook = suspend_targeted_reconciliation
+            completed = service.apply(operation.plan.plan_id)
+        elif interleave:
+            with patch.object(
+                capabilities,
+                "observe",
+                side_effect=admit_sibling_during_capability_observation,
+            ):
+                completed = service.apply(operation.plan.plan_id)
+        elif via_reconcile:
+            completed = service.reconcile(operation.plan.plan_id)
+        else:
+            completed = service.apply(operation.plan.plan_id)
+
+        assert sibling_case_id is not None
+        expected_affected = () if decide_sibling else (sibling_case_id,)
+        assert completed.affected_review_case_ids == expected_affected
+        if inline_ambiguous:
+            assert target.ambiguous_next is None
+            assert completed.state == "retryable"
+            assert completed.affected_review_case_ids == (sibling_case_id,)
+            assert announcements == [
+                ("activity", None),
+                ("library", sibling_case_id),
+            ]
+
+        if successful:
+            assert completed.state == "verified"
+            assert (
+                repository.field_effect_capability_suspension(
+                    source.target.connection, "series"
+                )
+                is None
+            )
+        else:
+            assert repository.field_effect_capability_suspension(
+                source.target.connection, "" if scope == "connection" else "series"
+            ) == (
+                "connection_unavailable"
+                if scope == "connection"
+                else "field_unavailable"
+            )
+        assert (
+            repository._field_effects._current_attention_review_case_ids(
+                source.target.connection,
+                None if scope == "connection" else "series",
+            )
+            == ()
+        )
+        after_all = browse.library(lens="all", search=None, limit=10, cursor=None)
+        assert sibling_case_id in {
+            item["review_case_id"]
+            for item in cast("list[dict[str, object]]", after_all["items"])
+        }
+        assert announcements == [
+            ("activity", None),
+            *((("library", sibling_case_id),) if not decide_sibling else ()),
+        ]
+        assert acknowledgement["review_case_id"] == trigger_case_id
+        repository.close()
 
 
 def test_sqlite_library_groups_attention_by_current_provider_completeness() -> None:
@@ -1165,6 +1555,381 @@ def test_sqlite_library_order_is_total_across_duplicate_work_identity() -> None:
         assert (
             repository.list_current_review_case_documents(None, 1, 0, None) == pages[0]
         )
+        repository.close()
+
+
+def _scheduled_suspension_fixture(
+    directory: Path,
+) -> tuple[
+    SQLiteMetadataReportRepository,
+    ContinuousGuardedApplication,
+    FakeCapabilityObserver,
+    str,
+    str,
+]:
+    """Build one decided trigger beside the still-unresolved Library sibling."""
+    repository = open_repository(directory / "application.sqlite3")
+    trigger_source = _bibliographic_report(
+        current_title="Scheduled suspension trigger",
+        providers=(
+            _bibliographic_source("catalogue", "edition-1", titles=(), series="A"),
+        ),
+    )
+    trigger = MetadataReport.create(
+        target=TargetFacts(
+            trigger_source.target.connection,
+            trigger_source.target.library,
+            "scheduled-suspension-trigger",
+            trigger_source.target.fields,
+        ),
+        file=FileFacts(8, "c" * 64, "d" * 64, trigger_source.file.format),
+        local_claims=trigger_source.local_claims,
+        local_reasons=trigger_source.local_reasons,
+        providers=trigger_source.providers,
+        cover_sources=trigger_source.cover_sources,
+    )
+    repository.publish(trigger, lambda: True)
+    proposal = evaluate_report(trigger)
+    repository.publish_proposal(proposal)
+    trigger_case_id = json.loads(repository.admit_review_case(proposal))[
+        "review_case_id"
+    ]
+    assert type(trigger_case_id) is str
+    fields = InspectCurrentReviewCase(repository).run(trigger_case_id)["fields"]
+    trigger_field = next(
+        cast("dict[str, object]", field)
+        for field in cast("list[object]", fields)
+        if cast("dict[str, object]", field)["destination"] == "series"
+    )
+    RecordHumanDecision(repository, clock=lambda: 1).run(
+        trigger_case_id,
+        proposal_id=str(trigger_field["proposal_id"]),
+        target_fingerprint=str(trigger_field["target_fingerprint"]),
+        destination="series",
+        actor="owner",
+        outcome="accept",
+        selected_value=cast("dict[str, object]", trigger_field["proposed_values"])[0],
+        idempotency_key="scheduled-suspension-trigger-0001",
+    )
+    document = repository.find_human_decision(
+        HumanDecision.idempotency_digest_for("scheduled-suspension-trigger-0001")
+    )
+    assert document is not None
+    decision = HumanDecision.from_json(document)
+    sibling_source = _bibliographic_report(
+        current_title="Mistborn Secret History",
+        providers=(
+            _bibliographic_source(
+                "catalogue", "edition-1", titles=(), series="Mistborn"
+            ),
+        ),
+    )
+    sibling = sibling_source
+    repository.publish(sibling, lambda: True)
+    sibling_proposal = evaluate_report(sibling)
+    repository.publish_proposal(sibling_proposal)
+    sibling_case_id = json.loads(repository.admit_review_case(sibling_proposal))[
+        "review_case_id"
+    ]
+    assert type(sibling_case_id) is str
+    application, _target, authority, capabilities, consent = _field_effect_application(
+        repository, directory
+    )
+    authority.bind(
+        decision,
+        connection=trigger.target.connection,
+        library=trigger.target.library,
+        work_id=trigger.target.item,
+        target_version="version-1",
+        source="persisted_review_case",
+    )
+    consent.allow(
+        connection=trigger.target.connection,
+        library=trigger.target.library,
+        destination="series",
+    )
+    service = ContinuousGuardedApplication(
+        repository,
+        {(trigger.target.connection, trigger.target.library): application},
+        {(trigger.target.connection, trigger.target.library): capabilities},
+        authority,
+        ((trigger.target.connection, trigger.target.library),),
+        lambda: 2,
+        lambda *_: None,
+    )
+    return repository, service, capabilities, sibling_case_id, document
+
+
+@pytest.mark.parametrize("entrypoint", ("schedule", "enable"))
+def test_real_sqlite_suspension_refreshes_library_and_attention_for_public_callers(
+    entrypoint: str,
+) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        (
+            repository,
+            service,
+            capabilities,
+            sibling_case_id,
+            decision_document,
+        ) = _scheduled_suspension_fixture(Path(directory))
+        capabilities.category = "field_unavailable"
+        announcements: list[tuple[str, str | None]] = []
+        service.attach_updates(
+            lambda topic, subject: announcements.append((topic, subject))
+        )
+        if entrypoint == "schedule":
+            connection, library = service._libraries[0]
+            repository.grant_field_effect_consent_matrix(
+                connection, ((library, ("series",)),), 1
+            )
+            assert any(
+                row["review_case_id"] == sibling_case_id
+                and row["destination"] == "series"
+                for row in BrowseReviewLibrary(repository).attention(
+                    search=None, limit=10, cursor=None
+                )["items"]
+            )
+            with patch.object(
+                repository,
+                "pending_field_effect_decision_documents",
+                return_value=(decision_document,),
+            ):
+                assert service.schedule() == 0
+            assert (
+                repository.field_effect_capability_suspension(connection, "series")
+                == "field_unavailable"
+            )
+        else:
+            with (
+                patch.object(
+                    repository,
+                    "pending_field_effect_decision_documents",
+                    return_value=(decision_document,),
+                ),
+                pytest.raises(Exception, match="capability"),
+            ):
+                service.enable(((service._libraries[0][1], ("series",)),))
+        browse = BrowseReviewLibrary(repository)
+        all_rows = browse.library(lens="all", search=None, limit=10, cursor=None)[
+            "items"
+        ]
+        sibling = next(
+            row for row in all_rows if row["review_case_id"] == sibling_case_id
+        )
+        expected_count = 0
+        assert sibling["attention_count"] == expected_count
+        assert sibling["attention_state"] == (
+            "needs_attention" if expected_count else "no_attention_needed"
+        )
+        needs_attention = browse.library(
+            lens="needs_attention", search=None, limit=10, cursor=None
+        )["items"]
+        assert needs_attention == []
+        no_attention = {
+            row["review_case_id"]
+            for row in browse.library(
+                lens="no_attention_needed", search=None, limit=10, cursor=None
+            )["items"]
+        }
+        assert sibling_case_id in no_attention
+        attention = browse.attention(search=None, limit=10, cursor=None)
+        assert attention["total"] == 0
+        assert attention["items"] == []
+        assert announcements == [("activity", None), ("library", sibling_case_id)]
+        repository.close()
+
+
+def test_scheduler_flushes_committed_suspension_before_later_repository_failure() -> (
+    None
+):
+    with tempfile.TemporaryDirectory() as directory:
+        (
+            repository,
+            service,
+            capabilities,
+            sibling_case_id,
+            decision_document,
+        ) = _scheduled_suspension_fixture(Path(directory))
+        connection, library = service._libraries[0]
+        repository.grant_field_effect_consent_matrix(
+            connection, ((library, ("series",)),), 1
+        )
+        persisted_consent = repository.current_field_effect_consent(
+            connection, library, "series"
+        )
+        announcements: list[tuple[str, str | None]] = []
+        service.attach_updates(
+            lambda topic, subject: announcements.append((topic, subject))
+        )
+        with (
+            patch.object(
+                repository,
+                "pending_field_effect_decision_documents",
+                return_value=(decision_document, decision_document),
+            ),
+            patch.object(
+                capabilities,
+                "observe",
+                side_effect=(
+                    CapabilityObservation("field_unavailable", "c" * 64),
+                    CapabilityObservation("allowed", "c" * 64),
+                ),
+            ),
+            patch.object(
+                repository,
+                "current_field_effect_consent",
+                side_effect=(persisted_consent, FieldEffectError("persistence")),
+            ),
+            pytest.raises(FieldEffectError, match="persistence"),
+        ):
+            service.schedule()
+        assert announcements == [("activity", None), ("library", sibling_case_id)]
+        repository.close()
+
+
+def test_enable_flushes_committed_suspension_before_later_repository_failure() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        (
+            repository,
+            service,
+            capabilities,
+            sibling_case_id,
+            decision_document,
+        ) = _scheduled_suspension_fixture(Path(directory))
+        connection, library = service._libraries[0]
+        del connection
+        announcements: list[tuple[str, str | None]] = []
+        service.attach_updates(
+            lambda topic, subject: announcements.append((topic, subject))
+        )
+        observed_series = False
+
+        def observe_after_series(plan: FieldEffectPlan) -> CapabilityObservation:
+            nonlocal observed_series
+            if observed_series:
+                raise FieldEffectError("persistence")
+            if plan.destination == "series":
+                observed_series = True
+                return CapabilityObservation("field_unavailable", "c" * 64)
+            return CapabilityObservation("allowed", "c" * 64)
+
+        with (
+            patch.object(
+                repository,
+                "pending_field_effect_decision_documents",
+                return_value=(decision_document,),
+            ),
+            patch.object(
+                capabilities,
+                "observe",
+                side_effect=observe_after_series,
+            ),
+            pytest.raises(FieldEffectError, match="persistence"),
+        ):
+            service.enable(((library, ("series",)),))
+        assert announcements == [("activity", None), ("library", sibling_case_id)]
+        repository.close()
+
+
+@pytest.mark.parametrize("entrypoint", ("schedule", "enable"))
+def test_preexisting_suspension_does_not_reannounce_from_public_callers(
+    entrypoint: str,
+) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        (
+            repository,
+            service,
+            capabilities,
+            _sibling_case_id,
+            decision_document,
+        ) = _scheduled_suspension_fixture(Path(directory))
+        connection, library = service._libraries[0]
+        capabilities.category = "field_unavailable"
+        if entrypoint == "schedule":
+            repository.grant_field_effect_consent_matrix(
+                connection, ((library, ("series",)),), 1
+            )
+        with patch.object(
+            repository,
+            "pending_field_effect_decision_documents",
+            return_value=(decision_document,),
+        ):
+            if entrypoint == "schedule":
+                service.schedule()
+            else:
+                with pytest.raises(Exception, match="capability"):
+                    service.enable(((library, ("series",)),))
+        announcements: list[tuple[str, str | None]] = []
+        service.attach_updates(
+            lambda topic, subject: announcements.append((topic, subject))
+        )
+        with patch.object(
+            repository,
+            "pending_field_effect_decision_documents",
+            return_value=(decision_document,),
+        ):
+            if entrypoint == "schedule":
+                service.schedule()
+            else:
+                with pytest.raises(Exception, match="capability"):
+                    service.enable(((library, ("series",)),))
+        assert announcements == []
+        assert (
+            BrowseReviewLibrary(repository).attention(
+                search=None, limit=10, cursor=None
+            )["total"]
+            == 0
+        )
+        repository.close()
+
+
+def test_scheduler_success_keeps_a_different_unresolved_sibling_attention_only() -> (
+    None
+):
+    with tempfile.TemporaryDirectory() as directory:
+        (
+            repository,
+            service,
+            _capabilities,
+            sibling_case_id,
+            decision_document,
+        ) = _scheduled_suspension_fixture(Path(directory))
+        connection, library = service._libraries[0]
+        repository.grant_field_effect_consent_matrix(
+            connection, ((library, ("series",)),), 1
+        )
+        browse = BrowseReviewLibrary(repository)
+        before = browse.library(lens="all", search=None, limit=10, cursor=None)["items"]
+        sibling_before = next(
+            row for row in before if row["review_case_id"] == sibling_case_id
+        )
+        announcements: list[tuple[str, str | None]] = []
+        service.attach_updates(
+            lambda topic, subject: announcements.append((topic, subject))
+        )
+        with patch.object(
+            repository,
+            "pending_field_effect_decision_documents",
+            return_value=(decision_document,),
+        ):
+            assert service.schedule() == 1
+        after = browse.library(lens="all", search=None, limit=10, cursor=None)["items"]
+        sibling_after = next(
+            row for row in after if row["review_case_id"] == sibling_case_id
+        )
+        assert sibling_after["attention_count"] == sibling_before["attention_count"]
+        assert sibling_after["attention_state"] == sibling_before["attention_state"]
+        assert sibling_case_id in {
+            row["review_case_id"]
+            for row in browse.library(
+                lens="needs_attention", search=None, limit=10, cursor=None
+            )["items"]
+        }
+        assert sibling_case_id in {
+            row["review_case_id"]
+            for row in browse.attention(search=None, limit=10, cursor=None)["items"]
+        }
+        assert announcements == [("activity", None)]
         repository.close()
 
 

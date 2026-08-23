@@ -75,6 +75,7 @@ class ReviewLibrarySnapshot:
             tuple[str, ...],
             tuple[str, ...],
             str | None,
+            int,
         ],
         ...,
     ]
@@ -787,6 +788,7 @@ class BrowseReviewLibrary:
                     suspended_destinations,
                     shadow_abstention_destinations,
                     terminal_document,
+                    attention_count,
                 ) = row
                 items.append(
                     _library_item(
@@ -797,6 +799,7 @@ class BrowseReviewLibrary:
                         suspended_destinations,
                         shadow_abstention_destinations,
                         terminal_document,
+                        attention_count,
                     )
                 )
         except Exception as error:
@@ -1527,6 +1530,7 @@ def _library_item(
     suspended_destinations: tuple[str, ...] = (),
     shadow_abstention_destinations: tuple[str, ...] = (),
     terminal_document: str | None = None,
+    attention_count: int | None = None,
 ) -> dict[str, object]:
     if case_document is None:
         try:
@@ -1672,10 +1676,15 @@ def _library_item(
         f"{report.target.library}\0{report.target.item}"
     )
     work_id = "library_work_" + hashlib.sha256(material.encode("utf-8")).hexdigest()
+    current_attention_count = (
+        len(attention) if attention_count is None else attention_count
+    )
     value = {
         "authors": _report_authors(report),
-        "attention_count": len(attention),
-        "attention_state": ("needs_attention" if attention else "no_attention_needed"),
+        "attention_count": current_attention_count,
+        "attention_state": (
+            "needs_attention" if current_attention_count else "no_attention_needed"
+        ),
         "detail_url": None if case is None else f"/review/{case.review_case_id}",
         "dispositions": outcomes,
         "item": report.target.item,
