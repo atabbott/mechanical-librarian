@@ -681,47 +681,135 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     == 0
                 )
                 activity_ledger = page.locator(".cm-activity-ledger")
+                prior_viewport = page.viewport_size
+                assert prior_viewport is not None
 
                 def assert_compact_activity_priority(
                     state: str, ledger=activity_ledger
                 ) -> None:
+                    page.set_viewport_size({"width": 320, "height": 844})
+                    assert page.viewport_size == {"width": 320, "height": 844}
+                    page.evaluate("() => window.scrollTo(0, 0)")
                     heading = page.locator(".cm-page-heading")
+                    ledger_heading = ledger.locator(".cm-activity-ledger-heading")
                     controls = ledger.locator(".cm-activity-tools")
+                    filters = controls.locator(".cm-activity-filters")
                     first_row = ledger.locator("article").first
                     notice = page.get_by_label("Shared library connection status")
-                    for locator in (heading, controls, first_row, notice):
+                    for locator in (
+                        heading,
+                        ledger_heading,
+                        controls,
+                        filters,
+                        first_row,
+                        notice,
+                    ):
                         expect(locator).to_be_visible()
                     heading_box = heading.bounding_box()
+                    ledger_heading_box = ledger_heading.bounding_box()
                     controls_box = controls.bounding_box()
                     first_row_box = first_row.bounding_box()
                     notice_box = notice.bounding_box()
                     assert (
                         heading_box is not None
+                        and ledger_heading_box is not None
                         and controls_box is not None
                         and first_row_box is not None
                         and notice_box is not None
                     )
                     assert (
                         heading_box["y"]
+                        < ledger_heading_box["y"]
                         < controls_box["y"]
                         < first_row_box["y"]
                         < notice_box["y"]
                     ), state
                     assert first_row_box["y"] < 844, state
+                    assert (
+                        min(first_row_box["y"] + first_row_box["height"], 844)
+                        - max(first_row_box["y"], 0)
+                        >= 24
+                    ), state
+                    assert filters.evaluate(
+                        "node => node.scrollWidth > node.clientWidth"
+                    ), state
+                    filters_box = filters.bounding_box()
+                    assert filters_box is not None and filters_box["height"] <= 48, (
+                        state
+                    )
+                    assert filters.evaluate(
+                        """node => {
+                          const parent = node.parentElement;
+                          if (parent === null) return false;
+                          const rail = node.getBoundingClientRect();
+                          const tools = parent.getBoundingClientRect();
+                          return rail.left >= tools.left && rail.right <= tools.right;
+                        }"""
+                    ), state
+                    chips = filters.get_by_role("button")
+                    assert chips.count() == 5, state
+                    assert (
+                        filters.locator("button[aria-pressed='true']").count() == 1
+                    ), state
+                    for index in range(chips.count()):
+                        chip_box = chips.nth(index).bounding_box()
+                        assert (
+                            chip_box is not None
+                            and min(chip_box["width"], chip_box["height"]) >= 44
+                        ), state
+                    chips.first.focus()
+                    for _ in range(chips.count() - 1):
+                        page.keyboard.press("Tab")
+                    expect(chips.last).to_be_focused()
+                    assert filters.evaluate(
+                        """node => {
+                          const last = node.querySelector('button:last-child');
+                          if (last === null) return false;
+                          const rail = node.getBoundingClientRect();
+                          const chip = last.getBoundingClientRect();
+                          return chip.right > rail.left && chip.left < rail.right;
+                        }"""
+                    ), state
+                    assert chips.last.evaluate(
+                        """node => {
+                          const style = getComputedStyle(node);
+                          return style.outlineStyle === 'solid' &&
+                            parseFloat(style.outlineWidth) >= 3 &&
+                            parseFloat(style.outlineOffset) <= 0;
+                        }"""
+                    ), state
+                    expect(
+                        ledger.get_by_text(
+                            "One record for review decisions, policy changes, safeguards, writes, and verification.",
+                            exact=True,
+                        )
+                    ).to_be_visible()
+                    expect(ledger.get_by_text("Date range", exact=True)).to_be_visible()
+                    expect(
+                        controls.get_by_role("searchbox", name="Search activity")
+                    ).to_be_visible()
+                    assert page.evaluate(
+                        "() => document.documentElement.scrollWidth <= 320"
+                    ), state
 
-                assert_compact_activity_priority("paused")
-                for connection_state in ("checking",):
+                try:
+                    assert_compact_activity_priority("paused")
+                    for connection_state in ("checking",):
+                        page.reload()
+                        page.get_by_role("heading", name="Activity ledger").wait_for()
+                        assert_compact_activity_priority(connection_state)
+                    connection_state = "paused"
                     page.reload()
                     page.get_by_role("heading", name="Activity ledger").wait_for()
-                    assert_compact_activity_priority(connection_state)
-                connection_state = "paused"
-                page.reload()
-                page.get_by_role("heading", name="Activity ledger").wait_for()
-                page.get_by_label("Shared library connection status").get_by_role(
-                    "button", name="Check connection again"
-                ).click()
-                page.get_by_text("Library connection recovered", exact=True).wait_for()
-                assert_compact_activity_priority("recovered")
+                    page.get_by_label("Shared library connection status").get_by_role(
+                        "button", name="Check connection again"
+                    ).click()
+                    page.get_by_text(
+                        "Library connection recovered", exact=True
+                    ).wait_for()
+                    assert_compact_activity_priority("recovered")
+                finally:
+                    page.set_viewport_size(prior_viewport)
                 connection_state = "paused"
                 for work, label in (
                     ("Equal automatic title", "No change required"),

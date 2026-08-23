@@ -66,6 +66,10 @@ _CONTENT_OVERFLOW = """
     // `getComputedStyle` still answers with the padding it would have had.
     // A surface that hides at a breakpoint is not a surface that overflows.
     if (node.getClientRects().length === 0) continue;
+    const permittedScroller = node.matches('.cm-activity-filters') &&
+      getComputedStyle(node).overflowX === 'auto' &&
+      node.scrollWidth > node.clientWidth;
+    if (permittedScroller) continue;
     worst = Math.max(worst, node.scrollWidth - node.clientWidth);
     const style = getComputedStyle(node);
     const right = node.getBoundingClientRect().right -
@@ -93,6 +97,10 @@ _WORST_OVERFLOWING_NODE = r"""
       ? '.' + node.className.trim().split(/\s+/).join('.') : '');
   for (const node of [root, ...root.querySelectorAll('*')]) {
     if (node.getClientRects().length === 0) continue;
+    const permittedScroller = node.matches('.cm-activity-filters') &&
+      getComputedStyle(node).overflowX === 'auto' &&
+      node.scrollWidth > node.clientWidth;
+    if (permittedScroller) continue;
     if (node.scrollWidth - node.clientWidth > worst) {
       worst = node.scrollWidth - node.clientWidth;
       where = name(node) + ' scrolls its own content (' +
