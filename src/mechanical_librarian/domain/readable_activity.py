@@ -22,6 +22,7 @@ from typing import cast
 
 __all__ = [
     "ABSENT",
+    "AUTOMATIC_AUTHORITY_UNAVAILABLE",
     "CHANGE_LIMIT",
     "EVIDENCE_LIMIT",
     "ReadableChange",
@@ -45,6 +46,7 @@ CHANGE_LIMIT = 120
 # at 512 characters.
 EVIDENCE_LIMIT = 512
 ABSENT = "Not set"
+AUTOMATIC_AUTHORITY_UNAVAILABLE = "automatic_authority_unavailable"
 _ELLIPSIS = "…"
 _ARROW = "→"
 # An opaque durable cover identity. It names an exact image and means nothing

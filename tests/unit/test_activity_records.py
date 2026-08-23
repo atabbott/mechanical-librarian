@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import pytest
 
-from mechanical_librarian.application.activity_records import readable_activity_event
+from mechanical_librarian.domain.activity_records import (
+    activity_result_label,
+    readable_activity_event,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -25,6 +28,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.readable_activity import (
     ABSENT,
+    AUTOMATIC_AUTHORITY_UNAVAILABLE,
     CHANGE_LIMIT,
     EVIDENCE_LIMIT,
     destination_label,
@@ -96,6 +100,38 @@ def _facts(event: dict[str, object]) -> dict[str, str]:
 
 
 # --- the closed value vocabulary, rendered readably and safely ---------------
+
+
+@pytest.mark.parametrize(
+    ("state", "result"),
+    (
+        ("accept", "Accepted"),
+        ("keep_current", "Kept current"),
+        ("reject", "Rejected"),
+        ("completed", "Cover advice completed"),
+        ("unavailable", "Cover advice unavailable"),
+        ("failed", "Cover advice failed safely"),
+        ("selected", "Owner cover choice recorded"),
+        ("retry", "Manual cover retry"),
+        ("no_change_required", "No change required"),
+        ("applying", "Applying"),
+        ("claimed", "Preparing"),
+        ("planned", "Planned"),
+        ("reconciling", "Checking"),
+        ("retryable", "Waiting safely"),
+        ("verified", "Verified"),
+        ("stale", "Stale"),
+        ("superseded", "Superseded"),
+        ("abandoned", "Stopped safely"),
+        ("unrecognized durable state", "Recorded"),
+    ),
+)
+def test_each_durable_state_has_one_closed_owner_visible_result(
+    state: str, result: str
+) -> None:
+    assert activity_result_label(state) == result
+    projected = _project(_event(state=state))
+    assert "result" not in projected
 
 
 @pytest.mark.parametrize(
@@ -306,6 +342,29 @@ def test_an_automatic_keep_shows_the_unchanged_value_on_both_sides() -> None:
     facts = _facts(event)
     assert facts["Previous value"] == "The Farthest Shore"
     assert facts["New value"] == "The Farthest Shore"
+
+
+def test_unavailable_automatic_authority_has_one_value_free_diagnostic() -> None:
+    event = _project(
+        _event(
+            event_type="metadata",
+            origin="automatic_policy",
+            state="candidate",
+            record={
+                "source_kind": "degraded",
+                "degraded_reason": AUTOMATIC_AUTHORITY_UNAVAILABLE,
+            },
+        )
+    )
+
+    assert event["diagnostic"] == {
+        "event_class": "automatic_decision",
+        "reason": AUTOMATIC_AUTHORITY_UNAVAILABLE,
+    }
+    assert _facts(event) == {
+        "Record status": "This retained event cannot be fully projected",
+        "Disclosure": "The automatic authority is no longer available",
+    }
 
 
 def test_a_no_change_decision_says_the_value_already_matched() -> None:

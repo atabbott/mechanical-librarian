@@ -481,7 +481,10 @@ describe('Activity route', () => {
       'Cover advice failed safely',
     ],
   ])('keeps the protected ledger row truthful for %s work', async (_name, current, rowStatus) => {
-    const http: ReviewHttp = { ...createHttp(), getActivity: vi.fn(async () => activity(current)) }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => activity(current)),
+    }
     renderRoute('/activity', http)
 
     expect(await screen.findByRole('heading', { name: 'No intervention needed' })).toBeVisible()
