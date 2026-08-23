@@ -43,10 +43,10 @@ from mechanical_librarian.application.review_application import (
     ReviewApplicationError,
 )
 from mechanical_librarian.application.review_web import (
+    _TERMINAL_PREPARATION_GUIDANCE,
     BrowseReviewLibrary,
     InspectCurrentReviewCase,
     RecordHumanDecision,
-    _TERMINAL_PREPARATION_GUIDANCE,
     _library_item,
     _provider_comparison_notices,
     _provider_outcomes,
