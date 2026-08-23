@@ -592,16 +592,20 @@ def qualify_installed_pipeline(
         assert not (run_next(restarted))
         clock[0] = retry_at
         while True:
-            if cast(
-                PipelineProgress, restarted.progress("primary", "fiction")
-            ).state in {"completed", "completed_with_failures"}:
+            if (
+                cast(PipelineProgress, restarted.progress("primary", "fiction")).state
+                == "completed"
+            ):
                 break
             advanced = run_next(restarted)
             if not advanced:
-                assert cast(
-                    PipelineProgress,
-                    restarted.progress("primary", "fiction"),
-                ).state in {"completed", "completed_with_failures"}
+                assert (
+                    cast(
+                        PipelineProgress,
+                        restarted.progress("primary", "fiction"),
+                    ).state
+                    == "completed"
+                )
 
         before_new = len(extracted)
         initial_extracted = tuple(extracted)
@@ -654,12 +658,8 @@ def qualify_installed_pipeline(
         assert all(value is not None for value in final)
         assert sum(value.total for value in final if value) == expected_total
         assert sum(value.checked for value in final if value) == expected_total
-        assert sum(value.blocked for value in final if value) == 1
-        assert [value.state for value in final if value] == [
-            "completed_with_failures",
-            "completed",
-            "completed",
-        ]
+        assert sum(value.blocked for value in final if value) == 0
+        assert all(value.state == "completed" for value in final if value)
         discrepancy_admission = admission_results["fiction-0000"]
         assert discrepancy_admission[0] == "admitted"
         assert discrepancy_admission[1] is not None
