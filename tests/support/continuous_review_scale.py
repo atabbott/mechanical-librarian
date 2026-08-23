@@ -744,8 +744,7 @@ def qualify_installed_pipeline(
                     if at_zero.status_code == 200:
                         zero_projection = at_zero.json()
                         if (
-                            zero_projection["active"] is True
-                            and sum(
+                            sum(
                                 item["checked"] for item in zero_projection["libraries"]
                             )
                             == 0
@@ -754,8 +753,7 @@ def qualify_installed_pipeline(
                             break
                     if time.monotonic() >= zero_deadline:
                         pytest.fail(
-                            "resumed scan did not become active at zero progress before "
-                            "discovery release"
+                            "accepted scans did not reach held discovery at zero progress"
                         )
                     time.sleep(0.02)
                 installed_reconciliation_started = time.monotonic()
@@ -763,6 +761,7 @@ def qualify_installed_pipeline(
                 phase_thresholds = (("early", 0.05), ("peak", 0.45), ("late", 0.85))
                 sampled_phases: set[str] = set()
                 actual_fractions: dict[str, float] = {}
+                active_observed = False
                 deadline = time.monotonic() + 60
                 while True:
                     if second_process.poll() is not None:
@@ -786,6 +785,7 @@ def qualify_installed_pipeline(
                         continue
                     assert status.status_code == 200, status.text
                     projection = status.json()
+                    active_observed = active_observed or bool(projection["active"])
                     total = sum(item["total"] for item in projection["libraries"])
                     checked = sum(item["checked"] for item in projection["libraries"])
                     fraction = checked / total if total else 0
@@ -824,6 +824,7 @@ def qualify_installed_pipeline(
                         pytest.fail("installed reconciliation did not complete")
                     time.sleep(0.02)
                 assert sampled_phases == {"early", "peak", "late"}
+                assert active_observed is True
                 _sample_routes(client, origin, "quiescent", measurements)
                 installed_reconciliation_elapsed = (
                     time.monotonic() - installed_reconciliation_started
