@@ -274,6 +274,7 @@ export interface ActivityEventView {
 export interface ActivityTransitionView {
   event_id: string
   occurred_at: number
+  sequence: number
   state: string
 }
 export interface ActivityTransitionsView {
@@ -434,7 +435,11 @@ export interface ReviewHttp {
   getPolicyTransition(signal?: AbortSignal): Promise<PolicyTransitionView | null>
   policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T>
   getActivity(search?: ActivitySearch, signal?: AbortSignal): Promise<ActivityView>
-  getActivityTransitions(eventId: string, signal?: AbortSignal): Promise<ActivityTransitionsView>
+  getActivityTransitions(
+    eventId: string,
+    afterSequence?: number,
+    signal?: AbortSignal,
+  ): Promise<ActivityTransitionsView>
   activityCommand(
     path: string,
     body?: unknown,
@@ -660,10 +665,12 @@ export class ReviewApiClient implements ReviewHttp {
 
   async getActivityTransitions(
     eventId: string,
+    afterSequence?: number,
     signal?: AbortSignal,
   ): Promise<ActivityTransitionsView> {
+    const query = afterSequence === undefined ? '' : `?after_sequence=${String(afterSequence)}`
     const data = await this.read(
-      `/api/v1/activity/${encodeURIComponent(eventId)}/transitions`,
+      `/api/v1/activity/${encodeURIComponent(eventId)}/transitions${query}`,
       signal,
     )
     if (
@@ -676,6 +683,9 @@ export class ReviewApiClient implements ReviewHttp {
           record(event) &&
           typeof event.event_id === 'string' &&
           Number.isSafeInteger(event.occurred_at) &&
+          typeof event.sequence === 'number' &&
+          Number.isSafeInteger(event.sequence) &&
+          event.sequence >= 1 &&
           typeof event.state === 'string',
       )
     )

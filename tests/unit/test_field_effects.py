@@ -765,12 +765,13 @@ def test_activity_page_rejects_an_oversized_current_waiting_report(
     assert not effects.repository._connection.in_transaction
 
 
-def test_activity_page_rejects_a_valid_field_event_that_disagrees_with_columns(
+def test_activity_page_rejects_an_earlier_valid_field_event_that_disagrees_with_columns(
     effects: _EffectEnvironment,
 ) -> None:
     plan = _plan(effects, suffix="1")
+    assert effects.service.apply(plan.plan.plan_id).state == "verified"
     row = effects.repository._connection.execute(
-        "SELECT event_id,document FROM field_effect_events WHERE plan_id=?",
+        "SELECT event_id,document FROM field_effect_events WHERE plan_id=? AND sequence=1",
         (plan.plan.plan_id,),
     ).fetchone()
     raw = json.loads(row[1])

@@ -671,6 +671,11 @@
             "title": "Occurred At",
             "type": "integer"
           },
+          "sequence": {
+            "minimum": 1.0,
+            "title": "Sequence",
+            "type": "integer"
+          },
           "state": {
             "maxLength": 512,
             "title": "State",
@@ -680,6 +685,7 @@
         "required": [
           "event_id",
           "occurred_at",
+          "sequence",
           "state"
         ],
         "title": "_ActivityTransition",
@@ -4994,6 +5000,23 @@
             "schema": {
               "title": "Event Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after_sequence",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "After Sequence"
             }
           }
         ],

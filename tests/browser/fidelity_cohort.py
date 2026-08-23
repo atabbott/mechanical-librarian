@@ -1600,7 +1600,17 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     if path == "/api/v1/activity":
         return _activity(query)
     if path.startswith("/api/v1/activity/") and path.endswith("/transitions"):
-        return {"events": [], "has_more": False}
+        after_sequence = int(query.get("after_sequence", ["0"])[0])
+        transitions = [
+            {
+                "event_id": f"synthetic-transition-{sequence}",
+                "occurred_at": 1_754_858_100 + sequence,
+                "sequence": sequence,
+                "state": "planned" if sequence < 25 else "verified",
+            }
+            for sequence in range(after_sequence + 1, min(after_sequence + 20, 25) + 1)
+        ]
+        return {"events": transitions, "has_more": after_sequence + 20 < 25}
     raise AssertionError(f"unexpected API target: {target}")
 
 

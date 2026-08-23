@@ -935,6 +935,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # still has a 100-row public maximum and invokes it once.
         if len(rows) > 100:
             raise FieldEffectError("persistence")
+        # A grouped field-effect row stands for its complete immutable
+        # lifecycle. Admit it only after the existing bounded canonical
+        # validator accepts every transition, rather than trusting the latest
+        # row's JSON shape while an earlier transition is inconsistent.
+        try:
+            for plan_id in {row[15] for row in rows if row[13] == "field_effect"}:
+                if type(plan_id) is not str:
+                    raise FieldEffectError("persistence")
+                self._field_effect_lifecycle_documents(plan_id)
+        except FieldEffectError as error:
+            raise FieldEffectError("persistence") from error
         dependency_limit = 64 if searched else 100
         report_ids = sorted({row[6] for row in rows if row[6] is not None})
         report_rows = (
@@ -1562,6 +1573,97 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
         return projected_events, report_documents, reports
 
+    def _field_effect_lifecycle_documents(self, plan_id: str) -> tuple[str, ...]:
+        """Read one bounded lifecycle only after every immutable event agrees."""
+        try:
+            rows = self._connection.execute(
+                "SELECT event.event_id,event.sequence,event.kind,event.occurred_at,event.document,"
+                "effect.decision_id,effect.destination FROM field_effect_events event "
+                "JOIN field_effects effect ON effect.plan_id=event.plan_id "
+                "WHERE event.plan_id=? ORDER BY event.sequence ASC",
+                (plan_id,),
+            ).fetchall()
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+        if not rows or len(rows) > 100:
+            raise FieldEffectError("persistence")
+        event_keys = {
+            "attempt",
+            "decision_id",
+            "desired_value",
+            "destination",
+            "event_id",
+            "failure",
+            "kind",
+            "occurred_at",
+            "origin",
+            "plan_id",
+            "pre_value",
+            "schema_version",
+            "sequence",
+            "state",
+        }
+        documents: list[str] = []
+        try:
+            for expected_sequence, row in enumerate(rows, 1):
+                (
+                    event_id,
+                    sequence,
+                    kind,
+                    occurred_at,
+                    document,
+                    decision_id,
+                    destination,
+                ) = row
+                if (
+                    type(event_id) is not str
+                    or type(sequence) is not int
+                    or type(kind) is not str
+                    or type(occurred_at) is not int
+                    or type(document) is not str
+                    or not 2 <= len(document.encode("utf-8")) <= 131_072
+                    or type(decision_id) is not str
+                    or type(destination) is not str
+                ):
+                    raise FieldEffectError("persistence")
+                raw = json.loads(document)
+                if (
+                    type(raw) is not dict
+                    or set(raw) != event_keys
+                    or raw.get("schema_version") != "field-effect-event-v1"
+                    or raw.get("event_id") != event_id
+                    or raw.get("plan_id") != plan_id
+                    or raw.get("decision_id") != decision_id
+                    or raw.get("destination") != destination
+                    or raw.get("sequence") != sequence
+                    or raw.get("kind") != kind
+                    or raw.get("state") != kind
+                    or raw.get("occurred_at") != occurred_at
+                    or sequence != expected_sequence
+                    or type(raw.get("sequence")) is not int
+                    or type(raw.get("occurred_at")) is not int
+                    or type(raw.get("attempt")) is not int
+                    or not 0 <= raw["attempt"] <= 3
+                    or raw.get("failure") not in FIELD_EFFECT_FAILURES
+                    or canonical_effect_json(raw) != document
+                    or event_id
+                    != "effect_event_"
+                    + hashlib.sha256(
+                        canonical_effect_json(
+                            {
+                                key: value
+                                for key, value in raw.items()
+                                if key != "event_id"
+                            }
+                        ).encode()
+                    ).hexdigest()
+                ):
+                    raise FieldEffectError("persistence")
+                documents.append(document)
+        except (json.JSONDecodeError, TypeError, ValueError) as error:
+            raise FieldEffectError("persistence") from error
+        return tuple(documents)
+
     def field_effect_activity_page(
         self,
         *,
@@ -1705,7 +1807,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             + "), ranked_activity_events AS (SELECT raw_activity_events.*, "
             "row_number() OVER (PARTITION BY source_kind,"
             + group_identity
-            + " ORDER BY occurred_at DESC,event_id DESC) AS activity_rank, "
+            + " ORDER BY CASE WHEN source_kind='field_effect' THEN source_sequence END DESC, "
+            "occurred_at DESC,event_id DESC) AS activity_rank, "
             "min(source_valid) OVER (PARTITION BY source_kind,"
             + group_identity
             + ") AS group_valid FROM raw_activity_events), "
@@ -1894,13 +1997,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             raise
 
     def field_effect_activity_transitions(
-        self, event_id: str, limit: int = 20
+        self, event_id: str, after_sequence: int | None = None, limit: int = 20
     ) -> tuple[dict[str, object], ...]:
         """Return the bounded immutable lifecycle for one grouped effect row."""
         if (
             type(event_id) is not str
             or not event_id
             or len(event_id) > 128
+            or (
+                after_sequence is not None
+                and (type(after_sequence) is not int or after_sequence < 1)
+            )
             or limit not in {10, 20}
         ):
             raise FieldEffectError("invalid_activity_query")
@@ -1910,26 +2017,31 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ).fetchone()
             if row is None:
                 return ()
-            rows = self._connection.execute(
-                "SELECT event_id,occurred_at,kind FROM field_effect_events WHERE plan_id=? "
-                "ORDER BY occurred_at ASC,event_id ASC LIMIT ?",
-                (row[0], limit + 1),
-            ).fetchall()
+            documents = self._field_effect_lifecycle_documents(row[0])
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
+        except (FieldEffectError, json.JSONDecodeError, TypeError, ValueError) as error:
+            raise FieldEffectError("persistence") from error
+        transitions = tuple(json.loads(document) for document in documents)
         if any(
-            type(item[0]) is not str
-            or type(item[1]) is not int
-            or type(item[2]) is not str
-            or len(item[0]) > 128
-            or len(item[2]) > 512
-            for item in rows
+            type(item) is not dict
+            or type(item.get("event_id")) is not str
+            or type(item.get("occurred_at")) is not int
+            or type(item.get("state")) is not str
+            or type(item.get("sequence")) is not int
+            for item in transitions
         ):
             raise FieldEffectError("persistence")
         return tuple(
-            {"event_id": item[0], "occurred_at": item[1], "state": item[2]}
-            for item in rows
-        )
+            {
+                "event_id": item["event_id"],
+                "occurred_at": item["occurred_at"],
+                "state": item["state"],
+                "sequence": item["sequence"],
+            }
+            for item in transitions
+            if after_sequence is None or item["sequence"] > after_sequence
+        )[: limit + 1]
 
     def claim_field_effect(
         self, plan_id: str, expected_state: str, claim_token: str, claimed_at: int

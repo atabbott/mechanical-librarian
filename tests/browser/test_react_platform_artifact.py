@@ -122,6 +122,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
     documents = 0
     fail_activity_once = False
     activity_failures = 0
+    transition_failures = 0
     ambiguous_decisions = 0
     fail_policy_persistently = False
     description_mode = False
@@ -131,7 +132,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
     failed_requests: list[tuple[str, str, str | None]] = []
 
     def fulfill(route: Route) -> None:
-        nonlocal activity_failures, ambiguous_decisions, documents
+        nonlocal activity_failures, ambiguous_decisions, documents, transition_failures
         nonlocal connection_state, return_automatic_requests
         parsed = urlsplit(route.request.url)
         path = parsed.path
@@ -202,6 +203,17 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     status=200,
                     content_type="application/json",
                     body=json.dumps(rich_payload("/api/v1/activity")),
+                )
+                return
+            if path.startswith("/api/v1/activity/") and path.endswith("/transitions"):
+                if transition_failures == 0:
+                    transition_failures += 1
+                    route.fulfill(status=503, body="")
+                    return
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(rich_payload(route.request.url)),
                 )
                 return
             payload = rich_payload(route.request.url)
@@ -683,6 +695,23 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     "The Glass Orchard", exact=True
                 ).locator("xpath=ancestor::article")
                 automatic_row.get_by_role("button", name="Details").click()
+                expect(automatic_row.get_by_role("alert")).to_contain_text(
+                    "Recorded transitions could not be loaded."
+                )
+                capture_visual_proof("activity-transition-error")
+                automatic_row.get_by_role("button", name="Try again").click()
+                automatic_row.get_by_role(
+                    "button", name="Load more transitions"
+                ).wait_for()
+                automatic_row.get_by_role(
+                    "button", name="Load more transitions"
+                ).click()
+                expect(
+                    automatic_row.get_by_role(
+                        "button", name="Load more transitions"
+                    )
+                ).to_have_count(0)
+                capture_visual_proof("activity-transition-disclosure")
                 expect(
                     automatic_row.get_by_text("Previous value", exact=True)
                 ).to_be_visible()

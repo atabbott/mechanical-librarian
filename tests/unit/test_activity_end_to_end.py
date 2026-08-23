@@ -366,6 +366,13 @@ def test_only_a_verified_write_claims_audiobookshelf_confirmed_it(
     )
     states = {str(event["state"]) for event in transitions}
     assert "verified" in states and len(states) > 1
+    assert [event["sequence"] for event in transitions] == list(
+        range(1, len(transitions) + 1)
+    )
+    continued = effects.repository.field_effect_activity_transitions(
+        str(writes[0]["event_id"]), after_sequence=2
+    )
+    assert [event["sequence"] for event in continued] == [3, 4]
     assert {str(event["change"]) for event in writes} == {
         "Paper Moons: Larkspur → Paper Moons over Larkspur Station"
     }

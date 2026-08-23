@@ -617,6 +617,7 @@ class _ActivityEvent(_ClosedModel):
 class _ActivityTransition(_ClosedModel):
     event_id: str = Field(max_length=128)
     occurred_at: int
+    sequence: int = Field(ge=1)
     state: str = Field(max_length=512)
 
 
@@ -2118,10 +2119,13 @@ def _register_case_and_effect_routes(
     )
     def activity_transitions(
         event_id: str,
+        after_sequence: int | None = Query(default=None, ge=1),
         ml_session: str = Depends(authenticated_session_cookie),
     ) -> dict[str, object]:
         del ml_session
-        return _query_call(lambda: application.activity_transitions(event_id))
+        return _query_call(
+            lambda: application.activity_transitions(event_id, after_sequence)
+        )
 
     @app.post(
         "/api/v1/activity/consent",

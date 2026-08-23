@@ -6,6 +6,7 @@ import type {
   ActivityCategory,
   ActivityLibraryView,
   ActivitySearch,
+  ActivityTransitionView,
   ActivityView,
 } from '../api/http'
 import { activityOutcome } from '../activityState'
@@ -146,16 +147,32 @@ function PageJump({
 }
 function ActivityTransitions({ eventId }: { eventId: string }) {
   const { http } = useReviewContext()
+  const [extraPages, setExtraPages] = useState<ActivityTransitionView[][]>([])
   const query = useQuery({
     queryKey: ['activity-transitions', eventId],
-    queryFn: ({ signal }) => http.getActivityTransitions(eventId, signal),
+    queryFn: ({ signal }) => http.getActivityTransitions(eventId, undefined, signal),
     retry: false,
   })
+  const more = useMutation({
+    mutationFn: (afterSequence: number) => http.getActivityTransitions(eventId, afterSequence),
+    onSuccess: (page) => setExtraPages((current) => [...current, [...page.events]]),
+  })
   if (query.isLoading) return <p>Loading recorded transitions…</p>
-  if (query.isError || !query.data?.events.length) return null
+  if (query.isError)
+    return (
+      <p role="alert">
+        Recorded transitions could not be loaded.{' '}
+        <button type="button" onClick={() => void query.refetch()}>
+          Try again
+        </button>
+      </p>
+    )
+  const events = [...(query.data?.events ?? []), ...extraPages.flat()]
+  const hasMore = extraPages.length ? Boolean(more.data?.has_more) : Boolean(query.data?.has_more)
+  if (!events.length) return null
   return (
     <ol className="cm-activity-transitions" aria-label="Recorded lifecycle transitions">
-      {query.data.events.map((transition) => (
+      {events.map((transition) => (
         <li key={transition.event_id}>
           <time>
             {dateParts(transition.occurred_at).day} · {dateParts(transition.occurred_at).time}
@@ -163,7 +180,28 @@ function ActivityTransitions({ eventId }: { eventId: string }) {
           <span>{stateLabel(transition.state)}</span>
         </li>
       ))}
-      {query.data.has_more ? <li>Earlier transitions remain in the durable audit.</li> : null}
+      {hasMore ? (
+        <li>
+          <button
+            type="button"
+            onClick={() => more.mutate(events[events.length - 1]?.sequence ?? 1)}
+            disabled={more.isPending}
+          >
+            {more.isPending ? 'Loading transitions…' : 'Load more transitions'}
+          </button>
+          {more.isError ? (
+            <p role="alert">
+              More recorded transitions could not be loaded.{' '}
+              <button
+                type="button"
+                onClick={() => more.mutate(events[events.length - 1]?.sequence ?? 1)}
+              >
+                Try again
+              </button>
+            </p>
+          ) : null}
+        </li>
+      ) : null}
     </ol>
   )
 }
@@ -1005,7 +1043,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                             </div>
                           ))}
                         </dl>
-                        <ActivityTransitions eventId={event.event_id} />
+                        <ActivityTransitions key={event.event_id} eventId={event.event_id} />
                       </div>
                     ) : null}
                   </article>

@@ -698,9 +698,13 @@ class ReviewApplication:
             )
         )
 
-    def activity_transitions(self, event_id: str) -> dict[str, object]:
+    def activity_transitions(
+        self, event_id: str, after_sequence: int | None = None
+    ) -> dict[str, object]:
         application = self._continuous_application()
-        return self.serialized(lambda: application.activity_transitions(event_id))
+        return self.serialized(
+            lambda: application.activity_transitions(event_id, after_sequence)
+        )
 
     def enable_activity(
         self, grants: tuple[tuple[str, tuple[str, ...]], ...]
