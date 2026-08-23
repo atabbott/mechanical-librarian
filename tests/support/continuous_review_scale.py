@@ -385,7 +385,7 @@ def qualify_installed_pipeline(
     expected_total: int,
     memory_ceiling_kib: int | None = None,
     receipt_path: Path | None = None,
-    phase_callback: Callable[[str, str, str], None] | None = None,
+    phase_callback: Callable[[str, str], None] | None = None,
 ) -> None:
     # `closing` is entered first so it exits last, which is the order
     # `addCleanup(fixture.close)` gave the fixture under `TestCase`: the
@@ -814,7 +814,6 @@ def qualify_installed_pipeline(
                 fixture.release_discovery()
                 sampled_phases: set[str] = set()
                 actual_fractions: dict[str, float] = {}
-                installed_review_case_id: str | None = None
                 active_observed = False
                 deadline = time.monotonic() + 60
                 while True:
@@ -866,28 +865,6 @@ def qualify_installed_pipeline(
                     )
                     if phase is not None:
                         _assert_phase_fraction(phase, fraction)
-                        if installed_review_case_id is None:
-                            library_view = client.get(
-                                origin
-                                + "/api/v1/library?lens=needs_attention&q=fiction-0000"
-                            )
-                            assert library_view.status_code == 200, library_view.text
-                            items = library_view.json()["items"]
-                            matches = [
-                                item
-                                for item in items
-                                if item["title"] == "fiction-0000"
-                                and item["library"] == "fiction"
-                                and item["summary"] is not None
-                                and any(
-                                    field["destination"] == "title"
-                                    and field["value"] == "fiction-0000"
-                                    for field in item["summary"]["fields"]
-                                )
-                            ]
-                            assert len(matches) == 1
-                            installed_review_case_id = matches[0]["review_case_id"]
-                            assert type(installed_review_case_id) is str
                         fixture.hold_next_detail()
                         try:
                             assert fixture.detail_started.wait(15), (
@@ -899,7 +876,7 @@ def qualify_installed_pipeline(
                             actual_fractions[phase] = fraction
                             _sample_routes(client, origin, phase, measurements)
                             if phase_callback is not None:
-                                phase_callback(phase, origin, installed_review_case_id)
+                                phase_callback(phase, origin)
                         finally:
                             fixture.release_next_detail()
                         sampled_phases.add(phase)

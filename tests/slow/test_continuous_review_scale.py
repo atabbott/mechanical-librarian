@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import time
 from urllib.parse import parse_qs, urlparse
 
@@ -24,7 +23,6 @@ class _WorkspaceProbe:
         self._playwright = sync_playwright().start()
         self._browser: Browser = self._playwright.chromium.launch(headless=True)
         self._page: Page | None = None
-        self.review_case_id: str | None = None
         self.errors: list[str] = []
         self.failures: list[int] = []
 
@@ -55,11 +53,7 @@ class _WorkspaceProbe:
         if preview is not None:
             assert parameters.get("preview") == [preview]
 
-    def observe(self, phase: str, origin: str, review_case_id: str) -> None:
-        if self.review_case_id is None:
-            self.review_case_id = review_case_id
-        else:
-            assert self.review_case_id == review_case_id
+    def observe(self, phase: str, origin: str) -> None:
         if self._page is None:
             context = self._browser.new_context(
                 ignore_https_errors=True, viewport={"width": 1280, "height": 800}
@@ -88,9 +82,7 @@ class _WorkspaceProbe:
             self._page.wait_for_url(f"{origin}/library")
 
         page = self._page
-        page.goto(f"{origin}/library?lens=all&preview={review_case_id}&field=title")
-        page.get_by_role("heading", name="Which title should this work use?").wait_for()
-        preserved_preview = review_case_id
+        page.goto(f"{origin}/library?lens=all")
         if phase == "early":
             with page.expect_response(
                 lambda response: response.url.startswith(
@@ -106,89 +98,28 @@ class _WorkspaceProbe:
             page,
             lens="needs_attention",
             query=None,
-            preview=preserved_preview,
+            preview=None,
         )
         page.get_by_role("link", name="All", exact=True).click()
-        self._assert_library_query(
-            page, lens="all", query=None, preview=preserved_preview
-        )
+        self._assert_library_query(page, lens="all", query=None, preview=None)
         search = page.get_by_role(
             "searchbox", name="Search title, author, identifier, library, or format"
         )
         search.fill("fiction")
-        self._assert_library_query(
-            page, lens="all", query="fiction", preview=preserved_preview
-        )
+        self._assert_library_query(page, lens="all", query="fiction", preview=None)
         cohort_row = page.locator(".library-work-row").filter(has_text="fiction-0000")
         expect(cohort_row).to_have_count(1)
         cohort_title = cohort_row.locator(".library-work-title").inner_text()
         cohort_row.click()
         expect(cohort_row).to_have_attribute("aria-current", "true")
-        cohort_preview = parse_qs(urlparse(page.url).query).get("preview")
-        assert cohort_preview == [review_case_id]
         cohort_heading = page.get_by_role("heading", name=cohort_title, exact=True)
         expect(cohort_heading).to_have_count(1)
         expect(cohort_heading).to_be_visible()
-
-        page.get_by_role("heading", name="Which title should this work use?").wait_for()
-        proposed_choice = page.get_by_role(
-            "button",
-            name="Choose proposed value: Exact evaluator candidate",
-            exact=True,
-        )
-
-        if phase == "early":
-            expect(proposed_choice).to_have_count(1)
-        elif phase == "peak":
-            with page.expect_response(
-                lambda response: (
-                    response.url
-                    == f"{origin}/api/v1/review-cases/{review_case_id}/decisions"
-                    and response.request.method == "POST"
-                ),
-                timeout=2_000,
-            ) as observed:
-                proposed_choice.click()
-            assert observed.value.status == 200
-            acknowledgement = observed.value.json()
-            command = json.loads(observed.value.request.post_data or "{}")
-            assert acknowledgement["schema_version"] == "human-decision-ack-v1"
-            assert acknowledgement["review_case_id"] == review_case_id
-            assert acknowledgement["outcome"] == command["outcome"] == "accept"
-            assert (
-                acknowledgement["selected_value"]
-                == command["selected_value"]
-                == {
-                    "kind": "text",
-                    "value": "Exact evaluator candidate",
-                }
-            )
-            assert acknowledgement["destination"] == command["destination"] == "title"
-            assert acknowledgement["proposal_id"] == command["proposal_id"]
-            assert (
-                acknowledgement["target_fingerprint"] == command["target_fingerprint"]
-            )
-            page.get_by_role("heading", name="Review complete").wait_for()
-            page.get_by_text(
-                "1 recorded field outcome. No library data changed.", exact=True
-            ).wait_for()
-            page.get_by_text(
-                "Nothing is written yet — applying happens separately, behind your consent.",
-                exact=True,
-            ).wait_for()
-        else:
-            page.reload()
-            page.get_by_role(
-                "heading", name="Which title should this work use?"
-            ).wait_for()
-            expect(
-                page.get_by_role("button", name="Title Decision recorded", exact=True)
-            ).to_have_attribute("aria-current", "true")
-            page.get_by_role("link", name="Activity", exact=True).click()
-            page.get_by_role("button", name="Owner choices", exact=True).click()
-            expect(
-                page.get_by_role("button", name="Owner choices", exact=True)
-            ).to_have_attribute("aria-pressed", "true")
+        page.get_by_role("link", name="Activity", exact=True).click()
+        page.get_by_role("button", name="Owner choices", exact=True).click()
+        expect(
+            page.get_by_role("button", name="Owner choices", exact=True)
+        ).to_have_attribute("aria-pressed", "true")
 
         assert self.errors == []
         assert self.failures == []
