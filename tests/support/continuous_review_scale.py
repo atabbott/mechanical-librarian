@@ -52,6 +52,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from tests.support.epub_packages import epub_bytes
 from tests.support.ports import ReservedPort
 from tests.support.tls import synthetic_tls_identity
 
@@ -307,6 +308,31 @@ class _AudiobookshelfFixture:
         self.details["fiction-new"] = detail
         return summary, detail
 
+    def materialize_browser_selection_fixture(self, media: Path) -> None:
+        """Supply one neutral file for the installed Library selection proof."""
+
+        value = epub_bytes(
+            package=b"""<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="identifier" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="identifier">fiction-0000</dc:identifier><dc:title>fiction-0000</dc:title><dc:creator>Synthetic Author</dc:creator><dc:language>en</dc:language></metadata>
+  <manifest><item id="opening" href="opening.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="opening"/></spine>
+</package>""",
+            include_default_content=False,
+            extra_entries=(
+                (
+                    "EPUB/opening.xhtml",
+                    b"""<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><body><h1>fiction-0000</h1><p>Synthetic Author</p></body></html>""",
+                    8,
+                ),
+            ),
+        )
+        (media / "fiction-0000.epub").write_bytes(value)
+        file_metadata = self.details["fiction-0000"]["media"]["ebookFile"]["metadata"]
+        assert type(file_metadata) is dict
+        file_metadata["size"] = len(value)
+
     def hold_discovery(self) -> None:
         self.discovery_started.clear()
         self.discovery_release.clear()
@@ -385,6 +411,7 @@ def qualify_installed_pipeline(
         secret.chmod(0o600)
         media = root / "media"
         media.mkdir(mode=0o700)
+        fixture.materialize_browser_selection_fixture(media)
         artifacts = root / "artifacts"
         artifacts.mkdir(mode=0o700)
         owner_hash = root / "owner.hash"
