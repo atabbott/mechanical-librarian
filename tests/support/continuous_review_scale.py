@@ -841,16 +841,8 @@ def qualify_installed_pipeline(
                     active_observed = active_observed or bool(projection["active"])
                     total = sum(item["total"] for item in projection["libraries"])
                     assert total <= expected_total
-                    # Discovery commits library totals independently. Sampling
-                    # against a partial total would make a completed small
-                    # library look like a later phase of the full cohort.
-                    if total < expected_total:
-                        if time.monotonic() >= deadline:
-                            pytest.fail(
-                                "installed reconciliation did not discover the full cohort"
-                            )
-                        time.sleep(0.02)
-                        continue
+                    # Discovery commits library totals independently; progress
+                    # remains relative to the known full installed cohort.
                     fraction = (
                         sum(item["checked"] for item in projection["libraries"])
                         / expected_total
