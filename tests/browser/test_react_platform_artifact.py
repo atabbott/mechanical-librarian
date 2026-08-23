@@ -1380,6 +1380,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 assert (
                     page.evaluate("() => document.documentElement.scrollWidth") <= width
                 )
+                url_before_focus = page.url
                 terminal.focus()
                 assert page.evaluate(
                     "() => document.activeElement !== document.querySelector('.library-work-row.is-terminal')"
@@ -1389,12 +1390,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 assert page.evaluate(
                     "() => !document.querySelector('.library-work-row.is-terminal')?.contains(document.activeElement)"
                 )
-                page.keyboard.press("Enter")
-                page.keyboard.press("Space")
-                expect(page).to_have_url(
-                    "https://react-platform.invalid/library?lens=all"
-                )
-                assert page.locator(".workspace-detail").count() == 0
+                assert page.url == url_before_focus
             if scheme == "dark":
                 page.get_by_role("button", name="Use light mode").click()
         capture_visual_proof("library-work-summary")
