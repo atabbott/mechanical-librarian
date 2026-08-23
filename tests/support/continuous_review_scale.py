@@ -75,6 +75,11 @@ _REVIEW_SERVER_START_SECONDS = 60
 _REVIEW_SERVER_PORT_ATTEMPTS = 3
 _REVIEW_SERVER_PORT_WAIT_SECONDS = 10
 _MEASUREMENT_SAMPLES = 20
+_PHASE_BANDS = (
+    ("early", 0.05, 0.45),
+    ("peak", 0.45, 0.85),
+    ("late", 0.85, 1.0),
+)
 
 
 def _validate_receipt_budgets(
@@ -324,6 +329,48 @@ class _AudiobookshelfFixture:
         self.server.shutdown()
         self.thread.join()
         self.server.server_close()
+
+
+def _current_run_fraction(
+    libraries: list[dict[str, object]],
+    baseline_checked: dict[str, int],
+    expected_total: int,
+) -> float:
+    """Measure only the resumed scan, not the prior scan its projection retains."""
+
+    current_checked: dict[str, int] = {}
+    for item in libraries:
+        library = item["library"]
+        checked = item["checked"]
+        assert type(library) is str
+        assert type(checked) is int
+        current_checked[library] = checked
+    assert set(current_checked) == set(baseline_checked)
+    checked = sum(
+        current_checked[library] - baseline_checked[library]
+        for library in baseline_checked
+    )
+    assert 0 <= checked <= expected_total
+    return checked / expected_total
+
+
+def _assert_phase_fraction(phase: str, fraction: float) -> None:
+    """Keep each held-detail sample in its distinct resumed-scan band."""
+
+    lower, upper = next(
+        (lower, upper) for name, lower, upper in _PHASE_BANDS if name == phase
+    )
+    assert lower <= fraction < upper
+
+
+def _assert_distinct_phase_fractions(actual_fractions: dict[str, float]) -> None:
+    """Reject receipt evidence that collapsed two foreground phases together."""
+
+    assert tuple(actual_fractions) == tuple(
+        name for name, _lower, _upper in _PHASE_BANDS
+    )
+    for phase, fraction in actual_fractions.items():
+        _assert_phase_fraction(phase, fraction)
 
 
 def qualify_installed_pipeline(
@@ -788,9 +835,14 @@ def qualify_installed_pipeline(
                             "accepted scans did not reach held discovery before release"
                         )
                     time.sleep(0.02)
+                pre_release_projection = pre_release_status.json()
+                baseline_checked = {
+                    str(item["library"]): int(item["checked"])
+                    for item in pre_release_projection["libraries"]
+                }
+                assert set(baseline_checked) == {"fiction", "history", "science"}
                 installed_reconciliation_started = time.monotonic()
                 fixture.release_discovery()
-                phase_thresholds = (("early", 0.05), ("peak", 0.45), ("late", 0.85))
                 sampled_phases: set[str] = set()
                 actual_fractions: dict[str, float] = {}
                 active_observed = False
@@ -819,30 +871,38 @@ def qualify_installed_pipeline(
                     projection = status.json()
                     active_observed = active_observed or bool(projection["active"])
                     total = sum(item["total"] for item in projection["libraries"])
-                    checked = sum(item["checked"] for item in projection["libraries"])
-                    fraction = checked / total if total else 0
-                    for phase, threshold in phase_thresholds:
-                        if phase not in sampled_phases and fraction >= threshold:
-                            fixture.hold_next_detail()
-                            try:
-                                assert fixture.detail_started.wait(15), (
-                                    f"{phase} detail hold was not reached"
+                    assert total == expected_total
+                    fraction = _current_run_fraction(
+                        projection["libraries"], baseline_checked, expected_total
+                    )
+                    phase = next(
+                        (
+                            name
+                            for name, threshold, _upper in _PHASE_BANDS
+                            if name not in sampled_phases and fraction >= threshold
+                        ),
+                        None,
+                    )
+                    if phase is not None:
+                        _assert_phase_fraction(phase, fraction)
+                        fixture.hold_next_detail()
+                        try:
+                            assert fixture.detail_started.wait(15), (
+                                f"{phase} detail hold was not reached"
+                            )
+                            active = client.get(origin + "/api/v1/review-preparation")
+                            assert active.status_code == 200, active.text
+                            assert active.json()["active"] is True
+                            actual_fractions[phase] = fraction
+                            _sample_routes(client, origin, phase, measurements)
+                            if phase_callback is not None:
+                                assert review_case_ids, (
+                                    "installed pipeline did not admit a manual review case"
                                 )
-                                active = client.get(
-                                    origin + "/api/v1/review-preparation"
-                                )
-                                assert active.status_code == 200, active.text
-                                assert active.json()["active"] is True
-                                actual_fractions[phase] = fraction
-                                _sample_routes(client, origin, phase, measurements)
-                                if phase_callback is not None:
-                                    assert review_case_ids, (
-                                        "installed pipeline did not admit a manual review case"
-                                    )
-                                    phase_callback(phase, origin, review_case_ids[0])
-                            finally:
-                                fixture.release_next_detail()
-                            sampled_phases.add(phase)
+                                phase_callback(phase, origin, review_case_ids[0])
+                        finally:
+                            fixture.release_next_detail()
+                        sampled_phases.add(phase)
                     if (
                         not projection["active"]
                         and len(projection["libraries"]) == 3
@@ -856,6 +916,7 @@ def qualify_installed_pipeline(
                         pytest.fail("installed reconciliation did not complete")
                     time.sleep(0.02)
                 assert sampled_phases == {"early", "peak", "late"}
+                _assert_distinct_phase_fractions(actual_fractions)
                 assert active_observed is True
                 _sample_routes(client, origin, "quiescent", measurements)
                 installed_reconciliation_elapsed = (

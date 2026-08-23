@@ -11,6 +11,8 @@ from playwright.sync_api import Browser, Page, expect, sync_playwright
 
 from tests.support.continuous_review_scale import (
     _MEASUREMENT_SAMPLES,
+    _assert_distinct_phase_fractions,
+    _current_run_fraction,
     _validate_receipt_budgets,
     qualify_installed_pipeline,
 )
@@ -212,3 +214,15 @@ def test_receipt_budget_rejects_two_over_budget_active_samples() -> None:
     }
     with pytest.raises(AssertionError):
         _validate_receipt_budgets(receipt)
+
+
+def test_phase_fractions_exclude_retained_scan_progress() -> None:
+    baseline = {"fiction": 3, "history": 998, "science": 998}
+    resumed = [
+        {"library": "fiction", "checked": 3},
+        {"library": "history", "checked": 1_098},
+        {"library": "science", "checked": 998},
+    ]
+    assert _current_run_fraction(resumed, baseline, 2_000) == 0.05
+    with pytest.raises(AssertionError):
+        _assert_distinct_phase_fractions({"early": 5.0, "peak": 5.0, "late": 5.0})
