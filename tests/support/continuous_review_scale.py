@@ -584,14 +584,6 @@ def qualify_installed_pipeline(
         ).fetchone()[0]
         assert circuit == 0
         assert retry_at > clock[0]
-        discrepancy_admission = admission_results["fiction-0000"]
-        assert discrepancy_admission[0] == "admitted"
-        assert discrepancy_admission[1] is not None
-        assert all(
-            status == "no_case"
-            for item_id, (status, _case_id) in admission_results.items()
-            if item_id != "fiction-0000"
-        )
 
         restarted = pipeline()
         restarted.recover()
@@ -600,7 +592,7 @@ def qualify_installed_pipeline(
         while True:
             if (
                 cast(PipelineProgress, restarted.progress("primary", "fiction")).state
-                == "completed_with_failures"
+                == "completed"
             ):
                 break
             advanced = run_next(restarted)
@@ -610,7 +602,7 @@ def qualify_installed_pipeline(
                         PipelineProgress,
                         restarted.progress("primary", "fiction"),
                     ).state
-                    == "completed_with_failures"
+                    == "completed"
                 )
 
         before_new = len(extracted)
@@ -670,6 +662,14 @@ def qualify_installed_pipeline(
             "completed",
             "completed",
         ]
+        discrepancy_admission = admission_results["fiction-0000"]
+        assert discrepancy_admission[0] == "admitted"
+        assert discrepancy_admission[1] is not None
+        assert all(
+            status == "no_case"
+            for item_id, (status, _case_id) in admission_results.items()
+            if item_id != "fiction-0000"
+        )
         assert provider_attempts[transient_item] == 2
         assert provider_attempts[credential_item] == 2
         stored_repository.close()
