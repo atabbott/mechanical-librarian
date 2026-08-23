@@ -464,6 +464,12 @@ its authority happened to be human. Every value comes from the event's own
 immutable decision, plan or verification document, admitted by that document's
 own fingerprint, so a later catalogue change cannot alter a historical record.
 
+The default Activity ledger shows one row for each immutable change identity;
+the latest durable transition supplies its result and time. Its bounded
+inspection discloses the ordered lifecycle without replacing, rewriting, or
+loading the complete append-only audit stream. Search, filters, date bounds,
+totals, and pagination operate on those rows server-side.
+
 The delivered F16a detail page uses a bounded horizontally scrollable field
 attention-only strip inside a non-overflowing document. For each genuinely
 unresolved field, the current value and every specific eligible proposed value

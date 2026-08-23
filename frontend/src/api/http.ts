@@ -271,6 +271,15 @@ export interface ActivityEventView {
   work_id: string
   work_label: string
 }
+export interface ActivityTransitionView {
+  event_id: string
+  occurred_at: number
+  state: string
+}
+export interface ActivityTransitionsView {
+  events: readonly ActivityTransitionView[]
+  has_more: boolean
+}
 export interface ActivitySearch {
   q?: string
   eventType: 'all' | ActivityEventType
@@ -425,6 +434,10 @@ export interface ReviewHttp {
   getPolicyTransition(signal?: AbortSignal): Promise<PolicyTransitionView | null>
   policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T>
   getActivity(search?: ActivitySearch, signal?: AbortSignal): Promise<ActivityView>
+  getActivityTransitions(
+    eventId: string,
+    signal?: AbortSignal,
+  ): Promise<ActivityTransitionsView>
   activityCommand(
     path: string,
     body?: unknown,
@@ -646,6 +659,31 @@ export class ReviewApiClient implements ReviewHttp {
       p.set('page_size', String(search.pageSize))
     }
     return mapActivity(await this.read(`/api/v1/activity${p.size ? `?${p}` : ''}`, signal))
+  }
+
+  async getActivityTransitions(
+    eventId: string,
+    signal?: AbortSignal,
+  ): Promise<ActivityTransitionsView> {
+    const data = await this.read(
+      `/api/v1/activity/${encodeURIComponent(eventId)}/transitions`,
+      signal,
+    )
+    if (
+      !record(data) ||
+      typeof data.has_more !== 'boolean' ||
+      !Array.isArray(data.events) ||
+      data.events.length > 20 ||
+      !data.events.every(
+        (event) =>
+          record(event) &&
+          typeof event.event_id === 'string' &&
+          Number.isSafeInteger(event.occurred_at) &&
+          typeof event.state === 'string',
+      )
+    )
+      throw new ApiError(502, 'invalid_activity_response')
+    return data as ActivityTransitionsView
   }
   async activityCommand(
     path: string,

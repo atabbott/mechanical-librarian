@@ -614,6 +614,17 @@ class _ActivityEvent(_ClosedModel):
     work_id: str = Field(max_length=512)
 
 
+class _ActivityTransition(_ClosedModel):
+    event_id: str = Field(max_length=128)
+    occurred_at: int
+    state: str = Field(max_length=512)
+
+
+class _ActivityTransitions(_ClosedModel):
+    events: list[_ActivityTransition] = Field(max_length=20)
+    has_more: bool = False
+
+
 class _ActivitySuspension(_ClosedModel):
     connection: str
     destination: str | None
@@ -2099,6 +2110,18 @@ def _register_case_and_effect_routes(
                 )
             )
         )
+
+    @app.get(
+        "/api/v1/activity/{event_id}/transitions",
+        response_model=_ActivityTransitions,
+        responses={status: {"model": _ErrorResponse} for status in (401, 422, 503)},
+    )
+    def activity_transitions(
+        event_id: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> dict[str, object]:
+        del ml_session
+        return _query_call(lambda: application.activity_transitions(event_id))
 
     @app.post(
         "/api/v1/activity/consent",
