@@ -24,6 +24,7 @@ class _WorkspaceProbe:
         self._playwright = sync_playwright().start()
         self._browser: Browser = self._playwright.chromium.launch(headless=True)
         self._page: Page | None = None
+        self.review_case_id: str | None = None
         self.errors: list[str] = []
         self.failures: list[int] = []
 
@@ -55,6 +56,10 @@ class _WorkspaceProbe:
             assert parameters.get("preview") == [preview]
 
     def observe(self, phase: str, origin: str, review_case_id: str) -> None:
+        if self.review_case_id is None:
+            self.review_case_id = review_case_id
+        else:
+            assert self.review_case_id == review_case_id
         if self._page is None:
             context = self._browser.new_context(
                 ignore_https_errors=True, viewport={"width": 1280, "height": 800}
@@ -118,20 +123,17 @@ class _WorkspaceProbe:
         self._assert_library_query(
             page, lens="all", query=None, preview=preserved_preview
         )
-        cohort_row = page.locator(".library-work-row").first
+        cohort_row = page.locator(".library-work-row").filter(has_text="fiction-0000")
+        expect(cohort_row).to_have_count(1)
         cohort_title = cohort_row.locator(".library-work-title").inner_text()
         cohort_row.click()
         expect(cohort_row).to_have_attribute("aria-current", "true")
         cohort_preview = parse_qs(urlparse(page.url).query).get("preview")
-        assert cohort_preview is not None and len(cohort_preview) == 1
-        assert cohort_preview[0] != review_case_id
+        assert cohort_preview == [review_case_id]
         cohort_heading = page.get_by_role("heading", name=cohort_title, exact=True)
         expect(cohort_heading).to_have_count(1)
         expect(cohort_heading).to_be_visible()
 
-        # The seeded manual case deliberately sits outside the reconciliation
-        # cohort, so return to its direct route for the owner-decision proof.
-        page.goto(f"{origin}/library?lens=all&preview={review_case_id}&field=title")
         page.get_by_role("heading", name="Which title should this work use?").wait_for()
         proposed_choice = page.get_by_role(
             "button",

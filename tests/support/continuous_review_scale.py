@@ -311,11 +311,29 @@ class _AudiobookshelfFixture:
         """Give the installed process the deterministic files its API names."""
 
         payload = epub_bytes()
+        title_candidate = epub_bytes(
+            package=b"""<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" unique-identifier="identifier" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="identifier">fiction-0000</dc:identifier><dc:title>fiction-0000</dc:title></metadata>
+  <manifest><item id="opening" href="opening.xhtml" media-type="application/xhtml+xml"/></manifest>
+  <spine><itemref idref="opening"/></spine>
+</package>""",
+            include_default_content=False,
+            extra_entries=(
+                (
+                    "EPUB/opening.xhtml",
+                    b"""<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body><section epub:type="titlepage"><h1>Exact evaluator candidate</h1></section></body></html>""",
+                    8,
+                ),
+            ),
+        )
         for item, detail in self.details.items():
-            (media / f"{item}.epub").write_bytes(payload)
+            value = title_candidate if item == "fiction-0000" else payload
+            (media / f"{item}.epub").write_bytes(value)
             file_metadata = detail["media"]["ebookFile"]["metadata"]
             assert type(file_metadata) is dict
-            file_metadata["size"] = len(payload)
+            file_metadata["size"] = len(value)
 
     def hold_discovery(self) -> None:
         self.discovery_started.clear()
@@ -713,44 +731,6 @@ def qualify_installed_pipeline(
         # no-change restart rather than a real 2,000-work reconciliation.
         fixture.materialize_media(media)
         database = root / "installed.sqlite3"
-        seeded_repository = open_repository(database)
-        seeded_report = MetadataReport.create(
-            target=TargetFacts(
-                "primary",
-                "fiction",
-                "manual-browser-case",
-                default_target_fields("manual-browser-case"),
-            ),
-            file=FileFacts(0, "e" * 64, "f" * 64),
-            local_claims=(
-                LocalClaim.create(
-                    kind=ClaimKind.TITLE,
-                    observed="Exact evaluator candidate",
-                    canonical="Exact evaluator candidate",
-                    excerpt="Exact evaluator candidate",
-                    applicability="not_applicable",
-                    checksum="not_applicable",
-                    applicability_basis="not_applicable",
-                    scope=ClaimScope.WORK,
-                ),
-            ),
-            local_reasons=("opening_matter_title",),
-            providers=(),
-        )
-        seeded_repository.publish(seeded_report, lambda: True)
-        seeded_proposal = evaluate_report(seeded_report)
-        seeded_repository.publish_proposal(seeded_proposal)
-        seeded = json.loads(seeded_repository.admit_review_case(seeded_proposal))
-        seeded_review_case_id = seeded["review_case_id"]
-        assert type(seeded_review_case_id) is str
-        seeded_repository.close()
-        with closing(sqlite3.connect(database)) as connection:
-            assert (
-                connection.execute(
-                    "SELECT COUNT(*) FROM review_preparation_work"
-                ).fetchone()[0]
-                == 0
-            )
         catalogue = root / "installed-catalogue.sqlite3"
         command = shutil.which("mechanical-librarian")
         assert command is not None
@@ -834,6 +814,7 @@ def qualify_installed_pipeline(
                 fixture.release_discovery()
                 sampled_phases: set[str] = set()
                 actual_fractions: dict[str, float] = {}
+                installed_review_case_id: str | None = None
                 active_observed = False
                 deadline = time.monotonic() + 60
                 while True:
@@ -885,6 +866,20 @@ def qualify_installed_pipeline(
                     )
                     if phase is not None:
                         _assert_phase_fraction(phase, fraction)
+                        if installed_review_case_id is None:
+                            library_view = client.get(
+                                origin + "/api/v1/library?lens=needs_attention"
+                            )
+                            assert library_view.status_code == 200, library_view.text
+                            items = library_view.json()["items"]
+                            matches = [
+                                item
+                                for item in items
+                                if item["work_id"] == "fiction-0000"
+                            ]
+                            assert len(matches) == 1
+                            installed_review_case_id = matches[0]["review_case_id"]
+                            assert type(installed_review_case_id) is str
                         fixture.hold_next_detail()
                         try:
                             assert fixture.detail_started.wait(15), (
@@ -896,7 +891,7 @@ def qualify_installed_pipeline(
                             actual_fractions[phase] = fraction
                             _sample_routes(client, origin, phase, measurements)
                             if phase_callback is not None:
-                                phase_callback(phase, origin, seeded_review_case_id)
+                                phase_callback(phase, origin, installed_review_case_id)
                         finally:
                             fixture.release_next_detail()
                         sampled_phases.add(phase)
