@@ -42,7 +42,10 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPreparationPipeline,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
     FileFacts,
+    LocalClaim,
     MetadataReport,
     TargetFacts,
     default_target_fields,
@@ -469,6 +472,24 @@ def qualify_installed_pipeline(
             assert action.item_id is not None
             extracted.append(action.item_id)
             index = int(action.file_identity or "0", 16)
+            local_claims = (
+                (
+                    LocalClaim(
+                        "local_" + f"{index:064x}",
+                        ClaimKind.TITLE,
+                        "Synthetic reviewed title",
+                        "Synthetic reviewed title",
+                        "Synthetic reviewed title",
+                        "not_applicable",
+                        "opening_matter",
+                        "not_applicable",
+                        "not_applicable",
+                        ClaimScope.WORK,
+                    ),
+                )
+                if action.item_id == "fiction-0000"
+                else ()
+            )
             report = MetadataReport.create(
                 target=TargetFacts(
                     action.connection,
@@ -481,7 +502,7 @@ def qualify_installed_pipeline(
                     action.file_identity or "",
                     f"{index + 10_001:064x}",
                 ),
-                local_claims=(),
+                local_claims=local_claims,
                 local_reasons=("no_opening_claims",),
                 providers=(),
             )
@@ -733,22 +754,24 @@ def qualify_installed_pipeline(
                         headers=action_headers,
                     )
                     assert requested.status_code == 202, requested.text
-                zero_deadline = time.monotonic() + 15
+                admission_deadline = time.monotonic() + 15
                 while True:
                     if second_process.poll() is not None:
                         pytest.fail(
                             "installed review server exited before resumed scan became active"
                         )
-                    at_zero = client.get(origin + "/api/v1/review-preparation")
-                    assert at_zero.status_code < 500, at_zero.text
+                    pre_release_status = client.get(
+                        origin + "/api/v1/review-preparation"
+                    )
+                    assert pre_release_status.status_code < 500, pre_release_status.text
                     if (
-                        at_zero.status_code == 200
+                        pre_release_status.status_code == 200
                         and fixture.discovery_started.is_set()
                     ):
                         break
-                    if time.monotonic() >= zero_deadline:
+                    if time.monotonic() >= admission_deadline:
                         pytest.fail(
-                            "accepted scans did not reach held discovery at zero progress"
+                            "accepted scans did not reach held discovery before release"
                         )
                     time.sleep(0.02)
                 installed_reconciliation_started = time.monotonic()
