@@ -234,6 +234,28 @@ export interface ActivityCapabilityView {
 export type ActivityEventType = 'review' | 'policy' | 'metadata' | 'safety' | 'unknown'
 /** How a record reached the ledger, in the owner's terms rather than the event's. */
 export type ActivityCategory = 'owner' | 'automatic' | 'policy' | 'recovery'
+export type ActivityResult = Schema<'ActivityResult'>
+const activityResults = [
+  'Accepted',
+  'Kept current',
+  'Rejected',
+  'Cover advice completed',
+  'Cover advice unavailable',
+  'Cover advice failed safely',
+  'Owner cover choice recorded',
+  'Manual cover retry',
+  'No change required',
+  'Applying',
+  'Preparing',
+  'Planned',
+  'Checking',
+  'Waiting safely',
+  'Verified',
+  'Stale',
+  'Superseded',
+  'Stopped safely',
+  'Recorded',
+] as const satisfies readonly ActivityResult[]
 export interface ActivityEvidenceView {
   label: string
   value: string
@@ -267,7 +289,7 @@ export interface ActivityEventView {
   occurred_at: number | null
   origin: string
   policy_changes: readonly ActivityPolicyChangeView[]
-  result: string
+  result: ActivityResult
   state: string
   work_id: string
   work_label: string
@@ -744,6 +766,12 @@ const stringValue = (value: unknown, field: string) => {
   if (typeof value !== 'string') throw new ApiError(502, `invalid_${field}`)
   return value
 }
+const activityResult = (value: unknown): ActivityResult => {
+  const result = stringValue(value, 'activity_event_result')
+  if (!(activityResults as readonly string[]).includes(result))
+    throw new ApiError(502, 'invalid_activity_event_result')
+  return result as ActivityResult
+}
 const integerValue = (value: unknown, field: string) => {
   if (!Number.isSafeInteger(value) || (value as number) < 0)
     throw new ApiError(502, `invalid_${field}`)
@@ -1071,7 +1099,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
         }),
         library: stringValue(event.library, 'activity_event_library'),
         origin: stringValue(event.origin, 'activity_event_origin'),
-        result: stringValue(event.result, 'activity_event_result'),
+        result: activityResult(event.result),
         state: stringValue(event.state, 'activity_event_state'),
         work_id: stringValue(event.work_id, 'activity_work_id'),
         work_label:

@@ -17,6 +17,7 @@ because it was that state.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import cast
 
 from mechanical_librarian.domain.metadata_report import (
@@ -42,12 +43,39 @@ from mechanical_librarian.domain.readable_activity import (
 
 __all__ = [
     "ACTIVITY_CATEGORIES",
+    "ActivityResult",
     "activity_result_label",
     "activity_search_text",
     "readable_activity_event",
 ]
 
 ACTIVITY_CATEGORIES = ("owner", "automatic", "policy", "recovery")
+
+
+class ActivityResult(StrEnum):
+    """The closed result vocabulary the Activity owner can read and search."""
+
+    ACCEPTED = "Accepted"
+    KEPT_CURRENT = "Kept current"
+    REJECTED = "Rejected"
+    COVER_ADVICE_COMPLETED = "Cover advice completed"
+    COVER_ADVICE_UNAVAILABLE = "Cover advice unavailable"
+    COVER_ADVICE_FAILED_SAFELY = "Cover advice failed safely"
+    OWNER_COVER_CHOICE_RECORDED = "Owner cover choice recorded"
+    MANUAL_COVER_RETRY = "Manual cover retry"
+    NO_CHANGE_REQUIRED = "No change required"
+    APPLYING = "Applying"
+    PREPARING = "Preparing"
+    PLANNED = "Planned"
+    CHECKING = "Checking"
+    WAITING_SAFELY = "Waiting safely"
+    VERIFIED = "Verified"
+    STALE = "Stale"
+    SUPERSEDED = "Superseded"
+    STOPPED_SAFELY = "Stopped safely"
+    RECORDED = "Recorded"
+
+
 # The write lifecycle states that are still moving or already closed without
 # an applied value. Neither is a completed change, so neither claims one.
 _UNSETTLED = frozenset({"planned", "claimed", "applying", "reconciling"})
@@ -66,30 +94,30 @@ _CATEGORIES = {
 }
 
 _RESULT_LABELS = {
-    "accept": "Accepted",
-    "keep_current": "Kept current",
-    "reject": "Rejected",
-    "completed": "Cover advice completed",
-    "unavailable": "Cover advice unavailable",
-    "failed": "Cover advice failed safely",
-    "selected": "Owner cover choice recorded",
-    "retry": "Manual cover retry",
-    "no_change_required": "No change required",
-    "applying": "Applying",
-    "claimed": "Preparing",
-    "planned": "Planned",
-    "reconciling": "Checking",
-    "retryable": "Waiting safely",
-    "verified": "Verified",
-    "stale": "Stale",
-    "superseded": "Superseded",
-    "abandoned": "Stopped safely",
+    "accept": ActivityResult.ACCEPTED,
+    "keep_current": ActivityResult.KEPT_CURRENT,
+    "reject": ActivityResult.REJECTED,
+    "completed": ActivityResult.COVER_ADVICE_COMPLETED,
+    "unavailable": ActivityResult.COVER_ADVICE_UNAVAILABLE,
+    "failed": ActivityResult.COVER_ADVICE_FAILED_SAFELY,
+    "selected": ActivityResult.OWNER_COVER_CHOICE_RECORDED,
+    "retry": ActivityResult.MANUAL_COVER_RETRY,
+    "no_change_required": ActivityResult.NO_CHANGE_REQUIRED,
+    "applying": ActivityResult.APPLYING,
+    "claimed": ActivityResult.PREPARING,
+    "planned": ActivityResult.PLANNED,
+    "reconciling": ActivityResult.CHECKING,
+    "retryable": ActivityResult.WAITING_SAFELY,
+    "verified": ActivityResult.VERIFIED,
+    "stale": ActivityResult.STALE,
+    "superseded": ActivityResult.SUPERSEDED,
+    "abandoned": ActivityResult.STOPPED_SAFELY,
 }
 
 
 def activity_result_label(state: str) -> str:
     """Return the closed owner-visible result word for one durable state."""
-    return _RESULT_LABELS.get(state, "Recorded")
+    return _RESULT_LABELS.get(state, ActivityResult.RECORDED).value
 
 
 def _reported_value(report: MetadataReport | None, destination: str) -> object:

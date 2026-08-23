@@ -66,7 +66,9 @@ from tests.unit.test_field_effects import (  # noqa: F401
 )
 
 
-def _ledger(environment: _EffectEnvironment) -> list[dict[str, object]]:
+def _ledger(
+    environment: _EffectEnvironment, *, search: str | None = None
+) -> list[dict[str, object]]:
     """Read the ledger exactly as the web transport reads it.
 
     The collaborators here are the ones ``bootstrap.composition`` supplies for
@@ -83,7 +85,7 @@ def _ledger(environment: _EffectEnvironment) -> list[dict[str, object]]:
         lambda *_: None,
         activity_only=True,
     )
-    events = service.activity()["events"]
+    events = service.activity(search=search)["events"]
     assert isinstance(events, list)
     return events
 
@@ -254,6 +256,18 @@ def test_an_unqualified_policy_records_no_automatic_decision(
 def test_a_qualified_automatic_no_change_is_recorded_by_normal_scheduling(
     effects: _EffectEnvironment,  # noqa: F811
 ) -> None:
+    report = metadata_report("Paper Moons: Larkspur", "a", "b", item_id="book-1")
+    effects.repository.publish(report, lambda: True)
+    retry = _plan(
+        effects,
+        destination="subtitle",
+        pre="Original subtitle",
+        desired="Replacement subtitle",
+        suffix="e",
+    )
+    effects.target.fail_next = True
+    assert effects.service.apply(retry.plan.plan_id).state == "retryable"
+
     decision = _qualified_no_change_decision(effects)
 
     class UnexpectedAuthority:
@@ -282,6 +296,17 @@ def test_a_qualified_automatic_no_change_is_recorded_by_normal_scheduling(
         decision.review_case_id
     )
     assert no_change["change"] == "Kept Secret History"
+
+    waiting = _ledger(effects, search="Waiting safely")
+    assert [
+        (event["state"], event["destination"], event["result"]) for event in waiting
+    ] == [("retryable", "subtitle", "Waiting safely")]
+    no_change_rows = _ledger(effects, search="No change required")
+    assert [(event["state"], event["result"]) for event in no_change_rows] == [
+        ("no_change_required", "No change required")
+    ]
+    assert _ledger(effects, search="retryable") == []
+    assert _ledger(effects, search="no_change_required") == []
 
 
 def test_a_real_write_reaches_the_owner_as_one_exact_sentence(

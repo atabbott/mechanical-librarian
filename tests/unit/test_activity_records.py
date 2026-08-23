@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import pytest
 
-from mechanical_librarian.domain.activity_records import readable_activity_event
+from mechanical_librarian.domain.activity_records import (
+    activity_result_label,
+    readable_activity_event,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -97,6 +100,37 @@ def _facts(event: dict[str, object]) -> dict[str, str]:
 
 
 # --- the closed value vocabulary, rendered readably and safely ---------------
+
+
+@pytest.mark.parametrize(
+    ("state", "result"),
+    (
+        ("accept", "Accepted"),
+        ("keep_current", "Kept current"),
+        ("reject", "Rejected"),
+        ("completed", "Cover advice completed"),
+        ("unavailable", "Cover advice unavailable"),
+        ("failed", "Cover advice failed safely"),
+        ("selected", "Owner cover choice recorded"),
+        ("retry", "Manual cover retry"),
+        ("no_change_required", "No change required"),
+        ("applying", "Applying"),
+        ("claimed", "Preparing"),
+        ("planned", "Planned"),
+        ("reconciling", "Checking"),
+        ("retryable", "Waiting safely"),
+        ("verified", "Verified"),
+        ("stale", "Stale"),
+        ("superseded", "Superseded"),
+        ("abandoned", "Stopped safely"),
+        ("unrecognized durable state", "Recorded"),
+    ),
+)
+def test_each_durable_state_has_one_closed_owner_visible_result(
+    state: str, result: str
+) -> None:
+    assert activity_result_label(state) == result
+    assert _project(_event(state=state))["result"] == result
 
 
 @pytest.mark.parametrize(
