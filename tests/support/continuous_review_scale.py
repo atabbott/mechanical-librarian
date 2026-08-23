@@ -81,6 +81,7 @@ _PHASE_BANDS = (
     ("peak", 0.45, 0.85),
     ("late", 0.85, 1.0),
 )
+_MINIMUM_INSTALLED_RECONCILIATION_WORKS_PER_SECOND = 5.0
 
 
 def _validate_receipt_budgets(
@@ -815,7 +816,9 @@ def qualify_installed_pipeline(
                 sampled_phases: set[str] = set()
                 actual_fractions: dict[str, float] = {}
                 active_observed = False
-                deadline = time.monotonic() + 180
+                deadline = time.monotonic() + (
+                    expected_total / _MINIMUM_INSTALLED_RECONCILIATION_WORKS_PER_SECOND
+                )
                 while True:
                     if first_process.poll() is not None:
                         pytest.fail(
@@ -990,7 +993,10 @@ def qualify_installed_pipeline(
             "restart": {"completed_state_restart": True},
         }
         receipt["p95_budgets_ms"] = _validate_receipt_budgets(receipt)
-        assert installed_reconciliation_rate >= 5
+        assert (
+            installed_reconciliation_rate
+            >= _MINIMUM_INSTALLED_RECONCILIATION_WORKS_PER_SECOND
+        )
         assert peak_rss_kib < 524_288
         if receipt_path is not None:
             receipt_path.write_text(
