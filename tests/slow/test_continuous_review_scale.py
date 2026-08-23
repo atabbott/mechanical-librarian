@@ -133,14 +133,14 @@ class _WorkspaceProbe:
         # cohort, so return to its direct route for the owner-decision proof.
         page.goto(f"{origin}/library?lens=all&preview={review_case_id}&field=title")
         page.get_by_role("heading", name="Which title should this work use?").wait_for()
+        proposed_choice = page.get_by_role(
+            "button",
+            name="Choose proposed value: Exact evaluator candidate",
+            exact=True,
+        )
 
         if phase == "early":
-            assert (
-                page.get_by_role(
-                    "button", name="Choose current value:", exact=False
-                ).count()
-                == 1
-            )
+            expect(proposed_choice).to_have_count(1)
         elif phase == "peak":
             with page.expect_response(
                 lambda response: (
@@ -150,16 +150,21 @@ class _WorkspaceProbe:
                 ),
                 timeout=2_000,
             ) as observed:
-                page.get_by_role(
-                    "button", name="Choose current value:", exact=False
-                ).click()
+                proposed_choice.click()
             assert observed.value.status == 200
             acknowledgement = observed.value.json()
             command = json.loads(observed.value.request.post_data or "{}")
             assert acknowledgement["schema_version"] == "human-decision-ack-v1"
             assert acknowledgement["review_case_id"] == review_case_id
-            assert acknowledgement["outcome"] == "keep_current"
-            assert acknowledgement["selected_value"] is None
+            assert acknowledgement["outcome"] == command["outcome"] == "accept"
+            assert (
+                acknowledgement["selected_value"]
+                == command["selected_value"]
+                == {
+                    "kind": "text",
+                    "value": "Exact evaluator candidate",
+                }
+            )
             assert acknowledgement["destination"] == command["destination"] == "title"
             assert acknowledgement["proposal_id"] == command["proposal_id"]
             assert (
