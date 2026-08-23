@@ -13,11 +13,12 @@ at bootstrap and requires a clean rebuild; `review-field-facts-v1` cannot adopt
 it.
 
 The pre-release review-preparation claim index now orders each library's queued
-cohort by its persisted discovery ordinal. Earlier state with the former
-updated-time claim index is rejected at bootstrap and requires a clean rebuild;
-the #826 immediate predecessor is not adopted. The index remains
-reconstructible derived state under ADR-0013, but this increment delivers no
-exact-predecessor adoption plan for that immediate predecessor.
+cohort by its persisted discovery ordinal. The #826 immediate predecessor
+already contains the field-fact objects and still carries the historical
+`updated_at` claim index. That specific shape is rejected at bootstrap, requires
+a clean rebuild, and is not adopted. The index remains reconstructible derived
+state under ADR-0013, but this increment delivers no exact-predecessor adoption
+plan for that immediate predecessor.
 
 ## Offline derived-schema adoption
 
