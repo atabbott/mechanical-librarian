@@ -78,6 +78,12 @@ required test preserves the same functional path and failure transitions. A
 slow test is never silently skipped: delivery documentation identifies when
 exact-head slow evidence is required.
 
+The continuous-review slow qualifier advances 2,000 deterministic synthetic
+works through the installed process, then its restart. It is the scale control
+for preparation throughput, fair claims, pacing, restart recovery, and RSS.
+Its synthetic fixture and installed process never use a live library, provider,
+or private work identity.
+
 The same source job runs the frontend on the exact pinned Node and npm
 toolchain; [what merging proves](../../CONTRIBUTING.md#what-merging-proves)
 lists those commands against the workflow that runs them.

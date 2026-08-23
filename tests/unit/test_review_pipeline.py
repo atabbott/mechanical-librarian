@@ -6,6 +6,7 @@ import sqlite3
 import sys
 import tempfile
 import threading
+import time
 from collections.abc import Callable, Iterator
 from contextlib import ExitStack
 from dataclasses import replace
@@ -3552,6 +3553,178 @@ class _ScheduledPipeline:
 
     def set_paused(self, paused):
         self.is_paused = paused
+
+
+class _LifecyclePipeline:
+    """Small supervisor double that records only its lifecycle contract."""
+
+    libraries: tuple[tuple[str, str, str], ...] = ()
+
+    def __init__(self, *, fail_recover: bool = False, hold_run: bool = False) -> None:
+        self.events: list[str] = []
+        self.fail_recover = fail_recover
+        self.run_started = threading.Event()
+        self.release_run = threading.Event()
+        if not hold_run:
+            self.release_run.set()
+
+    def open_observation(self) -> None:
+        self.events.append("open")
+
+    def close_observation(self) -> None:
+        self.events.append("close")
+
+    def resume_claiming(self) -> None:
+        self.events.append("resume")
+
+    def recover(self) -> None:
+        self.events.append("recover")
+        if self.fail_recover:
+            raise ReviewPipelineError("persistence")
+
+    def run_next(self) -> bool:
+        self.events.append("run")
+        self.run_started.set()
+        self.release_run.wait(3)
+        return False
+
+    def begin_drain(self) -> None:
+        self.events.append("drain")
+
+    def paused(self) -> bool:
+        return False
+
+    def status(self) -> tuple[tuple[PipelineProgress | None, ...], bool]:
+        return (), False
+
+
+def test_supervisor_opens_observation_before_recovery_and_workers() -> None:
+    pipeline = _LifecyclePipeline()
+    supervisor = ReviewPreparationSupervisor(pipeline)
+    supervisor.start()
+    try:
+        assert pipeline.events[:3] == ["open", "resume", "recover"]
+        assert pipeline.run_started.wait(1)
+    finally:
+        supervisor.stop()
+
+
+def test_supervisor_closes_preopened_observation_when_start_fails() -> None:
+    pipeline = _LifecyclePipeline(fail_recover=True)
+    supervisor = ReviewPreparationSupervisor(pipeline)
+
+    with pytest.raises(ReviewPipelineError, match="persistence"):
+        supervisor.start()
+
+    assert pipeline.events == ["open", "resume", "recover", "close"]
+    assert supervisor._threads == ()
+
+
+def test_supervisor_stops_then_closes_observation_in_existing_callback_order() -> None:
+    pipeline = _LifecyclePipeline()
+    supervisor = ReviewPreparationSupervisor(
+        pipeline, on_stop=lambda: pipeline.events.append("on_stop")
+    )
+    supervisor.start()
+    supervisor.stop()
+
+    assert pipeline.events[-3:] == ["drain", "on_stop", "close"]
+
+
+def test_supervisor_timeout_retains_observation_until_workers_stop() -> None:
+    pipeline = _LifecyclePipeline(hold_run=True)
+    supervisor = ReviewPreparationSupervisor(pipeline, graceful_shutdown_seconds=1)
+    supervisor.start()
+    assert pipeline.run_started.wait(1)
+
+    with pytest.raises(ReviewPipelineError, match="shutdown_timeout"):
+        supervisor.stop(deadline=time.monotonic())
+    assert "close" not in pipeline.events
+
+    pipeline.release_run.set()
+    supervisor.stop()
+    assert pipeline.events[-1] == "close"
+
+
+def test_supervisor_restart_opens_a_fresh_observation() -> None:
+    pipeline = _LifecyclePipeline()
+    supervisor = ReviewPreparationSupervisor(pipeline)
+    supervisor.start()
+    supervisor.stop()
+    supervisor.start()
+    supervisor.stop()
+
+    assert [event for event in pipeline.events if event == "open"] == ["open", "open"]
+    assert [event for event in pipeline.events if event == "close"] == [
+        "close",
+        "close",
+    ]
+
+
+def test_observation_reads_share_one_reentrant_lock_and_actions_keep_their_factory() -> (
+    None
+):
+    status_entered = threading.Event()
+    release_status = threading.Event()
+    conditions_called = threading.Event()
+    regular_opens = 0
+    observation_opens = 0
+
+    class ObservationRepository:
+        def review_pipeline_status(self, *_):
+            status_entered.set()
+            assert release_status.wait(2)
+            return (), False
+
+        def target_connection_conditions(self):
+            conditions_called.set()
+            return ()
+
+        def close(self) -> None:
+            return None
+
+    observation = ObservationRepository()
+    action_repository = _ConcurrentRepository([])
+
+    def regular_factory() -> ReviewPipelineRepository:
+        nonlocal regular_opens
+        regular_opens += 1
+        return cast(ReviewPipelineRepository, action_repository)
+
+    def observation_factory() -> ReviewPipelineRepository:
+        nonlocal observation_opens
+        observation_opens += 1
+        return cast(ReviewPipelineRepository, observation)
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=regular_factory,
+        observation_repository_factory=observation_factory,
+        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+    )
+    pipeline.open_observation()
+    status_thread = threading.Thread(target=pipeline.status)
+    conditions_thread = threading.Thread(target=pipeline.connection_conditions)
+    status_thread.start()
+    assert status_entered.wait(1)
+    conditions_thread.start()
+    assert not conditions_called.wait(0.1)
+    release_status.set()
+    status_thread.join(timeout=1)
+    conditions_thread.join(timeout=1)
+    assert not status_thread.is_alive()
+    assert not conditions_thread.is_alive()
+    assert conditions_called.is_set()
+    assert pipeline.run_next() is False
+    pipeline.close_observation()
+
+    assert observation_opens == 1
+    assert regular_opens == 1
 
 
 @pytest.fixture
