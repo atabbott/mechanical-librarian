@@ -100,7 +100,7 @@ def test_the_seeded_ledger_groups_lifecycle_transitions_by_change(
     assert isinstance(block, dict)
     rows = _all_rows(ledger)
     assert block["total"] == len(rows)
-    assert block["total"] < 25
+    assert block["total"] > 25
 
 
 def test_a_filter_chip_narrows_to_its_own_category_and_the_count_follows(

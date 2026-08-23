@@ -14,6 +14,8 @@
 - Let Activity search find durable displayed values, including automatic,
   no-change, decision, and policy before/after wording. It streams immutable
   authority in order without an index, duplicate audit document, or new
+  private output. (#788)
+
 - Make Activity one current row per immutable change while retaining its
   ordered write lifecycle behind the row's bounded details disclosure. Search,
   filters, date bounds, totals, and pagination now operate on those change rows

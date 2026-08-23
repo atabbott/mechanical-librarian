@@ -472,6 +472,17 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
         ledger["query"],
         ledger["range_days"],
     ) == ("all", 1, 25, None, 30)
+    second_page = web.client.get(
+        "/api/v1/activity?event_type=all&range_days=30&page=2&page_size=25"
+    )
+    assert second_page.status_code == 200, second_page.text
+    second_ledger = second_page.json()["ledger"]
+    assert second_ledger["page"] == 2
+    assert second_ledger["page_count"] == ledger["page_count"]
+    assert second_page.json()["events"]
+    assert {event["event_id"] for event in filtered.json()["events"]}.isdisjoint(
+        {event["event_id"] for event in second_page.json()["events"]}
+    )
     assert web.client.get("/api/v1/activity?range_days=8").status_code == 422
     denied = web.client.post(
         "/api/v1/activity/consent",
