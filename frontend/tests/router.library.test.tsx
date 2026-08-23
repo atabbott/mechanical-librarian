@@ -188,6 +188,9 @@ describe('Library route', () => {
     const card = await screen.findByRole('button', { name: /^A Book./u })
     expect(card).not.toHaveClass('is-terminal')
     expect(card).toHaveTextContent('A <script> hostile diagnostic remains safe.')
+    expect(card).toHaveAccessibleDescription(
+      /provider: A <script> hostile diagnostic remains safe\. Scan again only after the source condition is corrected\. Reference: prep-safe-0123456789abcdef/u,
+    )
     expect(screen.getByText('prep-safe-0123456789abcdef')).toBeVisible()
     expect(screen.queryByRole('button', { name: /retry/i })).toBeNull()
     card.focus()
