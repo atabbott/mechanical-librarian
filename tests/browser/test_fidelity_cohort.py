@@ -58,6 +58,13 @@ def test_activity_carries_a_future_origin_and_every_cover_state() -> None:
     activity = rich_payload("/api/v1/activity")
     assert isinstance(activity, dict)
     assert "future_provider_origin" in {event["origin"] for event in activity["events"]}
+    assert {event["result"] for event in activity["events"]} >= {
+        "No change required",
+        "Applying",
+        "Verified",
+        "Stale",
+        "Recorded",
+    }
     cover_states = {
         event["state"]
         for event in activity["events"]
