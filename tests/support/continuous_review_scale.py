@@ -52,6 +52,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.infrastructure.configuration import load_configuration_file
+from tests.support.epub_packages import epub_bytes
 from tests.support.ports import ReservedPort
 from tests.support.tls import synthetic_tls_identity
 
@@ -306,6 +307,16 @@ class _AudiobookshelfFixture:
         self.details["fiction-new"] = detail
         return summary, detail
 
+    def materialize_media(self, media: Path) -> None:
+        """Give the installed process the deterministic files its API names."""
+
+        payload = epub_bytes()
+        for item, detail in self.details.items():
+            (media / f"{item}.epub").write_bytes(payload)
+            file_metadata = detail["media"]["ebookFile"]["metadata"]
+            assert type(file_metadata) is dict
+            file_metadata["size"] = len(payload)
+
     def hold_discovery(self) -> None:
         self.discovery_started.clear()
         self.discovery_release.clear()
@@ -329,29 +340,6 @@ class _AudiobookshelfFixture:
         self.server.shutdown()
         self.thread.join()
         self.server.server_close()
-
-
-def _current_run_fraction(
-    libraries: list[dict[str, object]],
-    baseline_checked: dict[str, int],
-    expected_total: int,
-) -> float:
-    """Measure only the resumed scan, not the prior scan its projection retains."""
-
-    current_checked: dict[str, int] = {}
-    for item in libraries:
-        library = item["library"]
-        checked = item["checked"]
-        assert type(library) is str
-        assert type(checked) is int
-        current_checked[library] = checked
-    assert set(current_checked) == set(baseline_checked)
-    checked = sum(
-        current_checked[library] - baseline_checked[library]
-        for library in baseline_checked
-    )
-    assert 0 <= checked <= expected_total
-    return checked / expected_total
 
 
 def _assert_phase_fraction(phase: str, fraction: float) -> None:
@@ -487,8 +475,8 @@ def qualify_installed_pipeline(
             )
             for name in entries
         }
-        database = root / "application.sqlite3"
-        stored_repository = open_repository(database)
+        direct_database = root / "direct-control.sqlite3"
+        stored_repository = open_repository(direct_database)
         repository = _SharedRepository(stored_repository)
         clock = [100]
         reports: dict[str, MetadataReport] = {}
@@ -718,7 +706,52 @@ def qualify_installed_pipeline(
         assert provider_attempts[transient_item] == 2
         assert provider_attempts[credential_item] == 2
         stored_repository.close()
-        catalogue = root / "catalogue.sqlite3"
+
+        # The installed child starts from a fresh state. The direct pipeline
+        # above remains a control for fairness and recovery only; carrying its
+        # scan rows into this child would turn the installed qualifier into a
+        # no-change restart rather than a real 2,000-work reconciliation.
+        fixture.materialize_media(media)
+        database = root / "installed.sqlite3"
+        seeded_repository = open_repository(database)
+        seeded_report = MetadataReport.create(
+            target=TargetFacts(
+                "primary",
+                "fiction",
+                "manual-browser-case",
+                default_target_fields("manual-browser-case"),
+            ),
+            file=FileFacts(0, "manual-browser-file", "f" * 64),
+            local_claims=(
+                LocalClaim.create(
+                    kind=ClaimKind.TITLE,
+                    observed="Exact evaluator candidate",
+                    canonical="Exact evaluator candidate",
+                    excerpt="Exact evaluator candidate",
+                    applicability="not_applicable",
+                    checksum="not_applicable",
+                    applicability_basis="not_applicable",
+                    scope=ClaimScope.WORK,
+                ),
+            ),
+            local_reasons=("opening_matter_title",),
+            providers=(),
+        )
+        seeded_repository.publish(seeded_report, lambda: True)
+        seeded_proposal = evaluate_report(seeded_report)
+        seeded_repository.publish_proposal(seeded_proposal)
+        seeded = json.loads(seeded_repository.admit_review_case(seeded_proposal))
+        seeded_review_case_id = seeded["review_case_id"]
+        assert type(seeded_review_case_id) is str
+        seeded_repository.close()
+        with closing(sqlite3.connect(database)) as connection:
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM review_preparation_work"
+                ).fetchone()[0]
+                == 0
+            )
+        catalogue = root / "installed-catalogue.sqlite3"
         command = shutil.which("mechanical-librarian")
         assert command is not None
         arguments = [
@@ -740,17 +773,46 @@ def qualify_installed_pipeline(
         fixture.hold_discovery()
         first_process = _start_review_server(review_port, arguments, origin)
         try:
+            with httpx.Client(verify=False, trust_env=False) as client:
+                login = client.post(
+                    origin + "/api/v1/session/login",
+                    headers={"Origin": origin},
+                    json={"password": "synthetic password"},
+                )
+                assert login.status_code == 200, login.text
+                workspace = client.get(origin + "/library")
+                assert workspace.status_code == 200, workspace.text
+                build_identity = re.search(
+                    r'data-build-identity="([0-9a-f]{64})"', workspace.text
+                )
+                browser_csrf = re.search(
+                    r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', workspace.text
+                )
+                assert build_identity is not None
+                assert browser_csrf is not None
+                action_headers = {
+                    "Origin": origin,
+                    "x-csrf-token": browser_csrf.group(1),
+                    "x-ml-build-identity": build_identity.group(1),
+                }
+                for library in ("fiction", "history", "science"):
+                    requested = client.post(
+                        origin + f"/api/v1/review-preparation/primary/{library}/scan",
+                        headers=action_headers,
+                    )
+                    assert requested.status_code == 202, requested.text
             assert fixture.discovery_started.wait(timeout=15), (
                 "first-start reconciliation was not observed"
             )
             with closing(sqlite3.connect(database)) as connection:
-                states = {
-                    row[0]
-                    for row in connection.execute(
-                        "SELECT state FROM review_preparation_scans"
-                    )
-                }
-            assert "discovering" in states
+                first_projection = connection.execute(
+                    "SELECT state,checked FROM review_preparation_scans"
+                ).fetchall()
+            assert first_projection
+            assert all(
+                state == "discovering" and checked == 0
+                for state, checked in first_projection
+            )
         finally:
             # Stopped, not killed. `SIGKILL` leaves SQLite's `-wal` and `-shm`
             # behind, and a database basename carrying a recovery sidecar is
@@ -836,11 +898,9 @@ def qualify_installed_pipeline(
                         )
                     time.sleep(0.02)
                 pre_release_projection = pre_release_status.json()
-                baseline_checked = {
-                    str(item["library"]): int(item["checked"])
-                    for item in pre_release_projection["libraries"]
-                }
-                assert set(baseline_checked) == {"fiction", "history", "science"}
+                assert all(
+                    item["checked"] == 0 for item in pre_release_projection["libraries"]
+                )
                 installed_reconciliation_started = time.monotonic()
                 fixture.release_discovery()
                 sampled_phases: set[str] = set()
@@ -872,8 +932,9 @@ def qualify_installed_pipeline(
                     active_observed = active_observed or bool(projection["active"])
                     total = sum(item["total"] for item in projection["libraries"])
                     assert total == expected_total
-                    fraction = _current_run_fraction(
-                        projection["libraries"], baseline_checked, expected_total
+                    fraction = (
+                        sum(item["checked"] for item in projection["libraries"])
+                        / expected_total
                     )
                     phase = next(
                         (
@@ -896,10 +957,7 @@ def qualify_installed_pipeline(
                             actual_fractions[phase] = fraction
                             _sample_routes(client, origin, phase, measurements)
                             if phase_callback is not None:
-                                assert review_case_ids, (
-                                    "installed pipeline did not admit a manual review case"
-                                )
-                                phase_callback(phase, origin, review_case_ids[0])
+                                phase_callback(phase, origin, seeded_review_case_id)
                         finally:
                             fixture.release_next_detail()
                         sampled_phases.add(phase)
@@ -941,11 +999,11 @@ def qualify_installed_pipeline(
                 second_process.wait(timeout=10)
 
         with closing(sqlite3.connect(database)) as connection:
-            work_count = connection.execute(
-                "SELECT COUNT(*) FROM review_preparation_work"
-            ).fetchone()[0]
-        assert work_count == expected_total
-        assert tuple(media.iterdir()) == ()
+            work_count, distinct_work = connection.execute(
+                "SELECT COUNT(*),COUNT(DISTINCT scan_id || ':' || item_id) "
+                "FROM review_preparation_work"
+            ).fetchone()
+        assert work_count == distinct_work == expected_total
         assert tuple(artifacts.iterdir()) == ()
         assert all(method == "GET" for method, _path in fixture.requests)
         installed_reconciliation_rate = (
