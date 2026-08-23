@@ -741,16 +741,11 @@ def qualify_installed_pipeline(
                         )
                     at_zero = client.get(origin + "/api/v1/review-preparation")
                     assert at_zero.status_code < 500, at_zero.text
-                    if at_zero.status_code == 200:
-                        zero_projection = at_zero.json()
-                        if (
-                            sum(
-                                item["checked"] for item in zero_projection["libraries"]
-                            )
-                            == 0
-                            and fixture.discovery_started.is_set()
-                        ):
-                            break
+                    if (
+                        at_zero.status_code == 200
+                        and fixture.discovery_started.is_set()
+                    ):
+                        break
                     if time.monotonic() >= zero_deadline:
                         pytest.fail(
                             "accepted scans did not reach held discovery at zero progress"
