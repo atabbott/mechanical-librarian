@@ -9,6 +9,7 @@ import sqlite3
 import stat
 import struct
 import sys
+import time
 from pathlib import Path
 
 from mechanical_librarian.adapters.persistence.binding import (
@@ -27,6 +28,11 @@ from mechanical_librarian.adapters.persistence.schema import (
     _REVIEW_CASE_FIELD_FACT_VALUES_SQL,
     _REVIEW_CASE_FIELD_FACTS_INSERT_SQL,
     _REVIEW_CASE_FIELD_FACTS_SQL,
+    _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
+    _REVIEW_WORK_DUE_PROMOTION_INDEX_SQL,
+    _REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL,
+    _REVIEW_WORK_RECENT_CLAIM_INDEX_SQL,
+    _REVIEW_WORK_SQL,
     _SHADOW_OUTCOME_FIELD_FACT_VALUES_SQL,
     _SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL,
     _SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL,
@@ -74,7 +80,9 @@ def _encode_value(value: object) -> bytes:
     raise MetadataReportError("database is unavailable or incompatible")
 
 
-def _application_table_digest(connection: sqlite3.Connection) -> str:
+def _application_table_digest(
+    connection: sqlite3.Connection, adoption_boundary: int | None = None
+) -> str:
     """Digest every application value in stable physical table order."""
     digest = hashlib.sha256()
     table_names = sorted(
@@ -88,6 +96,13 @@ def _application_table_digest(connection: sqlite3.Connection) -> str:
         digest.update(encoded_name)
         quoted = '"' + table_name.replace('"', '""') + '"'
         for row in connection.execute(f"SELECT * FROM {quoted} NOT INDEXED"):
+            if (
+                table_name == "review_preparation_work"
+                and adoption_boundary is not None
+                and row[14] == "queued"
+                and row[17] > adoption_boundary
+            ):
+                row = (*row[:14], "delayed", *row[15:])
             digest.update(len(row).to_bytes(4, "big"))
             for value in row:
                 encoded = _encode_value(value)
@@ -360,6 +375,7 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
     if database.parent != backup.parent or database.name == backup.name:
         raise MetadataReportError("schema adoption backup path is invalid")
 
+    adoption_boundary = -1
     descriptor = -1
     parent_descriptor = -1
     binding: _LinuxDatabaseBinding | None = None
@@ -406,10 +422,15 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
             source_descriptor,
             binding.require_current if binding is not None else None,
         )
-        connection.execute("PRAGMA foreign_keys=ON")
+        # The one frozen predecessor has a narrower CHECK on preparation work.
+        # Its adoption rebuilds that derived operational row in the same
+        # exclusive transaction, so SQLite must not check child references
+        # during the table swap; every reference is checked immediately after.
+        connection.execute("PRAGMA foreign_keys=OFF")
         connection.execute("PRAGMA synchronous=FULL")
         connection.execute("PRAGMA busy_timeout=0")
         connection.execute("BEGIN EXCLUSIVE")
+        adoption_boundary = int(time.time())
         try:
             _validate_schema(connection)
         except MetadataReportError:
@@ -423,7 +444,10 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
             return {"plan": plan, "status": "already-current"}
 
         _validate_canonical_documents(connection)
-        before = _application_table_digest(connection)
+        # The predecessor stored retry backoff as queued work. The current
+        # claimant only considers queued rows, so preserve a still-future
+        # backoff at this one explicit adoption boundary.
+        before = _application_table_digest(connection, adoption_boundary)
         backup_identity, backup_digest = _copy_verified_backup(
             source_descriptor, parent_descriptor, backup.name
         )
@@ -447,8 +471,51 @@ def adopt_schema(database_path: Path, backup_path: Path, plan: str) -> dict[str,
         )
         connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_CASE_INDEX_SQL)
         connection.execute(_SHADOW_OUTCOME_FIELD_FACTS_INSERT_SQL)
+        connection.execute("DROP INDEX review_preparation_work_aged_claim")
+        connection.execute("DROP INDEX review_preparation_work_recent_claim")
+        connection.execute("DROP INDEX review_preparation_work_lineage_history")
+        connection.execute(
+            _REVIEW_WORK_SQL.replace(
+                "review_preparation_work (", "review_preparation_work_rebuilt (", 1
+            )
+        )
+        columns = (
+            "work_id,scan_id,ordinal,connection_name,library_name,library_id,item_id,"
+            "file_identity,source_revision,source_fingerprint,producer_fingerprint,"
+            "catalogue_generation,catalogue_fingerprint,stage,state,attempt,recovery_attempt,"
+            "retry_not_before,report_id,recovery_source_report_id,proposal_set_id,"
+            "review_case_id,failure_code,failure_root,updated_at"
+        )
+        connection.execute(
+            "INSERT INTO review_preparation_work_rebuilt("
+            + columns
+            + ") SELECT "
+            + columns.replace(
+                "stage,state,attempt",
+                "stage,CASE WHEN state='queued' AND retry_not_before>? THEN 'delayed' ELSE state END,attempt",
+            )
+            + " FROM review_preparation_work",
+            (adoption_boundary,),
+        )
+        connection.execute("DROP TABLE review_preparation_work")
+        connection.execute(_REVIEW_WORK_SQL)
+        connection.execute(
+            "INSERT INTO review_preparation_work("
+            + columns
+            + ") SELECT "
+            + columns
+            + " FROM review_preparation_work_rebuilt"
+        )
+        connection.execute("DROP TABLE review_preparation_work_rebuilt")
+        connection.execute(_REVIEW_WORK_AGED_CLAIM_INDEX_SQL)
+        connection.execute(_REVIEW_WORK_DUE_PROMOTION_INDEX_SQL)
+        connection.execute(_REVIEW_WORK_RECENT_CLAIM_INDEX_SQL)
+        connection.execute(_REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL)
         recovery_required = True
         connection.commit()
+        connection.execute("PRAGMA foreign_keys=ON")
+        if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+            raise SchemaAdoptionRecoveryRequired
         if binding is not None:
             binding.require_current()
         _validate_schema(connection)

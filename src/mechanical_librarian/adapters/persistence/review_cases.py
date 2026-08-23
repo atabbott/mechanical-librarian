@@ -38,6 +38,7 @@ module would silently stop the interleave from happening.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from collections.abc import Callable
 from typing import cast
@@ -378,6 +379,44 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "review case availability is unavailable"
             ) from error
 
+    def current_review_case_successor(self, review_case_id: str) -> str | None:
+        """Read the current case for this exact persisted target lineage."""
+        try:
+            if re.fullmatch(r"review_case_[0-9a-f]{64}", review_case_id) is None:
+                raise MetadataReportError("review case is unavailable")
+            row = self._connection.execute(
+                "SELECT document FROM review_cases WHERE review_case_id=?",
+                (review_case_id,),
+            ).fetchone()
+            if row is None or type(row[0]) is not str:
+                raise MetadataReportError("review case is unavailable")
+            target = ReviewCase.from_json(row[0]).target
+            current = self._connection.execute(
+                "SELECT lineage.review_case_id,successor.document "
+                "FROM current_review_case_lineages lineage LEFT JOIN review_cases successor "
+                "ON successor.review_case_id=lineage.review_case_id "
+                "WHERE lineage.connection_name=? AND lineage.library_name=? AND lineage.item_id=?",
+                (target["connection"], target["library"], target["item"]),
+            ).fetchone()
+            if current is None or current[0] is None:
+                return None
+            if (
+                type(current[0]) is not str
+                or re.fullmatch(r"review_case_[0-9a-f]{64}", current[0]) is None
+                or type(current[1]) is not str
+            ):
+                raise MetadataReportError("review case is unavailable")
+            successor = ReviewCase.from_json(current[1])
+            if successor.review_case_id != current[0] or (
+                successor.target["connection"],
+                successor.target["library"],
+                successor.target["item"],
+            ) != (target["connection"], target["library"], target["item"]):
+                raise MetadataReportError("review case is unavailable")
+            return None if current[0] == review_case_id else current[0]
+        except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
+            raise MetadataReportError("review case is unavailable") from error
+
     def get_review_case(self, review_case_id: str) -> str:
         try:
             row = self._connection.execute(
@@ -486,7 +525,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     "'library',library_name,'recovery_attempt',recovery_attempt,"
                     "'schema_version','review-terminal-work-v1','status',failure_code,"
                     "'work_id',work_id),NULL,connection_name,library_name,item_id,NULL,"
-                    "1,'preparation unavailable','' FROM review_preparation_work "
+                    "1,0,'preparation unavailable','' FROM review_preparation_work "
                     "WHERE state='failed' AND failure_code IS NOT NULL AND NOT EXISTS ("
                     "SELECT 1 FROM current_review_packages p WHERE "
                     "p.connection_name=review_preparation_work.connection_name AND "
@@ -510,6 +549,20 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "CASE WHEN "
                 + _REVIEW_ATTENTION_SQL
                 + " THEN 0 ELSE 1 END AS attention_order,"
+                # A report's provider lanes are current evidence, not a
+                # second workflow state. Aggregate-only observations have no
+                # lanes, so the LEFT JOIN falls back to their own status.
+                # Provider completeness matters only inside the attention
+                # group: the no-attention lens remains alphabetical.
+                "CASE WHEN "
+                + _REVIEW_ATTENTION_SQL
+                + " AND EXISTS(SELECT 1 FROM json_each(mr.document,'$.providers') provider "
+                "LEFT JOIN json_each(provider.value,'$.lanes') lane ON 1 "
+                "WHERE COALESCE(json_extract(lane.value,'$.status'),"
+                "json_extract(provider.value,'$.status')) IN ("
+                "'authentication','authorization','rate_limited','unavailable',"
+                "'incomplete','malformed','oversized','candidate_limit_exceeded',"
+                "'query_limit_exceeded')) THEN 1 ELSE 0 END AS provider_order,"
                 "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) AS title_order,"
                 "COALESCE(rc.review_case_id,'') AS case_order "
                 + _CURRENT_LIBRARY_FROM_SQL
@@ -517,7 +570,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 + condition
                 + _REVIEW_SEARCH_SQL
                 + terminal_union
-                + ") ORDER BY attention_order,title_order,library_name,item_id,"
+                + ") ORDER BY attention_order,provider_order,title_order,library_name,item_id,"
                 "connection_name,case_order LIMIT ? OFFSET ?",
                 tuple(parameters),
             ).fetchall()

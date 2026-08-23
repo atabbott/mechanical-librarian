@@ -115,6 +115,7 @@ class CurrentReviewCaseStore(Protocol):
     def review_case_exists(self, review_case_id: str) -> bool: ...
     def get_review_case(self, review_case_id: str) -> str: ...
     def review_case_ready_at(self, review_case_id: str) -> int | None: ...
+    def current_review_case_successor(self, review_case_id: str) -> str | None: ...
     def read_current_review_case(
         self, review_case_id: str, history_limit: int | None
     ) -> CurrentReviewCaseSnapshot: ...
@@ -491,6 +492,13 @@ class InspectCurrentReviewCase:
             report,
             snapshot,
         )
+
+    def successor(self, review_case_id: str) -> str | None:
+        """Name the current replacement for one stale case, if it has one."""
+        try:
+            return self._repository.current_review_case_successor(review_case_id)
+        except Exception as error:
+            raise ReviewWebError("unavailable") from error
 
     def run(self, review_case_id: str) -> dict[str, object]:
         detail, _, _ = self._read(review_case_id)

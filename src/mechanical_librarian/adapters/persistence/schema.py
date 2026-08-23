@@ -266,7 +266,7 @@ _REVIEW_WORK_SQL = (
     "producer_fingerprint TEXT NOT NULL CHECK(length(producer_fingerprint)=64 AND producer_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "catalogue_generation INTEGER NOT NULL CHECK(catalogue_generation>0), catalogue_fingerprint TEXT NOT NULL CHECK(length(catalogue_fingerprint)=64 AND catalogue_fingerprint NOT GLOB '*[^0-9a-f]*'), "
     "stage TEXT NOT NULL CHECK(stage IN ('extraction','provider','proposal','admission','projection','complete')), "
-    "state TEXT NOT NULL CHECK(state IN ('queued','running','complete','failed','stale')), attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt BETWEEN 0 AND 3), recovery_attempt INTEGER NOT NULL DEFAULT 0 CHECK(recovery_attempt BETWEEN 0 AND 3), retry_not_before INTEGER NOT NULL DEFAULT 0 CHECK(retry_not_before>=0), "
+    "state TEXT NOT NULL CHECK(state IN ('queued','delayed','running','complete','failed','stale')), attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt BETWEEN 0 AND 3), recovery_attempt INTEGER NOT NULL DEFAULT 0 CHECK(recovery_attempt BETWEEN 0 AND 3), retry_not_before INTEGER NOT NULL DEFAULT 0 CHECK(retry_not_before>=0), "
     "report_id TEXT REFERENCES metadata_reports(report_id), recovery_source_report_id TEXT REFERENCES metadata_reports(report_id), proposal_set_id TEXT REFERENCES proposal_sets(proposal_set_id), review_case_id TEXT REFERENCES review_cases(review_case_id), "
     "failure_code TEXT CHECK(failure_code IS NULL OR failure_code IN ('provider','configuration','authentication','stale','transient','projection','failed','currentness','persistence')), "
     "failure_root TEXT CHECK(failure_root IS NULL OR (failure_code='authentication' AND typeof(failure_root)='text' AND length(CAST(failure_root AS BLOB)) BETWEEN 1 AND 64 AND failure_root NOT GLOB '*[^a-z0-9_-]*' AND substr(failure_root,1,1) GLOB '[a-z]')), "
@@ -283,7 +283,11 @@ _REVIEW_ABSENCES_SQL = (
 )
 _REVIEW_WORK_AGED_CLAIM_INDEX_SQL = (
     "CREATE INDEX review_preparation_work_aged_claim "
-    "ON review_preparation_work(state,library_name,updated_at,ordinal)"
+    "ON review_preparation_work(state,library_name,ordinal)"
+)
+_REVIEW_WORK_DUE_PROMOTION_INDEX_SQL = (
+    "CREATE INDEX review_preparation_work_due_promotion "
+    "ON review_preparation_work(state,retry_not_before)"
 )
 _REVIEW_WORK_RECENT_CLAIM_INDEX_SQL = (
     "CREATE INDEX review_preparation_work_recent_claim "
@@ -602,6 +606,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_METADATA_POLICY_TRANSITION_ITEMS_SQL)
     connection.execute(_REVIEW_ABSENCES_SQL)
     connection.execute(_REVIEW_WORK_AGED_CLAIM_INDEX_SQL)
+    connection.execute(_REVIEW_WORK_DUE_PROMOTION_INDEX_SQL)
     connection.execute(_REVIEW_WORK_RECENT_CLAIM_INDEX_SQL)
     connection.execute(_REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL)
     connection.execute(_REVIEW_SESSIONS_SQL)
@@ -747,6 +752,11 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 "index",
                 "review_preparation_work_aged_claim",
                 _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
+            ),
+            (
+                "index",
+                "review_preparation_work_due_promotion",
+                _REVIEW_WORK_DUE_PROMOTION_INDEX_SQL,
             ),
             (
                 "index",

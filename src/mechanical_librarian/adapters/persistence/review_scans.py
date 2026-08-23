@@ -41,12 +41,15 @@ from mechanical_librarian.application.review_pipeline import (
 # by state: a work queued for extraction has not started, and one running it is
 # being read, and those are different sentences to an owner watching.
 _STAGE_BUCKETS = (
-    ("queued", "w.state='queued' AND w.stage='extraction'"),
+    ("queued", "w.state IN ('queued','delayed') AND w.stage='extraction'"),
     ("extracting", "w.state='running' AND w.stage='extraction'"),
-    ("providers", "w.state IN ('queued','running') AND w.stage='provider'"),
-    ("proposals", "w.state IN ('queued','running') AND w.stage='proposal'"),
-    ("admission", "w.state IN ('queued','running') AND w.stage='admission'"),
-    ("projection", "w.state IN ('queued','running') AND w.stage='projection'"),
+    ("providers", "w.state IN ('queued','delayed','running') AND w.stage='provider'"),
+    ("proposals", "w.state IN ('queued','delayed','running') AND w.stage='proposal'"),
+    ("admission", "w.state IN ('queued','delayed','running') AND w.stage='admission'"),
+    (
+        "projection",
+        "w.state IN ('queued','delayed','running') AND w.stage='projection'",
+    ),
     ("ready", "w.state='complete'"),
     ("failed", "w.state IN ('failed','stale')"),
 )
@@ -374,7 +377,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                     continue
                 self._connection.execute(
                     "UPDATE review_preparation_work SET state='stale',failure_code='stale',"
-                    "failure_root=NULL WHERE scan_id=? AND state IN ('queued','running')",
+                    "failure_root=NULL WHERE scan_id=? AND state IN ('queued','delayed','running')",
                     (scan_id,),
                 )
                 self._connection.execute(
@@ -618,9 +621,9 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "SELECT (SELECT count(*) FROM review_preparation_scans scan "
                 "WHERE scan.connection_name=? AND scan.state IN ('queued','discovering','processing') "
                 "AND NOT EXISTS(SELECT 1 FROM review_preparation_work work "
-                "WHERE work.scan_id=scan.scan_id AND work.state IN ('queued','running')))+"
+                "WHERE work.scan_id=scan.scan_id AND work.state IN ('queued','delayed','running')))+"
                 "(SELECT count(*) FROM review_preparation_work "
-                "WHERE connection_name=? AND state IN ('queued','running'))",
+                "WHERE connection_name=? AND state IN ('queued','delayed','running'))",
                 (connection, connection),
             ).fetchone()[0],
         )

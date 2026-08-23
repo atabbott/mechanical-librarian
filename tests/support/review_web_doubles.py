@@ -117,6 +117,8 @@ class FakeReviewRepository:
         self.rotate_result = "rotated"
         self.existence_failure = False
         self.case_current = True
+        self.current_successor: str | None = None
+        self.successor_failure = False
         self.policy_documents: dict[str, str] = {}
         self.policy_count_calls: list[str] = []
         builtin = MetadataPolicyProfile.builtin()
@@ -343,6 +345,13 @@ class FakeReviewRepository:
         if review_case_id != self.case.review_case_id:
             raise RuntimeError
         return self.report.to_json()
+
+    def current_review_case_successor(self, review_case_id: str) -> str | None:
+        if self.successor_failure:
+            raise RuntimeError
+        if review_case_id != self.case.review_case_id:
+            raise RuntimeError
+        return self.current_successor
 
     def read_current_review_case(
         self, review_case_id: str, history_limit: int | None
