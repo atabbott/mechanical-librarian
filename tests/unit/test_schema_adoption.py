@@ -23,6 +23,7 @@ from mechanical_librarian.adapters.persistence.schema import (
     _PROPOSAL_NO_UPDATE_SQL,
     _REVIEW_NO_UPDATE_SQL,
     _REVIEW_WORK_AGED_CLAIM_INDEX_SQL,
+    _validate_review_field_facts_predecessor_schema,
 )
 from mechanical_librarian.adapters.persistence.schema_adoption import (
     _application_table_digest,
@@ -54,6 +55,18 @@ def _drop_field_facts_projection(connection: sqlite3.Connection) -> None:
     connection.execute("DROP TABLE review_case_field_facts")
 
 
+def _freeze_review_field_facts_predecessor(connection: sqlite3.Connection) -> None:
+    _drop_field_facts_projection(connection)
+    connection.execute("DROP INDEX review_preparation_work_aged_claim")
+    connection.execute(
+        "CREATE INDEX review_preparation_work_aged_claim "
+        "ON review_preparation_work(state,library_name,updated_at,ordinal)"
+    )
+    # Every malformed-document test starts from the one frozen schema the
+    # offline plan accepts, so its later rejection proves canonical validation.
+    _validate_review_field_facts_predecessor_schema(connection)
+
+
 def _predecessor(root: Path) -> Path:
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     root.chmod(0o700)
@@ -61,12 +74,7 @@ def _predecessor(root: Path) -> Path:
     repository = open_repository(database)
     repository.close()
     connection = sqlite3.connect(database)
-    _drop_field_facts_projection(connection)
-    connection.execute("DROP INDEX review_preparation_work_aged_claim")
-    connection.execute(
-        "CREATE INDEX review_preparation_work_aged_claim "
-        "ON review_preparation_work(state,library_name,updated_at,ordinal)"
-    )
+    _freeze_review_field_facts_predecessor(connection)
     connection.commit()
     connection.close()
     return database
@@ -92,7 +100,7 @@ def _predecessor_with_case(root: Path) -> tuple[Path, str, str, str]:
     case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
     repository.close()
     connection = sqlite3.connect(database)
-    _drop_field_facts_projection(connection)
+    _freeze_review_field_facts_predecessor(connection)
     connection.commit()
     connection.close()
     return database, report.report_id, proposal.proposal_set_id, str(case_id)
@@ -132,7 +140,7 @@ def _predecessor_with_decision(root: Path) -> Path:
     repository.record_human_decision(decision)
     repository.close()
     connection = sqlite3.connect(database)
-    _drop_field_facts_projection(connection)
+    _freeze_review_field_facts_predecessor(connection)
     connection.commit()
     connection.close()
     return database

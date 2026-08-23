@@ -15,8 +15,9 @@ it.
 The pre-release review-preparation claim index now orders each library's queued
 cohort by its persisted discovery ordinal. Earlier state with the former
 updated-time claim index is rejected at bootstrap and requires a clean rebuild;
-this increment delivers no exact-predecessor adoption plan. The index remains
-reconstructible derived state under ADR-0013, for which such a plan is allowed.
+the #826 immediate predecessor is not adopted. The index remains
+reconstructible derived state under ADR-0013, but this increment delivers no
+exact-predecessor adoption plan for that immediate predecessor.
 
 ## Offline derived-schema adoption
 
@@ -34,9 +35,13 @@ mechanical-librarian schema-adopt review-field-facts-v1 \
 The command accepts no SQL or configuration. It either verifies an already
 current database without creating the requested backup, or validates the exact
 predecessor, creates and verifies the non-overwriting `0600` backup, and adds
-only the two derived field-fact tables, their triggers, and measured index in
-one transaction. It reconstructs those facts from canonical ReviewCase and
-shadow-outcome documents without changing a canonical row. Any other schema,
+the two derived field-fact tables, their triggers, and measured index in one
+transaction. From that frozen predecessor it also atomically replaces the
+historical `updated_at` review-preparation claim index with the current ordinal
+index. It reconstructs the facts from canonical ReviewCase and shadow-outcome
+documents without changing a canonical row. The #826 immediate predecessor
+already contains those field-fact objects and is rejected; it requires a clean
+rebuild rather than this older plan. Any other schema,
 sidecar, stale private binding, integrity failure, live database authority,
 path replacement, backup collision, or backup-content change fails closed.
 Keep both clone and backup until the new build has started and its measured
