@@ -125,9 +125,9 @@ class _WorkspaceProbe:
         cohort_preview = parse_qs(urlparse(page.url).query).get("preview")
         assert cohort_preview is not None and len(cohort_preview) == 1
         assert cohort_preview[0] != review_case_id
-        cohort_heading = page.locator(".workspace-detail > h2")
+        cohort_heading = page.get_by_role("heading", name=cohort_title, exact=True)
         expect(cohort_heading).to_have_count(1)
-        expect(cohort_heading).to_have_text(cohort_title)
+        expect(cohort_heading).to_be_visible()
 
         # The seeded manual case deliberately sits outside the reconciliation
         # cohort, so return to its direct route for the owner-decision proof.
