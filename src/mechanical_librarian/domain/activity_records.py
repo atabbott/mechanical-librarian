@@ -115,9 +115,9 @@ _RESULT_LABELS = {
 }
 
 
-def activity_result_label(state: str) -> str:
+def activity_result_label(state: str) -> ActivityResult:
     """Return the closed owner-visible result word for one durable state."""
-    return _RESULT_LABELS.get(state, ActivityResult.RECORDED).value
+    return _RESULT_LABELS.get(state, ActivityResult.RECORDED)
 
 
 def _reported_value(report: MetadataReport | None, destination: str) -> object:
@@ -417,6 +417,8 @@ def activity_search_text(
         value = projected.get(key)
         if type(value) is str:
             values.append(value)
+        elif type(value) is ActivityResult:
+            values.append(value.value)
     if report is not None:
         values.append(report.target.current_title or "Untitled")
     evidence = projected.get("evidence")

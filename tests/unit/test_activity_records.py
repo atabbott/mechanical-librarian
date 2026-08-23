@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from mechanical_librarian.domain.activity_records import (
+    ActivityResult,
     activity_result_label,
     readable_activity_event,
 )
@@ -130,7 +131,9 @@ def test_each_durable_state_has_one_closed_owner_visible_result(
     state: str, result: str
 ) -> None:
     assert activity_result_label(state) == result
-    assert _project(_event(state=state))["result"] == result
+    projected = _project(_event(state=state))
+    assert type(projected["result"]) is ActivityResult
+    assert projected["result"] == result
 
 
 @pytest.mark.parametrize(

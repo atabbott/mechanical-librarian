@@ -39,6 +39,7 @@ from mechanical_librarian.application.review_web import (
     _provider_comparison_notices,
     _provider_label,
 )
+from mechanical_librarian.domain.activity_records import ActivityResult
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -453,6 +454,16 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
         "/api/v1/activity?event_type=all&range_days=30&page=1&page_size=25"
     )
     assert filtered.status_code == 200, filtered.text
+    projected_events = application.activity(
+        event_type="all", range_days=30, page=1, page_size=25
+    )["events"]
+    assert isinstance(projected_events, list)
+    assert projected_events
+    assert all(type(event["result"]) is ActivityResult for event in projected_events)
+    response_events = filtered.json()["events"]
+    assert [event["result"] for event in response_events] == [
+        event["result"].value for event in projected_events
+    ]
     # The ledger block is the projection's own, echoed unchanged. Comparing
     # against the projection rather than a copied literal keeps this a proof
     # that the transport does not reshape it, and stops the seeded ledger's
