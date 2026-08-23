@@ -978,6 +978,57 @@ describe('Activity route', () => {
     )
   })
 
+  it('keeps an open lifecycle disclosure through a refreshed latest event', async () => {
+    const user = userEvent.setup()
+    const transitionId = 'effect_plan_' + 'b'.repeat(64)
+    const transitions = (start: number, count: number) =>
+      Array.from({ length: count }, (_, index) => ({
+        event_id: `transition-${String(start + index)}`,
+        occurred_at: start + index,
+        sequence: start + index,
+        state: 'planned',
+      }))
+    let current = activity({
+      events: [{ change_id: 'stable-change', event_id: 'latest-event', transition_id: transitionId }],
+    })
+    let continuationFailures = 0
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getActivity: vi.fn(async () => current),
+      getActivityTransitions: vi.fn(async (_eventId: string, afterSequence?: number) => {
+        if (afterSequence === undefined) return { events: transitions(1, 20), has_more: true }
+        if (afterSequence === 20) return { events: transitions(21, 2), has_more: true }
+        ++continuationFailures
+        throw new ApiError(503, 'unavailable')
+      }),
+    }
+    const { queryClient } = renderRoute('/activity', http)
+
+    await user.click(await screen.findByRole('button', { name: 'Details' }))
+    const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
+    await user.click(screen.getByRole('button', { name: 'Load more transitions' }))
+    await waitFor(() => expect(lifecycle.querySelectorAll('li')).toHaveLength(23))
+    await user.click(screen.getByRole('button', { name: 'Load more transitions' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'More recorded transitions could not be loaded.',
+    )
+    const disclosure = screen.getByRole('button', { name: 'Hide details' })
+    disclosure.focus()
+
+    current = activity({
+      events: [{ change_id: 'stable-change', event_id: 'new-latest-event', transition_id: transitionId }],
+    })
+    await queryClient.invalidateQueries({ queryKey: ['activity'] })
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Hide details' })).toHaveFocus())
+    expect(lifecycle.querySelectorAll('li')).toHaveLength(23)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'More recorded transitions could not be loaded.',
+    )
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible()
+    expect(continuationFailures).toBe(1)
+  })
+
   it('does not request lifecycle transitions for human, policy, or no-change rows', async () => {
     const user = userEvent.setup()
     const http: ReviewHttp = {

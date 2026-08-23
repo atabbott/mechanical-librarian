@@ -419,6 +419,39 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                 page.goto(f"{origin}/activity")
                 page.get_by_role("heading", name="Activity and recovery").wait_for()
                 page.locator(".cm-write-consent").wait_for(timeout=8_000)
+                page.get_by_role("button", name="Enable writes").wait_for(timeout=8_000)
+                consent_semantic = [
+                    "cm-page-heading",
+                    "cm-activity-ledger",
+                    "cm-write-consent is-off",
+                    "cm-activity-status",
+                    "activity-command-status",
+                ]
+                _activity_surface_order(
+                    page,
+                    width=1440,
+                    semantic=consent_semantic,
+                    visual=[
+                        "cm-page-heading",
+                        "cm-write-consent is-off",
+                        "cm-activity-status",
+                        "cm-activity-ledger",
+                        "activity-command-status",
+                    ],
+                )
+                _activity_surface_order(
+                    page,
+                    width=390,
+                    semantic=consent_semantic,
+                    visual=[
+                        "cm-page-heading",
+                        "cm-activity-ledger",
+                        "cm-write-consent is-off",
+                        "cm-activity-status",
+                        "activity-command-status",
+                    ],
+                )
+                page.set_viewport_size({"width": 1440, "height": 900})
                 _fits_every_width(page, ".cm-write-consent")
                 _fits_every_width(page, ".cm-activity-status")
                 # The Activity row gained two flexible columns and a policy
